@@ -56,36 +56,6 @@ type ActionState = { type: 'idle' } | { type: 'loading'; action: string; connect
 export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) {
   const [actionState, setActionState] = useState<ActionState>({ type: 'idle' })
 
-  const handleSync = async (connectionId: string) => {
-    setActionState({ type: 'loading', action: 'sync', connectionId })
-    try {
-      const result = await api.syncConnection(workspaceId, connectionId, true)
-      const sync = result.sync as Record<string, unknown> | undefined
-      const detail = sync
-        ? `${sync.threadsImported ?? 0} threads, ${sync.messagesImported ?? 0} messages imported`
-        : undefined
-      setActionState({ type: 'success', action: 'sync', connectionId, detail })
-      onRefresh()
-    } catch (e) {
-      setActionState({ type: 'error', action: 'sync', connectionId, message: e instanceof Error ? e.message : 'Sync failed' })
-    }
-  }
-
-  const handleAnalyze = async (connectionId: string) => {
-    setActionState({ type: 'loading', action: 'analyze', connectionId })
-    try {
-      const result = await api.analyzeConnection(workspaceId, connectionId, true)
-      const analysis = result.analysis as Record<string, unknown> | undefined
-      const detail = analysis
-        ? `${analysis.messagesClassified ?? 0} classified, ${analysis.taskCandidatesCreated ?? 0} tasks`
-        : undefined
-      setActionState({ type: 'success', action: 'analyze', connectionId, detail })
-      onRefresh()
-    } catch (e) {
-      setActionState({ type: 'error', action: 'analyze', connectionId, message: e instanceof Error ? e.message : 'Analysis failed' })
-    }
-  }
-
   const handleDisconnect = async (connectionId: string) => {
     if (!confirm('Disconnect this inbox? The connection can be re-established later.')) return
     setActionState({ type: 'loading', action: 'disconnect', connectionId })
@@ -166,20 +136,6 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: '1px solid #eee', paddingTop: 12 }}>
-            {c.status === 'ACTIVE' && (
-              <>
-                <button className="btn btn-sm btn-primary"
-                  disabled={isLoading(c.id, 'sync')}
-                  onClick={() => handleSync(c.id)}>
-                  {isLoading(c.id, 'sync') ? 'Syncing...' : 'Sync Now'}
-                </button>
-                <button className="btn btn-sm btn-outline"
-                  disabled={isLoading(c.id, 'analyze')}
-                  onClick={() => handleAnalyze(c.id)}>
-                  {isLoading(c.id, 'analyze') ? 'Analyzing...' : 'Analyze'}
-                </button>
-              </>
-            )}
             {c.status === 'REQUIRES_REAUTH' && (
               <button className="btn btn-sm btn-primary" onClick={() => handleReconnect(c.id)}>
                 Reconnect
@@ -191,17 +147,6 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
               {isLoading(c.id, 'disconnect') ? '...' : 'Disconnect'}
             </button>
           </div>
-
-          {isLoading(c.id, 'sync') && (
-            <div style={{ marginTop: 10, padding: '8px 12px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, color: '#666' }}>
-              Syncing messages from {providerLabel(c.provider)}... This may take a minute.
-            </div>
-          )}
-          {isLoading(c.id, 'analyze') && (
-            <div style={{ marginTop: 10, padding: '8px 12px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, color: '#666' }}>
-              Running classification and task extraction... This may take a minute.
-            </div>
-          )}
         </div>
       ))}
 
