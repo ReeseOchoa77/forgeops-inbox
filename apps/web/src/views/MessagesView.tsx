@@ -14,12 +14,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const [totalPages, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeResult, setAnalyzeResult] = useState<string | null>(null)
 
   useEffect(() => {
     setPage(1)
   }, [connectionId])
 
-  useEffect(() => {
+  const loadMessages = () => {
     setLoading(true)
     api.getMessages(workspaceId, connectionId, page)
       .then(r => {
@@ -28,7 +30,27 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
         setTotalCount(r.pagination.totalCount)
       })
       .finally(() => setLoading(false))
-  }, [workspaceId, connectionId, page])
+  }
+
+  useEffect(loadMessages, [workspaceId, connectionId, page])
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true)
+    setAnalyzeResult(null)
+    try {
+      const result = await api.analyzeConnection(workspaceId, connectionId, true)
+      const analysis = result.analysis as Record<string, unknown> | undefined
+      const detail = analysis
+        ? `${analysis.messagesClassified ?? 0} classified, ${analysis.taskCandidatesCreated ?? 0} tasks extracted`
+        : 'Analysis completed'
+      setAnalyzeResult(detail)
+      loadMessages()
+    } catch (e) {
+      setAnalyzeResult(`Error: ${e instanceof Error ? e.message : 'Analysis failed'}`)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
 
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading messages...</p>
 
@@ -44,10 +66,27 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Inbox</h2>
-        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{totalCount} messages synced. Click any message to see full details.</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Inbox</h2>
+          <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{totalCount} messages synced. Click any message to see full details.</p>
+        </div>
+        <button className="btn btn-sm btn-primary" onClick={handleAnalyze} disabled={analyzing}>
+          {analyzing ? 'Analyzing...' : 'Run Analysis'}
+        </button>
       </div>
+
+      {analyzeResult && (
+        <div style={{
+          padding: '10px 16px', marginBottom: 12, borderRadius: 6, fontSize: 13,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: analyzeResult.startsWith('Error') ? '#fce4ec' : '#e6f4ea',
+          border: `1px solid ${analyzeResult.startsWith('Error') ? '#e8a09a' : '#a8d5a2'}`
+        }}>
+          <span>{analyzeResult}</span>
+          <button onClick={() => setAnalyzeResult(null)} style={{ background: 'none', border: 'none', fontSize: 16, cursor: 'pointer' }}>&times;</button>
+        </div>
+      )}
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

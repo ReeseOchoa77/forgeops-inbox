@@ -1,10 +1,18 @@
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string> ?? {})
+  };
+
+  if (options?.body) {
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options?.headers as Record<string, string> ?? {}) },
-    ...options
+    ...options,
+    headers
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
@@ -188,26 +196,22 @@ export const api = {
 
   syncConnection: (workspaceId: string, connectionId: string, wait = true) =>
     request<{ status: string; jobId: string; sync?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/sync?wait=${wait}`, {
-      method: 'POST',
-      body: '{}'
+      method: 'POST'
     }),
 
   analyzeConnection: (workspaceId: string, connectionId: string, wait = true) =>
     request<{ status: string; jobId: string; analysis?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/analyze?wait=${wait}`, {
-      method: 'POST',
-      body: '{}'
+      method: 'POST'
     }),
 
   reconnectConnection: (workspaceId: string, connectionId: string) =>
     request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reconnect`, {
-      method: 'POST',
-      body: '{}'
+      method: 'POST'
     }),
 
   startInboxConnection: (workspaceId: string, provider: 'google' | 'outlook') =>
     request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${provider}/start`, {
-      method: 'POST',
-      body: '{}'
+      method: 'POST'
     }),
 
   importCsv: (workspaceId: string, entity: 'customers' | 'vendors' | 'jobs', csvText: string) =>

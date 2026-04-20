@@ -45,9 +45,17 @@ export default function App() {
     }
 
     if (params.get('connected')) {
-      setConnectionNotice({ type: 'success', message: 'Inbox connected successfully. Sync it from the Connections page.' })
+      const connectedId = params.get('connected')!
+      setConnectionNotice({ type: 'success', message: 'Inbox connected. Syncing messages now...' })
       setPage('connections')
       window.history.replaceState({}, '', window.location.pathname)
+
+      api.getSession().then(s => {
+        if (s.authenticated && s.memberships.length > 0) {
+          const wsId = s.memberships[0].workspace.id
+          api.syncConnection(wsId, connectedId, false).catch(() => {})
+        }
+      })
     }
 
     if (params.get('connection_error')) {
