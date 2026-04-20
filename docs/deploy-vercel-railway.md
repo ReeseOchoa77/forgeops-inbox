@@ -3,8 +3,8 @@
 **Target architecture:**
 
 ```
-forgeops-inbox.app          → Vercel (static frontend)
-api.forgeops-inbox.app      → Railway (API service)
+forgeops-inbox.com          → Vercel (static frontend)
+api.forgeops-inbox.com      → Railway (API service)
                             → Railway (Worker service)
                             → Railway (Postgres)
                             → Railway (Redis)
@@ -14,7 +14,7 @@ api.forgeops-inbox.app      → Railway (API service)
 
 ## 1. DNS Records (Porkbun)
 
-Add these DNS records for `forgeops-inbox.app`:
+Add these DNS records for `forgeops-inbox.com`:
 
 | Type  | Host | Value | TTL |
 |-------|------|-------|-----|
@@ -59,7 +59,7 @@ The `api` CNAME value comes from Railway after you deploy the API service and ad
    - Root directory: `/` (monorepo root)
    - Build command: `npm install && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build`
    - Start command: `node apps/api/dist/main.js`
-3. **Custom domain:** Add `api.forgeops-inbox.app`
+3. **Custom domain:** Add `api.forgeops-inbox.com`
 4. **Environment variables:** (see section 4 below)
 
 ### 2e. Create Worker service
@@ -107,12 +107,12 @@ Edit the seed file first to set your admin email if different from `24rochoa@gma
 
 | Variable | Value |
 |----------|-------|
-| `VITE_API_URL` | `https://api.forgeops-inbox.app` |
+| `VITE_API_URL` | `https://api.forgeops-inbox.com` |
 
 ### 3c. Custom domain
 
 1. Go to project settings → Domains
-2. Add `forgeops-inbox.app`
+2. Add `forgeops-inbox.com`
 3. Vercel will verify the CNAME record from step 1
 
 ---
@@ -128,12 +128,12 @@ HOST=0.0.0.0
 DATABASE_URL=<from Railway Postgres>
 REDIS_URL=<from Railway Redis>
 
-FRONTEND_URL=https://forgeops-inbox.app
+FRONTEND_URL=https://forgeops-inbox.com
 
 GOOGLE_CLIENT_ID=<from Google Cloud Console>
 GOOGLE_CLIENT_SECRET=<from Google Cloud Console>
-GOOGLE_AUTH_REDIRECT_URI=https://api.forgeops-inbox.app/api/v1/auth/google/callback
-GOOGLE_INBOX_REDIRECT_URI=https://api.forgeops-inbox.app/api/v1/inbox-connections/google/callback
+GOOGLE_AUTH_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/auth/google/callback
+GOOGLE_INBOX_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/google/callback
 
 SESSION_COOKIE_SECRET=<generate: openssl rand -hex 32>
 TOKEN_ENCRYPTION_SECRET=<generate: openssl rand -hex 32>
@@ -144,7 +144,7 @@ DEV_AUTO_CREATE_WORKSPACE_ON_LOGIN=false
 # Optional Outlook
 OUTLOOK_CLIENT_ID=<from Azure AD>
 OUTLOOK_CLIENT_SECRET=<from Azure AD>
-OUTLOOK_REDIRECT_URI=https://api.forgeops-inbox.app/api/v1/inbox-connections/google/callback
+OUTLOOK_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/google/callback
 OUTLOOK_TENANT_ID=common
 ```
 
@@ -163,7 +163,7 @@ REDIS_URL=<same as API>
 
 GOOGLE_CLIENT_ID=<same as API>
 GOOGLE_CLIENT_SECRET=<same as API>
-GOOGLE_INBOX_REDIRECT_URI=https://api.forgeops-inbox.app/api/v1/inbox-connections/google/callback
+GOOGLE_INBOX_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/google/callback
 
 TOKEN_ENCRYPTION_SECRET=<same as API>
 
@@ -178,7 +178,7 @@ OUTLOOK_TENANT_ID=common
 ### Vercel: Frontend
 
 ```
-VITE_API_URL=https://api.forgeops-inbox.app
+VITE_API_URL=https://api.forgeops-inbox.com
 ```
 
 ---
@@ -188,12 +188,12 @@ VITE_API_URL=https://api.forgeops-inbox.app
 In [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials → your OAuth 2.0 Client:
 
 **Authorized redirect URIs:**
-- `https://api.forgeops-inbox.app/api/v1/auth/google/callback`
-- `https://api.forgeops-inbox.app/api/v1/inbox-connections/google/callback`
+- `https://api.forgeops-inbox.com/api/v1/auth/google/callback`
+- `https://api.forgeops-inbox.com/api/v1/inbox-connections/google/callback`
 
 **Authorized JavaScript origins:**
-- `https://forgeops-inbox.app`
-- `https://api.forgeops-inbox.app`
+- `https://forgeops-inbox.com`
+- `https://api.forgeops-inbox.com`
 
 If the app is still in "Testing" mode in Google Cloud, either publish it or add your test users.
 
@@ -203,13 +203,13 @@ If the app is still in "Testing" mode in Google Cloud, either publish it or add 
 
 1. **DNS:** Add all records in Porkbun (they take 5-30 min to propagate)
 2. **Railway Postgres + Redis:** Create and note connection strings
-3. **Railway API:** Deploy with env vars, add custom domain `api.forgeops-inbox.app`
+3. **Railway API:** Deploy with env vars, add custom domain `api.forgeops-inbox.com`
 4. **Railway migrations:** Run `prisma migrate deploy` in the API service shell
 5. **Railway seed:** Run the admin seed script
 6. **Railway Worker:** Deploy with env vars
 7. **Google Cloud:** Add production redirect URIs
-8. **Vercel:** Deploy with `VITE_API_URL` set, add custom domain `forgeops-inbox.app`
-9. **Smoke test:** Open `https://forgeops-inbox.app`, sign in, connect inbox, sync, analyze
+8. **Vercel:** Deploy with `VITE_API_URL` set, add custom domain `forgeops-inbox.com`
+9. **Smoke test:** Open `https://forgeops-inbox.com`, sign in, connect inbox, sync, analyze
 
 ---
 
@@ -228,8 +228,8 @@ If the app is still in "Testing" mode in Google Cloud, either publish it or add 
 
 ## 8. Post-Deploy Verification
 
-- [ ] `https://forgeops-inbox.app` loads the landing page
-- [ ] `https://api.forgeops-inbox.app/api/v1/health` returns `{"status":"ok"}`
+- [ ] `https://forgeops-inbox.com` loads the landing page
+- [ ] `https://api.forgeops-inbox.com/api/v1/health` returns `{"status":"ok"}`
 - [ ] Sign in with approved email works
 - [ ] Sign in with unapproved email shows access-denied
 - [ ] Gmail connect flow redirects correctly through Google and back
@@ -241,7 +241,7 @@ If the app is still in "Testing" mode in Google Cloud, either publish it or add 
 ## Troubleshooting
 
 **Cookies not working (session lost on API calls):**
-The API sets `sameSite: "none"` + `secure: true` when detecting cross-origin between `forgeops-inbox.app` and `api.forgeops-inbox.app`. Verify CORS is set to `https://forgeops-inbox.app` in the API's `FRONTEND_URL`.
+The API sets `sameSite: "none"` + `secure: true` when detecting cross-origin between `forgeops-inbox.com` and `api.forgeops-inbox.com`. Verify CORS is set to `https://forgeops-inbox.com` in the API's `FRONTEND_URL`.
 
 **Railway PORT conflict:**
 Do NOT set `API_PORT` in Railway env vars. Railway injects `PORT` automatically. The API reads `PORT` first, then falls back to `API_PORT`.
