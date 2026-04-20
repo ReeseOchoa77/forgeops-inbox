@@ -12,14 +12,34 @@ const sessionCookieOptions = (request: FastifyRequest) => {
     frontendUrl &&
     !frontendUrl.includes(apiHost);
 
-  return {
+  const options: {
+    path: string;
+    httpOnly: boolean;
+    sameSite: "lax" | "none";
+    secure: boolean;
+    signed: boolean;
+    maxAge: number;
+    domain?: string;
+  } = {
     path: "/",
     httpOnly: true,
-    sameSite: crossOrigin ? ("none" as const) : ("lax" as const),
+    sameSite: crossOrigin ? "none" : "lax",
     secure: isProduction,
     signed: true,
     maxAge: request.server.services.env.SESSION_TTL_SECONDS
   };
+
+  if (crossOrigin && frontendUrl) {
+    try {
+      const frontendHost = new URL(frontendUrl).hostname;
+      const parts = frontendHost.split(".");
+      if (parts.length >= 2) {
+        options.domain = "." + parts.slice(-2).join(".");
+      }
+    } catch {}
+  }
+
+  return options;
 };
 
 export const readSessionIdFromRequest = (
