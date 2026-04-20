@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { api, type ConnectionSummary } from '../api'
 
-const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
-
 interface Props {
   workspaceId: string
   connections: ConnectionSummary[]
@@ -224,8 +222,16 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
 
       <h3 style={{ fontSize: 15, marginBottom: 12, marginTop: 28 }}>Add an Inbox</h3>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <a href={`${API_ORIGIN}/api/v1/dev/workspaces/${workspaceId}/inbox-connections/google/start`}
-          className="card" style={{ flex: '1 1 280px', textDecoration: 'none', color: 'inherit', cursor: 'pointer', border: '2px dashed #d0d0d0', transition: 'border-color 0.15s' }}
+        <button
+          onClick={async () => {
+            try {
+              const result = await api.startInboxConnection(workspaceId, 'google')
+              window.location.href = result.authorizationUrl
+            } catch (e) {
+              setActionState({ type: 'error', action: 'connect', connectionId: '', message: e instanceof Error ? e.message : 'Failed to start connection' })
+            }
+          }}
+          className="card" style={{ flex: '1 1 280px', textDecoration: 'none', color: 'inherit', cursor: 'pointer', border: '2px dashed #d0d0d0', transition: 'border-color 0.15s', textAlign: 'left' }}
           onMouseOver={e => (e.currentTarget.style.borderColor = '#999')}
           onMouseOut={e => (e.currentTarget.style.borderColor = '#d0d0d0')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -235,10 +241,18 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
           <div style={{ fontSize: 13, color: '#888', lineHeight: 1.5 }}>
             Sync messages from a Google Workspace or personal Gmail account. You'll be redirected to Google to authorize read access to your inbox.
           </div>
-        </a>
+        </button>
 
-        <a href={`${API_ORIGIN}/api/v1/dev/workspaces/${workspaceId}/inbox-connections/outlook/start`}
-          className="card" style={{ flex: '1 1 280px', textDecoration: 'none', color: 'inherit', cursor: 'pointer', border: '2px dashed #d0d0d0', transition: 'border-color 0.15s' }}
+        <button
+          onClick={async () => {
+            try {
+              const result = await api.startInboxConnection(workspaceId, 'outlook')
+              window.location.href = result.authorizationUrl
+            } catch (e) {
+              setActionState({ type: 'error', action: 'connect', connectionId: '', message: e instanceof Error ? e.message : 'Failed to start connection' })
+            }
+          }}
+          className="card" style={{ flex: '1 1 280px', textDecoration: 'none', color: 'inherit', cursor: 'pointer', border: '2px dashed #d0d0d0', transition: 'border-color 0.15s', textAlign: 'left' }}
           onMouseOver={e => (e.currentTarget.style.borderColor = '#999')}
           onMouseOut={e => (e.currentTarget.style.borderColor = '#d0d0d0')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -248,7 +262,7 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
           <div style={{ fontSize: 13, color: '#888', lineHeight: 1.5 }}>
             Sync messages from a Microsoft 365 or Outlook.com account. You'll be redirected to Microsoft to authorize read access.
           </div>
-        </a>
+        </button>
       </div>
     </div>
   )

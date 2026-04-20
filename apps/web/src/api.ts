@@ -204,6 +204,12 @@ export const api = {
       body: '{}'
     }),
 
+  startInboxConnection: (workspaceId: string, provider: 'google' | 'outlook') =>
+    request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${provider}/start`, {
+      method: 'POST',
+      body: '{}'
+    }),
+
   importCsv: (workspaceId: string, entity: 'customers' | 'vendors' | 'jobs', csvText: string) =>
     fetch(`${BASE}/workspaces/${workspaceId}/import/${entity}`, {
       method: 'POST',
