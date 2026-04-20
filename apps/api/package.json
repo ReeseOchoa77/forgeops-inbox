@@ -1,0 +1,27 @@
+{
+  "name": "@forgeops/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.1",
+    "@fastify/cors": "^10.0.1",
+    "@forgeops/ai": "*",
+    "@forgeops/db": "*",
+    "@forgeops/shared": "*",
+    "bullmq": "^5.34.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "googleapis": "^144.0.0",
+    "ioredis": "^5.4.2",
+    "zod": "^3.24.1"
+  }
+}

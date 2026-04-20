@@ -1,0 +1,577 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  MEMBER
+  VIEWER
+}
+
+enum InboxProvider {
+  GMAIL
+  OUTLOOK
+}
+
+enum ApprovedAccessStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum InboxConnectionStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+  REQUIRES_REAUTH
+  DISCONNECTED
+}
+
+enum EmailType {
+  ACTIONABLE_REQUEST
+  FYI_UPDATE
+  SALES_MARKETING
+  SUPPORT_CUSTOMER_ISSUE
+  RECRUITING_HIRING
+  INTERNAL_COORDINATION
+  NEEDS_REVIEW
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ItemStatus {
+  NEW
+  NEEDS_REVIEW
+  ROUTED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ARCHIVED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+enum ReviewQueue {
+  TRIAGE
+  EXTRACTION
+  ROUTING
+  QA
+}
+
+enum ReviewStatus {
+  NOT_REQUIRED
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum RoutingRuleActionType {
+  ASSIGN
+  SET_PRIORITY
+  SET_STATUS
+  CREATE_TASK
+  SEND_TO_REVIEW_QUEUE
+}
+
+/// Workspace is the tenant boundary. Every operational record below is scoped
+/// to a workspace to keep inbox data isolated in a multi-tenant deployment.
+enum JobStatus {
+  ACTIVE
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+model Workspace {
+  id               String            @id @default(cuid())
+  name             String
+  slug             String            @unique
+  timezone         String            @default("UTC")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  memberships      Membership[]
+  inboxConnections InboxConnection[]
+  emailThreads     EmailThread[]
+  emailMessages    EmailMessage[]
+  normalizedEmails NormalizedEmail[]
+  classifications  Classification[]
+  tasks            Task[]
+  routingRules     RoutingRule[]
+  setting          WorkspaceSetting?
+  auditEvents      AuditEvent[]
+  approvedAccess   ApprovedAccess[]
+  customers        Customer[]
+  vendors          Vendor[]
+  jobs             Job[]
+}
+
+model User {
+  id                      String           @id @default(cuid())
+  googleSubject           String?          @unique
+  email                   String           @unique
+  name                    String?
+  avatarUrl               String?
+  lastLoginAt             DateTime?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  memberships             Membership[]
+  assignedThreads         EmailThread[]    @relation("ThreadAssignee")
+  assignedTasks           Task[]           @relation("TaskAssignee")
+  reviewedClassifications Classification[] @relation("ClassificationReviewer")
+  reviewedTasks           Task[]           @relation("TaskReviewer")
+  createdRoutingRules     RoutingRule[]    @relation("RoutingRuleCreator")
+  updatedRoutingRules     RoutingRule[]    @relation("RoutingRuleUpdater")
+  auditEvents             AuditEvent[]     @relation("AuditActor")
+  invitedAccess           ApprovedAccess[] @relation("ApprovedAccessInviter")
+}
+
+model ApprovedAccess {
+  id              String               @id @default(cuid())
+  email           String
+  workspaceId     String
+  role            Role                 @default(MEMBER)
+  status          ApprovedAccessStatus @default(ACTIVE)
+  invitedByUserId String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  workspace       Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedByUser   User?                @relation("ApprovedAccessInviter", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, email])
+  @@index([email])
+  @@index([workspaceId, status])
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role      @default(MEMBER)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId, role])
+}
+
+model InboxConnection {
+  id                String                @id @default(cuid())
+  workspaceId       String
+  provider          InboxProvider         @default(GMAIL)
+  email             String
+  displayName       String?
+  providerAccountId String?
+  status            InboxConnectionStatus @default(ACTIVE)
+  grantedScopes     String[]              @default([])
+  encryptedAccessToken String?
+  encryptedRefreshToken String?
+  accessTokenExpiresAt DateTime?
+  connectedAt       DateTime?
+  disconnectedAt    DateTime?
+  syncCursor        String?
+  lastSyncStartedAt DateTime?
+  lastSyncedAt      DateTime?
+  lastSyncErrorAt   DateTime?
+  lastSyncError     String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  threads           EmailThread[]
+  messages          EmailMessage[]
+  normalizedEmails  NormalizedEmail[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, provider, email])
+  @@index([providerAccountId])
+  @@index([workspaceId, email])
+  @@index([workspaceId, providerAccountId])
+  @@index([workspaceId, provider])
+  @@index([workspaceId, status])
+}
+
+model EmailThread {
+  id                         String        @id @default(cuid())
+  workspaceId                String
+  inboxConnectionId          String
+  unifiedThreadKey           String?
+  gmailThreadId              String
+  providerThreadId           String?
+  subject                    String?
+  normalizedSubject          String?
+  snippet                    String?
+  participants               Json?
+  firstMessageAt             DateTime?
+  lastMessageAt              DateTime?
+  messageCount               Int           @default(0)
+  unreadCount                Int           @default(0)
+  priority                   Priority?
+  itemStatus                 ItemStatus    @default(NEW)
+  assignedToUserId           String?
+  reviewQueue                ReviewQueue?
+  reviewStatus               ReviewStatus  @default(NOT_REQUIRED)
+  latestClassificationConfidence Decimal?  @db.Decimal(5, 4)
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
+  workspace                  Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inboxConnection            InboxConnection @relation(fields: [workspaceId, inboxConnectionId], references: [workspaceId, id], onDelete: Cascade)
+  assignedToUser             User?         @relation("ThreadAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages                   EmailMessage[]
+  normalizedEmails           NormalizedEmail[]
+  classifications            Classification[]
+  tasks                      Task[]        @relation("TaskSourceThread")
+
+  @@unique([workspaceId, id])
+  @@unique([inboxConnectionId, gmailThreadId])
+  @@index([gmailThreadId])
+  @@index([workspaceId, gmailThreadId])
+  @@index([providerThreadId])
+  @@index([workspaceId, providerThreadId])
+  @@index([workspaceId, unifiedThreadKey])
+  @@index([workspaceId, lastMessageAt])
+  @@index([workspaceId, itemStatus, lastMessageAt])
+  @@index([workspaceId, assignedToUserId, itemStatus])
+  @@index([workspaceId, reviewQueue, reviewStatus])
+}
+
+model EmailMessage {
+  id               String        @id @default(cuid())
+  workspaceId      String
+  inboxConnectionId String
+  threadId         String
+  gmailMessageId   String
+  gmailThreadId    String
+  providerMessageId String?
+  providerThreadId  String?
+  historyId        String?
+  subject          String?
+  senderName       String?
+  senderEmail      String
+  toAddresses      Json?
+  ccAddresses      Json?
+  bccAddresses     Json?
+  replyToAddresses Json?
+  snippet          String?
+  bodyText         String?
+  bodyHtml         String?
+  labelIds         String[]      @default([])
+  hasAttachments   Boolean       @default(false)
+  attachmentMetadata Json?
+  sentAt           DateTime
+  receivedAt       DateTime?
+  priority         Priority?
+  itemStatus       ItemStatus    @default(NEW)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inboxConnection  InboxConnection @relation(fields: [workspaceId, inboxConnectionId], references: [workspaceId, id], onDelete: Cascade)
+  thread           EmailThread   @relation(fields: [workspaceId, threadId], references: [workspaceId, id], onDelete: Cascade)
+  normalizedEmail  NormalizedEmail?
+  classifications  Classification[]
+  tasks            Task[]        @relation("TaskSourceMessage")
+
+  @@unique([workspaceId, id])
+  @@unique([inboxConnectionId, gmailMessageId])
+  @@index([gmailMessageId])
+  @@index([gmailThreadId])
+  @@index([workspaceId, gmailMessageId])
+  @@index([workspaceId, gmailThreadId])
+  @@index([providerMessageId])
+  @@index([providerThreadId])
+  @@index([workspaceId, providerMessageId])
+  @@index([workspaceId, providerThreadId])
+  @@index([workspaceId, inboxConnectionId, receivedAt])
+  @@index([workspaceId, historyId])
+  @@index([workspaceId, sentAt])
+  @@index([workspaceId, threadId, sentAt])
+  @@index([workspaceId, itemStatus, sentAt])
+  @@index([senderEmail])
+}
+
+model NormalizedEmail {
+  id               String          @id @default(cuid())
+  workspaceId      String
+  inboxConnectionId String
+  threadId         String
+  messageId        String
+  sender           Json
+  recipients       Json
+  subject          String?
+  normalizedSubject String?
+  snippet          String?
+  receivedAt       DateTime?
+  cleanTextBody    String?
+  labelHints       String[]        @default([])
+  categoryHints    String[]        @default([])
+  senderDomain     String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inboxConnection  InboxConnection @relation(fields: [workspaceId, inboxConnectionId], references: [workspaceId, id], onDelete: Cascade)
+  thread           EmailThread     @relation(fields: [workspaceId, threadId], references: [workspaceId, id], onDelete: Cascade)
+  message          EmailMessage    @relation(fields: [workspaceId, messageId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, messageId])
+  @@index([workspaceId, inboxConnectionId, receivedAt])
+  @@index([workspaceId, senderDomain])
+}
+
+model Classification {
+  id                    String       @id @default(cuid())
+  workspaceId           String
+  threadId              String
+  messageId             String?
+  emailType             EmailType
+  priority              Priority?
+  itemStatus            ItemStatus?
+  summary               String?
+  companyName           String?
+  projectName           String?
+  deadline              DateTime?
+  containsActionRequest Boolean      @default(false)
+  routingHints          Json?
+  extractedFields       Json?
+  confidence            Decimal      @db.Decimal(5, 4)
+  requiresReview        Boolean      @default(false)
+  reviewQueue           ReviewQueue?
+  reviewStatus          ReviewStatus @default(NOT_REQUIRED)
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  modelName             String?
+  modelVersion          String?
+  customerId            String?
+  vendorId              String?
+  jobId                 String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  workspace             Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  thread                EmailThread  @relation(fields: [workspaceId, threadId], references: [workspaceId, id], onDelete: Cascade)
+  message               EmailMessage? @relation(fields: [workspaceId, messageId], references: [workspaceId, id], onDelete: SetNull)
+  reviewedByUser        User?        @relation("ClassificationReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  customer              Customer?    @relation("ClassificationCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  vendor                Vendor?      @relation("ClassificationVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
+  job                   Job?         @relation("ClassificationJob", fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: SetNull)
+  tasks                 Task[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, emailType])
+  @@index([workspaceId, priority])
+  @@index([workspaceId, itemStatus])
+  @@index([workspaceId, confidence])
+  @@index([workspaceId, reviewQueue, reviewStatus])
+  @@index([workspaceId, requiresReview, confidence])
+  @@unique([workspaceId, messageId])
+  @@index([threadId, createdAt])
+  @@index([messageId])
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([jobId])
+}
+
+model Task {
+  id               String       @id @default(cuid())
+  workspaceId      String
+  sourceThreadId   String
+  sourceMessageId  String?
+  classificationId String?
+  assigneeUserId   String?
+  assigneeGuess    String?
+  title            String
+  summary          String?
+  description      String?
+  dueAt            DateTime?
+  priority         Priority     @default(MEDIUM)
+  status           TaskStatus   @default(OPEN)
+  confidence       Decimal      @db.Decimal(5, 4)
+  requiresReview   Boolean      @default(false)
+  reviewQueue      ReviewQueue?
+  reviewStatus     ReviewStatus @default(NOT_REQUIRED)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  completedAt      DateTime?
+  customerId       String?
+  vendorId         String?
+  jobId            String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceThread     EmailThread  @relation("TaskSourceThread", fields: [workspaceId, sourceThreadId], references: [workspaceId, id], onDelete: Cascade)
+  sourceMessage    EmailMessage? @relation("TaskSourceMessage", fields: [workspaceId, sourceMessageId], references: [workspaceId, id], onDelete: SetNull)
+  classification   Classification? @relation(fields: [workspaceId, classificationId], references: [workspaceId, id], onDelete: SetNull)
+  assigneeUser     User?        @relation("TaskAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  reviewedByUser   User?        @relation("TaskReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  customer         Customer?    @relation("TaskCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  vendor           Vendor?      @relation("TaskVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
+  job              Job?         @relation("TaskJob", fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: SetNull)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, dueAt])
+  @@index([workspaceId, assigneeUserId, status])
+  @@index([workspaceId, priority, status])
+  @@index([workspaceId, confidence])
+  @@index([workspaceId, reviewQueue, reviewStatus])
+  @@unique([workspaceId, sourceMessageId])
+  @@index([sourceThreadId])
+  @@index([sourceMessageId])
+  @@index([classificationId])
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([jobId])
+}
+
+/// Domain entity: a customer/client the workspace does business with.
+/// Designed for spreadsheet import. Matching to emails is deferred.
+model Customer {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  name            String
+  normalizedName  String
+  primaryEmail    String?
+  domain          String?
+  phone           String?
+  externalRef     String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  jobs            Job[]     @relation("JobCustomer")
+  classifications Classification[] @relation("ClassificationCustomer")
+  tasks           Task[]    @relation("TaskCustomer")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, domain])
+  @@index([workspaceId, primaryEmail])
+  @@index([workspaceId, externalRef])
+}
+
+/// Domain entity: a vendor/supplier the workspace works with.
+model Vendor {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  name            String
+  normalizedName  String
+  primaryEmail    String?
+  domain          String?
+  phone           String?
+  externalRef     String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  classifications Classification[] @relation("ClassificationVendor")
+  tasks           Task[]    @relation("TaskVendor")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, domain])
+  @@index([workspaceId, primaryEmail])
+  @@index([workspaceId, externalRef])
+}
+
+/// Domain entity: a job/project tied to a customer.
+model Job {
+  id              String     @id @default(cuid())
+  workspaceId     String
+  jobNumber       String?
+  name            String
+  normalizedName  String
+  customerId      String?
+  status          JobStatus  @default(ACTIVE)
+  externalRef     String?
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  workspace       Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer        Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  classifications Classification[] @relation("ClassificationJob")
+  tasks           Task[]     @relation("TaskJob")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, jobNumber])
+  @@index([workspaceId, customerId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, externalRef])
+}
+
+model RoutingRule {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  name            String
+  description     String?
+  enabled         Boolean               @default(true)
+  priorityOrder   Int                   @default(100)
+  stopProcessing  Boolean               @default(false)
+  actionType      RoutingRuleActionType
+  matchCriteria   Json
+  actionConfig    Json
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser   User?                 @relation("RoutingRuleCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUser   User?                 @relation("RoutingRuleUpdater", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+  @@index([workspaceId, enabled, priorityOrder])
+}
+
+model WorkspaceSetting {
+  id                                String       @id @default(cuid())
+  workspaceId                       String       @unique
+  timezone                          String       @default("UTC")
+  defaultReviewQueue                ReviewQueue  @default(TRIAGE)
+  classificationConfidenceThreshold Decimal      @default(0.7500) @db.Decimal(5, 4)
+  taskConfidenceThreshold           Decimal      @default(0.7500) @db.Decimal(5, 4)
+  autoCreateTasks                   Boolean      @default(true)
+  autoApplyRoutingRules             Boolean      @default(true)
+  archiveResolvedAfterDays          Int?
+  createdAt                         DateTime     @default(now())
+  updatedAt                         DateTime     @updatedAt
+  workspace                         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AuditEvent {
+  id         String    @id @default(cuid())
+  workspaceId String
+  actorUserId String?
+  entityType String
+  entityId   String
+  action     String
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorUser  User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, entityType, entityId])
+  @@index([actorUserId])
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@forgeops/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@forgeops/ai": "*",
+    "@forgeops/db": "*",
+    "@forgeops/shared": "*",
+    "bullmq": "^5.34.0",
+    "dotenv": "^16.4.7",
+    "googleapis": "^144.0.0",
+    "ioredis": "^5.4.2",
+    "zod": "^3.24.1"
+  }
+}
+

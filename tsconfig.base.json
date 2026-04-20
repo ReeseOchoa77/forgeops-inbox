@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@forgeops/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "@forgeops/shared/*": [
+        "packages/shared/src/*"
+      ],
+      "@forgeops/db": [
+        "packages/db/src/index.ts"
+      ],
+      "@forgeops/db/*": [
+        "packages/db/src/*"
+      ],
+      "@forgeops/ai": [
+        "packages/ai/src/index.ts"
+      ],
+      "@forgeops/ai/*": [
+        "packages/ai/src/*"
+      ]
+    }
+  }
+}
+

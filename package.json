@@ -1,0 +1,26 @@
+{
+  "name": "forgeops-inbox-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.projects.json",
+    "typecheck": "tsc -b tsconfig.projects.json --pretty",
+    "dev:api": "npm run dev --workspace @forgeops/api",
+    "dev:worker": "npm run dev --workspace @forgeops/worker",
+    "dev:web": "npm run dev --workspace @forgeops/web",
+    "db:generate": "npm run prisma:generate --workspace @forgeops/db",
+    "db:migrate": "npm run prisma:migrate --workspace @forgeops/db --",
+    "db:studio": "npm run prisma:studio --workspace @forgeops/db",
+    "db:seed-access": "tsx packages/db/prisma/seed-approved-access.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
