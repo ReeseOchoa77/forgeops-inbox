@@ -24,6 +24,8 @@ export const registerHealthRoute = async (
       inboxProviders[kind] = provider.isConfigured() ? "configured" : "not_configured";
     }
 
+    const env = app.services.env;
+
     return {
       status,
       service: "forgeops-api",
@@ -36,6 +38,27 @@ export const registerHealthRoute = async (
           ? "configured"
           : "not_configured",
         inboxProviders
+      },
+      configDiagnostics: {
+        google: {
+          hasClientId: Boolean(env.GOOGLE_CLIENT_ID),
+          hasClientSecret: Boolean(env.GOOGLE_CLIENT_SECRET),
+          hasAuthRedirectUri: Boolean(env.GOOGLE_AUTH_REDIRECT_URI),
+          hasInboxRedirectUri: Boolean(env.GOOGLE_INBOX_REDIRECT_URI)
+        },
+        outlook: {
+          hasClientId: Boolean(env.OUTLOOK_CLIENT_ID),
+          hasClientSecret: Boolean(env.OUTLOOK_CLIENT_SECRET),
+          hasRedirectUri: Boolean(env.OUTLOOK_REDIRECT_URI),
+          hasTenantId: Boolean(env.OUTLOOK_TENANT_ID)
+        },
+        app: {
+          nodeEnv: env.NODE_ENV,
+          hasFrontendUrl: Boolean(env.FRONTEND_URL),
+          frontendUrl: env.FRONTEND_URL,
+          hasSessionSecret: env.SESSION_COOKIE_SECRET !== "development-session-secret-change-me",
+          hasTokenEncryption: env.TOKEN_ENCRYPTION_SECRET !== "development-token-encryption-secret"
+        }
       }
     };
   });
