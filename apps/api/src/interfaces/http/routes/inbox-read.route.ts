@@ -87,7 +87,8 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   classificationType: z.enum(emailTypeValues).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
-  hasTaskCandidate: booleanQuerySchema.optional()
+  hasTaskCandidate: booleanQuerySchema.optional(),
+  search: z.string().min(1).optional()
 });
 
 const tasksListQuerySchema = paginationQuerySchema.extend({
@@ -539,6 +540,7 @@ const buildMessagesWhere = (input: {
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
+  search?: string;
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
 }): Prisma.EmailMessageWhereInput => {
@@ -548,6 +550,19 @@ const buildMessagesWhere = (input: {
       inboxConnectionId: input.inboxConnectionId
     }
   ];
+
+  if (input.search) {
+    const term = input.search.trim();
+    andConditions.push({
+      OR: [
+        { subject: { contains: term, mode: "insensitive" } },
+        { senderEmail: { contains: term, mode: "insensitive" } },
+        { senderName: { contains: term, mode: "insensitive" } },
+        { snippet: { contains: term, mode: "insensitive" } },
+        { bodyText: { contains: term, mode: "insensitive" } }
+      ]
+    });
+  }
 
   if (input.classificationType) {
     andConditions.push({
@@ -933,6 +948,7 @@ export const registerInboxReadRoutes = async (
         ...(typeof query.hasTaskCandidate === "boolean"
           ? { hasTaskCandidate: query.hasTaskCandidate }
           : {}),
+        ...(query.search ? { search: query.search } : {}),
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
       });

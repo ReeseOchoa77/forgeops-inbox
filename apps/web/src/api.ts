@@ -142,10 +142,13 @@ export const api = {
   getConnections: (workspaceId: string) =>
     request<{ connections: ConnectionSummary[] }>(`/workspaces/${workspaceId}/inbox-connections`),
 
-  getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25) =>
-    request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?page=${page}&pageSize=${pageSize}`
-    ),
+  getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, search?: string) => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (search) params.set('search', search);
+    return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
+    );
+  },
 
   getMessageDetail: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ data: MessageDetail }>(

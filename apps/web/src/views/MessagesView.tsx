@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type MessageSummary } from '../api'
 import { ConfidenceBadge, PriorityBadge, TypeBadge } from '../components/Badges'
 
@@ -8,31 +8,70 @@ interface Props {
   onSelectMessage: (id: string) => void
 }
 
+const PAGE_SIZE = 30
+
 export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [messages, setMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [search, setSearch] = useState('')
+  const [activeSearch, setActiveSearch] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeResult, setAnalyzeResult] = useState<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  const loadPage = useCallback(async (pageNum: number, searchTerm: string, append: boolean) => {
+    if (pageNum === 1) setLoading(true)
+    else setLoadingMore(true)
+
+    try {
+      const r = await api.getMessages(workspaceId, connectionId, pageNum, PAGE_SIZE, searchTerm || undefined)
+      if (append) {
+        setMessages(prev => [...prev, ...r.messages])
+      } else {
+        setMessages(r.messages)
+      }
+      setTotalCount(r.pagination.totalCount)
+      setHasMore(pageNum < r.pagination.totalPages)
+      setPage(pageNum)
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
+  }, [workspaceId, connectionId])
 
   useEffect(() => {
+    setMessages([])
     setPage(1)
-  }, [connectionId])
+    setHasMore(true)
+    setSearch('')
+    setActiveSearch('')
+    loadPage(1, '', false)
+  }, [workspaceId, connectionId])
 
-  const loadMessages = () => {
-    setLoading(true)
-    api.getMessages(workspaceId, connectionId, page)
-      .then(r => {
-        setMessages(r.messages)
-        setTotalPages(r.pagination.totalPages)
-        setTotalCount(r.pagination.totalCount)
-      })
-      .finally(() => setLoading(false))
-  }
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setActiveSearch(search)
+      setMessages([])
+      setPage(1)
+      setHasMore(true)
+      loadPage(1, search, false)
+    }, 350)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [search])
 
-  useEffect(loadMessages, [workspaceId, connectionId, page])
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el || loadingMore || !hasMore) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      loadPage(page + 1, activeSearch, true)
+    }
+  }, [page, activeSearch, hasMore, loadingMore, loadPage])
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
@@ -40,97 +79,97 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     try {
       const result = await api.analyzeConnection(workspaceId, connectionId, true)
       const analysis = result.analysis as Record<string, unknown> | undefined
-      const detail = analysis
-        ? `${analysis.messagesClassified ?? 0} classified, ${analysis.taskCandidatesCreated ?? 0} tasks extracted`
-        : 'Analysis completed'
-      setAnalyzeResult(detail)
-      loadMessages()
+      setAnalyzeResult(analysis
+        ? `${analysis.messagesClassified ?? 0} classified, ${analysis.taskCandidatesCreated ?? 0} tasks`
+        : 'Done')
+      loadPage(1, activeSearch, false)
     } catch (e) {
-      setAnalyzeResult(`Error: ${e instanceof Error ? e.message : 'Analysis failed'}`)
+      setAnalyzeResult(`Error: ${e instanceof Error ? e.message : 'Failed'}`)
     } finally {
       setAnalyzing(false)
     }
   }
 
-  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading messages...</p>
-
-  if (messages.length === 0) {
-    return (
-      <div className="empty-state">
-        <div className="empty-icon">&#128236;</div>
-        <h3>No messages yet</h3>
-        <p>After syncing an inbox, your messages will appear here with automatic classification and task extraction.</p>
-      </div>
-    )
-  }
+  if (loading) return <p style={{ color: '#999', padding: 4 }}>Loading...</p>
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-        <div>
-          <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Inbox</h2>
-          <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{totalCount} messages synced. Click any message to see full details.</p>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <h2 style={{ fontSize: 17, margin: 0 }}>Inbox</h2>
+          <span style={{ fontSize: 12, color: '#999' }}>{totalCount} messages</span>
         </div>
-        <button className="btn btn-sm btn-primary" onClick={handleAnalyze} disabled={analyzing}>
-          {analyzing ? 'Analyzing...' : 'Run Analysis'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="text"
+            placeholder="Search emails..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: 220 }}
+          />
+          <button className="btn btn-sm btn-primary" onClick={handleAnalyze} disabled={analyzing} style={{ whiteSpace: 'nowrap' }}>
+            {analyzing ? 'Analyzing...' : 'Run Analysis'}
+          </button>
+        </div>
       </div>
 
       {analyzeResult && (
         <div style={{
-          padding: '10px 16px', marginBottom: 12, borderRadius: 6, fontSize: 13,
+          padding: '6px 12px', marginBottom: 8, borderRadius: 4, fontSize: 12,
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           background: analyzeResult.startsWith('Error') ? '#fce4ec' : '#e6f4ea',
           border: `1px solid ${analyzeResult.startsWith('Error') ? '#e8a09a' : '#a8d5a2'}`
         }}>
           <span>{analyzeResult}</span>
-          <button onClick={() => setAnalyzeResult(null)} style={{ background: 'none', border: 'none', fontSize: 16, cursor: 'pointer' }}>&times;</button>
+          <button onClick={() => setAnalyzeResult(null)} style={{ background: 'none', border: 'none', fontSize: 14, cursor: 'pointer', padding: 0 }}>&times;</button>
         </div>
       )}
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left' }}>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>From</th>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>Subject</th>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>Category</th>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>Priority</th>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>Confidence</th>
-              <th style={{ padding: '10px 14px', fontWeight: 600 }}>Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {messages.map(m => (
-              <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-                style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
-                onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-                onMouseOut={e => (e.currentTarget.style.background = '')}>
-                <td style={{ padding: '10px 14px' }}>
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
-                  {m.senderName && <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>{m.senderEmail}</div>}
-                </td>
-                <td style={{ padding: '10px 14px' }}>
-                  <div style={{ fontWeight: 400 }}>{m.subject ?? '(no subject)'}</div>
-                  {m.taskCandidate && (
-                    <div style={{ fontSize: 11, color: '#1565c0', marginTop: 2 }}>Task: {m.taskCandidate.title.slice(0, 50)}</div>
-                  )}
-                </td>
-                <td style={{ padding: '10px 14px' }}>{m.classification ? <TypeBadge type={m.classification.emailType} /> : <span style={{ color: '#ccc' }}>Not classified</span>}</td>
-                <td style={{ padding: '10px 14px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ccc' }}>—</span>}</td>
-                <td style={{ padding: '10px 14px' }}>{m.classification ? <ConfidenceBadge confidence={m.classification.confidence} /> : <span style={{ color: '#ccc' }}>—</span>}</td>
-                <td style={{ padding: '10px 14px', fontSize: 12, whiteSpace: 'nowrap', color: '#888' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {messages.length === 0 && !loading && (
+        <div className="empty-state" style={{ padding: 32 }}>
+          <div className="empty-icon">&#128236;</div>
+          <h3>{activeSearch ? 'No results' : 'No messages yet'}</h3>
+          <p>{activeSearch ? `No messages match "${activeSearch}"` : 'After syncing an inbox, messages appear here.'}</p>
+        </div>
+      )}
 
-      {totalPages > 1 && (
-        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
-          <button className="btn btn-sm btn-outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</button>
-          <span style={{ fontSize: 13, color: '#888' }}>Page {page} of {totalPages}</span>
-          <button className="btn btn-sm btn-outline" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next</button>
+      {messages.length > 0 && (
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0, zIndex: 1 }}>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>Category</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>Confidence</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {messages.map(m => (
+                <tr key={m.id} onClick={() => onSelectMessage(m.id)}
+                  style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
+                  onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+                  onMouseOut={e => (e.currentTarget.style.background = '')}>
+                  <td style={{ padding: '7px 12px' }}>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
+                    {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+                  </td>
+                  <td style={{ padding: '7px 12px' }}>
+                    <div>{m.subject ?? '(no subject)'}</div>
+                    {m.taskCandidate && <div style={{ fontSize: 11, color: '#1565c0', marginTop: 1 }}>Task: {m.taskCandidate.title.slice(0, 50)}</div>}
+                  </td>
+                  <td style={{ padding: '7px 12px' }}>{m.classification ? <TypeBadge type={m.classification.emailType} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+                  <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+                  <td style={{ padding: '7px 12px' }}>{m.classification ? <ConfidenceBadge confidence={m.classification.confidence} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+                  <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {loadingMore && <div style={{ padding: 12, textAlign: 'center', color: '#999', fontSize: 13 }}>Loading more...</div>}
+          {!hasMore && messages.length > 0 && <div style={{ padding: 10, textAlign: 'center', color: '#ccc', fontSize: 12 }}>End of inbox</div>}
         </div>
       )}
     </div>
@@ -139,8 +178,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return iso
-  }
+    const d = new Date(iso)
+    const now = new Date()
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    }
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  } catch { return iso }
 }
