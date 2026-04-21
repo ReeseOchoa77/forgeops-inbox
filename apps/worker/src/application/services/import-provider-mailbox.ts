@@ -183,4 +183,7 @@ export const importProviderMailbox = async (input: {
       duplicatesSkipped: existingThreads.length + existingMessages.length,
       newestSyncCursor: input.mailbox.newestSyncCursor
     };
+  }, {
+    maxWait: 120000,
+    timeout: 120000
   });
