@@ -39,6 +39,7 @@ import { registerReviewActionRoutes } from "./routes/review-action.route.js";
 import { registerAllowlistRoutes } from "./routes/allowlist.route.js";
 import { registerInboxActionsRoutes } from "./routes/inbox-actions.route.js";
 import { registerImportRoutes } from "./routes/import.route.js";
+import { registerAiImportRoutes } from "./routes/ai-import.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -178,6 +179,16 @@ export const buildServer = async () => {
   app.addContentTypeParser("text/csv", { parseAs: "string" }, (_req, body, done) => {
     done(null, body);
   });
+
+  app.addContentTypeParser("text/plain", { parseAs: "string" }, (_req, body, done) => {
+    done(null, body);
+  });
+
+  app.addContentTypeParser("application/pdf", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
+  });
+
+  await registerAiImportRoutes(app);
 
   app.addHook("onClose", async () => {
     await inboxAnalysisQueueEvents.close();

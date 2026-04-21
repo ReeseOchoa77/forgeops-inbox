@@ -234,7 +234,32 @@ export const api = {
     request<ImportResult>(`/workspaces/${workspaceId}/import/${entity}`, {
       method: 'POST',
       body: JSON.stringify({ rows })
-    })
+    }),
+
+  aiExtract: async (workspaceId: string, file: File): Promise<ExtractionResult> => {
+    const contentType = file.type === 'application/pdf' ? 'application/pdf'
+      : file.name.endsWith('.csv') ? 'text/csv'
+      : 'text/plain';
+
+    const body = contentType === 'application/pdf'
+      ? await file.arrayBuffer()
+      : await file.text();
+
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/import/extract`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': contentType },
+      body
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message ?? 'Extraction failed');
+    }
+
+    const data = await res.json();
+    return data.extraction as ExtractionResult;
+  }
 };
 
 export interface ImportResult {
@@ -245,4 +270,20 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   errors: Array<{ row: number; error: string }>;
+}
+
+export interface ExtractedRecord {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  domain?: string | null;
+  company?: string | null;
+  jobNumber?: string | null;
+  notes?: string | null;
+}
+
+export interface ExtractionResult {
+  inferredType: 'customer' | 'vendor' | 'contact' | 'job' | 'unknown';
+  confidence: 'high' | 'medium' | 'low';
+  records: ExtractedRecord[];
 }
