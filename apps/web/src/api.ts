@@ -236,6 +236,19 @@ export const api = {
       body: JSON.stringify({ rows })
     }),
 
+  sendMessage: (workspaceId: string, connectionId: string, payload: {
+    action: 'reply' | 'forward';
+    originalMessageId: string;
+    to: string[];
+    cc?: string[];
+    subject: string;
+    body: string;
+  }) =>
+    request<{ status: string; action: string; providerMessageId: string }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`,
+      { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
   aiExtract: async (workspaceId: string, file: File): Promise<ExtractionResult> => {
     const contentType = file.type === 'application/pdf' ? 'application/pdf'
       : file.name.endsWith('.csv') ? 'text/csv'

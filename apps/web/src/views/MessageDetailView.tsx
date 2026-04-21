@@ -22,6 +22,13 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [data, setData] = useState<MessageDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [showRawBody, setShowRawBody] = useState(false)
+  const [composeMode, setComposeMode] = useState<'reply' | 'forward' | null>(null)
+  const [composeTo, setComposeTo] = useState('')
+  const [composeCc, setComposeCc] = useState('')
+  const [composeSubject, setComposeSubject] = useState('')
+  const [composeBody, setComposeBody] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -36,15 +43,77 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const { message, normalizedEmail, classification, taskCandidate, thread } = data
 
+  const openReply = () => {
+    setComposeMode('reply')
+    setComposeTo(message.senderEmail)
+    setComposeCc('')
+    setComposeSubject(message.subject?.startsWith('Re:') ? message.subject : `Re: ${message.subject ?? ''}`)
+    setComposeBody(`\n\n--- Original message from ${message.senderName ?? message.senderEmail} ---\n${normalizedEmail?.cleanTextBody ?? message.bodyText ?? ''}`)
+    setSendResult(null)
+  }
+
+  const openForward = () => {
+    setComposeMode('forward')
+    setComposeTo('')
+    setComposeCc('')
+    setComposeSubject(message.subject?.startsWith('Fwd:') ? message.subject : `Fwd: ${message.subject ?? ''}`)
+    setComposeBody(`\n\n--- Forwarded message ---\nFrom: ${message.senderName ?? message.senderEmail}\nDate: ${new Date(message.receivedAt ?? message.sentAt).toLocaleString()}\nSubject: ${message.subject ?? ''}\n\n${normalizedEmail?.cleanTextBody ?? message.bodyText ?? ''}`)
+    setSendResult(null)
+  }
+
+  const handleSend = async () => {
+    if (!composeTo.trim()) return
+    setSending(true)
+    setSendResult(null)
+
+    const toList = composeTo.split(',').map(e => e.trim()).filter(Boolean)
+    const ccList = composeCc ? composeCc.split(',').map(e => e.trim()).filter(Boolean) : []
+
+    try {
+      await api.sendMessage(workspaceId, connectionId, {
+        action: composeMode!,
+        originalMessageId: message.id,
+        to: toList,
+        cc: ccList,
+        subject: composeSubject,
+        body: composeBody.split('\n\n--- ')[0]?.trim() ?? composeBody
+      })
+      setSendResult({ type: 'success', message: composeMode === 'reply' ? 'Reply sent' : 'Message forwarded' })
+      setComposeMode(null)
+    } catch (e) {
+      setSendResult({ type: 'error', message: e instanceof Error ? e.message : 'Send failed' })
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div>
       <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 16 }}>
         &larr; Back to Inbox
       </button>
 
+      {sendResult && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 10, borderRadius: 4, fontSize: 13,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: sendResult.type === 'success' ? '#e6f4ea' : '#fce4ec',
+          border: `1px solid ${sendResult.type === 'success' ? '#a8d5a2' : '#e8a09a'}`
+        }}>
+          <span>{sendResult.message}</span>
+          <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>&times;</button>
+        </div>
+      )}
+
       {/* Message header */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, margin: '0 0 8px', lineHeight: 1.3 }}>{message.subject ?? '(no subject)'}</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <h2 style={{ fontSize: 18, margin: '0 0 8px', lineHeight: 1.3, flex: 1 }}>{message.subject ?? '(no subject)'}</h2>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 12 }}>
+            <button className="btn btn-sm btn-outline" onClick={openReply}>Reply</button>
+            <button className="btn btn-sm btn-outline" onClick={openForward}>Forward</button>
+          </div>
+        </div>
         <div style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>
           <strong>From:</strong> {message.senderName ?? message.senderEmail}
           {message.senderName && <span style={{ color: '#999' }}> &lt;{message.senderEmail}&gt;</span>}
@@ -204,6 +273,69 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           }
         </pre>
       </div>
+
+      {/* Compose panel */}
+      {composeMode && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #5c7cfa' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, margin: 0, fontWeight: 600 }}>
+              {composeMode === 'reply' ? 'Reply' : 'Forward'}
+            </h3>
+            <button onClick={() => setComposeMode(null)} className="btn btn-sm btn-outline">Cancel</button>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>To</label>
+            <input
+              type="text"
+              value={composeTo}
+              onChange={e => setComposeTo(e.target.value)}
+              placeholder="recipient@example.com"
+              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>CC (optional)</label>
+            <input
+              type="text"
+              value={composeCc}
+              onChange={e => setComposeCc(e.target.value)}
+              placeholder="cc@example.com"
+              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>Subject</label>
+            <input
+              type="text"
+              value={composeSubject}
+              onChange={e => setComposeSubject(e.target.value)}
+              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>Message</label>
+            <textarea
+              value={composeBody}
+              onChange={e => setComposeBody(e.target.value)}
+              rows={8}
+              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, lineHeight: 1.5, resize: 'vertical' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-primary" onClick={handleSend} disabled={sending || !composeTo.trim()}>
+              {sending ? 'Sending...' : composeMode === 'reply' ? 'Send Reply' : 'Send Forward'}
+            </button>
+            <span style={{ fontSize: 12, color: '#999' }}>
+              Sending as {message.toAddresses.length > 0 ? 'the connected account' : message.senderEmail}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Debug metadata */}
       <details style={{ marginBottom: 16 }}>

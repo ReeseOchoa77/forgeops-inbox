@@ -40,6 +40,7 @@ import { registerAllowlistRoutes } from "./routes/allowlist.route.js";
 import { registerInboxActionsRoutes } from "./routes/inbox-actions.route.js";
 import { registerImportRoutes } from "./routes/import.route.js";
 import { registerAiImportRoutes } from "./routes/ai-import.route.js";
+import { registerSendRoutes } from "./routes/send.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -189,6 +190,7 @@ export const buildServer = async () => {
   });
 
   await registerAiImportRoutes(app);
+  await registerSendRoutes(app);
 
   app.addHook("onClose", async () => {
     await inboxAnalysisQueueEvents.close();
