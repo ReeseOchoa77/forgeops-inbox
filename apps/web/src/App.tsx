@@ -5,18 +5,16 @@ const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
 const signInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
 import { MessagesView } from './views/MessagesView'
 import { MessageDetailView } from './views/MessageDetailView'
-import { TasksView } from './views/TasksView'
 import { ReviewQueueView } from './views/ReviewQueueView'
 import { ConnectionsView } from './views/ConnectionsView'
 import { TeamAccessView } from './views/TeamAccessView'
 import { SettingsView } from './views/SettingsView'
 import { DataImportView } from './views/DataImportView'
 
-type Page = 'inbox' | 'message-detail' | 'tasks' | 'review' | 'connections' | 'team' | 'import' | 'settings'
+type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'settings'
 
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string }> = [
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
-  { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'review', label: 'Review Queue', icon: '\u2696' },
   { page: 'connections', label: 'Connections', icon: '\u26A1', section: 'Manage' },
   { page: 'team', label: 'Team Access', icon: '\uD83D\uDC65' },
@@ -174,7 +172,7 @@ export default function App() {
   }
 
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
-  const needsConnection = ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && connections.length === 0
+  const needsConnection = ['inbox', 'review', 'message-detail'].includes(page) && connections.length === 0
 
   return (
     <div className="app-layout">
@@ -257,11 +255,6 @@ export default function App() {
           {!needsConnection && page === 'message-detail' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} />
-            </div>
-          )}
-          {!needsConnection && page === 'tasks' && connectionId && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={connectionId} />
             </div>
           )}
           {!needsConnection && page === 'review' && connectionId && (

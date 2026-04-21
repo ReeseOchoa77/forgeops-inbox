@@ -138,14 +138,22 @@ export interface ApprovedAccessEntry {
 export const api = {
   getSession: () => request<SessionResponse>('/auth/session'),
 
-  logout: () => request<{ status: string }>('/auth/logout', { method: 'POST' }),
+  logout: () => request<{ status: string }>('/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
 
   getConnections: (workspaceId: string) =>
     request<{ connections: ConnectionSummary[] }>(`/workspaces/${workspaceId}/inbox-connections`),
 
-  getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, search?: string) => {
+  getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
+    search?: string;
+    businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
+    classificationType?: string;
+    hasTaskCandidate?: boolean;
+  }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-    if (search) params.set('search', search);
+    if (filters?.search) params.set('search', filters.search);
+    if (filters?.businessCategory) params.set('businessCategory', filters.businessCategory);
+    if (filters?.classificationType) params.set('classificationType', filters.classificationType);
+    if (filters?.hasTaskCandidate !== undefined) params.set('hasTaskCandidate', String(filters.hasTaskCandidate));
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
@@ -200,22 +208,26 @@ export const api = {
 
   syncConnection: (workspaceId: string, connectionId: string, wait = true) =>
     request<{ status: string; jobId: string; sync?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/sync?wait=${wait}`, {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({})
     }),
 
   analyzeConnection: (workspaceId: string, connectionId: string, wait = true) =>
     request<{ status: string; jobId: string; analysis?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/analyze?wait=${wait}`, {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({})
     }),
 
   reconnectConnection: (workspaceId: string, connectionId: string) =>
     request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reconnect`, {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({})
     }),
 
   startInboxConnection: (workspaceId: string, provider: 'google' | 'outlook') =>
     request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${provider}/start`, {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({})
     }),
 
   importCsv: (workspaceId: string, entity: 'customers' | 'vendors' | 'jobs', csvText: string) =>

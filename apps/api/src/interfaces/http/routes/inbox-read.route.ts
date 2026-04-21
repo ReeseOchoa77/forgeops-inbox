@@ -10,6 +10,8 @@ import { getSessionFromRequest } from "../authentication.js";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = new Prisma.Decimal("0.75");
 
+const businessCategoryValues = ["BUSINESS", "NON_BUSINESS"] as const;
+
 const emailTypeValues = [
   "ACTIONABLE_REQUEST",
   "FYI_UPDATE",
@@ -84,6 +86,7 @@ const messageDetailParamsSchema = z.object({
 });
 
 const messagesListQuerySchema = paginationQuerySchema.extend({
+  businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
@@ -136,8 +139,6 @@ const connectionSummarySchema = z.object({
     threads: z.number().int().nonnegative()
   })
 });
-
-const businessCategoryValues = ["BUSINESS", "NON_BUSINESS"] as const;
 
 const classificationSummarySchema = z.object({
   id: z.string().min(1),
@@ -541,6 +542,7 @@ const buildReviewMessageConditions = (input: {
 const buildMessagesWhere = (input: {
   workspaceId: string;
   inboxConnectionId: string;
+  businessCategory?: (typeof businessCategoryValues)[number];
   classificationType?: EmailType;
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
@@ -566,6 +568,16 @@ const buildMessagesWhere = (input: {
         { snippet: { contains: term, mode: "insensitive" } },
         { bodyText: { contains: term, mode: "insensitive" } }
       ]
+    });
+  }
+
+  if (input.businessCategory) {
+    andConditions.push({
+      classifications: {
+        some: {
+          businessCategory: input.businessCategory
+        }
+      }
     });
   }
 
@@ -945,6 +957,9 @@ export const registerInboxReadRoutes = async (
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
         inboxConnectionId: params.id,
+        ...(query.businessCategory
+          ? { businessCategory: query.businessCategory }
+          : {}),
         ...(query.classificationType
           ? { classificationType: query.classificationType }
           : {}),
