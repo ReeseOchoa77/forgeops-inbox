@@ -159,6 +159,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                   <td style={{ padding: '7px 12px' }}>
                     <div>{m.subject ?? '(no subject)'}</div>
                     {m.taskCandidate && <div style={{ fontSize: 11, color: '#1565c0', marginTop: 1 }}>Task: {m.taskCandidate.title.slice(0, 50)}</div>}
+                    {m.snippet && !m.taskCandidate && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
                   </td>
                   <td style={{ padding: '7px 12px' }}>{m.classification ? <BusinessBadge category={m.classification.businessCategory} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                   <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>

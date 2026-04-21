@@ -255,26 +255,40 @@ export default function App() {
             <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
           )}
           {!needsConnection && page === 'message-detail' && connectionId && (
-            <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} />
+            </div>
           )}
           {!needsConnection && page === 'tasks' && connectionId && (
-            <TasksView workspaceId={workspaceId} connectionId={connectionId} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <TasksView workspaceId={workspaceId} connectionId={connectionId} />
+            </div>
           )}
           {!needsConnection && page === 'review' && connectionId && (
-            <ReviewQueueView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <ReviewQueueView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+            </div>
           )}
 
           {page === 'connections' && (
-            <ConnectionsView workspaceId={workspaceId} connections={connections} onRefresh={loadConnections} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <ConnectionsView workspaceId={workspaceId} connections={connections} onRefresh={loadConnections} />
+            </div>
           )}
           {page === 'team' && (
-            <TeamAccessView workspaceId={workspaceId} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <TeamAccessView workspaceId={workspaceId} />
+            </div>
           )}
           {page === 'import' && (
-            <DataImportView workspaceId={workspaceId} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <DataImportView workspaceId={workspaceId} />
+            </div>
           )}
           {page === 'settings' && (
-            <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
+            </div>
           )}
         </div>
       </div>

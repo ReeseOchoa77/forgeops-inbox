@@ -100,9 +100,10 @@ table { border-spacing: 0; }
 .page-content {
   flex: 1;
   padding: 16px 20px;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .card {

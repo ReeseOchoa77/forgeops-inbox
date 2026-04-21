@@ -46,7 +46,21 @@ export const buildServer = async () => {
   const env = loadApiEnv();
   const app = Fastify({
     logger: true,
-    trustProxy: env.NODE_ENV === "production"
+    trustProxy: env.NODE_ENV === "production",
+    bodyLimit: 10_485_760
+  });
+
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    const text = typeof body === "string" ? body : String(body);
+    if (!text || text.trim().length === 0) {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(text));
+    } catch (e) {
+      done(e as Error, undefined);
+    }
   });
 
   await app.register(cookie, {
