@@ -137,8 +137,11 @@ const connectionSummarySchema = z.object({
   })
 });
 
+const businessCategoryValues = ["BUSINESS", "NON_BUSINESS"] as const;
+
 const classificationSummarySchema = z.object({
   id: z.string().min(1),
+  businessCategory: z.enum(businessCategoryValues).nullable(),
   emailType: z.enum(emailTypeValues),
   priority: z.enum(priorityValues).nullable(),
   itemStatus: z.enum(itemStatusValues).nullable(),
@@ -377,6 +380,7 @@ const serializeConnection = (connection: {
 
 const serializeClassification = (classification: {
   id: string;
+  businessCategory: (typeof businessCategoryValues)[number] | null;
   emailType: EmailType;
   priority: (typeof priorityValues)[number] | null;
   itemStatus: (typeof itemStatusValues)[number] | null;
@@ -393,6 +397,7 @@ const serializeClassification = (classification: {
   classification
     ? classificationSummarySchema.parse({
         id: classification.id,
+        businessCategory: classification.businessCategory,
         emailType: classification.emailType,
         priority: classification.priority,
         itemStatus: classification.itemStatus,
@@ -986,6 +991,7 @@ export const registerInboxReadRoutes = async (
               take: 1,
               select: {
                 id: true,
+                businessCategory: true,
                 emailType: true,
                 priority: true,
                 itemStatus: true,
@@ -1165,6 +1171,7 @@ export const registerInboxReadRoutes = async (
             take: 1,
             select: {
               id: true,
+              businessCategory: true,
               emailType: true,
               priority: true,
               itemStatus: true,
@@ -1359,6 +1366,7 @@ export const registerInboxReadRoutes = async (
               take: 1,
               select: {
                 id: true,
+                businessCategory: true,
                 emailType: true,
                 priority: true,
                 itemStatus: true,
@@ -1535,6 +1543,7 @@ export const registerInboxReadRoutes = async (
             classification: {
               select: {
                 id: true,
+                businessCategory: true,
                 emailType: true,
                 priority: true,
                 itemStatus: true,

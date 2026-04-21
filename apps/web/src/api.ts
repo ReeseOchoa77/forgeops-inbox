@@ -41,6 +41,7 @@ export interface ConnectionSummary {
 
 export interface Classification {
   id: string;
+  businessCategory: string | null;
   emailType: string;
   priority: string | null;
   summary: string | null;

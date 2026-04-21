@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type TaskListItem } from '../api'
-import { ConfidenceBadge, PriorityBadge, TypeBadge, ReviewStatusBadge, StatusBadge } from '../components/Badges'
+import { BusinessBadge, ConfidenceBadge, PriorityBadge, ReviewStatusBadge, StatusBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -108,7 +108,7 @@ export function TasksView({ workspaceId, connectionId }: Props) {
           {/* Classification context */}
           {classification && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#999' }}>
-              <span style={{ color: '#aaa' }}>Classification:</span> <TypeBadge type={classification.emailType} />
+              <span style={{ color: '#aaa' }}>Classification:</span> <BusinessBadge category={classification.businessCategory} />
               {classification.summary && <span style={{ marginLeft: 8 }}>{classification.summary.slice(0, 80)}</span>}
             </div>
           )}

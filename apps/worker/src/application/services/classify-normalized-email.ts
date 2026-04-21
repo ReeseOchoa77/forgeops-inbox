@@ -166,7 +166,22 @@ export const classifyNormalizedEmail = (input: {
 
   routingHints.add(`classification:${chosenCategory.toLowerCase()}`);
 
+  const nonBusinessCategories = new Set(["SALES_MARKETING", "RECRUITING_HIRING"]);
+  const nonBusinessSignals =
+    nonBusinessCategories.has(chosenCategory) ||
+    input.email.labelHints.includes("gmail-category:promotions") ||
+    input.email.labelHints.includes("gmail-category:social") ||
+    input.email.categoryHints.includes("marketing-signal") ||
+    /(unsubscribe|newsletter|webinar|free trial|special offer|no.?reply)/i.test(haystack);
+
+  const businessCategory = nonBusinessSignals && !containsActionRequest
+    ? "NON_BUSINESS" as const
+    : "BUSINESS" as const;
+
+  routingHints.add(`business:${businessCategory.toLowerCase()}`);
+
   return classifiedEmailSchema.parse({
+    businessCategory,
     emailType: chosenCategory,
     priority: inferPriority(haystack, chosenCategory),
     itemStatus: requiresReview ? "NEEDS_REVIEW" : "NEW",

@@ -20,6 +20,7 @@ export const normalizedEmailSchema = z.object({
 });
 
 export const classifiedEmailSchema = z.object({
+  businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
   emailType: z.enum([
     "ACTIONABLE_REQUEST",
     "FYI_UPDATE",

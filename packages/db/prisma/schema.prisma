@@ -34,6 +34,11 @@ enum InboxConnectionStatus {
   DISCONNECTED
 }
 
+enum BusinessCategory {
+  BUSINESS
+  NON_BUSINESS
+}
+
 enum EmailType {
   ACTIONABLE_REQUEST
   FYI_UPDATE
@@ -343,6 +348,7 @@ model Classification {
   workspaceId           String
   threadId              String
   messageId             String?
+  businessCategory      BusinessCategory?
   emailType             EmailType
   priority              Priority?
   itemStatus            ItemStatus?
@@ -376,6 +382,7 @@ model Classification {
   tasks                 Task[]
 
   @@unique([workspaceId, id])
+  @@index([workspaceId, businessCategory])
   @@index([workspaceId, emailType])
   @@index([workspaceId, priority])
   @@index([workspaceId, itemStatus])

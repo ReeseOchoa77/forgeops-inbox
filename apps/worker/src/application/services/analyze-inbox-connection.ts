@@ -243,6 +243,7 @@ export const analyzeInboxConnection = async (input: {
         },
         update: {
           threadId: message.threadId,
+          businessCategory: classification.businessCategory,
           emailType: classification.emailType,
           priority: classification.priority,
           itemStatus: classification.itemStatus,
@@ -273,6 +274,7 @@ export const analyzeInboxConnection = async (input: {
           workspaceId: input.workspaceId,
           threadId: message.threadId,
           messageId: message.id,
+          businessCategory: classification.businessCategory,
           emailType: classification.emailType,
           priority: classification.priority,
           itemStatus: classification.itemStatus,

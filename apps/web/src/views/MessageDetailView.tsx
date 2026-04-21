@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type MessageDetail } from '../api'
-import { ConfidenceBadge, PriorityBadge, TypeBadge, ReviewStatusBadge } from '../components/Badges'
+import { BusinessBadge, ConfidenceBadge, PriorityBadge, TypeBadge, ReviewStatusBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -73,7 +73,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           <h3 style={{ fontSize: 15, margin: '0 0 12px', fontWeight: 600 }}>Classification</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '10px 20px', fontSize: 13 }}>
             <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Category</div>
+              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Type</div>
+              <BusinessBadge category={classification.businessCategory} />
+            </div>
+            <div>
+              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Detail</div>
               <TypeBadge type={classification.emailType} />
             </div>
             <div>

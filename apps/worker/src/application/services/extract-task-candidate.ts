@@ -161,7 +161,10 @@ export const extractTaskCandidate = (input: {
     input.classification.emailType === "RECRUITING_HIRING" ||
     input.classification.emailType === "INTERNAL_COORDINATION";
 
-  if (!input.classification.containsActionRequest && !eligibleCategory) {
+  const eligibleByBusinessCategory =
+    input.classification.businessCategory === "BUSINESS";
+
+  if (!input.classification.containsActionRequest && !eligibleCategory && !eligibleByBusinessCategory) {
     return null;
   }
 

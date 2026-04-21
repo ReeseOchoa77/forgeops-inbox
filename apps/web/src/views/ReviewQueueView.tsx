@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ReviewItem } from '../api'
-import { ConfidenceBadge, PriorityBadge, TypeBadge } from '../components/Badges'
+import { BusinessBadge, ConfidenceBadge, PriorityBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -110,7 +110,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
             </div>
 
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-              {m.classification && <TypeBadge type={m.classification.emailType} />}
+              {m.classification && <BusinessBadge category={m.classification.businessCategory} />}
               {m.classification && <PriorityBadge priority={m.classification.priority} />}
               {m.classification && <ConfidenceBadge confidence={m.classification.confidence} />}
               {m.taskCandidate && (

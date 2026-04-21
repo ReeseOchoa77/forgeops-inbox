@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type MessageSummary } from '../api'
-import { ConfidenceBadge, PriorityBadge, TypeBadge } from '../components/Badges'
+import { BusinessBadge, ConfidenceBadge, PriorityBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -160,7 +160,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     <div>{m.subject ?? '(no subject)'}</div>
                     {m.taskCandidate && <div style={{ fontSize: 11, color: '#1565c0', marginTop: 1 }}>Task: {m.taskCandidate.title.slice(0, 50)}</div>}
                   </td>
-                  <td style={{ padding: '7px 12px' }}>{m.classification ? <TypeBadge type={m.classification.emailType} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+                  <td style={{ padding: '7px 12px' }}>{m.classification ? <BusinessBadge category={m.classification.businessCategory} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                   <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                   <td style={{ padding: '7px 12px' }}>{m.classification ? <ConfidenceBadge confidence={m.classification.confidence} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                   <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>

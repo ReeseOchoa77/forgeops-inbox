@@ -7,6 +7,14 @@ const badgeBase: React.CSSProperties = {
   letterSpacing: '0.2px'
 }
 
+export function BusinessBadge({ category }: { category: string | null }) {
+  if (!category) return <span style={{ ...badgeBase, background: '#f5f5f5', color: '#aaa' }}>Unclassified</span>
+  if (category === 'BUSINESS') {
+    return <span style={{ ...badgeBase, background: '#e3f2fd', color: '#1565c0' }}>Business</span>
+  }
+  return <span style={{ ...badgeBase, background: '#f0f0f0', color: '#888' }}>Non-Business</span>
+}
+
 const typeLabels: Record<string, string> = {
   ACTIONABLE_REQUEST: 'Action Needed',
   FYI_UPDATE: 'FYI / Update',
