@@ -158,8 +158,12 @@ export const analyzeInboxConnection = async (input: {
   let taskCandidatesCreated = 0;
   let lowConfidenceItemsFlaggedForReview = 0;
 
+  const BATCH_SIZE = 25;
+  for (let batchStart = 0; batchStart < importedMessages.length; batchStart += BATCH_SIZE) {
+    const batch = importedMessages.slice(batchStart, batchStart + BATCH_SIZE);
+
   await input.prisma.$transaction(async (tx) => {
-    for (const message of importedMessages) {
+    for (const message of batch) {
       const normalizedEmail = normalizeEmailMessage({
         subject: message.subject,
         threadSubject: message.thread.subject,
@@ -394,7 +398,16 @@ export const analyzeInboxConnection = async (input: {
         lowConfidenceItemsFlaggedForReview += 1;
       }
     }
+  }, { timeout: 120_000 });
 
+    console.info("analysis-batch-complete", {
+      batchStart,
+      batchSize: batch.length,
+      totalMessages: importedMessages.length
+    });
+  }
+
+  await input.prisma.$transaction(async (tx) => {
     for (const [threadId, reviewState] of threadReviewState) {
       await tx.emailThread.update({
         where: {
@@ -409,7 +422,7 @@ export const analyzeInboxConnection = async (input: {
         }
       });
     }
-  });
+  }, { timeout: 60_000 });
 
   return {
     workspaceId: input.workspaceId,
