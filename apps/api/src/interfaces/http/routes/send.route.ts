@@ -181,31 +181,62 @@ async function sendViaOutlook(input: {
   }));
 
   if (input.isReply && input.replyToMessageId) {
-    const replyRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/messages/${input.replyToMessageId}/reply`,
+    const createRes = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${input.replyToMessageId}/createReply`,
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
           "Content-Type": "application/json"
         },
+        body: JSON.stringify({})
+      }
+    );
+
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      throw new Error(`Outlook createReply failed: ${createRes.status} ${err}`);
+    }
+
+    const draft = await createRes.json() as { id: string };
+    const draftId = draft.id;
+
+    const patchRes = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${draftId}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({
-          message: {
-            toRecipients: input.to.map(e => ({ emailAddress: { address: e } })),
-            ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } })),
-            ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
-          },
-          comment: input.body
+          body: { contentType, content: input.body },
+          toRecipients: input.to.map(e => ({ emailAddress: { address: e } })),
+          ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } })),
+          ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
         })
       }
     );
 
-    if (!replyRes.ok) {
-      const err = await replyRes.text();
-      throw new Error(`Outlook reply failed: ${replyRes.status} ${err}`);
+    if (!patchRes.ok) {
+      const err = await patchRes.text();
+      throw new Error(`Outlook patch draft failed: ${patchRes.status} ${err}`);
     }
 
-    return { providerMessageId: "reply-sent" };
+    const sendRes = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokens.access_token}` }
+      }
+    );
+
+    if (!sendRes.ok) {
+      const err = await sendRes.text();
+      throw new Error(`Outlook send reply failed: ${sendRes.status} ${err}`);
+    }
+
+    return { providerMessageId: draftId };
   }
 
   const sendRes = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {

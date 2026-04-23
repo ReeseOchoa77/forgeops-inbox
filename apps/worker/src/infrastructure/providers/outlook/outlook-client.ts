@@ -46,7 +46,10 @@ const graphMessageSchema = z.object({
   hasAttachments: z.boolean().optional(),
   categories: z.array(z.string()).optional(),
   parentFolderId: z.string().nullable().optional(),
-  importance: z.enum(["low", "normal", "high"]).optional()
+  importance: z.enum(["low", "normal", "high"]).optional(),
+  flag: z.object({
+    flagStatus: z.enum(["notFlagged", "flagged", "complete"]).optional()
+  }).nullable().optional()
 });
 
 const graphMessagesResponseSchema = z.object({
@@ -226,11 +229,19 @@ const extractBodyText = (msg: GraphMessage): string | null => {
   return trimmed.slice(0, MAX_STORED_BODY_TEXT_LENGTH);
 };
 
-const buildFolderLabels = (msg: GraphMessage): string[] => {
+const buildFolderLabels = (msg: GraphMessage, folderMap: Map<string, string>): string[] => {
   const labels: string[] = [];
 
   if (msg.parentFolderId) {
-    labels.push(`outlook-folder:${msg.parentFolderId}`);
+    const folderName = folderMap.get(msg.parentFolderId)?.toLowerCase();
+    labels.push(`outlook-folder:${folderName ?? msg.parentFolderId}`);
+    if (folderName === "junk email" || folderName === "junk") {
+      labels.push("spam");
+      labels.push("junk");
+    }
+    if (folderName === "deleted items" || folderName === "trash") {
+      labels.push("trash");
+    }
   }
 
   for (const category of msg.categories ?? []) {
@@ -243,6 +254,12 @@ const buildFolderLabels = (msg: GraphMessage): string[] => {
 
   if (msg.importance === "high") {
     labels.push("important");
+  } else if (msg.importance === "low") {
+    labels.push("low-priority");
+  }
+
+  if (msg.flag?.flagStatus === "flagged") {
+    labels.push("starred");
   }
 
   return labels.sort();
@@ -278,7 +295,7 @@ const mergeParticipants = (
   return [...participants.values()];
 };
 
-const parseMessage = (msg: GraphMessage): OutlookMessageSnapshot => {
+const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): OutlookMessageSnapshot => {
   const from = msg.from ? mapGraphAddress(msg.from) : null;
   const sentAt = parseDate(msg.sentDateTime) ?? new Date();
   const receivedAt = parseDate(msg.receivedDateTime);
@@ -298,7 +315,7 @@ const parseMessage = (msg: GraphMessage): OutlookMessageSnapshot => {
     bodyHtml: msg.body?.contentType === "html" ? (msg.body.content ?? null) : null,
     hasAttachments: msg.hasAttachments ?? false,
     attachmentMetadata: [],
-    folderLabels: buildFolderLabels(msg),
+    folderLabels: buildFolderLabels(msg, folderMap),
     sentAt,
     receivedAt,
     isRead: msg.isRead ?? true,
@@ -381,10 +398,13 @@ export class OutlookClient {
 
     const tokenResult = await this.refreshAccessToken(input.refreshToken);
 
+    const folderMap = await this.fetchFolderNames(tokenResult.accessToken);
+
     const messages = await this.fetchInboxMessages(
       tokenResult.accessToken,
       input.maxMessages ?? MAX_MESSAGES_PER_SYNC,
-      input.syncCursor ?? null
+      input.syncCursor ?? null,
+      folderMap
     );
 
     if (messages.hasAttachmentIds.length > 0) {
@@ -483,10 +503,30 @@ export class OutlookClient {
     }
   }
 
+  private async fetchFolderNames(accessToken: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    try {
+      const res = await this.fetchWithThrottleRetry(
+        `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders?$select=id,displayName&$top=50`,
+        { Authorization: `Bearer ${accessToken}` }
+      );
+      if (res.ok) {
+        const data = await res.json() as { value: Array<{ id: string; displayName: string }> };
+        for (const folder of data.value ?? []) {
+          map.set(folder.id, folder.displayName);
+        }
+      }
+    } catch (e) {
+      console.warn("outlook-folder-fetch-warning", { error: e instanceof Error ? e.message : "unknown" });
+    }
+    return map;
+  }
+
   private async fetchInboxMessages(
     accessToken: string,
     maxMessages: number,
-    syncCursor: string | null
+    syncCursor: string | null,
+    folderMap: Map<string, string>
   ): Promise<{
     items: OutlookMessageSnapshot[];
     deltaLink: string | null;
@@ -510,7 +550,8 @@ export class OutlookClient {
       "hasAttachments",
       "categories",
       "parentFolderId",
-      "importance"
+      "importance",
+      "flag"
     ].join(",");
 
     let url: string | null;
@@ -541,7 +582,7 @@ export class OutlookClient {
         console.warn("outlook-delta-link-expired", {
           cursor: syncCursor?.slice(0, 80)
         });
-        return this.fetchInboxMessages(accessToken, maxMessages, null);
+        return this.fetchInboxMessages(accessToken, maxMessages, null, folderMap);
       }
 
       if (!response.ok) {
@@ -559,7 +600,7 @@ export class OutlookClient {
         if (seenMessageIds.has(graphMsg.id)) continue;
 
         seenMessageIds.add(graphMsg.id);
-        const parsed = parseMessage(graphMsg);
+        const parsed = parseMessage(graphMsg, folderMap);
         items.push(parsed);
 
         if (parsed.hasAttachments) {

@@ -91,9 +91,12 @@ const threadMessagesParamsSchema = z.object({
   threadId: z.string().min(1)
 });
 
+const messageCategoryValues = ["important", "spam", "trash"] as const;
+
 const messagesListQuerySchema = paginationQuerySchema.extend({
   businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
+  category: z.enum(messageCategoryValues).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
   hasTaskCandidate: booleanQuerySchema.optional(),
@@ -193,6 +196,9 @@ const messageSummarySchema = z.object({
   priority: z.enum(priorityValues).nullable(),
   itemStatus: z.enum(itemStatusValues),
   isRead: z.boolean(),
+  isImportant: z.boolean(),
+  isSpam: z.boolean(),
+  isTrashed: z.boolean(),
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable()
 });
@@ -470,6 +476,9 @@ const serializeMessageSummary = (message: {
   priority: (typeof priorityValues)[number] | null;
   itemStatus: (typeof itemStatusValues)[number];
   isRead: boolean;
+  isImportant: boolean;
+  isSpam: boolean;
+  isTrashed: boolean;
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
   tasks: Array<Parameters<typeof serializeTask>[0]>;
 }) =>
@@ -486,6 +495,9 @@ const serializeMessageSummary = (message: {
     priority: message.priority,
     itemStatus: message.itemStatus,
     isRead: message.isRead,
+    isImportant: message.isImportant,
+    isSpam: message.isSpam,
+    isTrashed: message.isTrashed,
     classification: serializeClassification(message.classifications[0] ?? null),
     taskCandidate: serializeTask(message.tasks[0] ?? null)
   });
@@ -554,6 +566,7 @@ const buildMessagesWhere = (input: {
   inboxConnectionId: string;
   businessCategory?: (typeof businessCategoryValues)[number];
   classificationType?: EmailType;
+  category?: (typeof messageCategoryValues)[number];
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
@@ -567,6 +580,16 @@ const buildMessagesWhere = (input: {
       inboxConnectionId: input.inboxConnectionId
     }
   ];
+
+  if (input.category === "important") {
+    andConditions.push({ isImportant: true });
+  } else if (input.category === "spam") {
+    andConditions.push({ isSpam: true });
+  } else if (input.category === "trash") {
+    andConditions.push({ isTrashed: true });
+  } else {
+    andConditions.push({ isTrashed: false });
+  }
 
   if (input.search) {
     const term = input.search.trim();
@@ -973,6 +996,7 @@ export const registerInboxReadRoutes = async (
         ...(query.classificationType
           ? { classificationType: query.classificationType }
           : {}),
+        ...(query.category ? { category: query.category } : {}),
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         ...(typeof query.hasTaskCandidate === "boolean"
@@ -1010,6 +1034,9 @@ export const registerInboxReadRoutes = async (
             priority: true,
             itemStatus: true,
             isRead: true,
+            isImportant: true,
+            isSpam: true,
+            isTrashed: true,
             classifications: {
               orderBy: {
                 createdAt: "desc"
@@ -1532,6 +1559,9 @@ export const registerInboxReadRoutes = async (
             priority: true,
             itemStatus: true,
             isRead: true,
+            isImportant: true,
+            isSpam: true,
+            isTrashed: true,
             classifications: {
               orderBy: {
                 createdAt: "desc"
@@ -1809,6 +1839,58 @@ export const registerInboxReadRoutes = async (
           OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
         },
         data: { isRead: true }
+      });
+
+      return reply.send({ status: "ok" });
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/trash",
+    async (request, reply) => {
+      const params = messageDetailParamsSchema.parse(request.params);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      await app.services.prisma.emailMessage.updateMany({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+        },
+        data: { isTrashed: true }
+      });
+
+      return reply.send({ status: "ok" });
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/untrash",
+    async (request, reply) => {
+      const params = messageDetailParamsSchema.parse(request.params);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      await app.services.prisma.emailMessage.updateMany({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+        },
+        data: { isTrashed: false }
       });
 
       return reply.send({ status: "ok" });

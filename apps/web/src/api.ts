@@ -78,6 +78,9 @@ export interface MessageSummary {
   priority: string | null;
   itemStatus: string;
   isRead: boolean;
+  isImportant: boolean;
+  isSpam: boolean;
+  isTrashed: boolean;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
 }
@@ -190,12 +193,14 @@ export const api = {
     businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
     classificationType?: string;
     hasTaskCandidate?: boolean;
+    category?: 'important' | 'spam' | 'trash';
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
     if (filters?.businessCategory) params.set('businessCategory', filters.businessCategory);
     if (filters?.classificationType) params.set('classificationType', filters.classificationType);
     if (filters?.hasTaskCandidate !== undefined) params.set('hasTaskCandidate', String(filters.hasTaskCandidate));
+    if (filters?.category) params.set('category', filters.category);
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
@@ -203,6 +208,18 @@ export const api = {
 
   markAsRead: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/read`, {
+      method: 'PATCH',
+      body: JSON.stringify({})
+    }),
+
+  trashMessage: (workspaceId: string, connectionId: string, messageId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/trash`, {
+      method: 'PATCH',
+      body: JSON.stringify({})
+    }),
+
+  untrashMessage: (workspaceId: string, connectionId: string, messageId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/untrash`, {
       method: 'PATCH',
       body: JSON.stringify({})
     }),

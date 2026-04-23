@@ -129,6 +129,12 @@ export const importProviderMailbox = async (input: {
             labelIds: [...message.providerLabels].sort(),
             hasAttachments: message.hasAttachments,
             isRead: !message.providerLabels.some(l => l === "UNREAD" || l === "unread"),
+            isImportant: message.providerLabels.some(l => l === "IMPORTANT" || l === "important"),
+            isSpam: message.providerLabels.some(l =>
+              l === "SPAM" || l === "CATEGORY_PROMOTIONS" ||
+              l === "gmail-category:promotions" || l === "outlook-category:junk" ||
+              l === "spam" || l === "junk"
+            ),
             attachmentMetadata: toPrismaJson(sortAttachments(message.attachmentMetadata)),
             sentAt: message.sentAt,
             receivedAt: message.receivedAt

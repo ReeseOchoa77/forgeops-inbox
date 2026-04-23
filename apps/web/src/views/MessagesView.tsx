@@ -10,13 +10,16 @@ interface Props {
 
 const PAGE_SIZE = 30
 
-type CategoryTab = 'ALL' | 'BUSINESS' | 'NON_BUSINESS'
+type CategoryTab = 'ALL' | 'BUSINESS' | 'NON_BUSINESS' | 'IMPORTANT' | 'SPAM' | 'TRASH'
 type TypeFilter = '' | 'ACTIONABLE_REQUEST' | 'FYI_UPDATE' | 'SALES_MARKETING' | 'SUPPORT_CUSTOMER_ISSUE' | 'RECRUITING_HIRING' | 'INTERNAL_COORDINATION'
 
 const CATEGORY_TABS: Array<{ key: CategoryTab; label: string }> = [
   { key: 'ALL', label: 'All' },
   { key: 'BUSINESS', label: 'Business' },
   { key: 'NON_BUSINESS', label: 'Non-Business' },
+  { key: 'IMPORTANT', label: 'Important' },
+  { key: 'SPAM', label: 'Spam' },
+  { key: 'TRASH', label: 'Trash' },
 ]
 
 const TYPE_FILTERS: Array<{ key: TypeFilter; label: string }> = [
@@ -55,7 +58,15 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
 
   const buildFilters = useCallback(() => {
     const f: Parameters<typeof api.getMessages>[4] = {}
-    if (categoryTab !== 'ALL') f.businessCategory = categoryTab
+    if (categoryTab === 'BUSINESS' || categoryTab === 'NON_BUSINESS') {
+      f.businessCategory = categoryTab
+    } else if (categoryTab === 'IMPORTANT') {
+      f.category = 'important'
+    } else if (categoryTab === 'SPAM') {
+      f.category = 'spam'
+    } else if (categoryTab === 'TRASH') {
+      f.category = 'trash'
+    }
     if (typeFilter) f.classificationType = typeFilter
     if (activeSearch) f.search = activeSearch
     return f
@@ -129,6 +140,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       loadPage(page + 1, buildFilters(), true)
     }
   }, [page, buildFilters, hasMore, loadingMore, loadPage])
+
+  const handleTrash = async (messageId: string, isTrashed: boolean) => {
+    try {
+      if (isTrashed) {
+        await api.untrashMessage(workspaceId, connectionId, messageId)
+      } else {
+        await api.trashMessage(workspaceId, connectionId, messageId)
+      }
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isTrashed: !isTrashed } : m))
+    } catch { /* ignore */ }
+  }
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
@@ -245,12 +267,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0, zIndex: 1 }}>
+                  <th style={{ padding: '8px 6px', width: 28 }}></th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>
-                  <th style={{ padding: '8px 12px', fontWeight: 600 }}>Confidence</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
+                  <th style={{ padding: '8px 6px', width: 32 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -259,6 +282,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
                     onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
                     onMouseOut={e => (e.currentTarget.style.background = m.isRead ? '' : '#f0f4ff')}>
+                    <td style={{ padding: '7px 6px', textAlign: 'center', fontSize: 14 }}>
+                      {m.isImportant && <span title="Important" style={{ color: '#f5a623' }}>{'\u2605'}</span>}
+                    </td>
                     <td style={{ padding: '7px 12px' }}>
                       <div style={{ fontWeight: m.isRead ? 500 : 700, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
                       {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
@@ -270,8 +296,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     </td>
                     <td style={{ padding: '7px 12px' }}>{m.classification ? <TypeBadge type={m.classification.emailType} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                     <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
-                    <td style={{ padding: '7px 12px' }}>{m.classification ? <ConfidenceBadge confidence={m.classification.confidence} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
                     <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
+                    <td style={{ padding: '7px 6px', textAlign: 'center' }}>
+                      <button
+                        title={m.isTrashed ? 'Restore' : 'Trash'}
+                        onClick={(e) => { e.stopPropagation(); handleTrash(m.id, m.isTrashed) }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}
+                      >
+                        {m.isTrashed ? '\u21A9' : '\u{1F5D1}'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

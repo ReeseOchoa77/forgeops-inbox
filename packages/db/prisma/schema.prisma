@@ -283,6 +283,9 @@ model EmailMessage {
   labelIds         String[]      @default([])
   hasAttachments   Boolean       @default(false)
   isRead           Boolean       @default(false)
+  isImportant      Boolean       @default(false)
+  isTrashed        Boolean       @default(false)
+  isSpam           Boolean       @default(false)
   attachmentMetadata Json?
   sentAt           DateTime
   receivedAt       DateTime?
