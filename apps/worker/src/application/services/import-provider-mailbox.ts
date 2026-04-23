@@ -125,9 +125,10 @@ export const importProviderMailbox = async (input: {
             replyToAddresses: toPrismaJson(sortAddresses(message.replyToAddresses)),
             snippet: message.snippet,
             bodyText: message.bodyText,
-            bodyHtml: null,
+            bodyHtml: message.bodyHtml,
             labelIds: [...message.providerLabels].sort(),
             hasAttachments: message.hasAttachments,
+            isRead: !message.providerLabels.some(l => l === "UNREAD" || l === "unread"),
             attachmentMetadata: toPrismaJson(sortAttachments(message.attachmentMetadata)),
             sentAt: message.sentAt,
             receivedAt: message.receivedAt

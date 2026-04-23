@@ -282,6 +282,7 @@ model EmailMessage {
   bodyHtml         String?
   labelIds         String[]      @default([])
   hasAttachments   Boolean       @default(false)
+  isRead           Boolean       @default(false)
   attachmentMetadata Json?
   sentAt           DateTime
   receivedAt       DateTime?

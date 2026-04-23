@@ -53,6 +53,7 @@ export interface ProviderMessageSnapshot {
   replyToAddresses: ProviderAddress[];
   snippet: string | null;
   bodyText: string | null;
+  bodyHtml: string | null;
   hasAttachments: boolean;
   attachmentMetadata: ProviderAttachmentMetadata[];
   providerLabels: string[];

@@ -119,6 +119,7 @@ export interface GmailMessageSnapshot {
   replyToAddresses: GmailAddress[];
   snippet: string | null;
   bodyText: string | null;
+  bodyHtml: string | null;
   hasAttachments: boolean;
   attachmentMetadata: GmailAttachmentMetadata[];
   labelIds: string[];
@@ -381,7 +382,8 @@ const parseMessage = (message: z.infer<typeof gmailMessageSchema>): GmailMessage
   collectContent(message.payload, content);
 
   const plainText = normalizeBodyText(content.plainTextParts.join("\n\n"));
-  const htmlFallbackText = normalizeBodyText(stripHtml(content.htmlParts.join("\n\n")));
+  const rawHtml = content.htmlParts.join("\n\n").trim() || null;
+  const htmlFallbackText = normalizeBodyText(stripHtml(rawHtml ?? ""));
   const bodyText = plainText ?? htmlFallbackText;
 
   return {
@@ -397,6 +399,7 @@ const parseMessage = (message: z.infer<typeof gmailMessageSchema>): GmailMessage
     replyToAddresses,
     snippet: message.snippet ?? null,
     bodyText,
+    bodyHtml: rawHtml,
     hasAttachments: content.attachments.length > 0,
     attachmentMetadata: content.attachments,
     labelIds: message.labelIds ?? [],

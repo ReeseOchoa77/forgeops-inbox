@@ -77,11 +77,51 @@ export interface MessageSummary {
   sentAt: string;
   priority: string | null;
   itemStatus: string;
+  isRead: boolean;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
 }
 
 export interface Participant { name: string | null; email: string; role: string }
+
+export interface AttachmentMeta {
+  attachmentId: string | null;
+  contentId: string | null;
+  filename: string | null;
+  inline: boolean;
+  mimeType: string | null;
+  size: number | null;
+}
+
+export interface ThreadMessage {
+  id: string;
+  providerMessageId: string;
+  providerThreadId: string;
+  subject: string | null;
+  senderName: string | null;
+  senderEmail: string;
+  toAddresses: Array<{ name: string | null; email: string }>;
+  ccAddresses: Array<{ name: string | null; email: string }>;
+  bccAddresses: Array<{ name: string | null; email: string }>;
+  replyToAddresses: Array<{ name: string | null; email: string }>;
+  snippet: string | null;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  labelIds: string[];
+  hasAttachments: boolean;
+  attachmentMetadata: AttachmentMeta[];
+  sentAt: string;
+  receivedAt: string | null;
+  priority: string | null;
+  itemStatus: string;
+  classification: Classification | null;
+  taskCandidate: TaskSummary | null;
+}
+
+export interface ThreadDetail {
+  thread: { id: string; providerThreadId: string; subject: string | null; normalizedSubject: string | null; messageCount: number };
+  messages: ThreadMessage[];
+}
 
 export interface MessageDetail {
   message: {
@@ -94,11 +134,13 @@ export interface MessageDetail {
     toAddresses: Array<{ name: string | null; email: string }>;
     ccAddresses: Array<{ name: string | null; email: string }>;
     bodyText: string | null;
+    bodyHtml: string | null;
     sentAt: string;
     receivedAt: string | null;
     priority: string | null;
     itemStatus: string;
     hasAttachments: boolean;
+    attachmentMetadata: AttachmentMeta[];
     labelIds: string[];
   };
   thread: { id: string; providerThreadId: string; subject: string | null; normalizedSubject: string | null; messageCount: number };
@@ -159,10 +201,24 @@ export const api = {
     );
   },
 
+  markAsRead: (workspaceId: string, connectionId: string, messageId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/read`, {
+      method: 'PATCH',
+      body: JSON.stringify({})
+    }),
+
   getMessageDetail: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ data: MessageDetail }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}`
     ),
+
+  getThreadMessages: (workspaceId: string, connectionId: string, threadId: string) =>
+    request<ThreadDetail>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/threads/${threadId}/messages`
+    ),
+
+  getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
+    `${BASE}/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/attachments/${attachmentId}/download`,
 
   getTasks: (workspaceId: string, connectionId: string, page = 1) =>
     request<{ tasks: TaskListItem[]; pagination: { page: number; totalCount: number; totalPages: number } }>(
@@ -249,12 +305,14 @@ export const api = {
     }),
 
   sendMessage: (workspaceId: string, connectionId: string, payload: {
-    action: 'reply' | 'forward';
-    originalMessageId: string;
+    action: 'reply' | 'forward' | 'new';
+    originalMessageId?: string;
     to: string[];
     cc?: string[];
+    bcc?: string[];
     subject: string;
     body: string;
+    bodyFormat?: 'text' | 'html';
   }) =>
     request<{ status: string; action: string; providerMessageId: string }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`,

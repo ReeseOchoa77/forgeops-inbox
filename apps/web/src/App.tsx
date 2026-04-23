@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api, type SessionResponse, type ConnectionSummary } from './api'
+import { ComposeEditor } from './components/ComposeEditor'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
 const signInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
@@ -32,6 +33,8 @@ export default function App() {
   const [error, setError] = useState('')
   const [accessDenied, setAccessDenied] = useState(false)
   const [connectionNotice, setConnectionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [showCompose, setShowCompose] = useState(false)
+  const [composeSending, setComposeSending] = useState(false)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -171,6 +174,26 @@ export default function App() {
     window.location.href = '/'
   }
 
+  const handleNewComposeSend = async (payload: { to: string[]; cc: string[]; subject: string; html: string; files: File[] }) => {
+    if (!connectionId) return
+    setComposeSending(true)
+    try {
+      await api.sendMessage(workspaceId, connectionId, {
+        action: 'new',
+        to: payload.to,
+        cc: payload.cc,
+        subject: payload.subject,
+        body: payload.html,
+        bodyFormat: 'html'
+      })
+      setShowCompose(false)
+    } catch {
+      // errors shown by compose editor
+    } finally {
+      setComposeSending(false)
+    }
+  }
+
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
   const needsConnection = ['inbox', 'review', 'message-detail'].includes(page) && connections.length === 0
 
@@ -178,6 +201,18 @@ export default function App() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-brand">ForgeOps Inbox</div>
+
+        {connectionId && (
+          <div style={{ padding: '4px 14px 8px' }}>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', fontSize: 13, padding: '8px 0' }}
+              onClick={() => setShowCompose(true)}
+            >
+              Compose
+            </button>
+          </div>
+        )}
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item, i) => (
@@ -285,6 +320,36 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Compose modal */}
+      {showCompose && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 24
+        }}>
+          <div style={{
+            width: 560, maxHeight: '80vh', background: '#fff', borderRadius: 10,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden'
+          }}>
+            <div style={{
+              padding: '12px 16px', borderBottom: '1px solid #e5e5e5',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>New Message</h3>
+              <button onClick={() => setShowCompose(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999' }}>&times;</button>
+            </div>
+            <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
+              <ComposeEditor
+                onSend={handleNewComposeSend}
+                sending={composeSending}
+                sendLabel="Send"
+                onCancel={() => setShowCompose(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

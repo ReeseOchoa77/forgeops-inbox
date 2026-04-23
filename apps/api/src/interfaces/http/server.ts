@@ -1,5 +1,6 @@
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { OpenAIInboxClassifier, createOpenAIClient } from "@forgeops/ai";
 import { prisma } from "@forgeops/db";
 import {
@@ -41,6 +42,7 @@ import { registerInboxActionsRoutes } from "./routes/inbox-actions.route.js";
 import { registerImportRoutes } from "./routes/import.route.js";
 import { registerAiImportRoutes } from "./routes/ai-import.route.js";
 import { registerSendRoutes } from "./routes/send.route.js";
+import { registerAttachmentRoutes } from "./routes/attachment.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -70,6 +72,10 @@ export const buildServer = async () => {
   await app.register(cors, {
     origin: env.FRONTEND_URL,
     credentials: true
+  });
+
+  await app.register(multipart, {
+    limits: { fileSize: 25 * 1024 * 1024, files: 10 }
   });
 
   const redis = createRedisConnection(env.REDIS_URL);
@@ -205,6 +211,7 @@ export const buildServer = async () => {
 
   await registerAiImportRoutes(app);
   await registerSendRoutes(app);
+  await registerAttachmentRoutes(app);
 
   app.addHook("onClose", async () => {
     await inboxAnalysisQueueEvents.close();

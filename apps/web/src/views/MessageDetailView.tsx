@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { api, type MessageDetail } from '../api'
-import { BusinessBadge, ConfidenceBadge, PriorityBadge, TypeBadge, ReviewStatusBadge } from '../components/Badges'
+import DOMPurify from 'dompurify'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta } from '../api'
+import { PriorityBadge } from '../components/Badges'
+import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 
 interface Props {
   workspaceId: string
@@ -9,74 +11,278 @@ interface Props {
   onBack: () => void
 }
 
-function MetaField({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null
+function formatSize(bytes: number | null): string {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function fileIcon(mimeType: string | null): string {
+  if (!mimeType) return '\u{1F4CE}'
+  if (mimeType.startsWith('image/')) return '\u{1F5BC}'
+  if (mimeType.includes('pdf')) return '\u{1F4D1}'
+  if (mimeType.includes('zip') || mimeType.includes('compressed')) return '\u{1F4E6}'
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel') || mimeType.includes('csv')) return '\u{1F4CA}'
+  if (mimeType.includes('document') || mimeType.includes('word')) return '\u{1F4DD}'
+  return '\u{1F4CE}'
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  } catch { return iso }
+}
+
+function EmailBody({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: string | null }) {
+  const [showHtml, setShowHtml] = useState(!!bodyHtml)
+  const hasHtml = !!bodyHtml
+
+  if (!bodyHtml && !bodyText) {
+    return <div style={{ color: '#aaa', fontSize: 13, padding: 16 }}>(empty body)</div>
+  }
+
   return (
-    <div style={{ fontSize: 12, color: '#999', marginBottom: 2 }}>
-      <span style={{ color: '#aaa' }}>{label}:</span> <span style={{ color: '#777', fontFamily: 'monospace', fontSize: 11 }}>{value}</span>
+    <div>
+      {hasHtml && bodyText && (
+        <div style={{ marginBottom: 8, textAlign: 'right' }}>
+          <button
+            onClick={() => setShowHtml(v => !v)}
+            style={{ background: 'none', border: 'none', fontSize: 11, color: '#888', cursor: 'pointer', textDecoration: 'underline' }}
+          >
+            {showHtml ? 'Show plain text' : 'Show HTML'}
+          </button>
+        </div>
+      )}
+      {showHtml && bodyHtml ? (
+        <div
+          className="email-html-body"
+          style={{
+            fontSize: 14, lineHeight: 1.6, padding: '8px 0', overflow: 'auto', maxHeight: 600,
+            wordBreak: 'break-word'
+          }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml, { ADD_ATTR: ['target'] }) }}
+        />
+      ) : (
+        <div style={{
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          fontSize: 13, lineHeight: 1.6, padding: '8px 0',
+          maxHeight: 600, overflow: 'auto'
+        }}>
+          {bodyText}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AttachmentBar({ attachments, workspaceId, connectionId, messageId }: {
+  attachments: AttachmentMeta[]
+  workspaceId: string
+  connectionId: string
+  messageId: string
+}) {
+  const nonInline = attachments.filter(a => !a.inline && a.attachmentId)
+  if (nonInline.length === 0) return null
+
+  return (
+    <div style={{
+      display: 'flex', gap: 8, flexWrap: 'wrap', padding: '10px 0',
+      borderTop: '1px solid #f0f0f0', marginTop: 8
+    }}>
+      {nonInline.map((att, i) => (
+        <a
+          key={i}
+          href={api.getAttachmentUrl(workspaceId, connectionId, messageId, att.attachmentId!)}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
+            border: '1px solid #e5e5e5', borderRadius: 6, background: '#fafafa',
+            textDecoration: 'none', color: '#333', fontSize: 12, maxWidth: 240
+          }}
+        >
+          <span style={{ fontSize: 16 }}>{fileIcon(att.mimeType)}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+            {att.filename ?? 'attachment'}
+          </span>
+          {att.size && <span style={{ color: '#999', fontSize: 11, flexShrink: 0 }}>{formatSize(att.size)}</span>}
+        </a>
+      ))}
+    </div>
+  )
+}
+
+function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward }: {
+  msg: ThreadMessage
+  expanded: boolean
+  onToggle: () => void
+  workspaceId: string
+  connectionId: string
+  isLast: boolean
+  onReply: () => void
+  onForward: () => void
+}) {
+  const senderDisplay = msg.senderName ?? msg.senderEmail
+  const toDisplay = msg.toAddresses.map(a => a.name ?? a.email).join(', ')
+
+  if (!expanded) {
+    return (
+      <div
+        onClick={onToggle}
+        style={{
+          padding: '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
+          borderBottom: '1px solid #f0f0f0', fontSize: 13
+        }}
+        onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+        onMouseOut={e => (e.currentTarget.style.background = '')}
+      >
+        <div style={{
+          width: 32, height: 32, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14, flexShrink: 0
+        }}>
+          {senderDisplay.charAt(0).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ fontWeight: 500 }}>{senderDisplay}</span>
+          <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>
+        </div>
+        <div style={{ color: '#aaa', fontSize: 11, flexShrink: 0 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</div>
+        {msg.hasAttachments && <span style={{ fontSize: 14 }} title="Has attachments">{'\u{1F4CE}'}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15, flexShrink: 0
+        }}>
+          {senderDisplay.charAt(0).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{senderDisplay}</span>
+              {msg.senderName && <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>&lt;{msg.senderEmail}&gt;</span>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</span>
+              {!isLast && (
+                <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#bbb', padding: 0 }} title="Collapse">&#9660;</button>
+              )}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+            to {toDisplay}
+            {msg.ccAddresses.length > 0 && <span>, cc: {msg.ccAddresses.map(a => a.name ?? a.email).join(', ')}</span>}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ paddingLeft: 48 }}>
+        <EmailBody bodyHtml={msg.bodyHtml} bodyText={msg.bodyText} />
+
+        <AttachmentBar
+          attachments={msg.attachmentMetadata}
+          workspaceId={workspaceId}
+          connectionId={connectionId}
+          messageId={msg.id}
+        />
+
+        {isLast && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="btn btn-sm btn-outline" onClick={onReply}>Reply</button>
+            <button className="btn btn-sm btn-outline" onClick={onForward}>Forward</button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
 export function MessageDetailView({ workspaceId, connectionId, messageId, onBack }: Props) {
-  const [data, setData] = useState<MessageDetail | null>(null)
+  const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showRawBody, setShowRawBody] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
   const [composeMode, setComposeMode] = useState<'reply' | 'forward' | null>(null)
-  const [composeTo, setComposeTo] = useState('')
-  const [composeCc, setComposeCc] = useState('')
-  const [composeSubject, setComposeSubject] = useState('')
-  const [composeBody, setComposeBody] = useState('')
+  const [composeDefaults, setComposeDefaults] = useState({ to: '', cc: '', subject: '' })
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
     setLoading(true)
-    setShowRawBody(false)
+    setComposeMode(null)
+    setSendResult(null)
+
     api.getMessageDetail(workspaceId, connectionId, messageId)
-      .then(r => setData(r.data))
+      .then(r => {
+        const threadId = r.data.thread.id
+        api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
+        return api.getThreadMessages(workspaceId, connectionId, threadId)
+      })
+      .then(td => {
+        setThreadData(td)
+        const lastMsg = td.messages[td.messages.length - 1]
+        setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
+      })
+      .catch(() => setThreadData(null))
       .finally(() => setLoading(false))
   }, [workspaceId, connectionId, messageId])
 
-  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading message...</p>
-  if (!data) return <p>Message not found.</p>
+  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading conversation...</p>
+  if (!threadData || threadData.messages.length === 0) return <p>Message not found.</p>
 
-  const { message, normalizedEmail, classification, taskCandidate, thread } = data
+  const messages = threadData.messages
+  const lastMessage = messages[messages.length - 1]!
+  const subject = threadData.thread.subject ?? lastMessage.subject ?? '(no subject)'
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const openReply = () => {
     setComposeMode('reply')
-    setComposeTo(message.senderEmail)
-    setComposeCc('')
-    setComposeSubject(message.subject?.startsWith('Re:') ? message.subject : `Re: ${message.subject ?? ''}`)
-    setComposeBody(`\n\n--- Original message from ${message.senderName ?? message.senderEmail} ---\n${normalizedEmail?.cleanTextBody ?? message.bodyText ?? ''}`)
+    setComposeDefaults({
+      to: lastMessage.senderEmail,
+      cc: '',
+      subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`
+    })
     setSendResult(null)
   }
 
   const openForward = () => {
     setComposeMode('forward')
-    setComposeTo('')
-    setComposeCc('')
-    setComposeSubject(message.subject?.startsWith('Fwd:') ? message.subject : `Fwd: ${message.subject ?? ''}`)
-    setComposeBody(`\n\n--- Forwarded message ---\nFrom: ${message.senderName ?? message.senderEmail}\nDate: ${new Date(message.receivedAt ?? message.sentAt).toLocaleString()}\nSubject: ${message.subject ?? ''}\n\n${normalizedEmail?.cleanTextBody ?? message.bodyText ?? ''}`)
+    setComposeDefaults({
+      to: '',
+      cc: '',
+      subject: subject.startsWith('Fwd:') ? subject : `Fwd: ${subject}`
+    })
     setSendResult(null)
   }
 
-  const handleSend = async () => {
-    if (!composeTo.trim()) return
+  const handleComposeSend = async (payload: ComposeSendPayload) => {
+    if (!composeMode) return
     setSending(true)
     setSendResult(null)
 
-    const toList = composeTo.split(',').map(e => e.trim()).filter(Boolean)
-    const ccList = composeCc ? composeCc.split(',').map(e => e.trim()).filter(Boolean) : []
-
     try {
       await api.sendMessage(workspaceId, connectionId, {
-        action: composeMode!,
-        originalMessageId: message.id,
-        to: toList,
-        cc: ccList,
-        subject: composeSubject,
-        body: composeBody.split('\n\n--- ')[0]?.trim() ?? composeBody
+        action: composeMode,
+        originalMessageId: lastMessage.id,
+        to: payload.to,
+        cc: payload.cc,
+        subject: payload.subject,
+        body: payload.html,
+        bodyFormat: 'html'
       })
       setSendResult({ type: 'success', message: composeMode === 'reply' ? 'Reply sent' : 'Message forwarded' })
       setComposeMode(null)
@@ -89,7 +295,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   return (
     <div>
-      <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 16 }}>
+      <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12 }}>
         &larr; Back to Inbox
       </button>
 
@@ -105,273 +311,51 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         </div>
       )}
 
-      {/* Message header */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ fontSize: 18, margin: '0 0 8px', lineHeight: 1.3, flex: 1 }}>{message.subject ?? '(no subject)'}</h2>
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 12 }}>
-            <button className="btn btn-sm btn-outline" onClick={openReply}>Reply</button>
-            <button className="btn btn-sm btn-outline" onClick={openForward}>Forward</button>
-          </div>
+      {/* Subject header */}
+      <div style={{ padding: '12px 16px', marginBottom: 2 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <h2 style={{ fontSize: 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
+          {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
         </div>
-        <div style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>
-          <strong>From:</strong> {message.senderName ?? message.senderEmail}
-          {message.senderName && <span style={{ color: '#999' }}> &lt;{message.senderEmail}&gt;</span>}
-        </div>
-        {message.toAddresses.length > 0 && (
-          <div style={{ fontSize: 13, color: '#888' }}>
-            <strong>To:</strong> {message.toAddresses.map(a => a.name ? `${a.name} <${a.email}>` : a.email).join(', ')}
-          </div>
-        )}
-        {message.ccAddresses.length > 0 && (
-          <div style={{ fontSize: 13, color: '#888' }}>
-            <strong>CC:</strong> {message.ccAddresses.map(a => a.name ? `${a.name} <${a.email}>` : a.email).join(', ')}
-          </div>
-        )}
-        <div style={{ fontSize: 12, color: '#aaa', marginTop: 6 }}>
-          {new Date(message.receivedAt ?? message.sentAt).toLocaleString()}
-          {thread.messageCount > 1 && <span> &middot; {thread.messageCount} messages in thread</span>}
-          {message.hasAttachments && <span> &middot; Has attachments</span>}
-          <span> &middot; {message.itemStatus.replace(/_/g, ' ')}</span>
+        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+          {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
         </div>
       </div>
 
-      {/* Classification */}
-      {classification ? (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 15, margin: '0 0 12px', fontWeight: 600 }}>Classification</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '10px 20px', fontSize: 13 }}>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Type</div>
-              <BusinessBadge category={classification.businessCategory} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Detail</div>
-              <TypeBadge type={classification.emailType} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Priority</div>
-              <PriorityBadge priority={classification.priority} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Confidence</div>
-              <ConfidenceBadge confidence={classification.confidence} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Action requested?</div>
-              <span style={{ fontWeight: 500 }}>{classification.containsActionRequest ? 'Yes' : 'No'}</span>
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>Review status</div>
-              <ReviewStatusBadge status={classification.reviewStatus} />
-            </div>
-          </div>
-          {classification.summary && (
-            <div style={{ marginTop: 12, padding: '10px 12px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, lineHeight: 1.5 }}>
-              <strong>Summary:</strong> {classification.summary}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="card" style={{ marginBottom: 16, opacity: 0.6 }}>
-          <h3 style={{ fontSize: 14, margin: 0, color: '#888' }}>Classification: not yet analyzed</h3>
-        </div>
-      )}
-
-      {/* Extracted task */}
-      {taskCandidate ? (
-        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #1565c0' }}>
-          <h3 style={{ fontSize: 15, margin: '0 0 12px', fontWeight: 600 }}>Extracted Task</h3>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>{taskCandidate.title}</div>
-          {taskCandidate.summary && <div style={{ fontSize: 13, color: '#666', marginBottom: 8, lineHeight: 1.5 }}>{taskCandidate.summary}</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px 20px', fontSize: 13 }}>
-            {taskCandidate.assigneeGuess && (
-              <div>
-                <div style={{ color: '#888', fontSize: 11 }}>Suggested assignee</div>
-                <div style={{ fontWeight: 500 }}>{taskCandidate.assigneeGuess}</div>
-              </div>
-            )}
-            {taskCandidate.dueAt && (
-              <div>
-                <div style={{ color: '#888', fontSize: 11 }}>Due date</div>
-                <div style={{ fontWeight: 500 }}>{new Date(taskCandidate.dueAt).toLocaleDateString()}</div>
-              </div>
-            )}
-            <div>
-              <div style={{ color: '#888', fontSize: 11 }}>Priority</div>
-              <PriorityBadge priority={taskCandidate.priority} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11 }}>Confidence</div>
-              <ConfidenceBadge confidence={taskCandidate.confidence} />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 11 }}>Review</div>
-              <ReviewStatusBadge status={taskCandidate.reviewStatus} />
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="card" style={{ marginBottom: 16, opacity: 0.6 }}>
-          <h3 style={{ fontSize: 14, margin: 0, color: '#888' }}>Task: none extracted from this message</h3>
-        </div>
-      )}
-
-      {/* Linked entities (future enrichment) */}
-      <div className="card" style={{ marginBottom: 16, opacity: 0.5, borderStyle: 'dashed' }}>
-        <h3 style={{ fontSize: 14, margin: '0 0 6px', fontWeight: 600, color: '#888' }}>Linked Entities</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, fontSize: 13 }}>
-          <div>
-            <div style={{ color: '#aaa', fontSize: 11 }}>Customer</div>
-            <div style={{ color: '#bbb' }}>Not linked yet</div>
-          </div>
-          <div>
-            <div style={{ color: '#aaa', fontSize: 11 }}>Vendor</div>
-            <div style={{ color: '#bbb' }}>Not linked yet</div>
-          </div>
-          <div>
-            <div style={{ color: '#aaa', fontSize: 11 }}>Job</div>
-            <div style={{ color: '#bbb' }}>Not linked yet</div>
-          </div>
-        </div>
-        <div style={{ fontSize: 11, color: '#ccc', marginTop: 8 }}>
-          These fields will be populated once customer/vendor/job matching is enabled.
-        </div>
-      </div>
-
-      {/* Email body */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <h3 style={{ fontSize: 15, margin: 0, fontWeight: 600 }}>
-            {showRawBody ? 'Raw Email Body' : normalizedEmail ? 'Email Body (cleaned)' : 'Email Body'}
-          </h3>
-          {normalizedEmail && message.bodyText && (
-            <button className="btn btn-sm btn-outline" onClick={() => setShowRawBody(v => !v)}>
-              {showRawBody ? 'Show cleaned' : 'Show raw'}
-            </button>
-          )}
-        </div>
-        {!showRawBody && normalizedEmail && normalizedEmail.categoryHints.length > 0 && (
-          <div style={{ fontSize: 11, color: '#999', marginBottom: 6 }}>
-            Detected signals: {normalizedEmail.categoryHints.join(', ')}
-          </div>
-        )}
-        {!showRawBody && normalizedEmail && normalizedEmail.labelHints.length > 0 && (
-          <div style={{ fontSize: 11, color: '#999', marginBottom: 6 }}>
-            Labels: {normalizedEmail.labelHints.join(', ')}
-          </div>
-        )}
-        <pre style={{
-          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-          background: '#fafafa', padding: 16, borderRadius: 6,
-          fontSize: 13, lineHeight: 1.6, border: '1px solid #eee',
-          maxHeight: 500, overflow: 'auto', margin: 0
-        }}>
-          {showRawBody
-            ? (message.bodyText ?? '(empty body)')
-            : (normalizedEmail?.cleanTextBody ?? message.bodyText ?? '(empty body)')
-          }
-        </pre>
+      {/* Thread messages */}
+      <div style={{ background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, overflow: 'hidden' }}>
+        {messages.map((msg, i) => (
+          <MessageCard
+            key={msg.id}
+            msg={msg}
+            expanded={expandedIds.has(msg.id)}
+            onToggle={() => toggleExpand(msg.id)}
+            workspaceId={workspaceId}
+            connectionId={connectionId}
+            isLast={i === messages.length - 1}
+            onReply={openReply}
+            onForward={openForward}
+          />
+        ))}
       </div>
 
       {/* Compose panel */}
       {composeMode && (
-        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #5c7cfa' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <h3 style={{ fontSize: 15, margin: 0, fontWeight: 600 }}>
-              {composeMode === 'reply' ? 'Reply' : 'Forward'}
-            </h3>
-            <button onClick={() => setComposeMode(null)} className="btn btn-sm btn-outline">Cancel</button>
-          </div>
-
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>To</label>
-            <input
-              type="text"
-              value={composeTo}
-              onChange={e => setComposeTo(e.target.value)}
-              placeholder="recipient@example.com"
-              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>CC (optional)</label>
-            <input
-              type="text"
-              value={composeCc}
-              onChange={e => setComposeCc(e.target.value)}
-              placeholder="cc@example.com"
-              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>Subject</label>
-            <input
-              type="text"
-              value={composeSubject}
-              onChange={e => setComposeSubject(e.target.value)}
-              style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 2 }}>Message</label>
-            <textarea
-              value={composeBody}
-              onChange={e => setComposeBody(e.target.value)}
-              rows={8}
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, lineHeight: 1.5, resize: 'vertical' }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="btn btn-primary" onClick={handleSend} disabled={sending || !composeTo.trim()}>
-              {sending ? 'Sending...' : composeMode === 'reply' ? 'Send Reply' : 'Send Forward'}
-            </button>
-            <span style={{ fontSize: 12, color: '#999' }}>
-              Sending as {message.toAddresses.length > 0 ? 'the connected account' : message.senderEmail}
-            </span>
-          </div>
+        <div className="card" style={{ marginTop: 12, borderLeft: '3px solid #5c7cfa' }}>
+          <h3 style={{ fontSize: 15, margin: '0 0 12px', fontWeight: 600 }}>
+            {composeMode === 'reply' ? 'Reply' : 'Forward'}
+          </h3>
+          <ComposeEditor
+            onSend={handleComposeSend}
+            sending={sending}
+            sendLabel={composeMode === 'reply' ? 'Send Reply' : 'Send Forward'}
+            onCancel={() => setComposeMode(null)}
+            initialTo={composeDefaults.to}
+            initialCc={composeDefaults.cc}
+            initialSubject={composeDefaults.subject}
+          />
         </div>
       )}
-
-      {/* Debug metadata */}
-      <details style={{ marginBottom: 16 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 13, color: '#999', padding: '8px 0' }}>
-          Debug metadata
-        </summary>
-        <div className="card" style={{ marginTop: 8, background: '#fafafa' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
-            <MetaField label="Message ID" value={message.id} />
-            <MetaField label="Provider message ID" value={(message as Record<string, unknown>).providerMessageId as string} />
-            <MetaField label="Provider thread ID" value={(message as Record<string, unknown>).providerThreadId as string} />
-            <MetaField label="Thread ID" value={thread.id} />
-            <MetaField label="Sent at" value={message.sentAt} />
-            <MetaField label="Received at" value={message.receivedAt} />
-            <MetaField label="Item status" value={message.itemStatus} />
-            <MetaField label="Priority" value={message.priority} />
-            {normalizedEmail && (
-              <>
-                <MetaField label="Sender domain" value={normalizedEmail.senderDomain} />
-                <MetaField label="Normalized subject" value={thread.subject !== (thread as Record<string, unknown>).normalizedSubject ? (thread as Record<string, unknown>).normalizedSubject as string : null} />
-              </>
-            )}
-            {message.labelIds.length > 0 && (
-              <div style={{ gridColumn: '1 / -1' }}>
-                <MetaField label="Label IDs" value={message.labelIds.join(', ')} />
-              </div>
-            )}
-            {classification && (
-              <MetaField label="Classification ID" value={classification.id} />
-            )}
-            {taskCandidate && (
-              <MetaField label="Task ID" value={taskCandidate.id} />
-            )}
-          </div>
-        </div>
-      </details>
     </div>
   )
 }

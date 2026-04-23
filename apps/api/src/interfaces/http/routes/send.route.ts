@@ -11,35 +11,78 @@ const paramsSchema = z.object({
 });
 
 const sendBodySchema = z.object({
-  action: z.enum(["reply", "forward"]),
-  originalMessageId: z.string().min(1),
+  action: z.enum(["reply", "forward", "new"]),
+  originalMessageId: z.string().min(1).optional(),
   to: z.array(z.string().email()).min(1),
   cc: z.array(z.string().email()).optional().default([]),
+  bcc: z.array(z.string().email()).optional().default([]),
   subject: z.string().min(1),
-  body: z.string().min(1)
+  body: z.string().min(1),
+  bodyFormat: z.enum(["text", "html"]).optional().default("text")
 });
 
-function buildRfc2822Message(input: {
+interface ParsedAttachment {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+}
+
+function buildMimeBoundary(): string {
+  return `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function buildMultipartMime(input: {
   from: string;
   to: string[];
   cc: string[];
+  bcc: string[];
   subject: string;
-  body: string;
+  bodyHtml: string | null;
+  bodyText: string;
   inReplyTo?: string | null;
   references?: string | null;
-  threadId?: string | null;
+  attachments: ParsedAttachment[];
 }): string {
+  const boundary = buildMimeBoundary();
+  const hasAttachments = input.attachments.length > 0;
+  const useHtml = !!input.bodyHtml;
+
   const lines: string[] = [];
   lines.push(`From: ${input.from}`);
   lines.push(`To: ${input.to.join(", ")}`);
   if (input.cc.length > 0) lines.push(`Cc: ${input.cc.join(", ")}`);
+  if (input.bcc.length > 0) lines.push(`Bcc: ${input.bcc.join(", ")}`);
   lines.push(`Subject: ${input.subject}`);
   lines.push("MIME-Version: 1.0");
-  lines.push('Content-Type: text/plain; charset="UTF-8"');
   if (input.inReplyTo) lines.push(`In-Reply-To: ${input.inReplyTo}`);
   if (input.references) lines.push(`References: ${input.references}`);
-  lines.push("");
-  lines.push(input.body);
+
+  if (!hasAttachments) {
+    lines.push(`Content-Type: ${useHtml ? "text/html" : "text/plain"}; charset="UTF-8"`);
+    lines.push("");
+    lines.push(useHtml ? input.bodyHtml! : input.bodyText);
+  } else {
+    lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+    lines.push("");
+    lines.push(`--${boundary}`);
+    lines.push(`Content-Type: ${useHtml ? "text/html" : "text/plain"}; charset="UTF-8"`);
+    lines.push("");
+    lines.push(useHtml ? input.bodyHtml! : input.bodyText);
+
+    for (const att of input.attachments) {
+      lines.push(`--${boundary}`);
+      lines.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
+      lines.push("Content-Transfer-Encoding: base64");
+      lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+      lines.push("");
+      const b64 = att.data.toString("base64");
+      for (let i = 0; i < b64.length; i += 76) {
+        lines.push(b64.slice(i, i + 76));
+      }
+    }
+    lines.push(`--${boundary}--`);
+  }
+
   return lines.join("\r\n");
 }
 
@@ -59,24 +102,30 @@ async function sendViaGmail(input: {
   from: string;
   to: string[];
   cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
+  bodyFormat: "text" | "html";
   threadId: string | null;
   inReplyTo: string | null;
+  attachments: ParsedAttachment[];
 }): Promise<{ providerMessageId: string }> {
   const client = new google.auth.OAuth2(input.clientId, input.clientSecret, input.redirectUri);
   client.setCredentials({ refresh_token: input.refreshToken });
   await client.getAccessToken();
 
   const gmail = google.gmail({ version: "v1", auth: client });
-  const raw = toBase64Url(buildRfc2822Message({
+  const raw = toBase64Url(buildMultipartMime({
     from: input.from,
     to: input.to,
     cc: input.cc,
+    bcc: input.bcc,
     subject: input.subject,
-    body: input.body,
+    bodyHtml: input.bodyFormat === "html" ? input.body : null,
+    bodyText: input.body,
     inReplyTo: input.inReplyTo,
-    references: input.inReplyTo
+    references: input.inReplyTo,
+    attachments: input.attachments
   }));
 
   const result = await gmail.users.messages.send({
@@ -97,10 +146,13 @@ async function sendViaOutlook(input: {
   refreshToken: string;
   to: string[];
   cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
+  bodyFormat: "text" | "html";
   replyToMessageId: string | null;
   isReply: boolean;
+  attachments: ParsedAttachment[];
 }): Promise<{ providerMessageId: string }> {
   const tokenUrl = `https://login.microsoftonline.com/${input.tenantId}/oauth2/v2.0/token`;
   const tokenBody = new URLSearchParams({
@@ -120,6 +172,14 @@ async function sendViaOutlook(input: {
   if (!tokenRes.ok) throw new Error(`Outlook token refresh failed: ${tokenRes.status}`);
   const tokens = await tokenRes.json() as { access_token: string };
 
+  const contentType = input.bodyFormat === "html" ? "HTML" : "Text";
+  const graphAttachments = input.attachments.map(att => ({
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: att.filename,
+    contentType: att.mimeType,
+    contentBytes: att.data.toString("base64")
+  }));
+
   if (input.isReply && input.replyToMessageId) {
     const replyRes = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${input.replyToMessageId}/reply`,
@@ -133,6 +193,7 @@ async function sendViaOutlook(input: {
           message: {
             toRecipients: input.to.map(e => ({ emailAddress: { address: e } })),
             ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } })),
+            ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
           },
           comment: input.body
         })
@@ -156,9 +217,11 @@ async function sendViaOutlook(input: {
     body: JSON.stringify({
       message: {
         subject: input.subject,
-        body: { contentType: "Text", content: input.body },
+        body: { contentType, content: input.body },
         toRecipients: input.to.map(e => ({ emailAddress: { address: e } })),
-        ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } }))
+        ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } })),
+        bccRecipients: input.bcc.map(e => ({ emailAddress: { address: e } })),
+        ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
       }
     })
   });
@@ -168,7 +231,7 @@ async function sendViaOutlook(input: {
     throw new Error(`Outlook send failed: ${sendRes.status} ${err}`);
   }
 
-  return { providerMessageId: "forward-sent" };
+  return { providerMessageId: "sent" };
 }
 
 export const registerSendRoutes = async (
@@ -178,7 +241,6 @@ export const registerSendRoutes = async (
     "/api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/send",
     async (request, reply) => {
       const params = paramsSchema.parse(request.params);
-      const body = sendBodySchema.parse(request.body);
       const session = await getSessionFromRequest(request);
 
       if (!session) return reply.code(401).send({ message: "Authentication required" });
@@ -206,16 +268,48 @@ export const registerSendRoutes = async (
       if (connection.status !== "ACTIVE") return reply.code(409).send({ message: "Connection is not active" });
       if (!connection.encryptedRefreshToken) return reply.code(409).send({ message: "No refresh token available" });
 
-      const originalMessage = await app.services.prisma.emailMessage.findFirst({
-        where: {
-          workspaceId: params.workspaceId,
-          inboxConnectionId: params.connectionId,
-          OR: [{ id: body.originalMessageId }, { gmailMessageId: body.originalMessageId }]
-        },
-        select: { id: true, gmailMessageId: true, gmailThreadId: true, subject: true }
-      });
+      let body: z.infer<typeof sendBodySchema>;
+      const attachments: ParsedAttachment[] = [];
 
-      if (!originalMessage) return reply.code(404).send({ message: "Original message not found" });
+      const contentType = request.headers["content-type"] ?? "";
+      if (contentType.includes("multipart/form-data")) {
+        const parts = request.parts();
+        const fields: Record<string, string> = {};
+        for await (const part of parts) {
+          if (part.type === "file") {
+            const buf = await part.toBuffer();
+            attachments.push({
+              filename: part.filename ?? "attachment",
+              mimeType: part.mimetype ?? "application/octet-stream",
+              data: buf
+            });
+          } else {
+            fields[part.fieldname] = part.value as string;
+          }
+        }
+        body = sendBodySchema.parse({
+          ...fields,
+          to: fields.to ? JSON.parse(fields.to) : [],
+          cc: fields.cc ? JSON.parse(fields.cc) : [],
+          bcc: fields.bcc ? JSON.parse(fields.bcc) : []
+        });
+      } else {
+        body = sendBodySchema.parse(request.body);
+      }
+
+      let originalMessage: { id: string; gmailMessageId: string; gmailThreadId: string; subject: string | null } | null = null;
+      if (body.action !== "new" && body.originalMessageId) {
+        originalMessage = await app.services.prisma.emailMessage.findFirst({
+          where: {
+            workspaceId: params.workspaceId,
+            inboxConnectionId: params.connectionId,
+            OR: [{ id: body.originalMessageId }, { gmailMessageId: body.originalMessageId }]
+          },
+          select: { id: true, gmailMessageId: true, gmailThreadId: true, subject: true }
+        });
+
+        if (!originalMessage) return reply.code(404).send({ message: "Original message not found" });
+      }
 
       const refreshToken = app.services.tokenCipher.decrypt(connection.encryptedRefreshToken);
 
@@ -236,10 +330,13 @@ export const registerSendRoutes = async (
             from: connection.email,
             to: body.to,
             cc: body.cc,
+            bcc: body.bcc,
             subject: body.subject,
             body: body.body,
-            threadId: body.action === "reply" ? originalMessage.gmailThreadId : null,
-            inReplyTo: body.action === "reply" ? `<${originalMessage.gmailMessageId}>` : null
+            bodyFormat: body.bodyFormat,
+            threadId: body.action === "reply" && originalMessage ? originalMessage.gmailThreadId : null,
+            inReplyTo: body.action === "reply" && originalMessage ? `<${originalMessage.gmailMessageId}>` : null,
+            attachments
           });
         } else if (connection.provider === "OUTLOOK") {
           const env = app.services.env;
@@ -254,10 +351,13 @@ export const registerSendRoutes = async (
             refreshToken,
             to: body.to,
             cc: body.cc,
+            bcc: body.bcc,
             subject: body.subject,
             body: body.body,
-            replyToMessageId: body.action === "reply" ? originalMessage.gmailMessageId : null,
-            isReply: body.action === "reply"
+            bodyFormat: body.bodyFormat,
+            replyToMessageId: body.action === "reply" && originalMessage ? originalMessage.gmailMessageId : null,
+            isReply: body.action === "reply",
+            attachments
           });
         } else {
           return reply.code(400).send({ message: "Unsupported provider for sending" });
@@ -267,14 +367,16 @@ export const registerSendRoutes = async (
           workspaceId: params.workspaceId,
           actorUserId: session.userId,
           entityType: "EMAIL_MESSAGE",
-          entityId: originalMessage.id,
+          entityId: originalMessage?.id ?? "new",
           action: `email_message.${body.action}_sent`,
           metadata: {
             to: body.to,
             cc: body.cc,
             subject: body.subject,
             provider: connection.provider,
-            providerMessageId: result.providerMessageId
+            providerMessageId: result.providerMessageId,
+            attachmentCount: attachments.length,
+            bodyFormat: body.bodyFormat
           },
           request
         });
@@ -292,7 +394,7 @@ export const registerSendRoutes = async (
           workspaceId: params.workspaceId,
           actorUserId: session.userId,
           entityType: "EMAIL_MESSAGE",
-          entityId: originalMessage.id,
+          entityId: originalMessage?.id ?? "new",
           action: `email_message.${body.action}_failed`,
           metadata: { error: message },
           request

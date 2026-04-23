@@ -85,6 +85,12 @@ const messageDetailParamsSchema = z.object({
   messageId: z.string().min(1)
 });
 
+const threadMessagesParamsSchema = z.object({
+  workspaceId: z.string().min(1),
+  id: z.string().min(1),
+  threadId: z.string().min(1)
+});
+
 const messagesListQuerySchema = paginationQuerySchema.extend({
   businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
@@ -186,6 +192,7 @@ const messageSummarySchema = z.object({
   sentAt: z.string().datetime(),
   priority: z.enum(priorityValues).nullable(),
   itemStatus: z.enum(itemStatusValues),
+  isRead: z.boolean(),
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable()
 });
@@ -218,6 +225,7 @@ const messageDetailSchema = z.object({
     replyToAddresses: z.array(storedAddressSchema),
     snippet: z.string().nullable(),
     bodyText: z.string().nullable(),
+    bodyHtml: z.string().nullable(),
     labelIds: z.array(z.string().min(1)),
     hasAttachments: z.boolean(),
     attachmentMetadata: z.array(attachmentMetadataSchema),
@@ -461,6 +469,7 @@ const serializeMessageSummary = (message: {
   sentAt: Date;
   priority: (typeof priorityValues)[number] | null;
   itemStatus: (typeof itemStatusValues)[number];
+  isRead: boolean;
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
   tasks: Array<Parameters<typeof serializeTask>[0]>;
 }) =>
@@ -476,6 +485,7 @@ const serializeMessageSummary = (message: {
     sentAt: message.sentAt.toISOString(),
     priority: message.priority,
     itemStatus: message.itemStatus,
+    isRead: message.isRead,
     classification: serializeClassification(message.classifications[0] ?? null),
     taskCandidate: serializeTask(message.tasks[0] ?? null)
   });
@@ -999,6 +1009,7 @@ export const registerInboxReadRoutes = async (
             sentAt: true,
             priority: true,
             itemStatus: true,
+            isRead: true,
             classifications: {
               orderBy: {
                 createdAt: "desc"
@@ -1144,6 +1155,7 @@ export const registerInboxReadRoutes = async (
           replyToAddresses: true,
           snippet: true,
           bodyText: true,
+          bodyHtml: true,
           labelIds: true,
           hasAttachments: true,
           attachmentMetadata: true,
@@ -1259,6 +1271,7 @@ export const registerInboxReadRoutes = async (
               replyToAddresses: parseStoredAddresses(message.replyToAddresses),
               snippet: message.snippet,
               bodyText: message.bodyText,
+              bodyHtml: message.bodyHtml ?? null,
               labelIds: message.labelIds,
               hasAttachments: message.hasAttachments,
               attachmentMetadata: parseAttachmentMetadata(message.attachmentMetadata),
@@ -1300,6 +1313,150 @@ export const registerInboxReadRoutes = async (
           }
         })
       );
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/threads/:threadId/messages",
+    async (request, reply) => {
+      const params = threadMessagesParamsSchema.parse(request.params);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) {
+        return sendAuthenticationRequired(reply);
+      }
+
+      if (!membership) {
+        return sendWorkspaceAccessDenied(reply);
+      }
+
+      const thread = await app.services.prisma.emailThread.findFirst({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          id: params.threadId
+        },
+        select: {
+          id: true,
+          gmailThreadId: true,
+          subject: true,
+          normalizedSubject: true,
+          messageCount: true
+        }
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ message: "Thread not found" });
+      }
+
+      const messages = await app.services.prisma.emailMessage.findMany({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          threadId: params.threadId
+        },
+        orderBy: [{ sentAt: "asc" }, { receivedAt: "asc" }],
+        select: {
+          id: true,
+          gmailMessageId: true,
+          gmailThreadId: true,
+          subject: true,
+          senderName: true,
+          senderEmail: true,
+          toAddresses: true,
+          ccAddresses: true,
+          bccAddresses: true,
+          replyToAddresses: true,
+          snippet: true,
+          bodyText: true,
+          bodyHtml: true,
+          labelIds: true,
+          hasAttachments: true,
+          attachmentMetadata: true,
+          sentAt: true,
+          receivedAt: true,
+          priority: true,
+          itemStatus: true,
+          classifications: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              businessCategory: true,
+              emailType: true,
+              priority: true,
+              itemStatus: true,
+              summary: true,
+              confidence: true,
+              requiresReview: true,
+              reviewQueue: true,
+              reviewStatus: true,
+              containsActionRequest: true,
+              deadline: true,
+              routingHints: true,
+              extractedFields: true
+            }
+          },
+          tasks: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              title: true,
+              summary: true,
+              description: true,
+              assigneeGuess: true,
+              dueAt: true,
+              priority: true,
+              status: true,
+              confidence: true,
+              requiresReview: true,
+              reviewQueue: true,
+              reviewStatus: true,
+              createdAt: true,
+              updatedAt: true
+            }
+          }
+        }
+      });
+
+      return reply.send({
+        thread: {
+          id: thread.id,
+          providerThreadId: thread.gmailThreadId,
+          subject: thread.subject,
+          normalizedSubject: thread.normalizedSubject,
+          messageCount: thread.messageCount
+        },
+        messages: messages.map(m => ({
+          id: m.id,
+          providerMessageId: m.gmailMessageId,
+          providerThreadId: m.gmailThreadId,
+          subject: m.subject,
+          senderName: m.senderName,
+          senderEmail: m.senderEmail,
+          toAddresses: parseStoredAddresses(m.toAddresses),
+          ccAddresses: parseStoredAddresses(m.ccAddresses),
+          bccAddresses: parseStoredAddresses(m.bccAddresses),
+          replyToAddresses: parseStoredAddresses(m.replyToAddresses),
+          snippet: m.snippet,
+          bodyText: m.bodyText,
+          bodyHtml: m.bodyHtml ?? null,
+          labelIds: m.labelIds,
+          hasAttachments: m.hasAttachments,
+          attachmentMetadata: parseAttachmentMetadata(m.attachmentMetadata),
+          sentAt: m.sentAt.toISOString(),
+          receivedAt: serializeDate(m.receivedAt),
+          priority: m.priority,
+          itemStatus: m.itemStatus,
+          classification: serializeClassification(m.classifications[0] ?? null),
+          taskCandidate: serializeTask(m.tasks[0] ?? null)
+        }))
+      });
     }
   );
 
@@ -1374,6 +1531,7 @@ export const registerInboxReadRoutes = async (
             sentAt: true,
             priority: true,
             itemStatus: true,
+            isRead: true,
             classifications: {
               orderBy: {
                 createdAt: "desc"
@@ -1628,6 +1786,32 @@ export const registerInboxReadRoutes = async (
           )
         })
       );
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/read",
+    async (request, reply) => {
+      const params = messageDetailParamsSchema.parse(request.params);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      await app.services.prisma.emailMessage.updateMany({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+        },
+        data: { isRead: true }
+      });
+
+      return reply.send({ status: "ok" });
     }
   );
 };

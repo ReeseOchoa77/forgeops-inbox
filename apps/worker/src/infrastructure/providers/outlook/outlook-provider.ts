@@ -28,6 +28,7 @@ const mapMessage = (
   replyToAddresses: msg.replyToAddresses,
   snippet: msg.snippet,
   bodyText: msg.bodyText,
+  bodyHtml: msg.bodyHtml,
   hasAttachments: msg.hasAttachments,
   attachmentMetadata: msg.attachmentMetadata.map((att) => ({
     attachmentId: att.attachmentId,

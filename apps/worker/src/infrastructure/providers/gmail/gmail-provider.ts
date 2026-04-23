@@ -26,6 +26,7 @@ const mapMessage = (msg: GmailMessageSnapshot): ProviderMessageSnapshot => ({
   replyToAddresses: msg.replyToAddresses,
   snippet: msg.snippet,
   bodyText: msg.bodyText,
+  bodyHtml: msg.bodyHtml,
   hasAttachments: msg.hasAttachments,
   attachmentMetadata: msg.attachmentMetadata,
   providerLabels: msg.labelIds,

@@ -256,15 +256,15 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
               <tbody>
                 {messages.map(m => (
                   <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-                    style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
+                    style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
                     onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-                    onMouseOut={e => (e.currentTarget.style.background = '')}>
+                    onMouseOut={e => (e.currentTarget.style.background = m.isRead ? '' : '#f0f4ff')}>
                     <td style={{ padding: '7px 12px' }}>
-                      <div style={{ fontWeight: 500, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
+                      <div style={{ fontWeight: m.isRead ? 500 : 700, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
                       {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
                     </td>
                     <td style={{ padding: '7px 12px' }}>
-                      <div>{m.subject ?? '(no subject)'}</div>
+                      <div style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</div>
                       {m.taskCandidate && <div style={{ fontSize: 11, color: '#1565c0', marginTop: 1 }}>Task: {m.taskCandidate.title.slice(0, 50)}</div>}
                       {m.snippet && !m.taskCandidate && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
                     </td>

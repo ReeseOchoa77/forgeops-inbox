@@ -100,6 +100,7 @@ export interface OutlookMessageSnapshot {
   replyToAddresses: OutlookAddress[];
   snippet: string | null;
   bodyText: string | null;
+  bodyHtml: string | null;
   hasAttachments: boolean;
   attachmentMetadata: OutlookAttachmentMetadata[];
   folderLabels: string[];
@@ -294,6 +295,7 @@ const parseMessage = (msg: GraphMessage): OutlookMessageSnapshot => {
     replyToAddresses: (msg.replyTo ?? []).map(mapGraphAddress),
     snippet: msg.bodyPreview?.trim().slice(0, 500) ?? null,
     bodyText: extractBodyText(msg),
+    bodyHtml: msg.body?.contentType === "html" ? (msg.body.content ?? null) : null,
     hasAttachments: msg.hasAttachments ?? false,
     attachmentMetadata: [],
     folderLabels: buildFolderLabels(msg),
