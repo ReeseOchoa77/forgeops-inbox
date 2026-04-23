@@ -4,9 +4,11 @@ import {
   QueueNames,
   TokenCipher,
   type InboxSyncJobPayload,
-  type InboxSyncResult
+  type InboxSyncResult,
+  type InboxAnalysisJobPayload,
+  type InboxAnalysisResult
 } from "@forgeops/shared";
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 
 import { InboxSyncProcessor } from "../application/processors/inbox-sync.processor.js";
@@ -20,7 +22,7 @@ import {
 
 export const startInboxSyncWorker = (
   env: WorkerEnv
-): { worker: Worker<InboxSyncJobPayload, InboxSyncResult>; redis: Redis } => {
+): { worker: Worker<InboxSyncJobPayload, InboxSyncResult>; syncQueue: Queue<InboxSyncJobPayload, InboxSyncResult>; redis: Redis } => {
   const redis = createRedisConnection(env.REDIS_URL);
 
   const providerRegistry = new ProviderRegistry();
@@ -46,7 +48,18 @@ export const startInboxSyncWorker = (
   );
 
   const tokenCipher = new TokenCipher(env.TOKEN_ENCRYPTION_SECRET);
-  const processor = new InboxSyncProcessor(prisma, providerRegistry, tokenCipher);
+
+  const analysisQueue = new Queue<InboxAnalysisJobPayload, InboxAnalysisResult>(
+    QueueNames.INBOX_ANALYSIS,
+    { connection: createBullMqConnection(env.REDIS_URL) }
+  );
+
+  const syncQueue = new Queue<InboxSyncJobPayload, InboxSyncResult>(
+    QueueNames.INBOX_SYNC,
+    { connection: createBullMqConnection(env.REDIS_URL) }
+  );
+
+  const processor = new InboxSyncProcessor(prisma, providerRegistry, tokenCipher, analysisQueue);
 
   const worker = new Worker<InboxSyncJobPayload, InboxSyncResult>(
     QueueNames.INBOX_SYNC,
@@ -78,5 +91,5 @@ export const startInboxSyncWorker = (
     });
   });
 
-  return { worker, redis };
+  return { worker, syncQueue, redis };
 };

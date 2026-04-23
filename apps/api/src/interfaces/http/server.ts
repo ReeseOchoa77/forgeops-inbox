@@ -153,6 +153,37 @@ export const buildServer = async () => {
   const tokenCipher = new TokenCipher(env.TOKEN_ENCRYPTION_SECRET);
   const auditEventLogger = new AuditEventLogger(prisma);
 
+  const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+  const registerScheduledSync = async (workspaceId: string, connectionId: string): Promise<void> => {
+    const jobId = `scheduled-sync:${connectionId}`;
+    await inboxSyncQueue.add(
+      QueueNames.INBOX_SYNC,
+      { workspaceId, inboxConnectionId: connectionId },
+      {
+        jobId,
+        repeat: { every: SYNC_INTERVAL_MS },
+        attempts: 2,
+        backoff: { type: "exponential", delay: 10000 },
+        removeOnComplete: { count: 5 },
+        removeOnFail: { count: 10 }
+      }
+    );
+  };
+
+  const removeScheduledSync = async (connectionId: string): Promise<void> => {
+    const jobId = `scheduled-sync:${connectionId}`;
+    try {
+      await inboxSyncQueue.removeRepeatableByKey(`${QueueNames.INBOX_SYNC}:${jobId}:::${SYNC_INTERVAL_MS}`);
+    } catch {
+      const jobs = await inboxSyncQueue.getRepeatableJobs();
+      const match = jobs.find(j => j.id === jobId || j.key?.includes(connectionId));
+      if (match) {
+        await inboxSyncQueue.removeRepeatableByKey(match.key);
+      }
+    }
+  };
+
   app.decorate("services", {
     env,
     prisma,
@@ -168,7 +199,9 @@ export const buildServer = async () => {
     sessionStore,
     oauthStateStore,
     tokenCipher,
-    auditEventLogger
+    auditEventLogger,
+    registerScheduledSync,
+    removeScheduledSync
   });
 
   app.setErrorHandler((error, _request, reply) => {

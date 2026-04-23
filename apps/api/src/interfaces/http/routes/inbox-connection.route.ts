@@ -668,6 +668,10 @@ export const registerInboxConnectionRoutes = async (
         request
       });
 
+      app.services.registerScheduledSync(storedState.workspaceId, connection.id).catch(e => {
+        request.log.warn({ event: "scheduled_sync_registration_failed", error: e instanceof Error ? e.message : "unknown" });
+      });
+
       return reply.redirect(
         `${app.services.env.FRONTEND_URL}/?connected=${connection.id}`
       );
@@ -831,6 +835,10 @@ export const registerInboxConnectionRoutes = async (
             disconnectedAt: new Date()
           }
         });
+
+      app.services.removeScheduledSync(connection.id).catch(e => {
+        request.log.warn({ event: "scheduled_sync_removal_failed", error: e instanceof Error ? e.message : "unknown" });
+      });
 
       await app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,

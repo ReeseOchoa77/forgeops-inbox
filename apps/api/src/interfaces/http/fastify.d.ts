@@ -29,6 +29,8 @@ declare module "fastify" {
       oauthStateStore: GoogleOAuthStateStore;
       tokenCipher: TokenCipher;
       auditEventLogger: AuditEventLogger;
+      registerScheduledSync: (workspaceId: string, connectionId: string) => Promise<void>;
+      removeScheduledSync: (connectionId: string) => Promise<void>;
     };
   }
 }

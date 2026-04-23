@@ -3,12 +3,14 @@ import type {
   Prisma,
   PrismaClient
 } from "@prisma/client";
-import type { InboxSyncResult } from "@forgeops/shared";
+import type { InboxSyncResult, InboxAnalysisJobPayload, InboxAnalysisResult } from "@forgeops/shared";
 import {
   ProviderRegistry,
+  QueueNames,
   TokenCipher,
   providerKindFromEnum
 } from "@forgeops/shared";
+import type { Queue } from "bullmq";
 
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 import type { InboxSyncContext } from "../../domain/inbox-sync-context.js";
@@ -90,7 +92,8 @@ export class InboxSyncProcessor {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly providerRegistry: ProviderRegistry,
-    private readonly tokenCipher: TokenCipher
+    private readonly tokenCipher: TokenCipher,
+    private readonly analysisQueue?: Queue<InboxAnalysisJobPayload, InboxAnalysisResult>
   ) {}
 
   async process(context: InboxSyncContext): Promise<InboxSyncResult> {
@@ -216,6 +219,30 @@ export class InboxSyncProcessor {
         refreshTokenRotated: Boolean(mailbox.refreshedRefreshToken),
         ...syncResult
       });
+
+      if (this.analysisQueue && (syncResult.messagesImported > 0 || syncResult.threadsImported > 0)) {
+        try {
+          const analysisPayload: InboxAnalysisJobPayload = {
+            workspaceId: context.workspaceId,
+            inboxConnectionId: context.inboxConnectionId,
+            ...(context.initiatedBy ? { initiatedBy: context.initiatedBy } : {})
+          };
+          await this.analysisQueue.add(
+            QueueNames.INBOX_ANALYSIS,
+            analysisPayload,
+            { attempts: 2, backoff: { type: "exponential", delay: 5000 } }
+          );
+          console.info("auto-analysis-queued", {
+            jobId: context.jobId,
+            workspaceId: context.workspaceId,
+            inboxConnectionId: context.inboxConnectionId
+          });
+        } catch (e) {
+          console.warn("auto-analysis-queue-failed", {
+            error: e instanceof Error ? e.message : "unknown"
+          });
+        }
+      }
 
       return syncResult;
     } catch (error) {
