@@ -672,6 +672,10 @@ export const registerInboxConnectionRoutes = async (
         request.log.warn({ event: "scheduled_sync_registration_failed", error: e instanceof Error ? e.message : "unknown" });
       });
 
+      app.inject({ method: "POST", url: `/api/v1/webhooks/register-push/${connection.id}` }).catch(e => {
+        request.log.warn({ event: "push_registration_on_connect_failed", error: e instanceof Error ? e.message : "unknown" });
+      });
+
       return reply.redirect(
         `${app.services.env.FRONTEND_URL}/?connected=${connection.id}`
       );

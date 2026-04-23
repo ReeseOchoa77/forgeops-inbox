@@ -43,6 +43,7 @@ import { registerImportRoutes } from "./routes/import.route.js";
 import { registerAiImportRoutes } from "./routes/ai-import.route.js";
 import { registerSendRoutes } from "./routes/send.route.js";
 import { registerAttachmentRoutes } from "./routes/attachment.route.js";
+import { registerWebhookRoutes } from "./routes/webhook.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -245,8 +246,56 @@ export const buildServer = async () => {
   await registerAiImportRoutes(app);
   await registerSendRoutes(app);
   await registerAttachmentRoutes(app);
+  await registerWebhookRoutes(app);
+
+  const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
+  let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;
+
+  const renewExpiringPushSubscriptions = async (): Promise<void> => {
+    try {
+      const soonExpiring = await prisma.inboxConnection.findMany({
+        where: {
+          status: "ACTIVE",
+          pushExpiresAt: { not: null, lt: new Date(Date.now() + 12 * 60 * 60 * 1000) }
+        },
+        select: { id: true, provider: true, email: true }
+      });
+
+      for (const conn of soonExpiring) {
+        try {
+          const internalRes = await app.inject({
+            method: "POST",
+            url: `/api/v1/webhooks/register-push/${conn.id}`
+          });
+          app.log.info({
+            event: "push_renewal",
+            connectionId: conn.id,
+            provider: conn.provider,
+            status: internalRes.statusCode
+          });
+        } catch (e) {
+          app.log.warn({
+            event: "push_renewal_failed",
+            connectionId: conn.id,
+            error: e instanceof Error ? e.message : "unknown"
+          });
+        }
+      }
+    } catch (e) {
+      app.log.error({ event: "push_renewal_scan_failed", error: e instanceof Error ? e.message : "unknown" });
+    }
+  };
+
+  app.addHook("onReady", async () => {
+    pushRenewalTimer = setInterval(() => {
+      void renewExpiringPushSubscriptions();
+    }, PUSH_RENEWAL_INTERVAL_MS);
+
+    setTimeout(() => void renewExpiringPushSubscriptions(), 30_000);
+  });
 
   app.addHook("onClose", async () => {
+    if (pushRenewalTimer) clearInterval(pushRenewalTimer);
     await inboxAnalysisQueueEvents.close();
     await inboxAnalysisQueue.close();
     await inboxSyncQueueEvents.close();

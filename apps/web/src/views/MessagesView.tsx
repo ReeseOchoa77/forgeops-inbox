@@ -380,9 +380,19 @@ function formatDate(iso: string): string {
   try {
     const d = new Date(iso)
     const now = new Date()
+    const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     if (d.toDateString() === now.toDateString()) {
-      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      return `Today, ${time}`
     }
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const yesterday = new Date(now)
+    yesterday.setDate(yesterday.getDate() - 1)
+    if (d.toDateString() === yesterday.toDateString()) {
+      return `Yesterday, ${time}`
+    }
+    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    if (d.getFullYear() !== now.getFullYear()) {
+      return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${time}`
+    }
+    return `${date}, ${time}`
   } catch { return iso }
 }
