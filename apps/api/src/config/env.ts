@@ -47,6 +47,8 @@ const apiEnvSchema = z.object({
   OUTLOOK_TENANT_ID: z.string().default("common"),
   GMAIL_PUBSUB_TOPIC: optionalStringFromEnv,
   PUSH_WEBHOOK_SECRET: optionalStringFromEnv,
+  N8N_INTEGRATION_API_KEY: optionalStringFromEnv,
+  N8N_INTEGRATION_ENABLED: booleanFromString.default("false"),
   SESSION_COOKIE_NAME: z.string().default("forgeops_session"),
   SESSION_COOKIE_SECRET: z
     .string()

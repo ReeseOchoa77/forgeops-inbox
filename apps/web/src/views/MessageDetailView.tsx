@@ -167,6 +167,9 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
             <div>
               <span style={{ fontWeight: 600, fontSize: 14 }}>{senderDisplay}</span>
               {msg.senderName && <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>&lt;{msg.senderEmail}&gt;</span>}
+              {msg.labelIds.includes('n8n-ingested') && (
+                <span style={{ fontSize: 10, color: '#6a1b9a', background: '#f3e5f5', padding: '1px 6px', borderRadius: 3, marginLeft: 6, fontWeight: 500 }}>via n8n</span>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</span>
