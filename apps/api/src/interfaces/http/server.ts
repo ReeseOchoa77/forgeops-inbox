@@ -47,6 +47,7 @@ import { registerWebhookRoutes } from "./routes/webhook.route.js";
 import { registerN8nIngestRoutes } from "./routes/n8n-ingest.route.js";
 import { registerPlatformAdminRoutes } from "./routes/platform-admin.route.js";
 import { registerReferenceDataRoutes } from "./routes/reference-data.route.js";
+import { registerDocumentImportRoutes } from "./routes/document-import.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -253,6 +254,7 @@ export const buildServer = async () => {
   await registerN8nIngestRoutes(app);
   await registerPlatformAdminRoutes(app);
   await registerReferenceDataRoutes(app);
+  await registerDocumentImportRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

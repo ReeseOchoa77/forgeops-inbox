@@ -700,6 +700,7 @@ model KnowledgeDocument {
   documentType     DocumentType   @default(OTHER)
   storageReference String?
   extractedText    String?
+  extractedJson    Json?
   fileSize         Int?
   createdBy        String?
   createdAt        DateTime       @default(now())
