@@ -45,6 +45,7 @@ import { registerSendRoutes } from "./routes/send.route.js";
 import { registerAttachmentRoutes } from "./routes/attachment.route.js";
 import { registerWebhookRoutes } from "./routes/webhook.route.js";
 import { registerN8nIngestRoutes } from "./routes/n8n-ingest.route.js";
+import { registerPlatformAdminRoutes } from "./routes/platform-admin.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -249,6 +250,7 @@ export const buildServer = async () => {
   await registerAttachmentRoutes(app);
   await registerWebhookRoutes(app);
   await registerN8nIngestRoutes(app);
+  await registerPlatformAdminRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

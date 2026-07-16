@@ -24,7 +24,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export interface SessionResponse {
   authenticated: boolean;
   accessRevoked?: boolean;
-  user: { id: string; email: string; name: string | null; avatarUrl: string | null } | null;
+  user: { id: string; email: string; name: string | null; avatarUrl: string | null; isPlatformAdmin?: boolean } | null;
   memberships: Array<{ id: string; role: string; workspace: { id: string; name: string; slug: string } }>;
 }
 
@@ -359,7 +359,40 @@ export const api = {
 
     const data = await res.json();
     return data.extraction as ExtractionResult;
-  }
+  },
+
+  adminGetWorkspaces: () =>
+    request<{ workspaces: AdminWorkspace[] }>('/admin/workspaces'),
+
+  adminCreateWorkspace: (name: string, slug: string) =>
+    request<{ workspace: { id: string; name: string; slug: string } }>('/admin/workspaces', {
+      method: 'POST', body: JSON.stringify({ name, slug })
+    }),
+
+  adminDeleteWorkspace: (workspaceId: string) =>
+    request<{ status: string }>(`/admin/workspaces/${workspaceId}`, { method: 'DELETE' }),
+
+  adminGetMailboxes: () =>
+    request<{ mailboxes: AdminMailbox[] }>('/admin/mailboxes'),
+
+  adminRegisterMailbox: (data: { workspaceId: string; provider: string; email: string; ingestionSource?: string }) =>
+    request<{ mailbox: { id: string; workspaceId: string; provider: string; email: string; status: string; ingestionMode: string } }>('/admin/mailboxes', {
+      method: 'POST', body: JSON.stringify(data)
+    }),
+
+  adminPauseMailbox: (mailboxId: string) =>
+    request<{ status: string }>(`/admin/mailboxes/${mailboxId}/pause`, { method: 'PATCH', body: JSON.stringify({}) }),
+
+  adminResumeMailbox: (mailboxId: string) =>
+    request<{ status: string }>(`/admin/mailboxes/${mailboxId}/resume`, { method: 'PATCH', body: JSON.stringify({}) }),
+
+  adminChangeIngestionMode: (mailboxId: string, ingestionSource: 'NATIVE' | 'N8N') =>
+    request<{ status: string }>(`/admin/mailboxes/${mailboxId}/ingestion-mode`, {
+      method: 'PATCH', body: JSON.stringify({ ingestionSource })
+    }),
+
+  adminGetMembers: (workspaceId: string) =>
+    request<{ members: AdminMember[] }>(`/admin/workspaces/${workspaceId}/members`)
 };
 
 export interface ImportResult {
@@ -386,4 +419,42 @@ export interface ExtractionResult {
   inferredType: 'customer' | 'vendor' | 'contact' | 'job' | 'unknown';
   confidence: 'high' | 'medium' | 'low';
   records: ExtractedRecord[];
+}
+
+export interface AdminWorkspace {
+  id: string;
+  name: string;
+  slug: string;
+  timezone: string;
+  createdAt: string;
+  counts: { members: number; connections: number; messages: number };
+}
+
+export interface AdminMailbox {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  provider: string;
+  email: string;
+  displayName: string | null;
+  status: string;
+  ingestionMode: string;
+  connectedAt: string | null;
+  lastSyncedAt: string | null;
+  lastReceivedAt: string | null;
+  lastProcessedAt: string | null;
+  lastError: string | null;
+  counts: { messages: number; threads: number };
+}
+
+export interface AdminMember {
+  membershipId: string;
+  userId: string;
+  email: string;
+  name: string | null;
+  role: string;
+  isPlatformAdmin: boolean;
+  lastLoginAt: string | null;
+  memberSince: string;
 }

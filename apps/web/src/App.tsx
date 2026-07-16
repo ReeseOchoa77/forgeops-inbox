@@ -11,16 +11,18 @@ import { ConnectionsView } from './views/ConnectionsView'
 import { TeamAccessView } from './views/TeamAccessView'
 import { SettingsView } from './views/SettingsView'
 import { DataImportView } from './views/DataImportView'
+import { PlatformAdminView } from './views/PlatformAdminView'
 
-type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'settings'
+type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'settings' | 'admin'
 
-const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string }> = [
+const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'review', label: 'Review Queue', icon: '\u2696' },
   { page: 'connections', label: 'Connections', icon: '\u26A1', section: 'Manage' },
   { page: 'team', label: 'Team Access', icon: '\uD83D\uDC65' },
   { page: 'import', label: 'Data Import', icon: '\uD83D\uDCC1' },
   { page: 'settings', label: 'Settings', icon: '\u2699' },
+  { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
 export default function App() {
@@ -215,9 +217,9 @@ export default function App() {
         )}
 
         <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item, i) => (
+          {NAV_ITEMS.filter(item => !item.adminOnly || session.user?.isPlatformAdmin).map((item, i, arr) => (
             <div key={item.page}>
-              {item.section && (i === 0 || NAV_ITEMS[i - 1]?.section !== item.section) && (
+              {item.section && (i === 0 || arr[i - 1]?.section !== item.section) && (
                 <div className="sidebar-section-label">{item.section}</div>
               )}
               <button
@@ -316,6 +318,11 @@ export default function App() {
           {page === 'settings' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
+            </div>
+          )}
+          {page === 'admin' && session.user?.isPlatformAdmin && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <PlatformAdminView />
             </div>
           )}
         </div>

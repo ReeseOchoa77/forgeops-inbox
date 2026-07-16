@@ -141,6 +141,7 @@ model User {
   name                    String?
   avatarUrl               String?
   lastLoginAt             DateTime?
+  isPlatformAdmin         Boolean          @default(false)
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
   memberships             Membership[]
@@ -208,6 +209,9 @@ model InboxConnection {
   lastSyncError     String?
   pushSubscriptionId String?
   pushExpiresAt     DateTime?
+  lastReceivedAt    DateTime?
+  lastProcessedAt   DateTime?
+  lastErrorMessage  String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -222,6 +226,7 @@ model InboxConnection {
   @@index([workspaceId, providerAccountId])
   @@index([workspaceId, provider])
   @@index([workspaceId, status])
+  @@index([provider, email, ingestionSource])
 }
 
 model EmailThread {

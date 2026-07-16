@@ -13,7 +13,7 @@ const MAX_SUMMARY_LENGTH = 300;
 const MAX_BODY_LENGTH = 100_000;
 const MAX_RECIPIENTS = 200;
 
-const paramsSchema = z.object({
+const workspaceParamsSchema = z.object({
   workspaceId: z.string().min(1)
 });
 
@@ -95,52 +95,50 @@ function shouldRequireReview(body: N8nEmailResult): boolean {
   return body.analysis.requiresReview || body.analysis.confidence < CLASSIFICATION_REVIEW_THRESHOLD;
 }
 
-async function resolveOrCreateConnection(
+async function resolveMailboxOwnership(
   prisma: PrismaClient,
-  workspaceId: string,
+  provider: string,
   mailboxEmail: string
-): Promise<{ id: string; isNew: boolean }> {
-  const existing = await prisma.inboxConnection.findFirst({
+): Promise<{ connectionId: string; workspaceId: string }> {
+  const normalized = mailboxEmail.toLowerCase();
+  const dbProvider = provider === "outlook" ? "OUTLOOK" : "GMAIL";
+
+  const connections = await prisma.inboxConnection.findMany({
     where: {
-      workspaceId,
-      provider: "OUTLOOK",
-      email: mailboxEmail.toLowerCase()
+      provider: dbProvider,
+      email: normalized,
+      ingestionSource: "N8N",
+      status: { in: ["ACTIVE", "PAUSED"] }
     },
-    select: { id: true, ingestionSource: true, status: true }
+    select: { id: true, workspaceId: true, status: true, ingestionSource: true }
   });
 
-  if (existing) {
-    if (existing.ingestionSource === "NATIVE" && existing.status === "ACTIVE") {
-      throw new Error(
-        `Mailbox ${mailboxEmail} is actively connected via native Outlook sync. ` +
-        `Disable native sync before using n8n ingestion to prevent duplicate processing.`
-      );
-    }
-
-    if (existing.ingestionSource !== "N8N") {
-      await prisma.inboxConnection.update({
-        where: { id: existing.id },
-        data: { ingestionSource: "N8N", status: "ACTIVE" }
-      });
-    }
-
-    return { id: existing.id, isNew: false };
+  if (connections.length === 0) {
+    throw new MailboxNotFoundError(
+      `No registered n8n mailbox found for ${normalized} (${provider}). ` +
+      `Register this mailbox via the platform admin API first.`
+    );
   }
 
-  const created = await prisma.inboxConnection.create({
-    data: {
-      workspaceId,
-      provider: "OUTLOOK",
-      email: mailboxEmail.toLowerCase(),
-      displayName: mailboxEmail,
-      status: "ACTIVE",
-      ingestionSource: "N8N",
-      connectedAt: new Date()
-    }
-  });
+  if (connections.length > 1) {
+    throw new AmbiguousMailboxError(
+      `Multiple workspaces claim mailbox ${normalized}. ` +
+      `Resolve the conflict via the platform admin API.`
+    );
+  }
 
-  return { id: created.id, isNew: true };
+  const connection = connections[0]!;
+
+  if (connection.status === "PAUSED") {
+    throw new MailboxPausedError(`Mailbox ${normalized} is paused. Resume it via the platform admin API.`);
+  }
+
+  return { connectionId: connection.id, workspaceId: connection.workspaceId };
 }
+
+class MailboxNotFoundError extends Error { constructor(msg: string) { super(msg); this.name = "MailboxNotFoundError"; } }
+class AmbiguousMailboxError extends Error { constructor(msg: string) { super(msg); this.name = "AmbiguousMailboxError"; } }
+class MailboxPausedError extends Error { constructor(msg: string) { super(msg); this.name = "MailboxPausedError"; } }
 
 async function upsertEmailData(
   tx: Prisma.TransactionClient,
@@ -425,176 +423,212 @@ async function upsertTasks(
   return taskIds;
 }
 
+async function handleN8nIngest(
+  app: FastifyInstance,
+  request: import("fastify").FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  explicitWorkspaceId?: string
+): Promise<void> {
+  const env = app.services.env;
+
+  if (!verifyN8nApiKey(request, reply, env.N8N_INTEGRATION_API_KEY, env.N8N_INTEGRATION_ENABLED)) {
+    await app.services.auditEventLogger.log({
+      workspaceId: "unknown",
+      entityType: "INTEGRATION",
+      entityId: "n8n",
+      action: "n8n.auth_rejected",
+      metadata: { reason: "invalid_or_missing_key" },
+      request
+    });
+    return;
+  }
+
+  let body: N8nEmailResult;
+  try {
+    body = n8nEmailResultSchema.parse(request.body);
+  } catch (error) {
+    await app.services.auditEventLogger.log({
+      workspaceId: explicitWorkspaceId ?? "unknown",
+      entityType: "INTEGRATION",
+      entityId: "n8n",
+      action: "n8n.validation_rejected",
+      metadata: {
+        error: error instanceof z.ZodError ? error.issues.slice(0, 5) : "parse_error"
+      },
+      request
+    });
+    reply.code(400).send({
+      message: "Invalid request payload",
+      issues: error instanceof z.ZodError ? error.issues : []
+    });
+    return;
+  }
+
+  let workspaceId: string;
+  let connectionId: string;
+
+  try {
+    const resolved = await resolveMailboxOwnership(
+      app.services.prisma,
+      body.source.provider,
+      body.source.mailboxEmail
+    );
+    workspaceId = resolved.workspaceId;
+    connectionId = resolved.connectionId;
+  } catch (error) {
+    if (error instanceof MailboxNotFoundError) {
+      reply.code(404).send({ message: error.message });
+      return;
+    }
+    if (error instanceof AmbiguousMailboxError) {
+      reply.code(409).send({ message: error.message });
+      return;
+    }
+    if (error instanceof MailboxPausedError) {
+      reply.code(409).send({ message: error.message });
+      return;
+    }
+    throw error;
+  }
+
+  if (explicitWorkspaceId && explicitWorkspaceId !== workspaceId) {
+    reply.code(403).send({
+      message: `Mailbox ${body.source.mailboxEmail} belongs to a different workspace than the one specified in the URL.`
+    });
+    return;
+  }
+
+  const deduplicationKey = buildDeduplicationKey(
+    workspaceId,
+    body.source.mailboxEmail,
+    body.source.provider,
+    body.source.providerMessageId
+  );
+
+  try {
+    await app.services.prisma.inboxConnection.update({
+      where: { id: connectionId },
+      data: { lastReceivedAt: new Date() }
+    });
+
+    const result = await app.services.prisma.$transaction(async (tx) => {
+      return upsertEmailData(tx, workspaceId, connectionId, body);
+    }, { timeout: 30_000 });
+
+    await app.services.prisma.inboxConnection.update({
+      where: { id: connectionId },
+      data: {
+        lastProcessedAt: new Date(),
+        lastErrorMessage: null
+      }
+    });
+
+    const auditAction = result.status === "created"
+      ? "n8n.email_created"
+      : result.status === "updated"
+        ? "n8n.email_updated"
+        : "n8n.duplicate_ignored";
+
+    await app.services.auditEventLogger.log({
+      workspaceId,
+      entityType: "EMAIL_MESSAGE",
+      entityId: result.messageId,
+      action: auditAction,
+      metadata: {
+        source: "n8n",
+        mailbox: body.source.mailboxEmail,
+        providerMessageId: body.source.providerMessageId,
+        connectionId,
+        resolvedWorkspaceId: workspaceId,
+        status: result.status,
+        taskCount: result.taskIds.length,
+        requiresReview: result.requiresReview,
+        deduplicationKey
+      },
+      request
+    });
+
+    reply.code(result.status === "created" ? 201 : 200).send({
+      status: result.status,
+      workspaceId,
+      threadId: result.threadId,
+      messageId: result.messageId,
+      classificationId: result.classificationId,
+      taskIds: result.taskIds,
+      requiresReview: result.requiresReview,
+      deduplicationKey
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Ingestion failed";
+
+    await app.services.prisma.inboxConnection.update({
+      where: { id: connectionId },
+      data: { lastErrorMessage: message }
+    }).catch(() => {});
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const existingMessage = await app.services.prisma.emailMessage.findFirst({
+        where: { workspaceId, gmailMessageId: body.source.providerMessageId },
+        select: {
+          id: true, threadId: true,
+          classifications: { select: { id: true }, take: 1, orderBy: { createdAt: "desc" } },
+          tasks: { select: { id: true } }
+        }
+      });
+
+      if (existingMessage) {
+        await app.services.auditEventLogger.log({
+          workspaceId,
+          entityType: "EMAIL_MESSAGE",
+          entityId: existingMessage.id,
+          action: "n8n.concurrent_duplicate_handled",
+          metadata: { providerMessageId: body.source.providerMessageId, deduplicationKey },
+          request
+        });
+
+        reply.code(200).send({
+          status: "unchanged",
+          workspaceId,
+          threadId: existingMessage.threadId,
+          messageId: existingMessage.id,
+          classificationId: existingMessage.classifications[0]?.id ?? null,
+          taskIds: existingMessage.tasks.map(t => t.id),
+          requiresReview: false,
+          deduplicationKey
+        });
+        return;
+      }
+    }
+
+    app.log.error({ event: "n8n_ingest_failed", error: message });
+
+    await app.services.auditEventLogger.log({
+      workspaceId,
+      entityType: "INTEGRATION",
+      entityId: "n8n",
+      action: "n8n.ingestion_failed",
+      metadata: { providerMessageId: body.source.providerMessageId, error: message },
+      request
+    });
+
+    reply.code(500).send({ message: `Ingestion failed: ${message}` });
+  }
+}
+
 export const registerN8nIngestRoutes = async (
   app: FastifyInstance
 ): Promise<void> => {
   app.post(
+    "/api/v1/integrations/n8n/email-results",
+    async (request, reply) => handleN8nIngest(app, request, reply)
+  );
+
+  app.post(
     "/api/v1/workspaces/:workspaceId/integrations/n8n/email-results",
     async (request, reply) => {
-      const env = app.services.env;
-
-      if (!verifyN8nApiKey(request, reply, env.N8N_INTEGRATION_API_KEY, env.N8N_INTEGRATION_ENABLED)) {
-        await app.services.auditEventLogger.log({
-          workspaceId: "unknown",
-          entityType: "INTEGRATION",
-          entityId: "n8n",
-          action: "n8n.auth_rejected",
-          metadata: { reason: "invalid_or_missing_key" },
-          request
-        });
-        return;
-      }
-
-      let params: z.infer<typeof paramsSchema>;
-      try {
-        params = paramsSchema.parse(request.params);
-      } catch {
-        return reply.code(400).send({ message: "Invalid workspace ID" });
-      }
-
-      const workspace = await app.services.prisma.workspace.findUnique({
-        where: { id: params.workspaceId },
-        select: { id: true }
-      });
-
-      if (!workspace) {
-        return reply.code(404).send({ message: "Workspace not found" });
-      }
-
-      let body: N8nEmailResult;
-      try {
-        body = n8nEmailResultSchema.parse(request.body);
-      } catch (error) {
-        await app.services.auditEventLogger.log({
-          workspaceId: params.workspaceId,
-          entityType: "INTEGRATION",
-          entityId: "n8n",
-          action: "n8n.validation_rejected",
-          metadata: {
-            error: error instanceof z.ZodError ? error.issues.slice(0, 5) : "parse_error"
-          },
-          request
-        });
-        return reply.code(400).send({
-          message: "Invalid request payload",
-          issues: error instanceof z.ZodError ? error.issues : []
-        });
-      }
-
-      const deduplicationKey = buildDeduplicationKey(
-        params.workspaceId,
-        body.source.mailboxEmail,
-        body.source.provider,
-        body.source.providerMessageId
-      );
-
-      try {
-        const connection = await resolveOrCreateConnection(
-          app.services.prisma,
-          params.workspaceId,
-          body.source.mailboxEmail
-        );
-
-        const result = await app.services.prisma.$transaction(async (tx) => {
-          return upsertEmailData(tx, params.workspaceId, connection.id, body);
-        }, { timeout: 30_000 });
-
-        const auditAction = result.status === "created"
-          ? "n8n.email_created"
-          : result.status === "updated"
-            ? "n8n.email_updated"
-            : "n8n.duplicate_ignored";
-
-        await app.services.auditEventLogger.log({
-          workspaceId: params.workspaceId,
-          entityType: "EMAIL_MESSAGE",
-          entityId: result.messageId,
-          action: auditAction,
-          metadata: {
-            source: "n8n",
-            mailbox: body.source.mailboxEmail,
-            providerMessageId: body.source.providerMessageId,
-            connectionId: connection.id,
-            connectionIsNew: connection.isNew,
-            status: result.status,
-            taskCount: result.taskIds.length,
-            requiresReview: result.requiresReview,
-            deduplicationKey
-          },
-          request
-        });
-
-        return reply.code(result.status === "created" ? 201 : 200).send({
-          status: result.status,
-          threadId: result.threadId,
-          messageId: result.messageId,
-          classificationId: result.classificationId,
-          taskIds: result.taskIds,
-          requiresReview: result.requiresReview,
-          deduplicationKey
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Ingestion failed";
-
-        if (message.includes("actively connected via native Outlook sync")) {
-          return reply.code(409).send({ message });
-        }
-
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-          const existingMessage = await app.services.prisma.emailMessage.findFirst({
-            where: {
-              workspaceId: params.workspaceId,
-              gmailMessageId: body.source.providerMessageId
-            },
-            select: {
-              id: true,
-              threadId: true,
-              classifications: { select: { id: true }, take: 1, orderBy: { createdAt: "desc" } },
-              tasks: { select: { id: true } }
-            }
-          });
-
-          if (existingMessage) {
-            await app.services.auditEventLogger.log({
-              workspaceId: params.workspaceId,
-              entityType: "EMAIL_MESSAGE",
-              entityId: existingMessage.id,
-              action: "n8n.concurrent_duplicate_handled",
-              metadata: {
-                providerMessageId: body.source.providerMessageId,
-                deduplicationKey
-              },
-              request
-            });
-
-            return reply.code(200).send({
-              status: "unchanged",
-              threadId: existingMessage.threadId,
-              messageId: existingMessage.id,
-              classificationId: existingMessage.classifications[0]?.id ?? null,
-              taskIds: existingMessage.tasks.map(t => t.id),
-              requiresReview: false,
-              deduplicationKey
-            });
-          }
-        }
-
-        app.log.error({ event: "n8n_ingest_failed", error: message });
-
-        await app.services.auditEventLogger.log({
-          workspaceId: params.workspaceId,
-          entityType: "INTEGRATION",
-          entityId: "n8n",
-          action: "n8n.ingestion_failed",
-          metadata: {
-            providerMessageId: body.source.providerMessageId,
-            error: message
-          },
-          request
-        });
-
-        return reply.code(500).send({ message: `Ingestion failed: ${message}` });
-      }
+      const params = workspaceParamsSchema.safeParse(request.params);
+      const wsId = params.success ? params.data.workspaceId : undefined;
+      return handleN8nIngest(app, request, reply, wsId);
     }
   );
 };
