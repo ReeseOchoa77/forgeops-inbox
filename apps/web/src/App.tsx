@@ -7,34 +7,27 @@ const signInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
 import { MessagesView } from './views/MessagesView'
 import { MessageDetailView } from './views/MessageDetailView'
 import { ReviewQueueView } from './views/ReviewQueueView'
-import { ConnectionsView } from './views/ConnectionsView'
-import { TeamAccessView } from './views/TeamAccessView'
 import { SettingsView } from './views/SettingsView'
-import { DataImportView } from './views/DataImportView'
 import { PlatformAdminView } from './views/PlatformAdminView'
-import { ReferenceDataView } from './views/ReferenceDataView'
 import { TasksView } from './views/TasksView'
 import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
+import { ReferenceDataView } from './views/ReferenceDataView'
+import { DataImportView } from './views/DataImportView'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'import' | 'reference' | 'workspace' | 'connections' | 'team' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin'
 
-type MinRole = 'VIEWER' | 'EDITOR' | 'OWNER'
-
-const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean; minRole?: MinRole }> = [
+const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'review', label: 'Review Queue', icon: '\u2696' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
-  { page: 'import', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
+  { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
-  { page: 'connections', label: 'Connections', icon: '\u26A1' },
   { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
-
-const ROLE_LEVEL: Record<string, number> = { VIEWER: 1, EDITOR: 2, OWNER: 3 }
 
 export default function App() {
   const [session, setSession] = useState<SessionResponse | null>(null)
@@ -61,7 +54,7 @@ export default function App() {
     if (params.get('connected')) {
       const connectedId = params.get('connected')!
       setConnectionNotice({ type: 'success', message: 'Inbox connected. Syncing messages now...' })
-      setPage('connections')
+      setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
 
       api.getSession().then(s => {
@@ -74,7 +67,7 @@ export default function App() {
 
     if (params.get('connection_error')) {
       setConnectionNotice({ type: 'error', message: decodeURIComponent(params.get('connection_error')!) })
-      setPage('connections')
+      setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
     }
 
@@ -86,11 +79,17 @@ export default function App() {
         }
         setSession(s)
         if (s.authenticated && s.memberships.length > 0) {
-          setWorkspaceId(s.memberships[0].workspace.id)
+          const saved = localStorage.getItem('forgeops_workspace')
+          const match = s.memberships.find(m => m.workspace.id === saved)
+          setWorkspaceId(match ? match.workspace.id : s.memberships[0].workspace.id)
         }
       })
       .catch(e => setError(e.message))
   }, [])
+
+  useEffect(() => {
+    if (workspaceId) localStorage.setItem('forgeops_workspace', workspaceId)
+  }, [workspaceId])
 
   const loadConnections = useCallback(() => {
     if (!workspaceId) return
@@ -106,21 +105,17 @@ export default function App() {
 
   useEffect(() => { loadConnections() }, [workspaceId])
 
+  // --- Pre-auth screens ---
+
   if (accessDenied) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 460 }}>
           <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fce4ec', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 28 }}>&#128274;</div>
           <h2 style={{ margin: '0 0 10px', fontSize: 22, fontWeight: 700 }}>Access Restricted</h2>
-          <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.6 }}>
-            Your email address is not authorized for ForgeOps Inbox.
-          </p>
-          <p style={{ color: '#999', margin: '0 0 28px', fontSize: 14, lineHeight: 1.5 }}>
-            This is a private application. If you believe you should have access, ask your workspace administrator to add your email in Team Access.
-          </p>
-          <a href={signInUrl} className="btn btn-outline" style={{ marginRight: 8 }}>
-            Try a different account
-          </a>
+          <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.6 }}>Your email address is not authorized for ForgeOps Inbox.</p>
+          <p style={{ color: '#999', margin: '0 0 28px', fontSize: 14, lineHeight: 1.5 }}>This is a private application. Contact your administrator for access.</p>
+          <a href={signInUrl} className="btn btn-outline">Try a different account</a>
         </div>
       </div>
     )
@@ -130,12 +125,9 @@ export default function App() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 460 }}>
-          <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fff3e0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>&#9888;&#65039;</div>
           <h2 style={{ margin: '0 0 8px', fontSize: 20 }}>Something went wrong</h2>
           <p style={{ color: '#888', fontSize: 14, margin: '0 0 20px' }}>{error}</p>
-          <a href={signInUrl} className="btn btn-primary">
-            Sign in with Google
-          </a>
+          <a href={signInUrl} className="btn btn-primary">Sign in with Google</a>
         </div>
       </div>
     )
@@ -155,18 +147,24 @@ export default function App() {
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
           <div style={{ width: 56, height: 56, borderRadius: 12, background: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 24, color: '#fff' }}>&#9993;</div>
           <h1 style={{ fontSize: 28, margin: '0 0 8px', fontWeight: 700, letterSpacing: '-0.5px', color: '#1a1a2e' }}>ForgeOps Inbox</h1>
-          <p style={{ color: '#666', margin: '0 0 6px', fontSize: 16, lineHeight: 1.5 }}>
-            Multi-provider inbox operations platform.
-          </p>
-          <p style={{ color: '#999', margin: '0 0 32px', fontSize: 14, lineHeight: 1.5 }}>
-            Sync email from Gmail and Outlook, classify messages automatically, and extract actionable tasks for your team.
-          </p>
-          <a href={signInUrl} className="btn btn-primary" style={{ fontSize: 15, padding: '12px 32px' }}>
-            Sign in with Google
-          </a>
-          <p style={{ color: '#bbb', margin: '20px 0 0', fontSize: 12 }}>
-            Private access only. Contact your administrator for an invite.
-          </p>
+          <p style={{ color: '#666', margin: '0 0 6px', fontSize: 16, lineHeight: 1.5 }}>Multi-provider inbox operations platform.</p>
+          <p style={{ color: '#999', margin: '0 0 32px', fontSize: 14, lineHeight: 1.5 }}>Sync email from Gmail and Outlook, classify messages automatically, and extract actionable tasks for your team.</p>
+          <a href={signInUrl} className="btn btn-primary" style={{ fontSize: 15, padding: '12px 32px' }}>Sign in with Google</a>
+          <p style={{ color: '#bbb', margin: '20px 0 0', fontSize: 12 }}>Private access only. Contact your administrator for an invite.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // --- Zero workspaces ---
+  if (session.memberships.length === 0 && !session.user?.isPlatformAdmin) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+        <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700 }}>Access Approved</h2>
+          <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.5 }}>Your account has been approved, but you haven't been assigned to a workspace yet.</p>
+          <p style={{ color: '#999', margin: '0 0 24px', fontSize: 14 }}>Contact your administrator to be added to a workspace.</p>
+          <button onClick={handleSignOut} className="btn btn-outline">Sign out</button>
         </div>
       </div>
     )
@@ -200,9 +198,7 @@ export default function App() {
         bodyFormat: 'html'
       })
       setShowCompose(false)
-    } catch {
-      // errors shown by compose editor
-    } finally {
+    } catch { /* */ } finally {
       setComposeSending(false)
     }
   }
@@ -210,47 +206,38 @@ export default function App() {
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
   const currentRole = currentWorkspace?.workspaceRole ?? 'VIEWER'
   const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
-
-  if (session.memberships.length === 0 && !session.user?.isPlatformAdmin) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
-        <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 12, background: '#e3f2fd', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 24 }}>&#9993;</div>
-          <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700 }}>Access Approved</h2>
-          <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.5 }}>
-            Your account has been approved for ForgeOps Inbox, but you haven't been assigned to a workspace yet.
-          </p>
-          <p style={{ color: '#999', margin: '0 0 24px', fontSize: 14 }}>
-            Contact your administrator to be added to a workspace.
-          </p>
-          <button onClick={handleSignOut} className="btn btn-outline">Sign out</button>
-        </div>
-      </div>
-    )
-  }
+  const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
 
   return (
     <div className="app-layout">
       <aside className="sidebar">
-        <div className="sidebar-brand">ForgeOps Inbox</div>
+        <div className="sidebar-brand">
+          <span style={{ fontSize: 16, marginRight: 6 }}>&#9993;</span>
+          ForgeOps
+        </div>
 
-        {connectionId && (
-          <div style={{ padding: '4px 14px 8px' }}>
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', fontSize: 13, padding: '8px 0' }}
-              onClick={() => setShowCompose(true)}
+        {/* Workspace switcher */}
+        <div style={{ padding: '0 14px 10px' }}>
+          {session.memberships.length > 1 ? (
+            <select
+              value={workspaceId}
+              onChange={e => { setWorkspaceId(e.target.value); setConnectionId('') }}
+              style={{ width: '100%', padding: '6px 8px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, fontSize: 12, background: 'rgba(255,255,255,0.08)', color: '#dde', cursor: 'pointer' }}
             >
-              Compose
-            </button>
-          </div>
-        )}
+              {session.memberships.map(m => (
+                <option key={m.workspace.id} value={m.workspace.id} style={{ color: '#333' }}>{m.workspace.name}</option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ fontSize: 12, color: '#99a', padding: '4px 0', fontWeight: 500 }}>
+              {currentWorkspace?.workspace.name ?? 'Workspace'}
+            </div>
+          )}
+        </div>
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.filter(item => {
-            if (item.adminOnly && !session.user?.isPlatformAdmin) return false
-            const myRole = session.memberships.find(m => m.workspace.id === workspaceId)?.workspaceRole ?? 'VIEWER'
-            if (item.minRole && (ROLE_LEVEL[myRole] ?? 0) < (ROLE_LEVEL[item.minRole] ?? 0)) return false
+            if (item.adminOnly && !isPlatformAdmin) return false
             return true
           }).map((item, i, arr) => (
             <div key={item.page}>
@@ -270,6 +257,7 @@ export default function App() {
 
         <div className="sidebar-footer">
           <div className="user-email">{session.user?.email}</div>
+          {isPlatformAdmin && <div style={{ fontSize: 9, color: '#5c7cfa', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Platform Admin</div>}
           <button onClick={handleSignOut}>Sign out</button>
         </div>
       </aside>
@@ -277,23 +265,23 @@ export default function App() {
       <div className="main-content">
         <div className="topbar">
           <span style={{ fontWeight: 600, fontSize: 15 }}>
-            {currentWorkspace?.workspace.name ?? 'Workspace'}
+            {currentWorkspace?.workspace.name ?? 'ForgeOps Inbox'}
           </span>
 
-          {session.memberships.length > 1 && (
-            <select value={workspaceId} onChange={e => { setWorkspaceId(e.target.value); setConnectionId('') }}>
-              {session.memberships.map(m => (
-                <option key={m.workspace.id} value={m.workspace.id}>{m.workspace.name}</option>
-              ))}
-            </select>
-          )}
+          <div style={{ flex: 1 }} />
 
           {connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
-            <select value={connectionId} onChange={e => setConnectionId(e.target.value)}>
+            <select value={connectionId} onChange={e => setConnectionId(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}>
               {connections.map(c => (
                 <option key={c.id} value={c.id}>{c.email} ({c.counts.messages} msgs)</option>
               ))}
             </select>
+          )}
+
+          {page === 'inbox' && connectionId && (
+            <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
+              Compose
+            </button>
           )}
         </div>
 
@@ -314,16 +302,14 @@ export default function App() {
             <div className="empty-state">
               <div className="empty-icon">&#128233;</div>
               <h3>No inbox connected</h3>
-              <p>Connect a Gmail or Outlook inbox to start syncing and analyzing your email.</p>
-              <button className="btn btn-primary" onClick={() => navigate('connections')}>
-                Go to Connections
-              </button>
+              <p>Connect a Gmail or Outlook inbox from the Workspace page to start syncing.</p>
+              <button className="btn btn-primary" onClick={() => navigate('workspace')}>Go to Workspace</button>
             </div>
           )}
 
           {page === 'dashboard' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0' }}>
-              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p: Page) => setPage(p)} />
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p: string) => setPage(p as Page)} />
             </div>
           )}
 
@@ -351,17 +337,7 @@ export default function App() {
               <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} />
             </div>
           )}
-          {page === 'connections' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <ConnectionsView workspaceId={workspaceId} connections={connections} onRefresh={loadConnections} />
-            </div>
-          )}
-          {page === 'team' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TeamAccessView workspaceId={workspaceId} />
-            </div>
-          )}
-          {page === 'import' && (
+          {page === 'documents' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <DataImportView workspaceId={workspaceId} />
             </div>
@@ -376,7 +352,7 @@ export default function App() {
               <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
             </div>
           )}
-          {page === 'admin' && session.user?.isPlatformAdmin && (
+          {page === 'admin' && isPlatformAdmin && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <PlatformAdminView />
             </div>
@@ -399,8 +375,7 @@ export default function App() {
               display: 'flex', justifyContent: 'space-between', alignItems: 'center'
             }}>
               <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>New Message</h3>
-              <button onClick={() => setShowCompose(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999' }}>&times;</button>
+              <button onClick={() => setShowCompose(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999' }}>&times;</button>
             </div>
             <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
               <ComposeEditor
