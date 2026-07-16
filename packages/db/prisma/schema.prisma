@@ -132,6 +132,10 @@ model Workspace {
   customers        Customer[]
   vendors          Vendor[]
   jobs             Job[]
+  entityAliases    EntityAlias[]
+  entityContacts   EntityContact[]
+  knowledgeDocs    KnowledgeDocument[]
+  importRuns       ImportRun[]
 }
 
 model User {
@@ -153,6 +157,7 @@ model User {
   updatedRoutingRules     RoutingRule[]    @relation("RoutingRuleUpdater")
   auditEvents             AuditEvent[]     @relation("AuditActor")
   invitedAccess           ApprovedAccess[] @relation("ApprovedAccessInviter")
+  createdDocuments        KnowledgeDocument[] @relation("DocumentCreator")
 }
 
 model ApprovedAccess {
@@ -483,6 +488,8 @@ model Customer {
   jobs            Job[]     @relation("JobCustomer")
   classifications Classification[] @relation("ClassificationCustomer")
   tasks           Task[]    @relation("TaskCustomer")
+  aliases         EntityAlias[]
+  contacts        EntityContact[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -507,6 +514,8 @@ model Vendor {
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   classifications Classification[] @relation("ClassificationVendor")
   tasks           Task[]    @relation("TaskVendor")
+  aliases         EntityAlias[]
+  contacts        EntityContact[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -532,6 +541,7 @@ model Job {
   customer        Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   classifications Classification[] @relation("ClassificationJob")
   tasks           Task[]     @relation("TaskJob")
+  aliases         EntityAlias[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -598,4 +608,127 @@ model AuditEvent {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, entityType, entityId])
   @@index([actorUserId])
+}
+
+enum EntityType {
+  CUSTOMER
+  VENDOR
+  JOB
+}
+
+enum AliasSource {
+  MANUAL
+  IMPORT
+  REVIEW
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum DocumentType {
+  CUSTOMER_LIST
+  VENDOR_LIST
+  JOB_LIST
+  CLASSIFICATION_GUIDE
+  OTHER
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model EntityAlias {
+  id              String      @id @default(cuid())
+  workspaceId     String
+  entityType      EntityType
+  customerId      String?
+  vendorId        String?
+  jobId           String?
+  alias           String
+  normalizedAlias String
+  source          AliasSource @default(IMPORT)
+  createdAt       DateTime    @default(now())
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer        Customer?   @relation(fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  vendor          Vendor?     @relation(fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
+  job             Job?        @relation(fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: SetNull)
+
+  @@unique([workspaceId, entityType, normalizedAlias])
+  @@index([workspaceId, normalizedAlias])
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([jobId])
+}
+
+model EntityContact {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  customerId      String?
+  vendorId        String?
+  name            String?
+  email           String?
+  normalizedEmail String?
+  domain          String?
+  phone           String?
+  role            String?
+  source          AliasSource @default(IMPORT)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer        Customer? @relation(fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  vendor          Vendor?   @relation(fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
+
+  @@index([workspaceId, normalizedEmail])
+  @@index([workspaceId, domain])
+  @@index([customerId])
+  @@index([vendorId])
+}
+
+model KnowledgeDocument {
+  id               String         @id @default(cuid())
+  workspaceId      String
+  filename         String
+  mimeType         String
+  status           DocumentStatus @default(UPLOADED)
+  documentType     DocumentType   @default(OTHER)
+  storageReference String?
+  extractedText    String?
+  fileSize         Int?
+  createdBy        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser    User?          @relation("DocumentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  importRuns       ImportRun[]
+
+  @@index([workspaceId, documentType])
+  @@index([workspaceId, status])
+}
+
+model ImportRun {
+  id                   String             @id @default(cuid())
+  workspaceId          String
+  knowledgeDocumentId  String?
+  importType           EntityType
+  status               ImportStatus       @default(PENDING)
+  rowsRead             Int                @default(0)
+  createdCount         Int                @default(0)
+  updatedCount         Int                @default(0)
+  skippedCount         Int                @default(0)
+  errorCount           Int                @default(0)
+  errorsJson           Json?
+  createdAt            DateTime           @default(now())
+  completedAt          DateTime?
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  knowledgeDocument    KnowledgeDocument? @relation(fields: [knowledgeDocumentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, importType])
+  @@index([workspaceId, status])
 }

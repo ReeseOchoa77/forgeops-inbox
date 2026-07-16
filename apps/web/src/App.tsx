@@ -12,8 +12,9 @@ import { TeamAccessView } from './views/TeamAccessView'
 import { SettingsView } from './views/SettingsView'
 import { DataImportView } from './views/DataImportView'
 import { PlatformAdminView } from './views/PlatformAdminView'
+import { ReferenceDataView } from './views/ReferenceDataView'
 
-type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'settings' | 'admin'
+type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'reference' | 'settings' | 'admin'
 
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
@@ -21,6 +22,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'connections', label: 'Connections', icon: '\u26A1', section: 'Manage' },
   { page: 'team', label: 'Team Access', icon: '\uD83D\uDC65' },
   { page: 'import', label: 'Data Import', icon: '\uD83D\uDCC1' },
+  { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
   { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
@@ -313,6 +315,11 @@ export default function App() {
           {page === 'import' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <DataImportView workspaceId={workspaceId} />
+            </div>
+          )}
+          {page === 'reference' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <ReferenceDataView workspaceId={workspaceId} />
             </div>
           )}
           {page === 'settings' && (
