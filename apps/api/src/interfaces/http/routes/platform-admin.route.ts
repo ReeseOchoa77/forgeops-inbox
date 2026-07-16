@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { getSessionFromRequest } from "../authentication.js";
 
-async function requirePlatformAdmin(
+async function requirePlatformAdminAccess(
   app: FastifyInstance,
   request: FastifyRequest,
   reply: FastifyReply
@@ -16,10 +16,10 @@ async function requirePlatformAdmin(
 
   const user = await app.services.prisma.user.findUnique({
     where: { id: session.userId },
-    select: { id: true, email: true, isPlatformAdmin: true }
+    select: { id: true, email: true, platformRole: true }
   });
 
-  if (!user?.isPlatformAdmin) {
+  if (!user || user.platformRole !== "PLATFORM_ADMIN") {
     reply.code(403).send({ message: "Platform admin access required" });
     return null;
   }
@@ -46,7 +46,7 @@ export const registerPlatformAdminRoutes = async (
 ): Promise<void> => {
 
   app.get("/api/v1/admin/workspaces", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const workspaces = await app.services.prisma.workspace.findMany({
@@ -74,7 +74,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.post("/api/v1/admin/workspaces", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const body = createWorkspaceSchema.parse(request.body);
@@ -106,7 +106,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.delete("/api/v1/admin/workspaces/:workspaceId", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
@@ -136,7 +136,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.get("/api/v1/admin/mailboxes", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const connections = await app.services.prisma.inboxConnection.findMany({
@@ -173,7 +173,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.post("/api/v1/admin/mailboxes", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const body = registerMailboxSchema.parse(request.body);
@@ -239,7 +239,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.patch("/api/v1/admin/mailboxes/:mailboxId/pause", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
@@ -270,7 +270,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.patch("/api/v1/admin/mailboxes/:mailboxId/resume", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
@@ -301,7 +301,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.patch("/api/v1/admin/mailboxes/:mailboxId/ingestion-mode", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
@@ -337,7 +337,7 @@ export const registerPlatformAdminRoutes = async (
   });
 
   app.get("/api/v1/admin/workspaces/:workspaceId/members", async (request, reply) => {
-    const admin = await requirePlatformAdmin(app, request, reply);
+    const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
     const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
@@ -346,8 +346,8 @@ export const registerPlatformAdminRoutes = async (
       where: { workspaceId },
       orderBy: { createdAt: "asc" },
       select: {
-        id: true, role: true, createdAt: true,
-        user: { select: { id: true, email: true, name: true, lastLoginAt: true, isPlatformAdmin: true } }
+        id: true, role: true, workspaceRole: true, createdAt: true,
+        user: { select: { id: true, email: true, name: true, lastLoginAt: true, isPlatformAdmin: true, platformRole: true } }
       }
     });
 
@@ -358,10 +358,182 @@ export const registerPlatformAdminRoutes = async (
         email: m.user.email,
         name: m.user.name,
         role: m.role,
+        workspaceRole: m.workspaceRole,
         isPlatformAdmin: m.user.isPlatformAdmin,
+        platformRole: m.user.platformRole,
         lastLoginAt: m.user.lastLoginAt?.toISOString() ?? null,
         memberSince: m.createdAt.toISOString()
       }))
     });
+  });
+
+  app.get("/api/v1/admin/approved-users", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const entries = await app.services.prisma.approvedAccess.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, email: true, workspaceId: true, role: true, workspaceRole: true,
+        status: true, createdAt: true,
+        workspace: { select: { name: true } },
+        invitedByUser: { select: { email: true } }
+      }
+    });
+
+    return reply.send({ entries });
+  });
+
+  app.post("/api/v1/admin/approved-users", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const body = z.object({
+      email: z.string().email(),
+      workspaceId: z.string().min(1),
+      workspaceRole: z.enum(["OWNER", "EDITOR", "VIEWER"]).default("VIEWER")
+    }).parse(request.body);
+
+    const entry = await app.services.prisma.approvedAccess.upsert({
+      where: { workspaceId_email: { workspaceId: body.workspaceId, email: body.email.toLowerCase() } },
+      update: { status: "ACTIVE", workspaceRole: body.workspaceRole, role: body.workspaceRole === "OWNER" ? "OWNER" : body.workspaceRole === "EDITOR" ? "MEMBER" : "VIEWER" },
+      create: {
+        email: body.email.toLowerCase(),
+        workspaceId: body.workspaceId,
+        workspaceRole: body.workspaceRole,
+        role: body.workspaceRole === "OWNER" ? "OWNER" : body.workspaceRole === "EDITOR" ? "MEMBER" : "VIEWER",
+        status: "ACTIVE",
+        invitedByUserId: admin.userId
+      }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: body.workspaceId,
+      actorUserId: admin.userId,
+      entityType: "APPROVED_ACCESS",
+      entityId: entry.id,
+      action: "admin.user_approved",
+      metadata: { email: body.email, workspaceRole: body.workspaceRole },
+      request
+    });
+
+    return reply.code(201).send({ entry });
+  });
+
+  app.patch("/api/v1/admin/approved-users/:accessId/revoke", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const { accessId } = z.object({ accessId: z.string().min(1) }).parse(request.params);
+
+    await app.services.prisma.approvedAccess.update({
+      where: { id: accessId },
+      data: { status: "REVOKED" }
+    });
+
+    return reply.send({ status: "revoked" });
+  });
+
+  app.patch("/api/v1/admin/users/:userId/platform-role", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const { userId } = z.object({ userId: z.string().min(1) }).parse(request.params);
+    const body = z.object({ platformRole: z.enum(["PLATFORM_ADMIN", "STANDARD_USER"]) }).parse(request.body);
+
+    if (userId === admin.userId && body.platformRole === "STANDARD_USER") {
+      return reply.code(400).send({ message: "Cannot revoke your own platform admin role" });
+    }
+
+    await app.services.prisma.user.update({
+      where: { id: userId },
+      data: {
+        platformRole: body.platformRole,
+        isPlatformAdmin: body.platformRole === "PLATFORM_ADMIN"
+      }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: "platform",
+      actorUserId: admin.userId,
+      entityType: "USER",
+      entityId: userId,
+      action: "admin.platform_role_changed",
+      metadata: { newRole: body.platformRole },
+      request
+    });
+
+    return reply.send({ status: "updated", platformRole: body.platformRole });
+  });
+
+  app.get("/api/v1/admin/workspace-mailboxes", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const mailboxes = await app.services.prisma.workspaceMailbox.findMany({
+      orderBy: { updatedAt: "desc" },
+      include: {
+        workspace: { select: { name: true, slug: true } }
+      }
+    });
+
+    return reply.send({ mailboxes });
+  });
+
+  app.post("/api/v1/admin/workspace-mailboxes", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const body = z.object({
+      workspaceId: z.string().min(1),
+      emailAddress: z.string().email(),
+      provider: z.enum(["GMAIL", "OUTLOOK"]).default("OUTLOOK"),
+      displayName: z.string().max(200).optional(),
+      ingestionMode: z.enum(["NATIVE", "N8N"]).default("N8N")
+    }).parse(request.body);
+
+    const normalized = body.emailAddress.toLowerCase();
+
+    const mailbox = await app.services.prisma.workspaceMailbox.create({
+      data: {
+        workspaceId: body.workspaceId,
+        emailAddress: body.emailAddress,
+        normalizedEmail: normalized,
+        provider: body.provider,
+        displayName: body.displayName ?? body.emailAddress,
+        status: "ACTIVE",
+        ingestionMode: body.ingestionMode
+      }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: body.workspaceId,
+      actorUserId: admin.userId,
+      entityType: "WORKSPACE_MAILBOX",
+      entityId: mailbox.id,
+      action: "admin.workspace_mailbox_created",
+      metadata: { email: normalized, provider: body.provider, ingestionMode: body.ingestionMode },
+      request
+    });
+
+    return reply.code(201).send({ mailbox });
+  });
+
+  app.patch("/api/v1/admin/workspace-mailboxes/:mailboxId/pause", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
+    await app.services.prisma.workspaceMailbox.update({ where: { id: mailboxId }, data: { status: "PAUSED" } });
+    return reply.send({ status: "paused" });
+  });
+
+  app.patch("/api/v1/admin/workspace-mailboxes/:mailboxId/resume", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
+    await app.services.prisma.workspaceMailbox.update({ where: { id: mailboxId }, data: { status: "ACTIVE" } });
+    return reply.send({ status: "active" });
   });
 };

@@ -148,23 +148,39 @@ export const registerAiImportRoutes = async (
 
       try {
         const openai = new OpenAI({ apiKey: app.services.env.OPENAI_API_KEY });
+        const model = app.services.env.OPENAI_MODEL ?? "gpt-4.1-mini";
 
-        const completion = await openai.chat.completions.create({
-          model: app.services.env.OPENAI_MODEL,
-          messages: [
-            { role: "system", content: EXTRACTION_PROMPT },
-            { role: "user", content: `Here is the document content:\n\n${documentText}` }
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" }
-        });
+        let completion;
+        try {
+          completion = await openai.chat.completions.create({
+            model,
+            messages: [
+              { role: "system", content: EXTRACTION_PROMPT },
+              { role: "user", content: `Here is the document content:\n\n${documentText}` }
+            ],
+            temperature: 0.1,
+            response_format: { type: "json_object" }
+          });
+        } catch (aiErr) {
+          const aiMsg = aiErr instanceof Error ? aiErr.message : "Unknown AI error";
+          app.log.error({ event: "ai_import_model_error", model, error: aiMsg });
+          return reply.code(502).send({
+            message: `AI service error: ${aiMsg.includes("verbosity") || aiMsg.includes("unsupported") ? "Model configuration issue — try setting OPENAI_MODEL to gpt-4.1-mini" : aiMsg}`
+          });
+        }
 
         const rawContent = completion.choices[0]?.message?.content;
         if (!rawContent) {
           return reply.code(500).send({ message: "AI did not return a response." });
         }
 
-        const parsed = JSON.parse(rawContent);
+        let parsed;
+        try {
+          parsed = JSON.parse(rawContent);
+        } catch {
+          return reply.code(502).send({ message: "AI returned invalid JSON." });
+        }
+
         const result = extractionResultSchema.parse(parsed);
 
         await app.services.auditEventLogger.log({

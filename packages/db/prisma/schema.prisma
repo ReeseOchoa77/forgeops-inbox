@@ -16,6 +16,29 @@ enum Role {
   VIEWER
 }
 
+enum PlatformRole {
+  PLATFORM_ADMIN
+  STANDARD_USER
+}
+
+enum WorkspaceRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+enum MailboxStatus {
+  ACTIVE
+  PAUSED
+  DISCONNECTED
+  ERROR
+}
+
+enum IngestionMode {
+  NATIVE
+  N8N
+}
+
 enum InboxProvider {
   GMAIL
   OUTLOOK
@@ -136,6 +159,7 @@ model Workspace {
   entityContacts   EntityContact[]
   knowledgeDocs    KnowledgeDocument[]
   importRuns       ImportRun[]
+  workspaceMailboxes WorkspaceMailbox[]
 }
 
 model User {
@@ -146,6 +170,7 @@ model User {
   avatarUrl               String?
   lastLoginAt             DateTime?
   isPlatformAdmin         Boolean          @default(false)
+  platformRole            PlatformRole     @default(STANDARD_USER)
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
   memberships             Membership[]
@@ -165,6 +190,7 @@ model ApprovedAccess {
   email           String
   workspaceId     String
   role            Role                 @default(MEMBER)
+  workspaceRole   WorkspaceRole        @default(VIEWER)
   status          ApprovedAccessStatus @default(ACTIVE)
   invitedByUserId String?
   createdAt       DateTime             @default(now())
@@ -181,15 +207,17 @@ model Membership {
   id          String    @id @default(cuid())
   workspaceId String
   userId      String
-  role        Role      @default(MEMBER)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            Role          @default(MEMBER)
+  workspaceRole   WorkspaceRole @default(VIEWER)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([userId])
   @@index([workspaceId, role])
+  @@index([workspaceId, workspaceRole])
 }
 
 model InboxConnection {
@@ -223,6 +251,7 @@ model InboxConnection {
   threads           EmailThread[]
   messages          EmailMessage[]
   normalizedEmails  NormalizedEmail[]
+  workspaceMailboxes WorkspaceMailbox[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, provider, email])
@@ -549,6 +578,32 @@ model Job {
   @@index([workspaceId, customerId])
   @@index([workspaceId, status])
   @@index([workspaceId, externalRef])
+}
+
+model WorkspaceMailbox {
+  id                          String        @id @default(cuid())
+  workspaceId                 String
+  emailAddress                String
+  normalizedEmail             String
+  provider                    InboxProvider @default(OUTLOOK)
+  displayName                 String?
+  status                      MailboxStatus @default(ACTIVE)
+  ingestionMode               IngestionMode @default(N8N)
+  inboxConnectionId           String?
+  lastMessageSeenAt           DateTime?
+  lastSuccessfulProcessingAt  DateTime?
+  lastErrorAt                 DateTime?
+  lastErrorMessage            String?
+  createdAt                   DateTime      @default(now())
+  updatedAt                   DateTime      @updatedAt
+  workspace                   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inboxConnection             InboxConnection? @relation(fields: [inboxConnectionId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, normalizedEmail])
+  @@unique([normalizedEmail, provider])
+  @@index([workspaceId, status])
+  @@index([normalizedEmail])
+  @@index([provider, normalizedEmail])
 }
 
 model RoutingRule {

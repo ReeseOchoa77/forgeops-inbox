@@ -328,11 +328,13 @@ export const registerAuthRoutes = async (
         email: user.email,
         name: user.name,
         avatarUrl: user.avatarUrl,
-        isPlatformAdmin: user.isPlatformAdmin
+        isPlatformAdmin: user.isPlatformAdmin,
+        platformRole: user.platformRole
       },
       memberships: memberships.map((membership) => ({
         id: membership.id,
         role: membership.role,
+        workspaceRole: membership.workspaceRole,
         workspace: membership.workspace
       }))
     });

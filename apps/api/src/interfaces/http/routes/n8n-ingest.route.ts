@@ -103,37 +103,84 @@ async function resolveMailboxOwnership(
   const normalized = mailboxEmail.toLowerCase();
   const dbProvider = provider === "outlook" ? "OUTLOOK" : "GMAIL";
 
-  const connections = await prisma.inboxConnection.findMany({
+  const mailboxes = await prisma.workspaceMailbox.findMany({
     where: {
+      normalizedEmail: normalized,
       provider: dbProvider,
-      email: normalized,
-      ingestionSource: "N8N",
       status: { in: ["ACTIVE", "PAUSED"] }
     },
-    select: { id: true, workspaceId: true, status: true, ingestionSource: true }
+    select: { id: true, workspaceId: true, status: true, ingestionMode: true, inboxConnectionId: true }
   });
 
-  if (connections.length === 0) {
-    throw new MailboxNotFoundError(
-      `No registered n8n mailbox found for ${normalized} (${provider}). ` +
-      `Register this mailbox via the platform admin API first.`
-    );
+  if (mailboxes.length === 0) {
+    const legacyConnection = await prisma.inboxConnection.findFirst({
+      where: {
+        provider: dbProvider,
+        email: normalized,
+        ingestionSource: "N8N",
+        status: { in: ["ACTIVE", "PAUSED"] }
+      },
+      select: { id: true, workspaceId: true, status: true }
+    });
+
+    if (!legacyConnection) {
+      throw new MailboxNotFoundError(
+        `No registered mailbox found for ${normalized} (${provider}). ` +
+        `Register this mailbox via the platform admin API first.`
+      );
+    }
+
+    if (legacyConnection.status === "PAUSED") {
+      throw new MailboxPausedError(`Mailbox ${normalized} is paused.`);
+    }
+
+    return { connectionId: legacyConnection.id, workspaceId: legacyConnection.workspaceId };
   }
 
-  if (connections.length > 1) {
+  if (mailboxes.length > 1) {
     throw new AmbiguousMailboxError(
       `Multiple workspaces claim mailbox ${normalized}. ` +
       `Resolve the conflict via the platform admin API.`
     );
   }
 
-  const connection = connections[0]!;
+  const mailbox = mailboxes[0]!;
 
-  if (connection.status === "PAUSED") {
+  if (mailbox.status === "PAUSED") {
     throw new MailboxPausedError(`Mailbox ${normalized} is paused. Resume it via the platform admin API.`);
   }
 
-  return { connectionId: connection.id, workspaceId: connection.workspaceId };
+  let connectionId = mailbox.inboxConnectionId;
+  if (!connectionId) {
+    const connection = await prisma.inboxConnection.findFirst({
+      where: { workspaceId: mailbox.workspaceId, provider: dbProvider, email: normalized },
+      select: { id: true }
+    });
+
+    if (connection) {
+      connectionId = connection.id;
+    } else {
+      const created = await prisma.inboxConnection.create({
+        data: {
+          workspaceId: mailbox.workspaceId,
+          provider: dbProvider,
+          email: normalized,
+          displayName: normalized,
+          status: "ACTIVE",
+          ingestionSource: "N8N",
+          connectedAt: new Date()
+        }
+      });
+      connectionId = created.id;
+    }
+
+    await prisma.workspaceMailbox.update({
+      where: { id: mailbox.id },
+      data: { inboxConnectionId: connectionId }
+    });
+  }
+
+  return { connectionId, workspaceId: mailbox.workspaceId };
 }
 
 class MailboxNotFoundError extends Error { constructor(msg: string) { super(msg); this.name = "MailboxNotFoundError"; } }
@@ -511,6 +558,11 @@ async function handleN8nIngest(
       data: { lastReceivedAt: new Date() }
     });
 
+    await app.services.prisma.workspaceMailbox.updateMany({
+      where: { inboxConnectionId: connectionId },
+      data: { lastMessageSeenAt: new Date() }
+    }).catch(() => {});
+
     const result = await app.services.prisma.$transaction(async (tx) => {
       return upsertEmailData(tx, workspaceId, connectionId, body);
     }, { timeout: 30_000 });
@@ -522,6 +574,11 @@ async function handleN8nIngest(
         lastErrorMessage: null
       }
     });
+
+    await app.services.prisma.workspaceMailbox.updateMany({
+      where: { inboxConnectionId: connectionId },
+      data: { lastSuccessfulProcessingAt: new Date(), lastErrorMessage: null }
+    }).catch(() => {});
 
     const auditAction = result.status === "created"
       ? "n8n.email_created"

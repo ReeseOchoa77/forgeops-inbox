@@ -24,8 +24,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export interface SessionResponse {
   authenticated: boolean;
   accessRevoked?: boolean;
-  user: { id: string; email: string; name: string | null; avatarUrl: string | null; isPlatformAdmin?: boolean } | null;
-  memberships: Array<{ id: string; role: string; workspace: { id: string; name: string; slug: string } }>;
+  user: { id: string; email: string; name: string | null; avatarUrl: string | null; isPlatformAdmin?: boolean; platformRole?: string } | null;
+  memberships: Array<{ id: string; role: string; workspaceRole: string; workspace: { id: string; name: string; slug: string } }>;
 }
 
 export interface ConnectionSummary {

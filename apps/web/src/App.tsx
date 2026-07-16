@@ -13,26 +13,35 @@ import { SettingsView } from './views/SettingsView'
 import { DataImportView } from './views/DataImportView'
 import { PlatformAdminView } from './views/PlatformAdminView'
 import { ReferenceDataView } from './views/ReferenceDataView'
+import { TasksView } from './views/TasksView'
+import { DashboardView } from './views/DashboardView'
+import { WorkspaceView } from './views/WorkspaceView'
 
-type Page = 'inbox' | 'message-detail' | 'review' | 'connections' | 'team' | 'import' | 'reference' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'import' | 'reference' | 'workspace' | 'connections' | 'team' | 'settings' | 'admin'
 
-const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
+type MinRole = 'VIEWER' | 'EDITOR' | 'OWNER'
+
+const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean; minRole?: MinRole }> = [
+  { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'review', label: 'Review Queue', icon: '\u2696' },
-  { page: 'connections', label: 'Connections', icon: '\u26A1', section: 'Manage' },
-  { page: 'team', label: 'Team Access', icon: '\uD83D\uDC65' },
-  { page: 'import', label: 'Data Import', icon: '\uD83D\uDCC1' },
+  { page: 'tasks', label: 'Tasks', icon: '\u2611' },
+  { page: 'import', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
+  { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
+  { page: 'connections', label: 'Connections', icon: '\u26A1' },
   { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
+
+const ROLE_LEVEL: Record<string, number> = { VIEWER: 1, EDITOR: 2, OWNER: 3 }
 
 export default function App() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [workspaceId, setWorkspaceId] = useState('')
   const [connectionId, setConnectionId] = useState('')
-  const [page, setPage] = useState<Page>('inbox')
+  const [page, setPage] = useState<Page>('dashboard')
   const [selectedMessageId, setSelectedMessageId] = useState('')
   const [error, setError] = useState('')
   const [accessDenied, setAccessDenied] = useState(false)
@@ -199,7 +208,26 @@ export default function App() {
   }
 
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
-  const needsConnection = ['inbox', 'review', 'message-detail'].includes(page) && connections.length === 0
+  const currentRole = currentWorkspace?.workspaceRole ?? 'VIEWER'
+  const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
+
+  if (session.memberships.length === 0 && !session.user?.isPlatformAdmin) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+        <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
+          <div style={{ width: 56, height: 56, borderRadius: 12, background: '#e3f2fd', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 24 }}>&#9993;</div>
+          <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700 }}>Access Approved</h2>
+          <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.5 }}>
+            Your account has been approved for ForgeOps Inbox, but you haven't been assigned to a workspace yet.
+          </p>
+          <p style={{ color: '#999', margin: '0 0 24px', fontSize: 14 }}>
+            Contact your administrator to be added to a workspace.
+          </p>
+          <button onClick={handleSignOut} className="btn btn-outline">Sign out</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app-layout">
@@ -219,7 +247,12 @@ export default function App() {
         )}
 
         <nav className="sidebar-nav">
-          {NAV_ITEMS.filter(item => !item.adminOnly || session.user?.isPlatformAdmin).map((item, i, arr) => (
+          {NAV_ITEMS.filter(item => {
+            if (item.adminOnly && !session.user?.isPlatformAdmin) return false
+            const myRole = session.memberships.find(m => m.workspace.id === workspaceId)?.workspaceRole ?? 'VIEWER'
+            if (item.minRole && (ROLE_LEVEL[myRole] ?? 0) < (ROLE_LEVEL[item.minRole] ?? 0)) return false
+            return true
+          }).map((item, i, arr) => (
             <div key={item.page}>
               {item.section && (i === 0 || arr[i - 1]?.section !== item.section) && (
                 <div className="sidebar-section-label">{item.section}</div>
@@ -288,6 +321,12 @@ export default function App() {
             </div>
           )}
 
+          {page === 'dashboard' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '0' }}>
+              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p: Page) => setPage(p)} />
+            </div>
+          )}
+
           {!needsConnection && page === 'inbox' && connectionId && (
             <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
           )}
@@ -301,7 +340,17 @@ export default function App() {
               <ReviewQueueView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
             </div>
           )}
+          {!needsConnection && page === 'tasks' && connectionId && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <TasksView workspaceId={workspaceId} connectionId={connectionId} />
+            </div>
+          )}
 
+          {page === 'workspace' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} />
+            </div>
+          )}
           {page === 'connections' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <ConnectionsView workspaceId={workspaceId} connections={connections} onRefresh={loadConnections} />
