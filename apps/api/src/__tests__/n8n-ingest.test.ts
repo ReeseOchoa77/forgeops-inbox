@@ -40,7 +40,13 @@ const n8nEmailResultSchema = z.object({
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
-      dueDate: z.string().datetime().nullable().optional(),
+      dueDate: z.string().nullable().optional().transform(val => {
+        if (!val) return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return `${val}T00:00:00.000Z`;
+        const d = new Date(val);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString();
+      }),
       recommendedOwner: z.string().max(200).nullable().optional(),
       confidence: z.number().min(0).max(1)
     })).max(MAX_TASKS).default([]),
@@ -246,5 +252,99 @@ describe("n8n email-results schema validation", () => {
       expect(result.data.analysis.tasks).toEqual([]);
       expect(result.data.analysis.reviewReasons).toEqual([]);
     }
+  });
+
+  it("accepts multiple tasks from one email", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Review PO #1234", description: "Review attached PO", dueDate: "2026-07-28", confidence: 0.9, recommendedOwner: null },
+      { title: "Update job log", description: "Log PO in system", dueDate: null, confidence: 0.85, recommendedOwner: null },
+      { title: "Send confirmation", description: "Reply to vendor", dueDate: "2026-07-30T00:00:00.000Z", confidence: 0.88, recommendedOwner: null }
+    ];
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.tasks.length).toBe(3);
+    }
+  });
+
+  it("replaying same payload with multiple tasks validates identically", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Task A", description: "", dueDate: null, confidence: 0.9, recommendedOwner: null },
+      { title: "Task B", description: "", dueDate: null, confidence: 0.8, recommendedOwner: null }
+    ];
+    const r1 = n8nEmailResultSchema.safeParse(payload);
+    const r2 = n8nEmailResultSchema.safeParse(payload);
+    expect(r1.success).toBe(true);
+    expect(r2.success).toBe(true);
+    if (r1.success && r2.success) {
+      expect(r1.data.analysis.tasks.length).toBe(r2.data.analysis.tasks.length);
+    }
+  });
+
+  it("accepts date-only due date (YYYY-MM-DD) and normalizes to UTC midnight", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Test task", description: "", dueDate: "2026-07-28", confidence: 0.9, recommendedOwner: null }
+    ];
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.tasks[0]!.dueDate).toBe("2026-07-28T00:00:00.000Z");
+    }
+  });
+
+  it("accepts full ISO due date", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Test task", description: "", dueDate: "2026-07-28T14:30:00.000Z", confidence: 0.9, recommendedOwner: null }
+    ];
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.tasks[0]!.dueDate).toBe("2026-07-28T14:30:00.000Z");
+    }
+  });
+
+  it("accepts null due date", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Test task", description: "", dueDate: null, confidence: 0.9, recommendedOwner: null }
+    ];
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.tasks[0]!.dueDate).toBeNull();
+    }
+  });
+
+  it("normalizes malformed dates to null instead of rejecting", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).tasks = [
+      { title: "Test task", description: "", dueDate: "not-a-date", confidence: 0.9, recommendedOwner: null }
+    ];
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.tasks[0]!.dueDate).toBeNull();
+    }
+  });
+
+  it("task order change between analyses produces different task keys", () => {
+    const payload1 = makeValidPayload();
+    const payload2 = makeValidPayload();
+    (payload1.analysis as Record<string, unknown>).tasks = [
+      { title: "Task A", description: "", dueDate: null, confidence: 0.9, recommendedOwner: null },
+      { title: "Task B", description: "", dueDate: null, confidence: 0.8, recommendedOwner: null }
+    ];
+    (payload2.analysis as Record<string, unknown>).tasks = [
+      { title: "Task B", description: "", dueDate: null, confidence: 0.8, recommendedOwner: null },
+      { title: "Task A", description: "", dueDate: null, confidence: 0.9, recommendedOwner: null }
+    ];
+    const r1 = n8nEmailResultSchema.safeParse(payload1);
+    const r2 = n8nEmailResultSchema.safeParse(payload2);
+    expect(r1.success).toBe(true);
+    expect(r2.success).toBe(true);
   });
 });

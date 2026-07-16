@@ -310,9 +310,10 @@ export const analyzeInboxConnection = async (input: {
 
         await tx.task.upsert({
           where: {
-            workspaceId_sourceMessageId: {
+            workspaceId_sourceMessageId_sourceTaskKey: {
               workspaceId: input.workspaceId,
-              sourceMessageId: message.id
+              sourceMessageId: message.id,
+              sourceTaskKey: "heuristic-primary"
             }
           },
           update: {
@@ -320,6 +321,7 @@ export const analyzeInboxConnection = async (input: {
             classificationId: persistedClassification.id,
             assigneeUserId: null,
             assigneeGuess: taskCandidate.assigneeGuess,
+            sourceTaskKey: "heuristic-primary",
             title: taskCandidate.title,
             summary: taskCandidate.summary,
             description: taskCandidate.summary,
@@ -338,6 +340,7 @@ export const analyzeInboxConnection = async (input: {
             workspaceId: input.workspaceId,
             sourceThreadId: message.threadId,
             sourceMessageId: message.id,
+            sourceTaskKey: "heuristic-primary",
             classificationId: persistedClassification.id,
             assigneeGuess: taskCandidate.assigneeGuess,
             title: taskCandidate.title,

@@ -49,7 +49,13 @@ const n8nEmailResultSchema = z.object({
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
-      dueDate: z.string().datetime().nullable().optional(),
+      dueDate: z.string().nullable().optional().transform(val => {
+        if (!val) return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return `${val}T00:00:00.000Z`;
+        const d = new Date(val);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString();
+      }),
       recommendedOwner: z.string().max(200).nullable().optional(),
       confidence: z.number().min(0).max(1)
     })).max(MAX_TASKS).default([]),
@@ -83,6 +89,14 @@ function mapPriorityToEnum(priority: string): "LOW" | "MEDIUM" | "HIGH" | "URGEN
     case "LOW": return "LOW";
     default: return "MEDIUM";
   }
+}
+
+function generateTaskKey(messageId: string, title: string, index: number): string {
+  const normalized = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
+  return createHash("sha256")
+    .update(`${messageId}:${normalized}:${index}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function mapEmailType(body: N8nEmailResult): "ACTIONABLE_REQUEST" | "FYI_UPDATE" | "SALES_MARKETING" | "SUPPORT_CUSTOMER_ISSUE" | "INTERNAL_COORDINATION" | "NEEDS_REVIEW" {
@@ -435,26 +449,49 @@ async function upsertTasks(
   body: N8nEmailResult,
   messagePriority: "LOW" | "MEDIUM" | "HIGH" | "URGENT"
 ): Promise<string[]> {
-  await tx.task.deleteMany({
-    where: { workspaceId, sourceMessageId: messageId }
-  });
-
   const taskIds: string[] = [];
+  const incomingKeys = new Set<string>();
 
-  for (const task of body.analysis.tasks) {
+  for (let i = 0; i < body.analysis.tasks.length; i++) {
+    const task = body.analysis.tasks[i]!;
+    const taskKey = generateTaskKey(messageId, task.title, i);
+    incomingKeys.add(taskKey);
     const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;
+    const dueAt = task.dueDate ? new Date(task.dueDate) : null;
 
-    const created = await tx.task.create({
-      data: {
-        workspaceId,
+    const upserted = await tx.task.upsert({
+      where: {
+        workspaceId_sourceMessageId_sourceTaskKey: {
+          workspaceId,
+          sourceMessageId: messageId,
+          sourceTaskKey: taskKey
+        }
+      },
+      update: {
         sourceThreadId: threadId,
-        sourceMessageId: messageId,
         classificationId,
         title: task.title,
         summary: task.description || null,
         description: task.description || null,
         assigneeGuess: task.recommendedOwner ?? null,
-        dueAt: task.dueDate ? new Date(task.dueDate) : null,
+        dueAt,
+        priority: messagePriority,
+        confidence: toConfidence(task.confidence),
+        requiresReview: taskRequiresReview,
+        reviewQueue: taskRequiresReview ? "EXTRACTION" : null,
+        reviewStatus: taskRequiresReview ? "PENDING" : "NOT_REQUIRED"
+      },
+      create: {
+        workspaceId,
+        sourceThreadId: threadId,
+        sourceMessageId: messageId,
+        sourceTaskKey: taskKey,
+        classificationId,
+        title: task.title,
+        summary: task.description || null,
+        description: task.description || null,
+        assigneeGuess: task.recommendedOwner ?? null,
+        dueAt,
         priority: messagePriority,
         status: "OPEN",
         confidence: toConfidence(task.confidence),
@@ -464,7 +501,19 @@ async function upsertTasks(
       }
     });
 
-    taskIds.push(created.id);
+    taskIds.push(upserted.id);
+  }
+
+  const staleTasksRemoved = await tx.task.deleteMany({
+    where: {
+      workspaceId,
+      sourceMessageId: messageId,
+      sourceTaskKey: { notIn: [...incomingKeys] }
+    }
+  });
+
+  if (staleTasksRemoved.count > 0) {
+    console.info("stale-tasks-removed", { messageId, count: staleTasksRemoved.count });
   }
 
   return taskIds;

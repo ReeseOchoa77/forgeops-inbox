@@ -456,6 +456,7 @@ model Task {
   classificationId String?
   assigneeUserId   String?
   assigneeGuess    String?
+  sourceTaskKey    String?
   title            String
   summary          String?
   description      String?
@@ -490,7 +491,7 @@ model Task {
   @@index([workspaceId, priority, status])
   @@index([workspaceId, confidence])
   @@index([workspaceId, reviewQueue, reviewStatus])
-  @@unique([workspaceId, sourceMessageId])
+  @@unique([workspaceId, sourceMessageId, sourceTaskKey])
   @@index([sourceThreadId])
   @@index([sourceMessageId])
   @@index([classificationId])
