@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type MessageSummary, type TaskListItem } from '../api'
-import { ConfidenceBadge, PriorityBadge, TypeBadge } from '../components/Badges'
+import { PriorityBadge, TypeBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string

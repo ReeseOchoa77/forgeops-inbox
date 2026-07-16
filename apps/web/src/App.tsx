@@ -156,6 +156,11 @@ export default function App() {
     )
   }
 
+  const handleSignOut = async () => {
+    await api.logout()
+    window.location.href = '/'
+  }
+
   // --- Zero workspaces ---
   if (session.memberships.length === 0 && !session.user?.isPlatformAdmin) {
     return (
@@ -178,11 +183,6 @@ export default function App() {
   const openMessage = (id: string) => {
     setSelectedMessageId(id)
     setPage('message-detail')
-  }
-
-  const handleSignOut = async () => {
-    await api.logout()
-    window.location.href = '/'
   }
 
   const handleNewComposeSend = async (payload: { to: string[]; cc: string[]; subject: string; html: string; files: File[] }) => {
@@ -309,7 +309,7 @@ export default function App() {
 
           {page === 'dashboard' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p: string) => setPage(p as Page)} />
+              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p) => setPage(p)} />
             </div>
           )}
 

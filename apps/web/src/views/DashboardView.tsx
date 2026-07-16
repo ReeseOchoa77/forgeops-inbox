@@ -4,7 +4,7 @@ import { api, type TaskListItem, type MessageSummary, type ReviewItem } from '..
 interface Props {
   workspaceId: string
   connectionId: string
-  onNavigate: (page: string) => void
+  onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin') => void
 }
 
 function formatDate(iso: string | null): string {

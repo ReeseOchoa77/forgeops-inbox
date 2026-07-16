@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../api'
+// api imported via fetchJson/postJson helpers below
 
 type Tab = 'customers' | 'vendors' | 'jobs' | 'contacts' | 'aliases' | 'documents' | 'imports'
 
