@@ -67,6 +67,13 @@ enum BusinessCategory {
   NON_BUSINESS
 }
 
+enum MailboxCategory {
+  BUSINESS
+  PERSONAL
+  SPAM
+  TRASH
+}
+
 enum EmailType {
   ACTIONABLE_REQUEST
   FYI_UPDATE
@@ -333,6 +340,10 @@ model EmailMessage {
   isImportant      Boolean       @default(false)
   isTrashed        Boolean       @default(false)
   isSpam           Boolean       @default(false)
+  mailboxCategory  MailboxCategory @default(BUSINESS)
+  trashedAt        DateTime?
+  trashedBy        String?
+  previousCategory MailboxCategory?
   attachmentMetadata Json?
   sentAt           DateTime
   receivedAt       DateTime?
@@ -360,6 +371,7 @@ model EmailMessage {
   @@index([workspaceId, inboxConnectionId, receivedAt])
   @@index([workspaceId, historyId])
   @@index([workspaceId, sentAt])
+  @@index([workspaceId, mailboxCategory, receivedAt])
   @@index([workspaceId, threadId, sentAt])
   @@index([workspaceId, itemStatus, sentAt])
   @@index([senderEmail])
@@ -470,6 +482,9 @@ model Task {
   reviewedByUserId String?
   reviewedAt       DateTime?
   completedAt      DateTime?
+  dismissedAt      DateTime?
+  dismissedBy      String?
+  dismissalReason  String?
   customerId       String?
   vendorId         String?
   jobId            String?

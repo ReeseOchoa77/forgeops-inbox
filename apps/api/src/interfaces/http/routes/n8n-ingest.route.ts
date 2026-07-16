@@ -42,6 +42,7 @@ const n8nEmailResultSchema = z.object({
   }),
   analysis: z.object({
     businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]).optional().default("BUSINESS"),
     confidence: z.number().min(0).max(1),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
@@ -375,8 +376,9 @@ async function upsertEmailData(
       hasAttachments: body.email.hasAttachments,
       isRead: false,
       isImportant: body.analysis.priority === "HIGH" || body.analysis.priority === "URGENT",
-      isSpam: false,
+      isSpam: body.analysis.mailboxCategory === "SPAM",
       isTrashed: false,
+      mailboxCategory: body.analysis.mailboxCategory ?? "BUSINESS",
       attachmentMetadata: toPrismaJson(attachmentMetadata),
       sentAt: receivedAt,
       receivedAt,

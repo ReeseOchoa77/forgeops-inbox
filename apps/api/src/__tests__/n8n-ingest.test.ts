@@ -33,6 +33,7 @@ const n8nEmailResultSchema = z.object({
   }),
   analysis: z.object({
     businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]).optional().default("BUSINESS"),
     confidence: z.number().min(0).max(1),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
@@ -346,5 +347,43 @@ describe("n8n email-results schema validation", () => {
     const r2 = n8nEmailResultSchema.safeParse(payload2);
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
+  });
+
+  it("accepts BUSINESS mailboxCategory", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).mailboxCategory = "BUSINESS";
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.analysis.mailboxCategory).toBe("BUSINESS");
+  });
+
+  it("accepts PERSONAL mailboxCategory", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).mailboxCategory = "PERSONAL";
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.analysis.mailboxCategory).toBe("PERSONAL");
+  });
+
+  it("accepts SPAM mailboxCategory", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).mailboxCategory = "SPAM";
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.analysis.mailboxCategory).toBe("SPAM");
+  });
+
+  it("defaults mailboxCategory to BUSINESS when omitted", () => {
+    const payload = makeValidPayload();
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.analysis.mailboxCategory).toBe("BUSINESS");
+  });
+
+  it("rejects TRASH as mailboxCategory (user action, not classification)", () => {
+    const payload = makeValidPayload();
+    (payload.analysis as Record<string, unknown>).mailboxCategory = "TRASH";
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(false);
   });
 });

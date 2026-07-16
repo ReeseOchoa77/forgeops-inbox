@@ -81,6 +81,7 @@ export interface MessageSummary {
   isImportant: boolean;
   isSpam: boolean;
   isTrashed: boolean;
+  mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
 }
