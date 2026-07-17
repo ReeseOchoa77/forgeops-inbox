@@ -63,14 +63,25 @@ function detectAliases(displayName: string, normalizedName: string): string[] {
 }
 
 async function parsePdfText(buffer: Buffer): Promise<string> {
-  const { PDFParse, VerbosityLevel } = await import("pdf-parse");
-  const parser = new PDFParse({
-    data: new Uint8Array(buffer),
-    verbosity: VerbosityLevel.ERRORS
-  });
-  const result = await parser.getText();
-  await parser.destroy();
-  return result.text;
+  const mod = await import("pdf-parse");
+  const PDFParse = mod.PDFParse;
+  const verbosity = mod.VerbosityLevel?.ERRORS ?? 0;
+
+  if (!PDFParse || typeof PDFParse !== "function") {
+    throw new Error(`pdf-parse module did not export PDFParse class (got ${typeof PDFParse})`);
+  }
+
+  if (buffer.length < 4 || buffer.slice(0, 5).toString("ascii") !== "%PDF-") {
+    throw new Error("File does not appear to be a valid PDF (missing %PDF- header)");
+  }
+
+  const parser = new PDFParse({ data: new Uint8Array(buffer), verbosity });
+  try {
+    const result = await parser.getText();
+    return result.text;
+  } finally {
+    await parser.destroy().catch(() => {});
+  }
 }
 
 function parsePdfTextToRows(fullText: string): Array<{ name: string; phone?: string | undefined; email?: string | undefined; address?: string | undefined }> {

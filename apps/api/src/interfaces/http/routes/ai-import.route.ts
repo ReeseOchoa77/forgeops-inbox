@@ -35,14 +35,25 @@ function parseCsvToText(text: string): string {
 }
 
 async function parsePdfToText(buffer: Buffer): Promise<string> {
-  const { PDFParse, VerbosityLevel } = await import("pdf-parse");
-  const parser = new PDFParse({
-    data: new Uint8Array(buffer),
-    verbosity: VerbosityLevel.ERRORS
-  });
-  const result = await parser.getText();
-  await parser.destroy();
-  return result.text.slice(0, 15000);
+  const mod = await import("pdf-parse");
+  const PDFParse = mod.PDFParse;
+  const verbosity = mod.VerbosityLevel?.ERRORS ?? 0;
+
+  if (!PDFParse || typeof PDFParse !== "function") {
+    throw new Error(`pdf-parse module did not export PDFParse class (got ${typeof PDFParse})`);
+  }
+
+  if (buffer.length < 4 || buffer.slice(0, 5).toString("ascii") !== "%PDF-") {
+    throw new Error("File does not appear to be a valid PDF (missing %PDF- header)");
+  }
+
+  const parser = new PDFParse({ data: new Uint8Array(buffer), verbosity });
+  try {
+    const result = await parser.getText();
+    return result.text.slice(0, 15000);
+  } finally {
+    await parser.destroy().catch(() => {});
+  }
 }
 
 const EXTRACTION_PROMPT = `You are a data extraction assistant for a business operations platform.
@@ -138,8 +149,17 @@ export const registerAiImportRoutes = async (
           });
         }
       } catch (e) {
+        const msg = e instanceof Error ? e.message : "unknown error";
+        app.log.error({
+          event: "document_parse_failed",
+          contentType,
+          error: msg,
+          stack: e instanceof Error ? e.stack : undefined
+        });
         return reply.code(400).send({
-          message: `Failed to parse file: ${e instanceof Error ? e.message : "unknown error"}`
+          code: "PDF_PARSE_FAILED",
+          message: "The file could not be parsed.",
+          details: msg
         });
       }
 
@@ -166,7 +186,9 @@ export const registerAiImportRoutes = async (
           const aiMsg = aiErr instanceof Error ? aiErr.message : "Unknown AI error";
           app.log.error({ event: "ai_import_model_error", model, error: aiMsg });
           return reply.code(502).send({
-            message: `AI service error: ${aiMsg.includes("verbosity") || aiMsg.includes("unsupported") ? "Model configuration issue — try setting OPENAI_MODEL to gpt-4.1-mini" : aiMsg}`
+            code: "AI_EXTRACTION_FAILED",
+            message: "AI-assisted extraction failed.",
+            details: aiMsg
           });
         }
 
