@@ -35,13 +35,14 @@ function parseCsvToText(text: string): string {
 }
 
 async function parsePdfToText(buffer: Buffer): Promise<string> {
-  // pdf-parse v2 exports { PDFParse } class
-  const { PDFParse } = await import("pdf-parse") as unknown as {
-    PDFParse: new () => { loadPDF: (buf: Buffer) => Promise<{ getAllText: () => string }> }
-  };
-  const parser = new PDFParse();
-  const pdf = await parser.loadPDF(buffer);
-  return pdf.getAllText().slice(0, 15000);
+  const { PDFParse, VerbosityLevel } = await import("pdf-parse");
+  const parser = new PDFParse({
+    data: new Uint8Array(buffer),
+    verbosity: VerbosityLevel.ERRORS
+  });
+  const result = await parser.getText();
+  await parser.destroy();
+  return result.text.slice(0, 15000);
 }
 
 const EXTRACTION_PROMPT = `You are a data extraction assistant for a business operations platform.

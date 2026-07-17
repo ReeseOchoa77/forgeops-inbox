@@ -110,14 +110,20 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     return reply.send({ status: "seeded", count: seeded });
   });
 
-  // --- Classification candidates (upgraded) ---
-  app.post("/api/v1/classification-candidates", async (request, reply) => {
+  async function handleCandidates(request: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) {
     const env = app.services.env;
-    const isN8n = verifyN8nApiKey(request, {} as any, env.N8N_INTEGRATION_API_KEY, env.N8N_INTEGRATION_ENABLED);
+    const authHeader = request.headers.authorization;
+    const hasApiKey = authHeader?.startsWith("Bearer ") && env.N8N_INTEGRATION_ENABLED && env.N8N_INTEGRATION_API_KEY;
 
     let workspaceId: string;
+    let isN8n = false;
 
-    if (isN8n) {
+    if (hasApiKey) {
+      if (!verifyN8nApiKey(request, reply, env.N8N_INTEGRATION_API_KEY, env.N8N_INTEGRATION_ENABLED)) {
+        return;
+      }
+      isN8n = true;
+
       const body = candidatesInputSchema.parse(request.body);
       const normalizedMailbox = body.mailboxEmail.toLowerCase();
 
@@ -285,7 +291,10 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       activeBusinessTypes: businessTypes.map(bt => ({ key: bt.systemKey, label: bt.displayLabel })),
       classificationInstructions: instructions.map(i => ({ title: i.title, content: i.content }))
     });
-  });
+  }
+
+  app.post("/api/v1/classification-candidates", handleCandidates);
+  app.post("/api/v1/integrations/n8n/classification-candidates", handleCandidates);
 
   // --- Reclassification ---
   app.post("/api/v1/workspaces/:workspaceId/messages/:messageId/reclassify", async (request, reply) => {

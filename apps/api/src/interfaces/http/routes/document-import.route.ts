@@ -62,10 +62,19 @@ function detectAliases(displayName: string, normalizedName: string): string[] {
   return [...new Set(aliases)].filter(Boolean);
 }
 
-async function parsePdfToRows(buffer: Buffer): Promise<Array<{ name: string; phone?: string | undefined; email?: string | undefined; address?: string | undefined }>> {
-  const pdfMod = await import("pdf-parse") as unknown as Record<string, unknown>;
-  const pdfParse = (typeof pdfMod === "function" ? pdfMod : pdfMod["default"] ?? pdfMod) as (buf: Buffer) => Promise<{ text: string }>;
-  const result = await pdfParse(buffer);
+async function parsePdfText(buffer: Buffer): Promise<string> {
+  const { PDFParse, VerbosityLevel } = await import("pdf-parse");
+  const parser = new PDFParse({
+    data: new Uint8Array(buffer),
+    verbosity: VerbosityLevel.ERRORS
+  });
+  const result = await parser.getText();
+  await parser.destroy();
+  return result.text;
+}
+
+function parsePdfTextToRows(fullText: string): Array<{ name: string; phone?: string | undefined; email?: string | undefined; address?: string | undefined }> {
+  const result = { text: fullText };
   const text = result.text;
 
   const rows: Array<{ name: string; phone?: string; email?: string; address?: string }> = [];
@@ -199,11 +208,8 @@ export const registerDocumentImportRoutes = async (app: FastifyInstance): Promis
 
       try {
         if (mimeType === "application/pdf") {
-          rawRows = await parsePdfToRows(fileBuffer);
-          const pdfMod = await import("pdf-parse") as unknown as Record<string, unknown>;
-          const pdfParse = (typeof pdfMod === "function" ? pdfMod : pdfMod["default"] ?? pdfMod) as (buf: Buffer) => Promise<{ text: string }>;
-          const result = await pdfParse(fileBuffer);
-          extractedText = result.text;
+          extractedText = await parsePdfText(fileBuffer);
+          rawRows = parsePdfTextToRows(extractedText);
         } else if (mimeType === "text/csv") {
           extractedText = fileBuffer.toString("utf-8");
           rawRows = parseCsvToRows(extractedText);
