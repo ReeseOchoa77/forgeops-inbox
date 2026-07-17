@@ -167,6 +167,9 @@ model Workspace {
   knowledgeDocs    KnowledgeDocument[]
   importRuns       ImportRun[]
   workspaceMailboxes WorkspaceMailbox[]
+  businessTypes      BusinessType[]
+  classificationCorrections ClassificationCorrection[]
+  classificationInstructions ClassificationInstruction[]
 }
 
 model User {
@@ -190,6 +193,8 @@ model User {
   auditEvents             AuditEvent[]     @relation("AuditActor")
   invitedAccess           ApprovedAccess[] @relation("ApprovedAccessInviter")
   createdDocuments        KnowledgeDocument[] @relation("DocumentCreator")
+  classificationCorrections ClassificationCorrection[] @relation("CorrectionReviewer")
+  classificationInstructions ClassificationInstruction[] @relation("InstructionCreator")
 }
 
 model ApprovedAccess {
@@ -433,6 +438,17 @@ model Classification {
   customerId            String?
   vendorId              String?
   jobId                 String?
+  mailboxCategory       MailboxCategory?
+  mailboxConfidence     Decimal?     @db.Decimal(5, 4)
+  businessTypeKey       String?
+  businessTypeConfidence Decimal?    @db.Decimal(5, 4)
+  entityMatchConfidence Decimal?     @db.Decimal(5, 4)
+  matchEvidence         Json?
+  rawAiPayload          Json?
+  candidateIds          Json?
+  classifierVersion     String?
+  promptVersion         String?
+  processedAt           DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
   workspace             Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -443,6 +459,7 @@ model Classification {
   vendor                Vendor?      @relation("ClassificationVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
   job                   Job?         @relation("ClassificationJob", fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: SetNull)
   tasks                 Task[]
+  corrections           ClassificationCorrection[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, businessCategory])
@@ -803,4 +820,66 @@ model ImportRun {
 
   @@index([workspaceId, importType])
   @@index([workspaceId, status])
+}
+
+model BusinessType {
+  id            String    @id @default(cuid())
+  workspaceId   String?
+  systemKey     String
+  displayLabel  String
+  description   String?
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, systemKey])
+  @@index([systemKey])
+  @@index([workspaceId, active])
+}
+
+model ClassificationCorrection {
+  id                       String    @id @default(cuid())
+  workspaceId              String
+  classificationId         String
+  originalMailboxCategory  String?
+  correctedMailboxCategory String?
+  originalBusinessType     String?
+  correctedBusinessType    String?
+  originalCustomerId       String?
+  correctedCustomerId      String?
+  originalVendorId         String?
+  correctedVendorId        String?
+  originalJobId            String?
+  correctedJobId           String?
+  originalPriority         String?
+  correctedPriority        String?
+  originalTaskData         Json?
+  correctedTaskData        Json?
+  reason                   String?
+  reviewedByUserId         String?
+  reviewedAt               DateTime  @default(now())
+  createdAt                DateTime  @default(now())
+  workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  classification           Classification @relation(fields: [classificationId], references: [id], onDelete: Cascade)
+  reviewedByUser           User?     @relation("CorrectionReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, classificationId])
+  @@index([workspaceId, reviewedAt])
+}
+
+model ClassificationInstruction {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  title         String
+  content       String
+  active        Boolean   @default(true)
+  sortOrder     Int       @default(0)
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser User?     @relation("InstructionCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, active])
 }

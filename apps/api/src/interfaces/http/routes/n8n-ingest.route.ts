@@ -43,10 +43,18 @@ const n8nEmailResultSchema = z.object({
   analysis: z.object({
     businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
     mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]).optional().default("BUSINESS"),
+    mailboxConfidence: z.number().min(0).max(1).optional(),
     confidence: z.number().min(0).max(1),
+    businessType: z.string().max(50).optional(),
+    businessTypeConfidence: z.number().min(0).max(1).optional(),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
     containsActionRequest: z.boolean(),
+    selectedCustomerId: z.string().nullable().optional(),
+    selectedVendorId: z.string().nullable().optional(),
+    selectedJobId: z.string().nullable().optional(),
+    entityMatchConfidence: z.number().min(0).max(1).optional(),
+    matchEvidence: z.array(z.string().max(200)).max(20).optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -107,7 +115,44 @@ function mapEmailType(body: N8nEmailResult): "ACTIONABLE_REQUEST" | "FYI_UPDATE"
 }
 
 function shouldRequireReview(body: N8nEmailResult): boolean {
-  return body.analysis.requiresReview || body.analysis.confidence < CLASSIFICATION_REVIEW_THRESHOLD;
+  if (body.analysis.requiresReview) return true;
+  if (body.analysis.confidence < CLASSIFICATION_REVIEW_THRESHOLD) return true;
+  const mc = body.analysis.mailboxConfidence;
+  if (mc !== undefined && mc < 0.90) return true;
+  const btc = body.analysis.businessTypeConfidence;
+  if (btc !== undefined && btc < CLASSIFICATION_REVIEW_THRESHOLD && body.analysis.mailboxCategory === "BUSINESS") return true;
+  const emc = body.analysis.entityMatchConfidence;
+  if (emc !== undefined && emc < CLASSIFICATION_REVIEW_THRESHOLD && (body.analysis.selectedCustomerId || body.analysis.selectedVendorId || body.analysis.selectedJobId)) return true;
+  return false;
+}
+
+function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT", emailType: string, requiresReview: boolean) {
+  return {
+    businessCategory: body.analysis.businessCategory,
+    emailType: emailType as "ACTIONABLE_REQUEST" | "FYI_UPDATE" | "SALES_MARKETING" | "SUPPORT_CUSTOMER_ISSUE" | "INTERNAL_COORDINATION" | "NEEDS_REVIEW" | "RECRUITING_HIRING",
+    priority,
+    itemStatus: requiresReview ? "NEEDS_REVIEW" as const : "NEW" as const,
+    summary: body.analysis.summary,
+    confidence: toConfidence(body.analysis.confidence),
+    containsActionRequest: body.analysis.containsActionRequest,
+    requiresReview,
+    reviewQueue: requiresReview ? "TRIAGE" as const : null,
+    reviewStatus: requiresReview ? "PENDING" as const : "NOT_REQUIRED" as const,
+    routingHints: toPrismaJson({ source: "n8n", reviewReasons: body.analysis.reviewReasons }),
+    modelName: "n8n-openai",
+    modelVersion: "v1",
+    mailboxCategory: body.analysis.mailboxCategory ?? "BUSINESS",
+    mailboxConfidence: body.analysis.mailboxConfidence ? toConfidence(body.analysis.mailboxConfidence) : null,
+    businessTypeKey: body.analysis.businessType ?? null,
+    businessTypeConfidence: body.analysis.businessTypeConfidence ? toConfidence(body.analysis.businessTypeConfidence) : null,
+    entityMatchConfidence: body.analysis.entityMatchConfidence ? toConfidence(body.analysis.entityMatchConfidence) : null,
+    matchEvidence: body.analysis.matchEvidence ? toPrismaJson(body.analysis.matchEvidence) : Prisma.JsonNull,
+    rawAiPayload: toPrismaJson(body.analysis),
+    customerId: body.analysis.selectedCustomerId ?? null,
+    vendorId: body.analysis.selectedVendorId ?? null,
+    jobId: body.analysis.selectedJobId ?? null,
+    processedAt: new Date()
+  };
 }
 
 async function resolveMailboxOwnership(
@@ -269,38 +314,12 @@ async function upsertEmailData(
           messageId: existingMessage.id
         }
       },
-      update: {
-        businessCategory: body.analysis.businessCategory,
-        emailType,
-        priority,
-        itemStatus: classificationRequiresReview ? "NEEDS_REVIEW" : "NEW",
-        summary: body.analysis.summary,
-        confidence: toConfidence(body.analysis.confidence),
-        containsActionRequest: body.analysis.containsActionRequest,
-        requiresReview: classificationRequiresReview,
-        reviewQueue: classificationRequiresReview ? "TRIAGE" : null,
-        reviewStatus: classificationRequiresReview ? "PENDING" : "NOT_REQUIRED",
-        routingHints: toPrismaJson({ source: "n8n", reviewReasons: body.analysis.reviewReasons }),
-        modelName: "n8n-openai",
-        modelVersion: "v1"
-      },
+      update: buildClassificationData(body, priority, emailType, classificationRequiresReview),
       create: {
         workspaceId,
         threadId: existingMessage.threadId,
         messageId: existingMessage.id,
-        businessCategory: body.analysis.businessCategory,
-        emailType,
-        priority,
-        itemStatus: classificationRequiresReview ? "NEEDS_REVIEW" : "NEW",
-        summary: body.analysis.summary,
-        confidence: toConfidence(body.analysis.confidence),
-        containsActionRequest: body.analysis.containsActionRequest,
-        requiresReview: classificationRequiresReview,
-        reviewQueue: classificationRequiresReview ? "TRIAGE" : null,
-        reviewStatus: classificationRequiresReview ? "PENDING" : "NOT_REQUIRED",
-        routingHints: toPrismaJson({ source: "n8n", reviewReasons: body.analysis.reviewReasons }),
-        modelName: "n8n-openai",
-        modelVersion: "v1"
+        ...buildClassificationData(body, priority, emailType, classificationRequiresReview)
       }
     });
 
@@ -414,19 +433,7 @@ async function upsertEmailData(
       workspaceId,
       threadId: thread.id,
       messageId: message.id,
-      businessCategory: body.analysis.businessCategory,
-      emailType,
-      priority,
-      itemStatus: classificationRequiresReview ? "NEEDS_REVIEW" : "NEW",
-      summary: body.analysis.summary,
-      confidence: toConfidence(body.analysis.confidence),
-      containsActionRequest: body.analysis.containsActionRequest,
-      requiresReview: classificationRequiresReview,
-      reviewQueue: classificationRequiresReview ? "TRIAGE" : null,
-      reviewStatus: classificationRequiresReview ? "PENDING" : "NOT_REQUIRED",
-      routingHints: toPrismaJson({ source: "n8n", reviewReasons: body.analysis.reviewReasons }),
-      modelName: "n8n-openai",
-      modelVersion: "v1"
+      ...buildClassificationData(body, priority, emailType, classificationRequiresReview)
     }
   });
 
@@ -613,6 +620,37 @@ async function handleN8nIngest(
       where: { inboxConnectionId: connectionId },
       data: { lastMessageSeenAt: new Date() }
     }).catch(() => {});
+
+    if (body.analysis.selectedCustomerId) {
+      const exists = await app.services.prisma.customer.findFirst({
+        where: { workspaceId, id: body.analysis.selectedCustomerId },
+        select: { id: true }
+      });
+      if (!exists) {
+        reply.code(400).send({ message: `Customer ID ${body.analysis.selectedCustomerId} not found in workspace` });
+        return;
+      }
+    }
+    if (body.analysis.selectedVendorId) {
+      const exists = await app.services.prisma.vendor.findFirst({
+        where: { workspaceId, id: body.analysis.selectedVendorId },
+        select: { id: true }
+      });
+      if (!exists) {
+        reply.code(400).send({ message: `Vendor ID ${body.analysis.selectedVendorId} not found in workspace` });
+        return;
+      }
+    }
+    if (body.analysis.selectedJobId) {
+      const exists = await app.services.prisma.job.findFirst({
+        where: { workspaceId, id: body.analysis.selectedJobId },
+        select: { id: true }
+      });
+      if (!exists) {
+        reply.code(400).send({ message: `Job ID ${body.analysis.selectedJobId} not found in workspace` });
+        return;
+      }
+    }
 
     const result = await app.services.prisma.$transaction(async (tx) => {
       return upsertEmailData(tx, workspaceId, connectionId, body);
