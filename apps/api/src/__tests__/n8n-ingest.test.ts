@@ -33,7 +33,7 @@ const n8nEmailResultSchema = z.object({
   }),
   analysis: z.object({
     businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
-    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]).optional().default("BUSINESS"),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional().default("BUSINESS"),
     confidence: z.number().min(0).max(1),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
@@ -365,12 +365,11 @@ describe("n8n email-results schema validation", () => {
     if (result.success) expect(result.data.analysis.mailboxCategory).toBe("PERSONAL");
   });
 
-  it("accepts SPAM mailboxCategory", () => {
+  it("rejects SPAM as mailboxCategory (not an AI classification)", () => {
     const payload = makeValidPayload();
     (payload.analysis as Record<string, unknown>).mailboxCategory = "SPAM";
     const result = n8nEmailResultSchema.safeParse(payload);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.analysis.mailboxCategory).toBe("SPAM");
+    expect(result.success).toBe(false);
   });
 
   it("defaults mailboxCategory to BUSINESS when omitted", () => {

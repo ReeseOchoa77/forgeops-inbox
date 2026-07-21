@@ -828,6 +828,8 @@ model BusinessType {
   systemKey     String
   displayLabel  String
   description   String?
+  displayGroup  String?
+  displayOrder  Int       @default(0)
   active        Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -836,6 +838,7 @@ model BusinessType {
   @@unique([workspaceId, systemKey])
   @@index([systemKey])
   @@index([workspaceId, active])
+  @@index([displayGroup, displayOrder])
 }
 
 model ClassificationCorrection {

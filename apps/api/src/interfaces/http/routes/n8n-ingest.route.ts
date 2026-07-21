@@ -42,7 +42,7 @@ const n8nEmailResultSchema = z.object({
   }),
   analysis: z.object({
     businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
-    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]).optional().default("BUSINESS"),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional().default("BUSINESS"),
     mailboxConfidence: z.number().min(0).max(1).optional(),
     confidence: z.number().min(0).max(1),
     businessType: z.string().max(50).optional(),
@@ -323,7 +323,7 @@ async function upsertEmailData(
       }
     });
 
-    const taskIds = await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
+    const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
 
     return {
       status: "updated",
@@ -395,7 +395,7 @@ async function upsertEmailData(
       hasAttachments: body.email.hasAttachments,
       isRead: false,
       isImportant: body.analysis.priority === "HIGH" || body.analysis.priority === "URGENT",
-      isSpam: body.analysis.mailboxCategory === "SPAM",
+      isSpam: false,
       isTrashed: false,
       mailboxCategory: body.analysis.mailboxCategory ?? "BUSINESS",
       attachmentMetadata: toPrismaJson(attachmentMetadata),
@@ -437,7 +437,7 @@ async function upsertEmailData(
     }
   });
 
-  const taskIds = await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
+  const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
 
   return {
     status: "created",
@@ -603,27 +603,21 @@ async function handleN8nIngest(
     return;
   }
 
-  if (body.analysis.mailboxCategory === "SPAM") {
-    await app.services.auditEventLogger.log({
-      workspaceId,
-      entityType: "INTEGRATION",
-      entityId: "n8n",
-      action: "n8n.spam_discarded",
-      metadata: {
-        mailbox: body.source.mailboxEmail,
-        providerMessageId: body.source.providerMessageId,
-        senderEmail: body.email.senderEmail,
-        subject: body.email.subject?.slice(0, 100)
-      },
-      request
-    });
+  const isPersonal = body.analysis.mailboxCategory === "PERSONAL";
 
-    reply.code(200).send({
-      status: "discarded",
-      reason: "spam",
-      providerMessageId: body.source.providerMessageId
-    });
-    return;
+  if (isPersonal) {
+    if (body.analysis.tasks.length > 0) {
+      reply.code(400).send({ message: "PERSONAL emails must not contain tasks" });
+      return;
+    }
+    if (body.analysis.businessType) {
+      reply.code(400).send({ message: "PERSONAL emails must not have a businessType" });
+      return;
+    }
+    if (body.analysis.selectedCustomerId || body.analysis.selectedVendorId || body.analysis.selectedJobId) {
+      reply.code(400).send({ message: "PERSONAL emails must not have entity selections" });
+      return;
+    }
   }
 
   const deduplicationKey = buildDeduplicationKey(

@@ -10,10 +10,16 @@ interface Props {
 
 const PAGE_SIZE = 30
 
-type MailboxTab = 'BUSINESS' | 'PERSONAL' | 'TRASH'
+type InboxTab = 'ALL_BUSINESS' | 'BIDS_ESTIMATING' | 'PROJECTS' | 'PURCHASING' | 'ACCOUNTING' | 'INTERNAL' | 'OTHER' | 'PERSONAL' | 'TRASH'
 
-const MAILBOX_TABS: Array<{ key: MailboxTab; label: string }> = [
-  { key: 'BUSINESS', label: 'Business' },
+const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
+  { key: 'ALL_BUSINESS', label: 'All Business' },
+  { key: 'BIDS_ESTIMATING', label: 'Bids & Estimating' },
+  { key: 'PROJECTS', label: 'Projects' },
+  { key: 'PURCHASING', label: 'Purchasing' },
+  { key: 'ACCOUNTING', label: 'Accounting' },
+  { key: 'INTERNAL', label: 'Internal' },
+  { key: 'OTHER', label: 'Other' },
   { key: 'PERSONAL', label: 'Personal' },
   { key: 'TRASH', label: 'Trash' },
 ]
@@ -35,7 +41,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  const [mailboxTab, setMailboxTab] = useState<MailboxTab>('BUSINESS')
+  const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('')
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
@@ -43,21 +49,22 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const scrollRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
 
+  const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+
   const buildFilters = useCallback(() => {
     const f: Parameters<typeof api.getMessages>[4] = {}
 
-    if (mailboxTab === 'BUSINESS') {
-      f.businessCategory = 'BUSINESS'
-    } else if (mailboxTab === 'PERSONAL') {
+    if (inboxTab === 'PERSONAL') {
       f.businessCategory = 'NON_BUSINESS'
-    } else if (mailboxTab === 'TRASH') {
+    } else if (inboxTab === 'TRASH') {
       f.category = 'trash'
+    } else {
+      f.businessCategory = 'BUSINESS'
     }
 
     if (activeSearch) f.search = activeSearch
-
     return f
-  }, [mailboxTab, activeSearch])
+  }, [inboxTab, activeSearch])
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
     if (pageNum === 1) setLoading(true)
@@ -84,7 +91,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setHasMore(true)
     setSearch('')
     setActiveSearch('')
-    setMailboxTab('BUSINESS')
+    setInboxTab('ALL_BUSINESS')
     setBusinessFilter('')
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
@@ -95,7 +102,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setPage(1)
     setHasMore(true)
     loadPage(1, filters, false)
-  }, [mailboxTab, businessFilter, activeSearch])
+  }, [inboxTab, businessFilter, activeSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -111,70 +118,52 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     }
   }, [page, buildFilters, hasMore, loadingMore, loadPage])
 
-  const handleMoveCategory = async (messageId: string, category: string) => {
+  const handleTrash = async (messageId: string, isTrashed: boolean) => {
     try {
-      if (category === 'trash') {
-        await api.trashMessage(workspaceId, connectionId, messageId)
-      } else if (category === 'untrash') {
-        await api.untrashMessage(workspaceId, connectionId, messageId)
-      }
+      if (isTrashed) await api.untrashMessage(workspaceId, connectionId, messageId)
+      else await api.trashMessage(workspaceId, connectionId, messageId)
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => prev - 1)
-    } catch { /* ignore */ }
+    } catch { /* */ }
   }
-
-  const isBusiness = mailboxTab === 'BUSINESS'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <h2 style={{ fontSize: 17, margin: 0 }}>Inbox</h2>
           <span style={{ fontSize: 12, color: '#999' }}>{totalCount} messages</span>
         </div>
-        <input
-          type="text"
-          placeholder="Search emails..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: 220 }}
-        />
+        <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)}
+          style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: 220 }} />
       </div>
 
-      {/* Mailbox category tabs */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 6, borderBottom: '2px solid #e5e5e5' }}>
-        {MAILBOX_TABS.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => { setMailboxTab(tab.key); setBusinessFilter('') }}
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', flexShrink: 0 }}>
+        {INBOX_TABS.map(tab => (
+          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setBusinessFilter('') }}
             style={{
-              padding: '7px 18px', fontSize: 13,
-              fontWeight: mailboxTab === tab.key ? 600 : 400,
-              color: mailboxTab === tab.key ? '#1a1a2e' : '#888',
+              padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
+              fontWeight: inboxTab === tab.key ? 600 : 400,
+              color: inboxTab === tab.key ? '#1a1a2e' : '#888',
               background: 'none', border: 'none',
-              borderBottom: mailboxTab === tab.key ? '2px solid #1a1a2e' : '2px solid transparent',
+              borderBottom: inboxTab === tab.key ? '2px solid #1a1a2e' : '2px solid transparent',
               marginBottom: -2, cursor: 'pointer'
-            }}
-          >{tab.label}</button>
+            }}>{tab.label}</button>
         ))}
       </div>
 
-      {/* Business-only filters */}
+      {/* Business filters (only for business tabs) */}
       {isBusiness && (
-        <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap' }}>
           {BUSINESS_FILTERS.map(f => (
-            <button
-              key={f.key}
-              onClick={() => setBusinessFilter(f.key)}
-              style={{
-                padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-                border: businessFilter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
-                background: businessFilter === f.key ? '#1a1a2e' : '#fff',
-                color: businessFilter === f.key ? '#fff' : '#666',
-                cursor: 'pointer'
-              }}
-            >{f.label}</button>
+            <button key={f.key} onClick={() => setBusinessFilter(f.key)} style={{
+              padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+              border: businessFilter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
+              background: businessFilter === f.key ? '#1a1a2e' : '#fff',
+              color: businessFilter === f.key ? '#fff' : '#666', cursor: 'pointer'
+            }}>{f.label}</button>
           ))}
         </div>
       )}
@@ -185,9 +174,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
           <p style={{ color: '#999', padding: 4, fontSize: 13 }}>Loading...</p>
         ) : messages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
-            <div className="empty-icon">{mailboxTab === 'TRASH' ? '\uD83D\uDDD1' : '\u2709'}</div>
-            <h3>{activeSearch ? 'No results' : `No ${mailboxTab.toLowerCase()} emails`}</h3>
-            <p>{activeSearch ? `No messages match "${activeSearch}"` : mailboxTab === 'BUSINESS' ? 'Business emails will appear here after syncing.' : mailboxTab === 'PERSONAL' ? 'Personal emails appear here.' : 'Nothing in trash.'}</p>
+            <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
+            <h3>{activeSearch ? 'No results' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
+            <p>{activeSearch ? `No messages match "${activeSearch}"` : 'Emails will appear here after syncing and classification.'}</p>
           </div>
         ) : (
           <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>
@@ -230,11 +219,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     )}
                     <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
                     <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                      {mailboxTab !== 'TRASH' ? (
-                        <button title="Trash" onClick={() => handleMoveCategory(m.id, 'trash')}
+                      {inboxTab !== 'TRASH' ? (
+                        <button title="Trash" onClick={() => handleTrash(m.id, false)}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
                       ) : (
-                        <button title="Restore" onClick={() => handleMoveCategory(m.id, 'untrash')}
+                        <button title="Restore" onClick={() => handleTrash(m.id, true)}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
                       )}
                     </td>
@@ -257,13 +246,10 @@ function formatDate(iso: string): string {
     const now = new Date()
     const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     if (d.toDateString() === now.toDateString()) return `Today, ${time}`
-    const yesterday = new Date(now)
-    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
     if (d.toDateString() === yesterday.toDateString()) return `Yesterday, ${time}`
     const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    if (d.getFullYear() !== now.getFullYear()) {
-      return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${time}`
-    }
+    if (d.getFullYear() !== now.getFullYear()) return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${time}`
     return `${date}, ${time}`
   } catch { return iso }
 }

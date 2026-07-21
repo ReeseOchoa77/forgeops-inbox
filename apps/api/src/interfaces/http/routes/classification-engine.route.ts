@@ -13,39 +13,36 @@ import { verifyN8nApiKey } from "../n8n-auth.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 
 const SYSTEM_BUSINESS_TYPES = [
-  { systemKey: "BID_INVITATION", displayLabel: "Bid Invitation", description: "Invitation to bid on a project" },
-  { systemKey: "RFQ", displayLabel: "Request for Quote", description: "Request for quotation on materials or services" },
-  { systemKey: "ADDENDUM", displayLabel: "Addendum", description: "Addendum or amendment to existing documents" },
-  { systemKey: "PURCHASE_ORDER", displayLabel: "Purchase Order", description: "Purchase order for materials or services" },
-  { systemKey: "VENDOR_QUOTE", displayLabel: "Vendor Quote", description: "Quote received from a vendor or supplier" },
-  { systemKey: "SUBMITTAL", displayLabel: "Submittal", description: "Submittal for approval" },
-  { systemKey: "SHOP_DRAWING", displayLabel: "Shop Drawing", description: "Shop drawing for review" },
-  { systemKey: "RFI", displayLabel: "RFI", description: "Request for information" },
-  { systemKey: "CHANGE_ORDER", displayLabel: "Change Order", description: "Change order to existing contract" },
-  { systemKey: "DELIVERY", displayLabel: "Delivery", description: "Delivery notification or schedule" },
-  { systemKey: "MATERIAL_ORDER", displayLabel: "Material Order", description: "Material order or requisition" },
-  { systemKey: "INVOICE", displayLabel: "Invoice", description: "Invoice or billing" },
-  { systemKey: "PAYMENT", displayLabel: "Payment", description: "Payment confirmation or request" },
-  { systemKey: "PROJECT_COMMUNICATION", displayLabel: "Project Communication", description: "General project communication" },
-  { systemKey: "FIELD_ISSUE", displayLabel: "Field Issue", description: "Issue reported from the field" },
-  { systemKey: "COMPLIANCE", displayLabel: "Compliance", description: "Regulatory or compliance related" },
-  { systemKey: "INTERNAL_ADMIN", displayLabel: "Internal Admin", description: "Internal administrative communication" },
-  { systemKey: "RECRUITING", displayLabel: "Recruiting", description: "Recruiting or hiring related" },
-  { systemKey: "OTHER_BUSINESS", displayLabel: "Other Business", description: "Other business communication" }
+  { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Opportunity", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
+  { systemKey: "BID_UPDATE", displayLabel: "Bid Update / Addendum", description: "Update or addendum to existing bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 2 },
+  { systemKey: "ESTIMATE_QUOTE", displayLabel: "Estimate / Quote", description: "Estimate or quote for work or materials", displayGroup: "BIDS_ESTIMATING", displayOrder: 3 },
+  { systemKey: "PURCHASE_ORDER_CONTRACT", displayLabel: "Purchase Order / Contract", description: "Purchase order or contract", displayGroup: "PURCHASING", displayOrder: 1 },
+  { systemKey: "PROJECT_COORDINATION", displayLabel: "Project Coordination", description: "General project coordination", displayGroup: "PROJECTS", displayOrder: 1 },
+  { systemKey: "RFI_CLARIFICATION", displayLabel: "RFI / Clarification", description: "Request for information", displayGroup: "PROJECTS", displayOrder: 2 },
+  { systemKey: "SUBMITTAL_SHOP_DRAWING", displayLabel: "Submittal / Shop Drawing", description: "Submittal or shop drawing", displayGroup: "PROJECTS", displayOrder: 3 },
+  { systemKey: "CHANGE_ORDER_SCOPE", displayLabel: "Change Order / Scope Change", description: "Change order or scope modification", displayGroup: "PROJECTS", displayOrder: 4 },
+  { systemKey: "FABRICATION_PRODUCTION", displayLabel: "Fabrication / Production", description: "Fabrication or production", displayGroup: "PROJECTS", displayOrder: 5 },
+  { systemKey: "MATERIAL_PURCHASING", displayLabel: "Material / Vendor / Purchasing", description: "Material orders and vendor communication", displayGroup: "PURCHASING", displayOrder: 2 },
+  { systemKey: "DELIVERY_LOGISTICS", displayLabel: "Delivery / Logistics", description: "Delivery and logistics", displayGroup: "PROJECTS", displayOrder: 6 },
+  { systemKey: "FIELD_INSTALLATION", displayLabel: "Field Issue / Installation", description: "Field issues and installation", displayGroup: "PROJECTS", displayOrder: 7 },
+  { systemKey: "INVOICE_PAYMENT", displayLabel: "Invoice / Payment", description: "Invoice or payment", displayGroup: "ACCOUNTING", displayOrder: 1 },
+  { systemKey: "COMPLIANCE_LEGAL", displayLabel: "Compliance / Safety / Legal", description: "Compliance or legal", displayGroup: "INTERNAL", displayOrder: 1 },
+  { systemKey: "INTERNAL_ADMIN", displayLabel: "Internal Administration", description: "Internal admin", displayGroup: "INTERNAL", displayOrder: 2 },
+  { systemKey: "OTHER_BUSINESS", displayLabel: "Other Business", description: "Other business", displayGroup: "OTHER", displayOrder: 1 }
 ];
 
 const candidatesInputSchema = z.object({
   mailboxEmail: z.string().email(),
-  senderName: z.string().max(200).optional(),
-  senderEmail: z.string().email(),
-  senderDomain: z.string().max(200),
-  subject: z.string().max(500).optional(),
-  cleanBody: z.string().max(10000).optional(),
-  attachmentNames: z.array(z.string()).max(50).default([])
+  senderName: z.string().max(200).nullable().optional(),
+  senderEmail: z.string().email().or(z.literal("")).default(""),
+  senderDomain: z.string().max(200).default("").transform(val => val || ""),
+  subject: z.string().max(500).nullable().optional().transform(val => val ?? ""),
+  cleanBody: z.string().max(10000).nullable().optional().transform(val => val ?? ""),
+  attachmentNames: z.array(z.string()).max(50).nullable().optional().transform(val => val ?? [])
 });
 
 const reclassifySchema = z.object({
-  mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM"]),
+  mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]),
   reason: z.string().max(500).optional()
 });
 
@@ -158,8 +155,8 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     }
 
     const body = candidatesInputSchema.parse(request.body);
-    const normalizedSenderEmail = normalizeEmail(body.senderEmail);
-    const senderDomain = body.senderDomain.toLowerCase();
+    const normalizedSenderEmail = body.senderEmail ? normalizeEmail(body.senderEmail) : "";
+    const senderDomain = (body.senderDomain || extractDomain(body.senderEmail) || "").toLowerCase();
 
     const [contacts, aliases, customers, vendors, jobs, businessTypes, instructions] = await Promise.all([
       app.services.prisma.entityContact.findMany({
@@ -184,8 +181,8 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       }),
       app.services.prisma.businessType.findMany({
         where: { OR: [{ workspaceId: null }, { workspaceId }], active: true },
-        select: { systemKey: true, displayLabel: true },
-        orderBy: { displayLabel: "asc" }
+      select: { systemKey: true, displayLabel: true, displayGroup: true, displayOrder: true },
+      orderBy: [{ displayGroup: "asc" }, { displayOrder: "asc" }]
       }),
       app.services.prisma.classificationInstruction.findMany({
         where: { workspaceId, active: true },
@@ -288,7 +285,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       customerCandidates: customerCandidates.slice(0, 5),
       vendorCandidates: vendorCandidates.slice(0, 5),
       jobCandidates: jobCandidates.slice(0, 5),
-      activeBusinessTypes: businessTypes.map(bt => ({ key: bt.systemKey, label: bt.displayLabel })),
+      activeBusinessTypes: businessTypes.map(bt => ({ key: bt.systemKey, label: bt.displayLabel, group: bt.displayGroup, order: bt.displayOrder })),
       classificationInstructions: instructions.map(i => ({ title: i.title, content: i.content }))
     });
   }
@@ -320,7 +317,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       where: { id: message.id },
       data: {
         mailboxCategory: body.mailboxCategory,
-        isSpam: body.mailboxCategory === "SPAM",
+        isSpam: false,
         isTrashed: false,
         previousCategory: previousCategory
       }
