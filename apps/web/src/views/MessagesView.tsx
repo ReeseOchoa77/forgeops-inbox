@@ -10,12 +10,11 @@ interface Props {
 
 const PAGE_SIZE = 30
 
-type MailboxTab = 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH'
+type MailboxTab = 'BUSINESS' | 'PERSONAL' | 'TRASH'
 
 const MAILBOX_TABS: Array<{ key: MailboxTab; label: string }> = [
   { key: 'BUSINESS', label: 'Business' },
   { key: 'PERSONAL', label: 'Personal' },
-  { key: 'SPAM', label: 'Spam' },
   { key: 'TRASH', label: 'Trash' },
 ]
 
@@ -51,8 +50,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       f.businessCategory = 'BUSINESS'
     } else if (mailboxTab === 'PERSONAL') {
       f.businessCategory = 'NON_BUSINESS'
-    } else if (mailboxTab === 'SPAM') {
-      f.category = 'spam'
     } else if (mailboxTab === 'TRASH') {
       f.category = 'trash'
     }
@@ -188,9 +185,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
           <p style={{ color: '#999', padding: 4, fontSize: 13 }}>Loading...</p>
         ) : messages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
-            <div className="empty-icon">{mailboxTab === 'TRASH' ? '\uD83D\uDDD1' : mailboxTab === 'SPAM' ? '\u26A0' : '\u2709'}</div>
+            <div className="empty-icon">{mailboxTab === 'TRASH' ? '\uD83D\uDDD1' : '\u2709'}</div>
             <h3>{activeSearch ? 'No results' : `No ${mailboxTab.toLowerCase()} emails`}</h3>
-            <p>{activeSearch ? `No messages match "${activeSearch}"` : mailboxTab === 'BUSINESS' ? 'Business emails will appear here after syncing.' : mailboxTab === 'PERSONAL' ? 'Personal emails appear here.' : mailboxTab === 'SPAM' ? 'No spam detected.' : 'Nothing in trash.'}</p>
+            <p>{activeSearch ? `No messages match "${activeSearch}"` : mailboxTab === 'BUSINESS' ? 'Business emails will appear here after syncing.' : mailboxTab === 'PERSONAL' ? 'Personal emails appear here.' : 'Nothing in trash.'}</p>
           </div>
         ) : (
           <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>

@@ -603,6 +603,29 @@ async function handleN8nIngest(
     return;
   }
 
+  if (body.analysis.mailboxCategory === "SPAM") {
+    await app.services.auditEventLogger.log({
+      workspaceId,
+      entityType: "INTEGRATION",
+      entityId: "n8n",
+      action: "n8n.spam_discarded",
+      metadata: {
+        mailbox: body.source.mailboxEmail,
+        providerMessageId: body.source.providerMessageId,
+        senderEmail: body.email.senderEmail,
+        subject: body.email.subject?.slice(0, 100)
+      },
+      request
+    });
+
+    reply.code(200).send({
+      status: "discarded",
+      reason: "spam",
+      providerMessageId: body.source.providerMessageId
+    });
+    return;
+  }
+
   const deduplicationKey = buildDeduplicationKey(
     workspaceId,
     body.source.mailboxEmail,
