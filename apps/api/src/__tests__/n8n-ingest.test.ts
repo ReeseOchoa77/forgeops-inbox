@@ -32,9 +32,10 @@ const n8nEmailResultSchema = z.object({
     attachmentNames: z.array(z.string().max(200)).max(50).default([])
   }),
   analysis: z.object({
-    businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
-    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional().default("BUSINESS"),
-    confidence: z.number().min(0).max(1),
+    businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]).optional(),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional(),
+    mailboxConfidence: z.number().min(0).max(1).optional(),
+    confidence: z.number().min(0).max(1).optional(),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
     containsActionRequest: z.boolean(),
@@ -53,6 +54,20 @@ const n8nEmailResultSchema = z.object({
     })).max(MAX_TASKS).default([]),
     requiresReview: z.boolean(),
     reviewReasons: z.array(z.string().max(200)).max(20).default([])
+  }).refine(
+    analysis => !!(analysis.mailboxCategory || analysis.businessCategory),
+    { message: "Either mailboxCategory or businessCategory is required", path: ["mailboxCategory"] }
+  ).transform(analysis => {
+    const resolvedCategory = analysis.mailboxCategory
+      ?? (analysis.businessCategory === "NON_BUSINESS" ? "PERSONAL" : "BUSINESS");
+    const resolvedConfidence = analysis.mailboxConfidence ?? analysis.confidence ?? 0;
+    return {
+      ...analysis,
+      mailboxCategory: resolvedCategory as "BUSINESS" | "PERSONAL",
+      mailboxConfidence: resolvedConfidence,
+      businessCategory: resolvedCategory === "BUSINESS" ? "BUSINESS" as const : "NON_BUSINESS" as const,
+      confidence: resolvedConfidence
+    };
   })
 });
 
@@ -81,8 +96,8 @@ function makeValidPayload(overrides?: Record<string, unknown>) {
       attachmentNames: ["PO-1234.pdf"]
     },
     analysis: {
-      businessCategory: "BUSINESS",
-      confidence: 0.92,
+      mailboxCategory: "BUSINESS",
+      mailboxConfidence: 0.92,
       summary: "Purchase order review request for Johnson project",
       priority: "HIGH",
       containsActionRequest: true,
@@ -184,7 +199,7 @@ describe("n8n email-results schema validation", () => {
 
   it("8. low-confidence triggers review", () => {
     const payload = makeValidPayload();
-    (payload.analysis as Record<string, unknown>).confidence = 0.6;
+    (payload.analysis as Record<string, unknown>).mailboxConfidence = 0.6;
     const result = n8nEmailResultSchema.safeParse(payload);
     expect(result.success).toBe(true);
     if (result.success) {
@@ -384,5 +399,65 @@ describe("n8n email-results schema validation", () => {
     (payload.analysis as Record<string, unknown>).mailboxCategory = "TRASH";
     const result = n8nEmailResultSchema.safeParse(payload);
     expect(result.success).toBe(false);
+  });
+
+  it("accepts legacy businessCategory BUSINESS and maps to mailboxCategory BUSINESS", () => {
+    const payload = makeValidPayload();
+    const analysis = payload.analysis as Record<string, unknown>;
+    delete analysis.mailboxCategory;
+    delete analysis.mailboxConfidence;
+    analysis.businessCategory = "BUSINESS";
+    analysis.confidence = 0.85;
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.mailboxCategory).toBe("BUSINESS");
+      expect(result.data.analysis.confidence).toBe(0.85);
+    }
+  });
+
+  it("accepts legacy businessCategory NON_BUSINESS and maps to mailboxCategory PERSONAL", () => {
+    const payload = makeValidPayload();
+    const analysis = payload.analysis as Record<string, unknown>;
+    delete analysis.mailboxCategory;
+    delete analysis.mailboxConfidence;
+    analysis.businessCategory = "NON_BUSINESS";
+    analysis.confidence = 0.70;
+    analysis.tasks = [];
+    analysis.containsActionRequest = false;
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.mailboxCategory).toBe("PERSONAL");
+      expect(result.data.analysis.confidence).toBe(0.70);
+    }
+  });
+
+  it("rejects payload with neither mailboxCategory nor businessCategory", () => {
+    const payload = makeValidPayload();
+    const analysis = payload.analysis as Record<string, unknown>;
+    delete analysis.mailboxCategory;
+    delete analysis.mailboxConfidence;
+    delete analysis.businessCategory;
+    delete analysis.confidence;
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(false);
+  });
+
+  it("new format takes precedence: mailboxCategory overrides businessCategory", () => {
+    const payload = makeValidPayload();
+    const analysis = payload.analysis as Record<string, unknown>;
+    analysis.mailboxCategory = "PERSONAL";
+    analysis.mailboxConfidence = 0.95;
+    analysis.businessCategory = "BUSINESS";
+    analysis.confidence = 0.80;
+    analysis.tasks = [];
+    analysis.containsActionRequest = false;
+    const result = n8nEmailResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.analysis.mailboxCategory).toBe("PERSONAL");
+      expect(result.data.analysis.mailboxConfidence).toBe(0.95);
+    }
   });
 });

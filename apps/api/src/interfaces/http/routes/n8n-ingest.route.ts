@@ -41,10 +41,10 @@ const n8nEmailResultSchema = z.object({
     attachmentNames: z.array(z.string().max(200)).max(50).default([])
   }),
   analysis: z.object({
-    businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]),
-    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional().default("BUSINESS"),
+    businessCategory: z.enum(["BUSINESS", "NON_BUSINESS"]).optional(),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional(),
     mailboxConfidence: z.number().min(0).max(1).optional(),
-    confidence: z.number().min(0).max(1),
+    confidence: z.number().min(0).max(1).optional(),
     businessType: z.string().max(50).optional(),
     businessTypeConfidence: z.number().min(0).max(1).optional(),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
@@ -70,6 +70,22 @@ const n8nEmailResultSchema = z.object({
     })).max(MAX_TASKS).default([]),
     requiresReview: z.boolean(),
     reviewReasons: z.array(z.string().max(200)).max(20).default([])
+  }).refine(
+    analysis => !!(analysis.mailboxCategory || analysis.businessCategory),
+    { message: "Either mailboxCategory (BUSINESS|PERSONAL) or businessCategory (BUSINESS|NON_BUSINESS) is required", path: ["mailboxCategory"] }
+  ).transform(analysis => {
+    const resolvedCategory = analysis.mailboxCategory
+      ?? (analysis.businessCategory === "NON_BUSINESS" ? "PERSONAL" : "BUSINESS");
+
+    const resolvedConfidence = analysis.mailboxConfidence ?? analysis.confidence ?? 0;
+
+    return {
+      ...analysis,
+      mailboxCategory: resolvedCategory as "BUSINESS" | "PERSONAL",
+      mailboxConfidence: resolvedConfidence,
+      businessCategory: resolvedCategory === "BUSINESS" ? "BUSINESS" as const : "NON_BUSINESS" as const,
+      confidence: resolvedConfidence
+    };
   })
 });
 
