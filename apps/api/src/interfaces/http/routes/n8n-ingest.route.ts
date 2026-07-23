@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 
 import { verifyN8nApiKey } from "../n8n-auth.js";
+import { calculateBusinessProbability, type EvidenceWeights, type EvidenceThresholds } from "@forgeops/shared";
 
 const CLASSIFICATION_REVIEW_THRESHOLD = 0.80;
 const TASK_REVIEW_THRESHOLD = 0.80;
@@ -55,6 +56,10 @@ const n8nEmailResultSchema = z.object({
     selectedJobId: z.string().nullable().optional(),
     entityMatchConfidence: z.number().min(0).max(1).optional(),
     matchEvidence: z.array(z.string().max(200)).max(20).optional(),
+    contentBusinessProbability: z.number().min(0).max(1).optional(),
+    subjectBusinessProbability: z.number().min(0).max(1).optional(),
+    signatureCompanyMatchConfidence: z.number().min(0).max(1).optional(),
+    jobReferenceConfidence: z.number().min(0).max(1).optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -142,7 +147,7 @@ function shouldRequireReview(body: N8nEmailResult): boolean {
   return false;
 }
 
-function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT", emailType: string, requiresReview: boolean) {
+function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT", emailType: string, requiresReview: boolean, evidenceResult?: import("@forgeops/shared").ClassificationEvidence | null) {
   return {
     businessCategory: body.analysis.businessCategory,
     emailType: emailType as "ACTIONABLE_REQUEST" | "FYI_UPDATE" | "SALES_MARKETING" | "SUPPORT_CUSTOMER_ISSUE" | "INTERNAL_COORDINATION" | "NEEDS_REVIEW" | "RECRUITING_HIRING",
@@ -164,6 +169,7 @@ function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM
     entityMatchConfidence: body.analysis.entityMatchConfidence ? toConfidence(body.analysis.entityMatchConfidence) : null,
     matchEvidence: body.analysis.matchEvidence ? toPrismaJson(body.analysis.matchEvidence) : Prisma.JsonNull,
     rawAiPayload: toPrismaJson(body.analysis),
+    classificationEvidence: (body as Record<string, unknown>)._evidenceResult ? toPrismaJson((body as Record<string, unknown>)._evidenceResult) : Prisma.JsonNull,
     customerId: body.analysis.selectedCustomerId ?? null,
     vendorId: body.analysis.selectedVendorId ?? null,
     jobId: body.analysis.selectedJobId ?? null,
@@ -636,6 +642,43 @@ async function handleN8nIngest(
     }
   }
 
+  const senderEvidence = await app.services.prisma.senderEvidence.findFirst({
+    where: { workspaceId, normalizedEmail: body.email.senderEmail.toLowerCase() },
+    select: { status: true, confidence: true, businessEvidenceCount: true, personalEvidenceCount: true }
+  }).catch(() => null);
+
+  const wsSettings = await app.services.prisma.workspaceSetting.findFirst({
+    where: { workspaceId },
+    select: {
+      businessThreshold: true, personalThreshold: true,
+      weightContent: true, weightSender: true, weightSignature: true, weightJob: true, weightSubject: true
+    }
+  }).catch(() => null);
+
+  const weights: EvidenceWeights = wsSettings ? {
+    content: Number(wsSettings.weightContent),
+    sender: Number(wsSettings.weightSender),
+    signature: Number(wsSettings.weightSignature),
+    job: Number(wsSettings.weightJob),
+    subject: Number(wsSettings.weightSubject)
+  } : { content: 0.40, sender: 0.25, signature: 0.15, job: 0.15, subject: 0.05 };
+
+  const thresholds: EvidenceThresholds = wsSettings ? {
+    businessThreshold: Number(wsSettings.businessThreshold),
+    personalThreshold: Number(wsSettings.personalThreshold)
+  } : { businessThreshold: 0.85, personalThreshold: 0.20 };
+
+  const evidenceResult = calculateBusinessProbability({
+    contentBusinessProbability: body.analysis.contentBusinessProbability ?? body.analysis.confidence ?? 0.5,
+    subjectBusinessProbability: body.analysis.subjectBusinessProbability ?? 0.5,
+    signatureCompanyMatchConfidence: body.analysis.signatureCompanyMatchConfidence ?? body.analysis.entityMatchConfidence ?? 0,
+    jobReferenceConfidence: body.analysis.jobReferenceConfidence ?? 0,
+    senderStatus: senderEvidence?.status ?? null,
+    senderConfidence: senderEvidence ? Number(senderEvidence.confidence) : 0,
+    senderBusinessCount: senderEvidence?.businessEvidenceCount ?? 0,
+    senderPersonalCount: senderEvidence?.personalEvidenceCount ?? 0
+  }, weights, thresholds);
+
   const deduplicationKey = buildDeduplicationKey(
     workspaceId,
     body.source.mailboxEmail,
@@ -684,6 +727,8 @@ async function handleN8nIngest(
         return;
       }
     }
+
+    (body as Record<string, unknown>)._evidenceResult = evidenceResult;
 
     const result = await app.services.prisma.$transaction(async (tx) => {
       return upsertEmailData(tx, workspaceId, connectionId, body);

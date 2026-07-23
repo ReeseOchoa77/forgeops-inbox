@@ -449,6 +449,7 @@ model Classification {
   entityMatchConfidence Decimal?     @db.Decimal(5, 4)
   matchEvidence         Json?
   rawAiPayload          Json?
+  classificationEvidence Json?
   candidateIds          Json?
   classifierVersion     String?
   promptVersion         String?
@@ -678,6 +679,13 @@ model WorkspaceSetting {
   autoCreateTasks                   Boolean      @default(true)
   autoApplyRoutingRules             Boolean      @default(true)
   archiveResolvedAfterDays          Int?
+  businessThreshold                 Decimal      @default(0.8500) @db.Decimal(5, 4)
+  personalThreshold                 Decimal      @default(0.2000) @db.Decimal(5, 4)
+  weightContent                     Decimal      @default(0.4000) @db.Decimal(5, 4)
+  weightSender                      Decimal      @default(0.2500) @db.Decimal(5, 4)
+  weightSignature                   Decimal      @default(0.1500) @db.Decimal(5, 4)
+  weightJob                         Decimal      @default(0.1500) @db.Decimal(5, 4)
+  weightSubject                     Decimal      @default(0.0500) @db.Decimal(5, 4)
   createdAt                         DateTime     @default(now())
   updatedAt                         DateTime     @updatedAt
   workspace                         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
