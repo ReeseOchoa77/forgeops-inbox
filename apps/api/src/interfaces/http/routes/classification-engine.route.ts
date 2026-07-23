@@ -43,6 +43,12 @@ const candidatesInputSchema = z.object({
 
 const reclassifySchema = z.object({
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]),
+  businessType: z.string().max(50).nullable().optional(),
+  customerId: z.string().nullable().optional(),
+  vendorId: z.string().nullable().optional(),
+  jobId: z.string().nullable().optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  containsActionRequest: z.boolean().optional(),
   reason: z.string().max(500).optional()
 });
 
@@ -347,12 +353,15 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
 
     const message = await app.services.prisma.emailMessage.findFirst({
       where: { workspaceId: params.workspaceId, OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }] },
-      select: { id: true, mailboxCategory: true }
+      select: { id: true, mailboxCategory: true, senderEmail: true, senderName: true, threadId: true,
+        classifications: { select: { id: true, mailboxCategory: true, businessTypeKey: true, customerId: true, vendorId: true, jobId: true, priority: true }, take: 1, orderBy: { createdAt: "desc" } }
+      }
     });
 
     if (!message) return reply.code(404).send({ message: "Message not found" });
 
     const previousCategory = message.mailboxCategory;
+    const classification = message.classifications[0];
 
     await app.services.prisma.emailMessage.update({
       where: { id: message.id },
@@ -360,14 +369,72 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         mailboxCategory: body.mailboxCategory,
         isSpam: false,
         isTrashed: false,
-        previousCategory: previousCategory
+        previousCategory: previousCategory,
+        ...(body.priority ? { priority: body.priority } : {})
       }
     });
 
-    if (previousCategory === "BUSINESS" && body.mailboxCategory !== "BUSINESS") {
+    if (classification) {
+      await app.services.prisma.classificationCorrection.create({
+        data: {
+          workspaceId: params.workspaceId,
+          classificationId: classification.id,
+          originalMailboxCategory: previousCategory,
+          correctedMailboxCategory: body.mailboxCategory,
+          originalBusinessType: classification.businessTypeKey ?? null,
+          correctedBusinessType: body.businessType ?? null,
+          originalCustomerId: classification.customerId ?? null,
+          correctedCustomerId: body.customerId ?? null,
+          originalVendorId: classification.vendorId ?? null,
+          correctedVendorId: body.vendorId ?? null,
+          originalJobId: classification.jobId ?? null,
+          correctedJobId: body.jobId ?? null,
+          originalPriority: classification.priority ?? null,
+          correctedPriority: body.priority ?? null,
+          reason: body.reason ?? null,
+          reviewedByUserId: session.userId
+        }
+      });
+
+      const classUpdate: Record<string, unknown> = {
+        mailboxCategory: body.mailboxCategory,
+        reviewStatus: "APPROVED",
+        reviewedByUserId: session.userId,
+        reviewedAt: new Date()
+      };
+      if (body.businessType !== undefined) classUpdate.businessTypeKey = body.businessType;
+      if (body.customerId !== undefined) classUpdate.customerId = body.customerId;
+      if (body.vendorId !== undefined) classUpdate.vendorId = body.vendorId;
+      if (body.jobId !== undefined) classUpdate.jobId = body.jobId;
+      if (body.priority) classUpdate.priority = body.priority;
+      if (body.containsActionRequest !== undefined) classUpdate.containsActionRequest = body.containsActionRequest;
+      if (body.mailboxCategory === "PERSONAL") {
+        classUpdate.businessTypeKey = null;
+        classUpdate.customerId = null;
+        classUpdate.vendorId = null;
+        classUpdate.jobId = null;
+      }
+
+      await app.services.prisma.classification.update({
+        where: { id: classification.id },
+        data: classUpdate as import("@prisma/client").Prisma.ClassificationUncheckedUpdateInput
+      });
+    }
+
+    const { recordSenderEvidence } = await import("./sender-evidence.route.js");
+    await recordSenderEvidence(
+      app.services.prisma,
+      params.workspaceId,
+      message.senderEmail,
+      message.senderName,
+      body.mailboxCategory,
+      true
+    ).catch(() => {});
+
+    if (previousCategory === "BUSINESS" && body.mailboxCategory === "PERSONAL") {
       await app.services.prisma.task.updateMany({
         where: { workspaceId: params.workspaceId, sourceMessageId: message.id, status: "OPEN" },
-        data: { dismissedAt: new Date(), dismissedBy: session.userId, dismissalReason: `Reclassified from BUSINESS to ${body.mailboxCategory}` }
+        data: { dismissedAt: new Date(), dismissedBy: session.userId, dismissalReason: `Reclassified to PERSONAL` }
       });
     }
 
@@ -377,11 +444,25 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       entityType: "EMAIL_MESSAGE",
       entityId: message.id,
       action: "email.reclassified",
-      metadata: { from: previousCategory, to: body.mailboxCategory, reason: body.reason ?? null },
+      metadata: {
+        from: previousCategory,
+        to: body.mailboxCategory,
+        businessType: body.businessType ?? null,
+        customerId: body.customerId ?? null,
+        vendorId: body.vendorId ?? null,
+        jobId: body.jobId ?? null,
+        reason: body.reason ?? null
+      },
       request
     });
 
-    return reply.send({ status: "reclassified", from: previousCategory, to: body.mailboxCategory });
+    return reply.send({
+      status: "reclassified",
+      from: previousCategory,
+      to: body.mailboxCategory,
+      correctionCreated: !!classification,
+      senderEvidenceUpdated: true
+    });
   });
 
   // --- Review correction ---
@@ -518,5 +599,33 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     });
 
     return reply.code(201).send({ instruction });
+  });
+
+  // --- Correction history ---
+  app.get("/api/v1/workspaces/:workspaceId/messages/:messageId/corrections", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), messageId: z.string().min(1) }).parse(request.params);
+    const session = await getSessionFromRequest(request);
+    if (!session) return reply.code(401).send({ message: "Authentication required" });
+    const membership = await requireWorkspaceMembership(app.services.prisma, session.userId, params.workspaceId);
+    if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
+
+    const message = await app.services.prisma.emailMessage.findFirst({
+      where: { workspaceId: params.workspaceId, OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }] },
+      select: { id: true, classifications: { select: { id: true }, take: 10, orderBy: { createdAt: "desc" } } }
+    });
+
+    if (!message) return reply.code(404).send({ message: "Message not found" });
+
+    const classificationIds = message.classifications.map(c => c.id);
+
+    const corrections = await app.services.prisma.classificationCorrection.findMany({
+      where: { workspaceId: params.workspaceId, classificationId: { in: classificationIds } },
+      orderBy: { reviewedAt: "desc" },
+      include: {
+        reviewedByUser: { select: { email: true, name: true } }
+      }
+    });
+
+    return reply.send({ corrections });
   });
 };

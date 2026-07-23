@@ -231,6 +231,23 @@ export const api = {
       body: JSON.stringify({})
     }),
 
+  reclassifyMessage: (workspaceId: string, messageId: string, data: {
+    mailboxCategory: 'BUSINESS' | 'PERSONAL';
+    businessType?: string | null;
+    customerId?: string | null;
+    vendorId?: string | null;
+    jobId?: string | null;
+    priority?: string;
+    reason?: string;
+  }) =>
+    request<{ status: string; from: string; to: string }>(`/workspaces/${workspaceId}/messages/${messageId}/reclassify`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+
+  getCorrections: (workspaceId: string, messageId: string) =>
+    request<{ corrections: Array<Record<string, unknown>> }>(`/workspaces/${workspaceId}/messages/${messageId}/corrections`),
+
   getMessageDetail: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ data: MessageDetail }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}`

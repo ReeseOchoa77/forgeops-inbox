@@ -130,6 +130,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     } catch { /* */ }
   }
 
+  const handleReclassify = async (messageId: string, category: 'BUSINESS' | 'PERSONAL') => {
+    try {
+      await api.reclassifyMessage(workspaceId, messageId, { mailboxCategory: category })
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+      setTotalCount(prev => prev - 1)
+    } catch { /* */ }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
       {/* Header */}
@@ -192,7 +200,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                   {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
                   {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
-                  <th style={{ padding: '8px 6px', width: 32 }}></th>
+                  <th style={{ padding: '8px 6px', width: 64 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -229,13 +237,23 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     )}
                     <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
                     <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                      {inboxTab !== 'TRASH' ? (
-                        <button title="Trash" onClick={() => handleTrash(m.id, false)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
-                      ) : (
-                        <button title="Restore" onClick={() => handleTrash(m.id, true)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
-                      )}
+                      <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                        {inboxTab === 'PERSONAL' && (
+                          <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
+                        )}
+                        {isBusiness && (
+                          <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
+                        )}
+                        {inboxTab !== 'TRASH' ? (
+                          <button title="Trash" onClick={() => handleTrash(m.id, false)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
+                        ) : (
+                          <button title="Restore" onClick={() => handleTrash(m.id, true)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
