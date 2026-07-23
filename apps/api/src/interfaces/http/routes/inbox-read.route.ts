@@ -615,6 +615,8 @@ const buildMessagesWhere = (input: {
     andConditions.push({ isTrashed: false });
   }
 
+  andConditions.push({ isArchived: false });
+
   if (input.search) {
     const term = input.search.trim();
     andConditions.push({

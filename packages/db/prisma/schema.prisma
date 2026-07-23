@@ -350,6 +350,9 @@ model EmailMessage {
   isImportant      Boolean       @default(false)
   isTrashed        Boolean       @default(false)
   isSpam           Boolean       @default(false)
+  isTestData       Boolean       @default(false)
+  isArchived       Boolean       @default(false)
+  archivedAt       DateTime?
   mailboxCategory  MailboxCategory @default(BUSINESS)
   trashedAt        DateTime?
   trashedBy        String?

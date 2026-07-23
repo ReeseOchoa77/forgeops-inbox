@@ -52,6 +52,7 @@ import { registerClassificationEngineRoutes } from "./routes/classification-engi
 import { registerFolderDiscoveryRoutes } from "./routes/folder-discovery.route.js";
 import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js";
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
+import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -263,6 +264,7 @@ export const buildServer = async () => {
   await registerFolderDiscoveryRoutes(app);
   await registerSenderEvidenceRoutes(app);
   await registerEmailAttachmentRoutes(app);
+  await registerTestDataAdminRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;
