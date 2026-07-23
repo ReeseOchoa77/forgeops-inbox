@@ -93,10 +93,23 @@ const threadMessagesParamsSchema = z.object({
 
 const messageCategoryValues = ["important", "spam", "trash"] as const;
 
+const businessTypeGroupValues = ["BIDS_ESTIMATING", "PROJECTS", "PURCHASING", "ACCOUNTING", "INTERNAL", "OTHER"] as const;
+
+const businessTypeKeysByGroup: Record<string, string[]> = {
+  BIDS_ESTIMATING: ["BID_OPPORTUNITY", "BID_UPDATE", "ESTIMATE_QUOTE"],
+  PROJECTS: ["PROJECT_COORDINATION", "RFI_CLARIFICATION", "SUBMITTAL_SHOP_DRAWING", "CHANGE_ORDER_SCOPE", "FABRICATION_PRODUCTION", "DELIVERY_LOGISTICS", "FIELD_INSTALLATION"],
+  PURCHASING: ["PURCHASE_ORDER_CONTRACT", "MATERIAL_PURCHASING"],
+  ACCOUNTING: ["INVOICE_PAYMENT"],
+  INTERNAL: ["COMPLIANCE_LEGAL", "INTERNAL_ADMIN"],
+  OTHER: ["OTHER_BUSINESS"]
+};
+
 const messagesListQuerySchema = paginationQuerySchema.extend({
   businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
   category: z.enum(messageCategoryValues).optional(),
+  businessTypeGroup: z.enum(businessTypeGroupValues).optional(),
+  businessTypeKey: z.string().max(50).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
   hasTaskCandidate: booleanQuerySchema.optional(),
@@ -576,6 +589,8 @@ const buildMessagesWhere = (input: {
   businessCategory?: (typeof businessCategoryValues)[number];
   classificationType?: EmailType;
   category?: (typeof messageCategoryValues)[number];
+  businessTypeGroup?: (typeof businessTypeGroupValues)[number];
+  businessTypeKey?: string;
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
@@ -631,6 +646,27 @@ const buildMessagesWhere = (input: {
         }
       }
     });
+  }
+
+  if (input.businessTypeKey) {
+    andConditions.push({
+      classifications: {
+        some: {
+          businessTypeKey: input.businessTypeKey
+        }
+      }
+    });
+  } else if (input.businessTypeGroup) {
+    const keys = businessTypeKeysByGroup[input.businessTypeGroup];
+    if (keys && keys.length > 0) {
+      andConditions.push({
+        classifications: {
+          some: {
+            businessTypeKey: { in: keys }
+          }
+        }
+      });
+    }
   }
 
   if (typeof input.hasTaskCandidate === "boolean") {
@@ -1006,6 +1042,8 @@ export const registerInboxReadRoutes = async (
           ? { classificationType: query.classificationType }
           : {}),
         ...(query.category ? { category: query.category } : {}),
+        ...(query.businessTypeGroup ? { businessTypeGroup: query.businessTypeGroup } : {}),
+        ...(query.businessTypeKey ? { businessTypeKey: query.businessTypeKey } : {}),
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         ...(typeof query.hasTaskCandidate === "boolean"

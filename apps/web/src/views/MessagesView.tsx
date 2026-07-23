@@ -60,6 +60,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       f.category = 'trash'
     } else {
       f.businessCategory = 'BUSINESS'
+      if (inboxTab !== 'ALL_BUSINESS') {
+        f.businessTypeGroup = inboxTab
+      }
     }
 
     if (activeSearch) f.search = activeSearch

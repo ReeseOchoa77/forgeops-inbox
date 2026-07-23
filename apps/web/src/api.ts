@@ -197,6 +197,8 @@ export const api = {
     classificationType?: string;
     hasTaskCandidate?: boolean;
     category?: 'important' | 'spam' | 'trash';
+    businessTypeGroup?: string;
+    businessTypeKey?: string;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
@@ -204,6 +206,8 @@ export const api = {
     if (filters?.classificationType) params.set('classificationType', filters.classificationType);
     if (filters?.hasTaskCandidate !== undefined) params.set('hasTaskCandidate', String(filters.hasTaskCandidate));
     if (filters?.category) params.set('category', filters.category);
+    if (filters?.businessTypeGroup) params.set('businessTypeGroup', filters.businessTypeGroup);
+    if (filters?.businessTypeKey) params.set('businessTypeKey', filters.businessTypeKey);
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
