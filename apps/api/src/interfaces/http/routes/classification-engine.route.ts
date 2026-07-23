@@ -252,10 +252,28 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       }
     }
 
+    const approvedFolders = await app.services.prisma.discoveredFolder.findMany({
+      where: { workspaceId, status: "APPROVED", matchedJobId: { not: null } },
+      select: { normalizedFolderName: true, matchedJobId: true, rawFolderName: true, detectedJobNumber: true }
+    });
+
     const jobCandidates: Array<{ id: string; name: string; score: number; matchedOn: string[]; evidence: string[] }> = [];
     const searchText = `${body.subject ?? ""} ${body.cleanBody ?? ""} ${body.attachmentNames.join(" ")}`.toLowerCase();
 
+    for (const folder of approvedFolders) {
+      if (!folder.matchedJobId) continue;
+      const job = jobs.find(j => j.id === folder.matchedJobId);
+      if (!job) continue;
+
+      if (folder.detectedJobNumber && searchText.includes(folder.detectedJobNumber.toLowerCase())) {
+        jobCandidates.push({ id: job.id, name: job.name, score: 0.95, matchedOn: ["folderJobNumber"], evidence: [`folder job# ${folder.detectedJobNumber}`] });
+      } else if (searchText.includes(folder.normalizedFolderName)) {
+        jobCandidates.push({ id: job.id, name: job.name, score: 0.85, matchedOn: ["folderName"], evidence: [`folder "${folder.rawFolderName}"`] });
+      }
+    }
+
     for (const job of jobs) {
+      if (jobCandidates.some(c => c.id === job.id)) continue;
       if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {
         jobCandidates.push({ id: job.id, name: job.name, score: 0.95, matchedOn: ["jobNumber"], evidence: [`job# ${job.jobNumber} in text`] });
       } else {

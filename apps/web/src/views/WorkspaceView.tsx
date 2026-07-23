@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api, type ApprovedAccessEntry, type ConnectionSummary } from '../api'
+import { FoldersView } from './FoldersView'
 
 interface Props {
   workspaceId: string
   workspaceName: string
   userRole: string
+  connectionId: string
 }
 
 function formatDate(iso: string | null): string {
@@ -13,10 +15,11 @@ function formatDate(iso: string | null): string {
   catch { return iso ?? '—' }
 }
 
-export function WorkspaceView({ workspaceId, workspaceName, userRole }: Props) {
+export function WorkspaceView({ workspaceId, workspaceName, userRole, connectionId }: Props) {
   const [members, setMembers] = useState<ApprovedAccessEntry[]>([])
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [wsTab, setWsTab] = useState<'overview' | 'folders'>('overview')
   const isOwner = userRole === 'OWNER'
 
   useEffect(() => {
@@ -36,8 +39,24 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole }: Props) {
   return (
     <div>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>{workspaceName}</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px' }}>Workspace overview, members, and monitored mailboxes.</p>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>Workspace overview, members, and monitored mailboxes.</p>
 
+      <div style={{ display: 'flex', gap: 0, marginBottom: 12, borderBottom: '2px solid #e5e5e5' }}>
+        {(['overview', 'folders'] as const).map(t => (
+          <button key={t} onClick={() => setWsTab(t)} style={{
+            padding: '7px 18px', fontSize: 13, fontWeight: wsTab === t ? 600 : 400,
+            color: wsTab === t ? '#1a1a2e' : '#888', background: 'none', border: 'none',
+            borderBottom: wsTab === t ? '2px solid #1a1a2e' : '2px solid transparent',
+            marginBottom: -2, cursor: 'pointer', textTransform: 'capitalize'
+          }}>{t === 'folders' ? 'Job Folders' : 'Overview'}</button>
+        ))}
+      </div>
+
+      {wsTab === 'folders' && (
+        <FoldersView workspaceId={workspaceId} connectionId={connectionId} />
+      )}
+
+      {wsTab === 'overview' && <>
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
         <div className="card" style={{ textAlign: 'center', padding: 14 }}>
@@ -122,6 +141,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole }: Props) {
           </table>
         )}
       </div>
+      </>}
     </div>
   )
 }

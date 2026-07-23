@@ -334,7 +334,7 @@ export default function App() {
 
           {page === 'workspace' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} />
+              <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} connectionId={connectionId} />
             </div>
           )}
           {page === 'documents' && (

@@ -170,6 +170,8 @@ model Workspace {
   businessTypes      BusinessType[]
   classificationCorrections ClassificationCorrection[]
   classificationInstructions ClassificationInstruction[]
+  discoveredFolders    DiscoveredFolder[]
+  jobFolderRoots       JobFolderRoot[]
 }
 
 model User {
@@ -603,7 +605,8 @@ model Job {
   customer        Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   classifications Classification[] @relation("ClassificationJob")
   tasks           Task[]     @relation("TaskJob")
-  aliases         EntityAlias[]
+  aliases           EntityAlias[]
+  discoveredFolders DiscoveredFolder[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -884,5 +887,51 @@ model ClassificationInstruction {
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdByUser User?     @relation("InstructionCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  @@index([workspaceId, active])
+}
+
+enum FolderStatus {
+  DISCOVERED
+  APPROVED
+  IGNORED
+}
+
+model DiscoveredFolder {
+  id                      String       @id @default(cuid())
+  workspaceId             String
+  provider                InboxProvider @default(OUTLOOK)
+  mailboxEmail            String
+  providerFolderId        String
+  parentProviderFolderId  String?
+  folderPath              String?
+  rawFolderName           String
+  normalizedFolderName    String
+  detectedJobNumber       String?
+  matchedJobId            String?
+  status                  FolderStatus @default(DISCOVERED)
+  childFolderCount        Int          @default(0)
+  lastSeenAt              DateTime     @default(now())
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  workspace               Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  matchedJob              Job?         @relation(fields: [workspaceId, matchedJobId], references: [workspaceId, id], onDelete: SetNull)
+
+  @@unique([workspaceId, providerFolderId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, normalizedFolderName])
+  @@index([matchedJobId])
+}
+
+model JobFolderRoot {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  rootName      String
+  normalizedName String
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, normalizedName])
   @@index([workspaceId, active])
 }
