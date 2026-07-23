@@ -172,6 +172,8 @@ model Workspace {
   classificationInstructions ClassificationInstruction[]
   discoveredFolders    DiscoveredFolder[]
   jobFolderRoots       JobFolderRoot[]
+  senderEvidence       SenderEvidence[]
+  domainEvidence       DomainEvidence[]
 }
 
 model User {
@@ -934,4 +936,55 @@ model JobFolderRoot {
 
   @@unique([workspaceId, normalizedName])
   @@index([workspaceId, active])
+}
+
+enum SenderStatus {
+  OBSERVED
+  LIKELY_BUSINESS
+  CONFIRMED_BUSINESS
+  CONFIRMED_PERSONAL
+  BLOCKED
+}
+
+model SenderEvidence {
+  id                          String       @id @default(cuid())
+  workspaceId                 String
+  senderEmail                 String
+  normalizedEmail             String
+  senderDomain                String
+  displayName                 String?
+  businessEvidenceCount       Int          @default(0)
+  personalEvidenceCount       Int          @default(0)
+  manualBusinessConfirmations Int          @default(0)
+  manualPersonalConfirmations Int          @default(0)
+  lastBusinessAt              DateTime?
+  lastPersonalAt              DateTime?
+  status                      SenderStatus @default(OBSERVED)
+  confidence                  Decimal      @default(0) @db.Decimal(5, 4)
+  createdAt                   DateTime     @default(now())
+  updatedAt                   DateTime     @updatedAt
+  workspace                   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, normalizedEmail])
+  @@index([workspaceId, senderDomain])
+  @@index([workspaceId, status])
+}
+
+model DomainEvidence {
+  id                          String       @id @default(cuid())
+  workspaceId                 String
+  domain                      String
+  isPublicDomain              Boolean      @default(false)
+  businessEvidenceCount       Int          @default(0)
+  personalEvidenceCount       Int          @default(0)
+  manualBusinessConfirmations Int          @default(0)
+  manualPersonalConfirmations Int          @default(0)
+  status                      SenderStatus @default(OBSERVED)
+  confidence                  Decimal      @default(0) @db.Decimal(5, 4)
+  createdAt                   DateTime     @default(now())
+  updatedAt                   DateTime     @updatedAt
+  workspace                   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, domain])
+  @@index([workspaceId, status])
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-// api imported via fetchJson/postJson helpers below
+import { SenderEvidenceView } from './SenderEvidenceView'
 
-type Tab = 'customers' | 'vendors' | 'jobs' | 'contacts' | 'aliases' | 'documents' | 'imports'
+type Tab = 'customers' | 'vendors' | 'jobs' | 'contacts' | 'aliases' | 'documents' | 'senders' | 'imports'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'customers', label: 'Customers' },
@@ -10,6 +10,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'contacts', label: 'Contacts' },
   { key: 'aliases', label: 'Aliases' },
   { key: 'documents', label: 'Documents' },
+  { key: 'senders', label: 'Senders' },
   { key: 'imports', label: 'Imports' },
 ]
 
@@ -200,8 +201,13 @@ export function ReferenceDataView({ workspaceId }: Props) {
         </div>
       )}
 
+      {/* Senders tab */}
+      {tab === 'senders' && (
+        <SenderEvidenceView workspaceId={workspaceId} />
+      )}
+
       {/* Data table */}
-      {loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
+      {tab !== 'senders' && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
         <div className="empty-state" style={{ padding: 24 }}>
           <h3>No {tab} yet</h3>
           <p>{tab === 'customers' || tab === 'vendors' ? 'Import from CSV or paste names above.' : `${tab} will appear here as data is imported.`}</p>
@@ -235,7 +241,7 @@ export function ReferenceDataView({ workspaceId }: Props) {
             </tbody>
           </table>
         </div>
-      )}
+      ))}
     </div>
   )
 }

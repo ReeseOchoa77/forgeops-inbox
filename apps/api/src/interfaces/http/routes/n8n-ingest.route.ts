@@ -702,6 +702,18 @@ async function handleN8nIngest(
       data: { lastSuccessfulProcessingAt: new Date(), lastErrorMessage: null }
     }).catch(() => {});
 
+    const { recordSenderEvidence } = await import("./sender-evidence.route.js");
+    await recordSenderEvidence(
+      app.services.prisma,
+      workspaceId,
+      body.email.senderEmail,
+      body.email.senderName ?? null,
+      body.analysis.mailboxCategory as "BUSINESS" | "PERSONAL",
+      false
+    ).catch(e => {
+      app.log.warn({ event: "sender_evidence_failed", error: e instanceof Error ? e.message : "unknown" });
+    });
+
     const auditAction = result.status === "created"
       ? "n8n.email_created"
       : result.status === "updated"

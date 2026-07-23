@@ -191,7 +191,19 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       })
     ]);
 
+    const [senderEvidence, domainEvidence] = await Promise.all([
+      normalizedSenderEmail ? app.services.prisma.senderEvidence.findFirst({
+        where: { workspaceId, normalizedEmail: normalizedSenderEmail },
+        select: { status: true, confidence: true, businessEvidenceCount: true, personalEvidenceCount: true }
+      }) : null,
+      senderDomain ? app.services.prisma.domainEvidence.findFirst({
+        where: { workspaceId, domain: senderDomain },
+        select: { status: true, confidence: true, isPublicDomain: true }
+      }) : null
+    ]);
+
     let knownSender = false;
+    if (senderEvidence && senderEvidence.status !== "OBSERVED") knownSender = true;
     const scored = new Map<string, { id: string; name: string; matchedOn: Set<string>; evidence: string[]; score: number; type: "customer" | "vendor" }>();
 
     function addCandidate(type: "customer" | "vendor", id: string, name: string, matchOn: string, evidence: string, score: number) {
@@ -303,6 +315,17 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       customerCandidates: customerCandidates.slice(0, 5),
       vendorCandidates: vendorCandidates.slice(0, 5),
       jobCandidates: jobCandidates.slice(0, 5),
+      senderEvidence: senderEvidence ? {
+        status: senderEvidence.status,
+        confidence: Number(senderEvidence.confidence.toString()),
+        businessCount: senderEvidence.businessEvidenceCount,
+        personalCount: senderEvidence.personalEvidenceCount
+      } : null,
+      domainEvidence: domainEvidence ? {
+        status: domainEvidence.status,
+        confidence: Number(domainEvidence.confidence.toString()),
+        isPublicDomain: domainEvidence.isPublicDomain
+      } : null,
       activeBusinessTypes: businessTypes.map(bt => ({ key: bt.systemKey, label: bt.displayLabel, group: bt.displayGroup, order: bt.displayOrder })),
       classificationInstructions: instructions.map(i => ({ title: i.title, content: i.content }))
     });
