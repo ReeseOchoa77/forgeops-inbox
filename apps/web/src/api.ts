@@ -49,6 +49,8 @@ export interface Classification {
   requiresReview: boolean;
   reviewStatus: string;
   containsActionRequest: boolean;
+  businessTypeKey: string | null;
+  businessTypeConfidence: number | null;
 }
 
 export interface TaskSummary {

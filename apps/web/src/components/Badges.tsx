@@ -15,30 +15,64 @@ export function BusinessBadge({ category }: { category: string | null }) {
   return <span style={{ ...badgeBase, background: '#f0f0f0', color: '#888' }}>Non-Business</span>
 }
 
-const typeLabels: Record<string, string> = {
+const businessTypeLabels: Record<string, string> = {
+  BID_OPPORTUNITY: 'Bid Opportunity',
+  BID_UPDATE: 'Bid Update / Addendum',
+  ESTIMATE_QUOTE: 'Estimate / Quote',
+  PURCHASE_ORDER_CONTRACT: 'Purchase Order / Contract',
+  PROJECT_COORDINATION: 'Project Coordination',
+  RFI_CLARIFICATION: 'RFI / Clarification',
+  SUBMITTAL_SHOP_DRAWING: 'Submittal / Shop Drawing',
+  CHANGE_ORDER_SCOPE: 'Change Order / Scope Change',
+  FABRICATION_PRODUCTION: 'Fabrication / Production',
+  MATERIAL_PURCHASING: 'Material / Vendor / Purchasing',
+  DELIVERY_LOGISTICS: 'Delivery / Logistics',
+  FIELD_INSTALLATION: 'Field Issue / Installation',
+  INVOICE_PAYMENT: 'Invoice / Payment',
+  COMPLIANCE_LEGAL: 'Compliance / Safety / Legal',
+  INTERNAL_ADMIN: 'Internal Administration',
+  OTHER_BUSINESS: 'Other Business'
+}
+
+const businessTypeColors: Record<string, { bg: string; fg: string }> = {
+  BID_OPPORTUNITY: { bg: '#e3f2fd', fg: '#1565c0' },
+  BID_UPDATE: { bg: '#e3f2fd', fg: '#1565c0' },
+  ESTIMATE_QUOTE: { bg: '#e3f2fd', fg: '#1565c0' },
+  PURCHASE_ORDER_CONTRACT: { bg: '#e8f5e9', fg: '#2e7d32' },
+  PROJECT_COORDINATION: { bg: '#e0f2f1', fg: '#00695c' },
+  RFI_CLARIFICATION: { bg: '#fff3e0', fg: '#e65100' },
+  SUBMITTAL_SHOP_DRAWING: { bg: '#f3e5f5', fg: '#6a1b9a' },
+  CHANGE_ORDER_SCOPE: { bg: '#fce4ec', fg: '#c62828' },
+  FABRICATION_PRODUCTION: { bg: '#e0f2f1', fg: '#00695c' },
+  MATERIAL_PURCHASING: { bg: '#e8f5e9', fg: '#2e7d32' },
+  DELIVERY_LOGISTICS: { bg: '#e0f2f1', fg: '#00695c' },
+  FIELD_INSTALLATION: { bg: '#fff3e0', fg: '#e65100' },
+  INVOICE_PAYMENT: { bg: '#e8f5e9', fg: '#2e7d32' },
+  COMPLIANCE_LEGAL: { bg: '#fce4ec', fg: '#c62828' },
+  INTERNAL_ADMIN: { bg: '#f0f0f0', fg: '#555' },
+  OTHER_BUSINESS: { bg: '#f0f0f0', fg: '#555' }
+}
+
+const actionLabels: Record<string, string> = {
   ACTIONABLE_REQUEST: 'Action Needed',
   FYI_UPDATE: 'FYI / Update',
-  SALES_MARKETING: 'Sales & Marketing',
-  SUPPORT_CUSTOMER_ISSUE: 'Support Issue',
-  RECRUITING_HIRING: 'Recruiting',
-  INTERNAL_COORDINATION: 'Internal',
   NEEDS_REVIEW: 'Needs Review'
 }
 
-const typeColors: Record<string, { bg: string; fg: string }> = {
-  ACTIONABLE_REQUEST: { bg: '#e3f2fd', fg: '#1565c0' },
-  FYI_UPDATE: { bg: '#e8f5e9', fg: '#2e7d32' },
-  SALES_MARKETING: { bg: '#fff3e0', fg: '#e65100' },
-  SUPPORT_CUSTOMER_ISSUE: { bg: '#fce4ec', fg: '#c62828' },
-  RECRUITING_HIRING: { bg: '#f3e5f5', fg: '#6a1b9a' },
-  INTERNAL_COORDINATION: { bg: '#e0f2f1', fg: '#00695c' },
-  NEEDS_REVIEW: { bg: '#fff9c4', fg: '#f57f17' }
+export function TypeBadge({ type, businessTypeKey }: { type: string; businessTypeKey?: string | null }) {
+  if (businessTypeKey && businessTypeLabels[businessTypeKey]) {
+    const c = businessTypeColors[businessTypeKey] ?? { bg: '#eee', fg: '#333' }
+    return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{businessTypeLabels[businessTypeKey]}</span>
+  }
+  const label = businessTypeLabels[type] ?? actionLabels[type] ?? type.replace(/_/g, ' ')
+  const c = businessTypeColors[type] ?? { bg: '#eee', fg: '#333' }
+  return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{label}</span>
 }
 
-export function TypeBadge({ type }: { type: string }) {
-  const c = typeColors[type] ?? { bg: '#eee', fg: '#333' }
-  const label = typeLabels[type] ?? type.replace(/_/g, ' ')
-  return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{label}</span>
+export function ActionBadge({ emailType, requiresReview }: { emailType: string; requiresReview: boolean }) {
+  if (requiresReview) return <span style={{ ...badgeBase, background: '#fff9c4', color: '#f57f17', fontSize: 10 }}>Review</span>
+  if (emailType === 'ACTIONABLE_REQUEST') return <span style={{ ...badgeBase, background: '#e3f2fd', color: '#1565c0', fontSize: 10 }}>Action</span>
+  return null
 }
 
 const priorityLabels: Record<string, string> = {

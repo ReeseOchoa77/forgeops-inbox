@@ -161,6 +161,8 @@ const classificationSummarySchema = z.object({
   reviewQueue: z.enum(reviewQueueValues).nullable(),
   reviewStatus: z.enum(reviewStatusValues),
   containsActionRequest: z.boolean(),
+  businessTypeKey: z.string().nullable(),
+  businessTypeConfidence: z.number().nullable(),
   deadline: z.string().datetime().nullable(),
   routingHints: z.unknown().nullable(),
   extractedFields: z.unknown().nullable()
@@ -406,6 +408,8 @@ const serializeClassification = (classification: {
   reviewQueue: (typeof reviewQueueValues)[number] | null;
   reviewStatus: (typeof reviewStatusValues)[number];
   containsActionRequest: boolean;
+  businessTypeKey: string | null;
+  businessTypeConfidence: import("@prisma/client").Prisma.Decimal | null;
   deadline: Date | null;
   routingHints: unknown;
   extractedFields: unknown;
@@ -423,6 +427,8 @@ const serializeClassification = (classification: {
         reviewQueue: classification.reviewQueue,
         reviewStatus: classification.reviewStatus,
         containsActionRequest: classification.containsActionRequest,
+        businessTypeKey: classification.businessTypeKey ?? null,
+        businessTypeConfidence: classification.businessTypeConfidence ? Number(classification.businessTypeConfidence.toString()) : null,
         deadline: serializeDate(classification.deadline),
         routingHints: classification.routingHints ?? null,
         extractedFields: classification.extractedFields ?? null
@@ -1058,6 +1064,8 @@ export const registerInboxReadRoutes = async (
                 reviewQueue: true,
                 reviewStatus: true,
                 containsActionRequest: true,
+                businessTypeKey: true,
+                businessTypeConfidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true
@@ -1239,6 +1247,8 @@ export const registerInboxReadRoutes = async (
               reviewQueue: true,
               reviewStatus: true,
               containsActionRequest: true,
+              businessTypeKey: true,
+              businessTypeConfidence: true,
               deadline: true,
               routingHints: true,
               extractedFields: true
@@ -1429,7 +1439,9 @@ export const registerInboxReadRoutes = async (
               containsActionRequest: true,
               deadline: true,
               routingHints: true,
-              extractedFields: true
+              extractedFields: true,
+              businessTypeKey: true,
+              businessTypeConfidence: true
             }
           },
           tasks: {
@@ -1584,6 +1596,8 @@ export const registerInboxReadRoutes = async (
                 reviewQueue: true,
                 reviewStatus: true,
                 containsActionRequest: true,
+                businessTypeKey: true,
+                businessTypeConfidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true
@@ -1761,6 +1775,8 @@ export const registerInboxReadRoutes = async (
                 reviewQueue: true,
                 reviewStatus: true,
                 containsActionRequest: true,
+                businessTypeKey: true,
+                businessTypeConfidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true

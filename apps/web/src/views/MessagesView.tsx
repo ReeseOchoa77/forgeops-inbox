@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type MessageSummary } from '../api'
-import { PriorityBadge, TypeBadge } from '../components/Badges'
+import { PriorityBadge, TypeBadge, ActionBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -212,7 +212,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                       {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
                     </td>
                     {isBusiness && (
-                      <td style={{ padding: '7px 12px' }}>{m.classification ? <TypeBadge type={m.classification.emailType} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+                      <td style={{ padding: '7px 12px' }}>
+                        {m.classification ? (
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+                            <ActionBadge emailType={m.classification.emailType} requiresReview={m.classification.requiresReview} />
+                          </div>
+                        ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+                      </td>
                     )}
                     {isBusiness && (
                       <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
