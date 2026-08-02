@@ -333,6 +333,7 @@ model EmailMessage {
   gmailThreadId    String
   providerMessageId String?
   providerThreadId  String?
+  internetMessageId String?
   historyId        String?
   subject          String?
   senderName       String?

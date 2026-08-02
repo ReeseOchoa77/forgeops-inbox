@@ -405,6 +405,7 @@ async function upsertEmailData(
       gmailThreadId: providerThreadId,
       providerMessageId: body.source.providerMessageId,
       providerThreadId,
+      internetMessageId: body.source.internetMessageId ?? null,
       subject: body.email.subject,
       senderName: body.email.senderName ?? null,
       senderEmail: body.email.senderEmail,
@@ -753,7 +754,14 @@ async function handleN8nIngest(
       classificationId: result.classificationId,
       taskIds: result.taskIds,
       requiresReview: result.requiresReview,
-      deduplicationKey
+      deduplicationKey,
+      debug: {
+        providerMessageId: body.source.providerMessageId,
+        internetMessageId: body.source.internetMessageId ?? null,
+        providerConversationId: body.source.providerConversationId ?? null,
+        workspaceId,
+        mailboxEmail: body.source.mailboxEmail
+      }
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Ingestion failed";
@@ -791,7 +799,14 @@ async function handleN8nIngest(
           classificationId: existingMessage.classifications[0]?.id ?? null,
           taskIds: existingMessage.tasks.map(t => t.id),
           requiresReview: false,
-          deduplicationKey
+          deduplicationKey,
+          debug: {
+            providerMessageId: body.source.providerMessageId,
+            internetMessageId: body.source.internetMessageId ?? null,
+            providerConversationId: body.source.providerConversationId ?? null,
+            workspaceId,
+            mailboxEmail: body.source.mailboxEmail
+          }
         });
         return;
       }
