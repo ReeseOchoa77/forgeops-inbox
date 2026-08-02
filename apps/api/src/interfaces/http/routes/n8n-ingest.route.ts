@@ -45,21 +45,21 @@ const n8nEmailResultSchema = z.object({
     mailboxCategory: z.enum(["BUSINESS", "PERSONAL"]).optional(),
     mailboxConfidence: z.number().min(0).max(1).optional(),
     confidence: z.number().min(0).max(1).optional(),
-    businessType: z.string().max(50).optional(),
-    businessTypeConfidence: z.number().min(0).max(1).optional(),
+    businessType: z.string().max(50).nullable().optional(),
+    businessTypeConfidence: z.number().min(0).max(1).nullable().optional(),
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
     containsActionRequest: z.boolean(),
     selectedCustomerId: z.string().nullable().optional(),
     selectedVendorId: z.string().nullable().optional(),
     selectedJobId: z.string().nullable().optional(),
-    entityMatchConfidence: z.number().min(0).max(1).optional(),
-    matchEvidence: z.array(z.string().max(200)).max(20).optional(),
-    contentBusinessProbability: z.number().min(0).max(1).optional(),
-    subjectBusinessProbability: z.number().min(0).max(1).optional(),
-    signatureCompanyMatchConfidence: z.number().min(0).max(1).optional(),
-    jobReferenceConfidence: z.number().min(0).max(1).optional(),
-    classificationEvidence: z.record(z.unknown()).optional(),
+    entityMatchConfidence: z.number().min(0).max(1).nullable().optional(),
+    matchEvidence: z.array(z.string().max(200)).max(20).nullable().optional(),
+    contentBusinessProbability: z.number().min(0).max(1).nullable().optional(),
+    subjectBusinessProbability: z.number().min(0).max(1).nullable().optional(),
+    signatureCompanyMatchConfidence: z.number().min(0).max(1).nullable().optional(),
+    jobReferenceConfidence: z.number().min(0).max(1).nullable().optional(),
+    classificationEvidence: z.record(z.unknown()).nullable().optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -139,11 +139,11 @@ function shouldRequireReview(body: N8nEmailResult): boolean {
   if (body.analysis.requiresReview) return true;
   if (body.analysis.confidence < CLASSIFICATION_REVIEW_THRESHOLD) return true;
   const mc = body.analysis.mailboxConfidence;
-  if (mc !== undefined && mc < 0.90) return true;
+  if (mc != null && mc < 0.90) return true;
   const btc = body.analysis.businessTypeConfidence;
-  if (btc !== undefined && btc < CLASSIFICATION_REVIEW_THRESHOLD && body.analysis.mailboxCategory === "BUSINESS") return true;
+  if (btc != null && btc < CLASSIFICATION_REVIEW_THRESHOLD && body.analysis.mailboxCategory === "BUSINESS") return true;
   const emc = body.analysis.entityMatchConfidence;
-  if (emc !== undefined && emc < CLASSIFICATION_REVIEW_THRESHOLD && (body.analysis.selectedCustomerId || body.analysis.selectedVendorId || body.analysis.selectedJobId)) return true;
+  if (emc != null && emc < CLASSIFICATION_REVIEW_THRESHOLD && (body.analysis.selectedCustomerId || body.analysis.selectedVendorId || body.analysis.selectedJobId)) return true;
   return false;
 }
 
