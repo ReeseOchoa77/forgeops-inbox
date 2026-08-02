@@ -20,6 +20,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [wsTab, setWsTab] = useState<'overview' | 'folders'>('overview')
+  const [clearing, setClearing] = useState('')
   const isOwner = userRole === 'OWNER'
 
   useEffect(() => {
@@ -33,6 +34,26 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
       setConnections(c.connections)
     }).finally(() => setLoading(false))
   }, [workspaceId])
+
+  const handleClearInbox = async (connId: string, email: string) => {
+    if (!confirm(`Clear all emails from ${email}? This removes messages, threads, classifications, and tasks. Reference data is preserved.`)) return
+    setClearing(connId)
+    try {
+      const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
+      await fetch(`${BASE}/admin/test-data/archive`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, mode: 'all', dryRun: false })
+      })
+      await fetch(`${BASE}/admin/test-data/delete`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, onlyArchived: true, confirmPhrase: 'PERMANENTLY DELETE' })
+      })
+      window.location.reload()
+    } catch { /* */ }
+    finally { setClearing('') }
+  }
 
   if (loading) return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading workspace...</p>
 
@@ -119,6 +140,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
                 <th style={{ padding: '6px 8px' }}>Status</th>
                 <th style={{ padding: '6px 8px' }}>Messages</th>
                 <th style={{ padding: '6px 8px' }}>Last Synced</th>
+                {isOwner && <th style={{ padding: '6px 8px' }}></th>}
               </tr>
             </thead>
             <tbody>
@@ -135,6 +157,20 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
                   </td>
                   <td style={{ padding: '5px 8px' }}>{c.counts.messages.toLocaleString()}</td>
                   <td style={{ padding: '5px 8px', color: '#888' }}>{formatDate(c.lastSyncedAt)}</td>
+                  {isOwner && (
+                    <td style={{ padding: '5px 8px' }}>
+                      {c.counts.messages > 0 && (
+                        <button
+                          className="btn btn-sm btn-danger"
+                          style={{ fontSize: 10, padding: '2px 8px' }}
+                          disabled={clearing === c.id}
+                          onClick={() => handleClearInbox(c.id, c.email)}
+                        >
+                          {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
