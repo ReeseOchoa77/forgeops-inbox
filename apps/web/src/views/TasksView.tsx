@@ -8,14 +8,15 @@ interface Props {
   onSelectMessage?: (id: string) => void
 }
 
-type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'due_today' | 'high_priority'
+type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'due_today' | 'due_this_week' | 'high_priority'
 
 const FILTERS: Array<{ key: TaskFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'open', label: 'Open' },
   { key: 'completed', label: 'Completed' },
   { key: 'overdue', label: 'Overdue' },
-  { key: 'due_today', label: 'Due Today' },
+  { key: 'due_today', label: 'Today' },
+  { key: 'due_this_week', label: 'This Week' },
   { key: 'high_priority', label: 'High Priority' },
 ]
 
@@ -34,6 +35,17 @@ function isOverdue(dueAt: string | null, status: string): boolean {
 function isDueToday(dueAt: string | null): boolean {
   if (!dueAt) return false
   return new Date(dueAt).toDateString() === new Date().toDateString()
+}
+
+function isDueThisWeek(dueAt: string | null): boolean {
+  if (!dueAt) return false
+  const now = new Date()
+  const day = now.getDay()
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 7)
+  const d = new Date(dueAt)
+  return d >= start && d < end
 }
 
 export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props) {
@@ -63,6 +75,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props)
       case 'completed': return task.status === 'DONE'
       case 'overdue': return isOverdue(task.dueAt, task.status)
       case 'due_today': return isDueToday(task.dueAt) && task.status !== 'DONE'
+      case 'due_this_week': return isDueThisWeek(task.dueAt) && task.status !== 'DONE'
       case 'high_priority': return (task.priority === 'HIGH' || task.priority === 'URGENT') && task.status !== 'DONE'
       default: return true
     }
@@ -118,7 +131,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props)
         <div className="empty-state" style={{ padding: 24 }}>
           <div className="empty-icon">{'\u2611'}</div>
           <h3>No {filter === 'all' ? '' : filter.replace('_', ' ')} tasks</h3>
-          <p>{filter === 'open' ? 'All tasks are completed.' : filter === 'overdue' ? 'No overdue tasks.' : 'Tasks appear here after email analysis.'}</p>
+          <p>{filter === 'open' ? 'All tasks are completed.' : filter === 'overdue' ? 'No overdue tasks.' : filter === 'due_today' ? 'Nothing due today.' : filter === 'due_this_week' ? 'Nothing due this week.' : 'Tasks appear here after email analysis.'}</p>
         </div>
       ) : (
         <div>
