@@ -5,6 +5,7 @@ import { PriorityBadge, StatusBadge } from '../components/Badges'
 interface Props {
   workspaceId: string
   connectionId: string
+  onSelectMessage?: (id: string) => void
 }
 
 type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'due_today' | 'high_priority'
@@ -21,8 +22,7 @@ const FILTERS: Array<{ key: TaskFilter; label: string }> = [
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
   try {
-    const d = new Date(iso)
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   } catch { return iso }
 }
 
@@ -36,7 +36,7 @@ function isDueToday(dueAt: string | null): boolean {
   return new Date(dueAt).toDateString() === new Date().toDateString()
 }
 
-export function TasksView({ workspaceId, connectionId }: Props) {
+export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
@@ -82,6 +82,15 @@ export function TasksView({ workspaceId, connectionId }: Props) {
     } catch { /* */ }
   }
 
+  const handleRemove = async (taskId: string) => {
+    if (!confirm('Remove this task? It will be dismissed permanently.')) return
+    try {
+      await api.reviewTask(workspaceId, taskId, 'REJECTED')
+      setTasks(prev => prev.filter(t => t.task.id !== taskId))
+      setTotalCount(prev => prev - 1)
+    } catch { /* */ }
+  }
+
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading tasks...</p>
 
   return (
@@ -113,40 +122,61 @@ export function TasksView({ workspaceId, connectionId }: Props) {
         </div>
       ) : (
         <div>
-          {filteredTasks.map(({ task, sourceMessage }) => (
-            <div key={task.id} className="card" style={{ borderLeft: `3px solid ${isOverdue(task.dueAt, task.status) ? '#c62828' : task.status === 'DONE' ? '#4caf50' : '#1565c0'}`, marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, textDecoration: task.status === 'DONE' ? 'line-through' : 'none', color: task.status === 'DONE' ? '#999' : '#333' }}>{task.title}</div>
-                  {task.summary && <div style={{ fontSize: 13, color: '#666', lineHeight: 1.5, marginBottom: 6 }}>{task.summary}</div>}
+          {filteredTasks.map(({ task, sourceMessage }) => {
+            const isDone = task.status === 'DONE'
+            return (
+              <div key={task.id} className="card" style={{
+                borderLeft: `3px solid ${isDone ? '#4caf50' : isOverdue(task.dueAt, task.status) ? '#c62828' : '#1565c0'}`,
+                marginBottom: 8,
+                background: isDone ? '#f6fef6' : '#fff'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: 14, fontWeight: 600, marginBottom: 4,
+                      color: isDone ? '#4caf50' : '#333'
+                    }}>
+                      {isDone && <span style={{ marginRight: 6 }}>{'\u2705'}</span>}
+                      {task.title}
+                    </div>
+                    {task.summary && <div style={{ fontSize: 13, color: '#666', lineHeight: 1.5, marginBottom: 6 }}>{task.summary}</div>}
+                  </div>
+                  <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
+                    <PriorityBadge priority={task.priority} />
+                    <StatusBadge status={task.status} />
+                  </div>
                 </div>
-                <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
-                  <PriorityBadge priority={task.priority} />
-                  <StatusBadge status={task.status} />
+
+                <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#888', marginTop: 4, flexWrap: 'wrap' }}>
+                  {task.dueAt && (
+                    <span style={{ color: isOverdue(task.dueAt, task.status) ? '#c62828' : '#888', fontWeight: isOverdue(task.dueAt, task.status) ? 600 : 400 }}>
+                      Due: {formatDate(task.dueAt)}
+                    </span>
+                  )}
+                  {task.assigneeGuess && <span>Assignee: {task.assigneeGuess}</span>}
+                  {sourceMessage && (
+                    <span
+                      style={{ color: '#06c', cursor: onSelectMessage ? 'pointer' : 'default' }}
+                      onClick={() => sourceMessage.id && onSelectMessage?.(sourceMessage.id)}
+                    >
+                      Source: {sourceMessage.subject?.slice(0, 40) ?? sourceMessage.senderEmail}
+                    </span>
+                  )}
+                  <span>Created: {formatDate(task.createdAt)}</span>
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+                  {!isDone && (
+                    <button className="btn btn-sm btn-success" onClick={() => handleComplete(task.id)}>Complete</button>
+                  )}
+                  {isDone && (
+                    <button className="btn btn-sm btn-outline" onClick={() => handleReopen(task.id)}>Reopen</button>
+                  )}
+                  <button className="btn btn-sm btn-danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => handleRemove(task.id)}>Remove</button>
                 </div>
               </div>
-
-              <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#888', marginTop: 4, flexWrap: 'wrap' }}>
-                {task.dueAt && (
-                  <span style={{ color: isOverdue(task.dueAt, task.status) ? '#c62828' : '#888', fontWeight: isOverdue(task.dueAt, task.status) ? 600 : 400 }}>
-                    Due: {formatDate(task.dueAt)}
-                  </span>
-                )}
-                {task.assigneeGuess && <span>Assignee: {task.assigneeGuess}</span>}
-                {sourceMessage && <span>From: {sourceMessage.senderEmail}</span>}
-                <span>Created: {formatDate(task.createdAt)}</span>
-              </div>
-
-              <div style={{ display: 'flex', gap: 6, marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-                {task.status !== 'DONE' && (
-                  <button className="btn btn-sm btn-success" onClick={() => handleComplete(task.id)}>Complete</button>
-                )}
-                {task.status === 'DONE' && (
-                  <button className="btn btn-sm btn-outline" onClick={() => handleReopen(task.id)}>Reopen</button>
-                )}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

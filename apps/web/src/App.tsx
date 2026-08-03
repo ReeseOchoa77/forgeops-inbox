@@ -328,7 +328,7 @@ export default function App() {
           )}
           {!needsConnection && page === 'tasks' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={connectionId} />
+              <TasksView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
             </div>
           )}
 
