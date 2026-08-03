@@ -53,6 +53,7 @@ import { registerFolderDiscoveryRoutes } from "./routes/folder-discovery.route.j
 import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js";
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
+import { registerJobsRoutes } from "./routes/jobs.route.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -265,6 +266,7 @@ export const buildServer = async () => {
   await registerSenderEvidenceRoutes(app);
   await registerEmailAttachmentRoutes(app);
   await registerTestDataAdminRoutes(app);
+  await registerJobsRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

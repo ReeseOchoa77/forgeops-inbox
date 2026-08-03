@@ -14,14 +14,17 @@ import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
 import { ReferenceDataView } from './views/ReferenceDataView'
 import { DataImportView } from './views/DataImportView'
+import { JobsView } from './views/JobsView'
+import { JobDetailView } from './views/JobDetailView'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin'
 
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'review', label: 'Review Queue', icon: '\u2696' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
+  { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
@@ -41,6 +44,7 @@ export default function App() {
   const [connectionNotice, setConnectionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [showCompose, setShowCompose] = useState(false)
   const [composeSending, setComposeSending] = useState(false)
+  const [selectedJobId, setSelectedJobId] = useState('')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -185,6 +189,11 @@ export default function App() {
     setPage('message-detail')
   }
 
+  const openJob = (id: string) => {
+    setSelectedJobId(id)
+    setPage('job-detail')
+  }
+
   const handleNewComposeSend = async (payload: { to: string[]; cc: string[]; subject: string; html: string; files: File[] }) => {
     if (!connectionId) return
     setComposeSending(true)
@@ -245,7 +254,7 @@ export default function App() {
                 <div className="sidebar-section-label">{item.section}</div>
               )}
               <button
-                className={page === item.page || (page === 'message-detail' && item.page === 'inbox') ? 'active' : ''}
+                className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && item.page === 'jobs') ? 'active' : ''}
                 onClick={() => navigate(item.page)}
               >
                 <span className="nav-icon">{item.icon}</span>
@@ -329,6 +338,17 @@ export default function App() {
           {!needsConnection && page === 'tasks' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <TasksView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+            </div>
+          )}
+
+          {page === 'jobs' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} />
+            </div>
+          )}
+          {page === 'job-detail' && selectedJobId && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <JobDetailView workspaceId={workspaceId} jobId={selectedJobId} userRole={currentRole} onBack={() => setPage('jobs')} />
             </div>
           )}
 

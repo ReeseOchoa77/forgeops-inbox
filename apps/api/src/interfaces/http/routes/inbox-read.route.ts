@@ -110,10 +110,18 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   category: z.enum(messageCategoryValues).optional(),
   businessTypeGroup: z.enum(businessTypeGroupValues).optional(),
   businessTypeKey: z.string().max(50).optional(),
+  jobId: z.string().min(1).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
   hasTaskCandidate: booleanQuerySchema.optional(),
   search: z.string().min(1).optional()
+});
+
+const jobSummarySchema = z.object({
+  id: z.string(),
+  jobNumber: z.string().nullable(),
+  name: z.string(),
+  status: z.string()
 });
 
 const tasksListQuerySchema = paginationQuerySchema.extend({
@@ -217,7 +225,11 @@ const messageSummarySchema = z.object({
   isTrashed: z.boolean(),
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
   classification: classificationSummarySchema.nullable(),
-  taskCandidate: taskSummarySchema.nullable()
+  taskCandidate: taskSummarySchema.nullable(),
+  job: jobSummarySchema.nullable().optional(),
+  jobAssignmentSource: z.string().nullable().optional(),
+  jobAssignmentIsManual: z.boolean().optional(),
+  jobMatchConfidence: z.number().nullable().optional()
 });
 
 const normalizedEmailDetailSchema = z.object({
@@ -255,7 +267,8 @@ const messageDetailSchema = z.object({
     sentAt: z.string().datetime(),
     receivedAt: z.string().datetime().nullable(),
     priority: z.enum(priorityValues).nullable(),
-    itemStatus: z.enum(itemStatusValues)
+    itemStatus: z.enum(itemStatusValues),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"])
   }),
   thread: z.object({
     id: z.string().min(1),
@@ -270,7 +283,11 @@ const messageDetailSchema = z.object({
   }),
   normalizedEmail: normalizedEmailDetailSchema.nullable(),
   classification: classificationSummarySchema.nullable(),
-  taskCandidate: taskSummarySchema.nullable()
+  taskCandidate: taskSummarySchema.nullable(),
+  job: jobSummarySchema.nullable().optional(),
+  jobAssignmentSource: z.string().nullable().optional(),
+  jobAssignmentIsManual: z.boolean().optional(),
+  jobMatchConfidence: z.number().nullable().optional()
 });
 
 const reviewItemSchema = z.object({
@@ -486,6 +503,23 @@ const serializeTask = (task: {
       })
     : null;
 
+const serializeJobSummary = (
+  job: {
+    id: string;
+    jobNumber: string | null;
+    name: string;
+    status: string;
+  } | null | undefined
+) =>
+  job
+    ? {
+        id: job.id,
+        jobNumber: job.jobNumber,
+        name: job.name,
+        status: job.status
+      }
+    : null;
+
 const serializeMessageSummary = (message: {
   id: string;
   gmailMessageId: string;
@@ -505,6 +539,15 @@ const serializeMessageSummary = (message: {
   mailboxCategory: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH";
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
   tasks: Array<Parameters<typeof serializeTask>[0]>;
+  job?: {
+    id: string;
+    jobNumber: string | null;
+    name: string;
+    status: string;
+  } | null;
+  jobAssignmentSource?: string | null;
+  jobAssignmentIsManual?: boolean;
+  jobMatchConfidence?: number | null;
 }) =>
   messageSummarySchema.parse({
     id: message.id,
@@ -524,7 +567,11 @@ const serializeMessageSummary = (message: {
     isTrashed: message.isTrashed,
     mailboxCategory: message.mailboxCategory,
     classification: serializeClassification(message.classifications[0] ?? null),
-    taskCandidate: serializeTask(message.tasks[0] ?? null)
+    taskCandidate: serializeTask(message.tasks[0] ?? null),
+    job: serializeJobSummary(message.job),
+    jobAssignmentSource: message.jobAssignmentSource ?? null,
+    jobAssignmentIsManual: message.jobAssignmentIsManual ?? false,
+    jobMatchConfidence: message.jobMatchConfidence ?? null
   });
 
 const getWorkspaceThresholds = async (
@@ -594,6 +641,7 @@ const buildMessagesWhere = (input: {
   category?: (typeof messageCategoryValues)[number];
   businessTypeGroup?: (typeof businessTypeGroupValues)[number];
   businessTypeKey?: string;
+  jobId?: string;
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
@@ -619,6 +667,14 @@ const buildMessagesWhere = (input: {
   }
 
   andConditions.push({ isArchived: false });
+
+  if (input.jobId) {
+    if (input.jobId === "unassigned") {
+      andConditions.push({ jobId: null });
+    } else {
+      andConditions.push({ jobId: input.jobId });
+    }
+  }
 
   if (input.search) {
     const term = input.search.trim();
@@ -1049,6 +1105,7 @@ export const registerInboxReadRoutes = async (
         ...(query.category ? { category: query.category } : {}),
         ...(query.businessTypeGroup ? { businessTypeGroup: query.businessTypeGroup } : {}),
         ...(query.businessTypeKey ? { businessTypeKey: query.businessTypeKey } : {}),
+        ...(query.jobId ? { jobId: query.jobId } : {}),
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         ...(typeof query.hasTaskCandidate === "boolean"
@@ -1090,6 +1147,17 @@ export const registerInboxReadRoutes = async (
             isSpam: true,
             isTrashed: true,
             mailboxCategory: true,
+            jobAssignmentSource: true,
+            jobAssignmentIsManual: true,
+            jobMatchConfidence: true,
+            job: {
+              select: {
+                id: true,
+                jobNumber: true,
+                name: true,
+                status: true
+              }
+            },
             classifications: {
               orderBy: {
                 createdAt: "desc"
@@ -1246,6 +1314,18 @@ export const registerInboxReadRoutes = async (
           receivedAt: true,
           priority: true,
           itemStatus: true,
+          mailboxCategory: true,
+          jobAssignmentSource: true,
+          jobAssignmentIsManual: true,
+          jobMatchConfidence: true,
+          job: {
+            select: {
+              id: true,
+              jobNumber: true,
+              name: true,
+              status: true
+            }
+          },
           thread: {
             select: {
               id: true,
@@ -1364,7 +1444,8 @@ export const registerInboxReadRoutes = async (
               sentAt: message.sentAt.toISOString(),
               receivedAt: serializeDate(message.receivedAt),
               priority: message.priority,
-              itemStatus: message.itemStatus
+              itemStatus: message.itemStatus,
+              mailboxCategory: message.mailboxCategory
             },
             thread: {
               id: message.thread.id,
@@ -1395,7 +1476,11 @@ export const registerInboxReadRoutes = async (
                 }
               : null,
             classification: serializeClassification(message.classifications[0] ?? null),
-            taskCandidate: serializeTask(message.tasks[0] ?? null)
+            taskCandidate: serializeTask(message.tasks[0] ?? null),
+            job: serializeJobSummary(message.job),
+            jobAssignmentSource: message.jobAssignmentSource ?? null,
+            jobAssignmentIsManual: message.jobAssignmentIsManual,
+            jobMatchConfidence: message.jobMatchConfidence ?? null
           }
         })
       );
@@ -1625,6 +1710,17 @@ export const registerInboxReadRoutes = async (
             isSpam: true,
             isTrashed: true,
             mailboxCategory: true,
+            jobAssignmentSource: true,
+            jobAssignmentIsManual: true,
+            jobMatchConfidence: true,
+            job: {
+              select: {
+                id: true,
+                jobNumber: true,
+                name: true,
+                status: true
+              }
+            },
             classifications: {
               orderBy: {
                 createdAt: "desc"

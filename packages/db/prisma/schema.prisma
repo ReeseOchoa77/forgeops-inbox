@@ -135,10 +135,42 @@ enum RoutingRuleActionType {
 /// Workspace is the tenant boundary. Every operational record below is scoped
 /// to a workspace to keep inbox data isolated in a multi-tenant deployment.
 enum JobStatus {
+  LEAD
+  BIDDING
+  AWARDED
   ACTIVE
-  COMPLETED
   ON_HOLD
+  COMPLETE
+  ARCHIVED
+  COMPLETED
   CANCELLED
+}
+
+enum JobAssignmentSource {
+  AI_SUGGESTED
+  AI_AUTO_ASSIGNED
+  USER_ASSIGNED
+  FOLDER_ALIAS
+  JOB_NUMBER_MATCH
+  IMPORT
+}
+
+enum JobActivityAction {
+  JOB_CREATED
+  JOB_UPDATED
+  JOB_ARCHIVED
+  JOB_RESTORED
+  JOB_STATUS_CHANGED
+  EMAIL_ASSIGNED
+  EMAIL_REMOVED
+  EMAIL_REASSIGNED
+  TASK_LINKED
+  TASK_REMOVED
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  ALIAS_ADDED
+  ALIAS_REMOVED
+  CUSTOMER_CHANGED
 }
 
 model Workspace {
@@ -175,6 +207,7 @@ model Workspace {
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
+  jobActivityLogs      JobActivityLog[]
 }
 
 model User {
@@ -363,11 +396,19 @@ model EmailMessage {
   receivedAt       DateTime?
   priority         Priority?
   itemStatus       ItemStatus    @default(NEW)
+  jobId                   String?
+  jobMatchConfidence      Float?
+  jobMatchEvidence        Json?
+  jobAssignmentSource     JobAssignmentSource?
+  jobAssignedAt           DateTime?
+  jobAssignedByUserId     String?
+  jobAssignmentIsManual   Boolean  @default(false)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   inboxConnection  InboxConnection @relation(fields: [workspaceId, inboxConnectionId], references: [workspaceId, id], onDelete: Cascade)
   thread           EmailThread   @relation(fields: [workspaceId, threadId], references: [workspaceId, id], onDelete: Cascade)
+  job              Job?          @relation("MessageJob", fields: [jobId], references: [id], onDelete: SetNull)
   normalizedEmail  NormalizedEmail?
   classifications  Classification[]
   tasks            Task[]        @relation("TaskSourceMessage")
@@ -390,6 +431,8 @@ model EmailMessage {
   @@index([workspaceId, threadId, sentAt])
   @@index([workspaceId, itemStatus, sentAt])
   @@index([senderEmail])
+  @@index([jobId])
+  @@index([workspaceId, jobId, sentAt])
 }
 
 model NormalizedEmail {
@@ -599,23 +642,31 @@ model Vendor {
 
 /// Domain entity: a job/project tied to a customer.
 model Job {
-  id              String     @id @default(cuid())
-  workspaceId     String
-  jobNumber       String?
-  name            String
-  normalizedName  String
-  customerId      String?
-  status          JobStatus  @default(ACTIVE)
-  externalRef     String?
-  notes           String?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-  workspace       Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer        Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
-  classifications Classification[] @relation("ClassificationJob")
-  tasks           Task[]     @relation("TaskJob")
-  aliases           EntityAlias[]
-  discoveredFolders DiscoveredFolder[]
+  id                    String     @id @default(cuid())
+  workspaceId           String
+  jobNumber             String?
+  name                  String
+  normalizedName        String
+  customerId            String?
+  status                JobStatus  @default(ACTIVE)
+  description           String?
+  externalRef           String?
+  notes                 String?
+  startDate             DateTime?
+  targetCompletionDate  DateTime?
+  archivedAt            DateTime?
+  createdByUserId       String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  workspace             Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer              Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  classifications       Classification[] @relation("ClassificationJob")
+  tasks                 Task[]     @relation("TaskJob")
+  aliases               EntityAlias[]
+  discoveredFolders     DiscoveredFolder[]
+  members               JobMember[]
+  activityLogs          JobActivityLog[]
+  assignedEmails        EmailMessage[] @relation("MessageJob")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -623,6 +674,39 @@ model Job {
   @@index([workspaceId, customerId])
   @@index([workspaceId, status])
   @@index([workspaceId, externalRef])
+  @@index([workspaceId, archivedAt])
+  @@index([createdByUserId])
+}
+
+model JobMember {
+  id        String   @id @default(cuid())
+  jobId     String
+  userId    String
+  role      String?
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([userId])
+}
+
+model JobActivityLog {
+  id            String            @id @default(cuid())
+  jobId         String
+  workspaceId   String
+  actorUserId   String?
+  action        JobActivityAction
+  entityType    String?
+  entityId      String?
+  previousValue Json?
+  newValue      Json?
+  createdAt     DateTime          @default(now())
+  job           Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([actorUserId])
 }
 
 model WorkspaceMailbox {

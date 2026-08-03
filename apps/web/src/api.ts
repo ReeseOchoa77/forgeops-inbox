@@ -75,6 +75,13 @@ export interface TaskSummary {
   createdAt: string;
 }
 
+export interface MessageJobSummary {
+  id: string;
+  jobNumber: string | null;
+  name: string;
+  status: string;
+}
+
 export interface MessageSummary {
   id: string;
   providerMessageId: string;
@@ -94,6 +101,10 @@ export interface MessageSummary {
   mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
+  job?: MessageJobSummary | null;
+  jobAssignmentSource?: string | null;
+  jobAssignmentIsManual?: boolean;
+  jobMatchConfidence?: number | null;
 }
 
 export interface Participant { name: string | null; email: string; role: string }
@@ -156,6 +167,7 @@ export interface MessageDetail {
     hasAttachments: boolean;
     attachmentMetadata: AttachmentMeta[];
     labelIds: string[];
+    mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
   };
   thread: { id: string; providerThreadId: string; subject: string | null; normalizedSubject: string | null; messageCount: number };
   normalizedEmail: {
@@ -168,6 +180,10 @@ export interface MessageDetail {
   } | null;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
+  job?: MessageJobSummary | null;
+  jobAssignmentSource?: string | null;
+  jobAssignmentIsManual?: boolean;
+  jobMatchConfidence?: number | null;
 }
 
 export interface ReviewItem {
@@ -207,6 +223,7 @@ export const api = {
     category?: 'important' | 'spam' | 'trash';
     businessTypeGroup?: string;
     businessTypeKey?: string;
+    jobId?: string;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
@@ -216,6 +233,7 @@ export const api = {
     if (filters?.category) params.set('category', filters.category);
     if (filters?.businessTypeGroup) params.set('businessTypeGroup', filters.businessTypeGroup);
     if (filters?.businessTypeKey) params.set('businessTypeKey', filters.businessTypeKey);
+    if (filters?.jobId) params.set('jobId', filters.jobId);
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
@@ -424,7 +442,108 @@ export const api = {
     }),
 
   adminGetMembers: (workspaceId: string) =>
-    request<{ members: AdminMember[] }>(`/admin/workspaces/${workspaceId}/members`)
+    request<{ members: AdminMember[] }>(`/admin/workspaces/${workspaceId}/members`),
+
+  // Jobs
+  getJobs: (workspaceId: string, params?: {
+    page?: number; pageSize?: number; status?: string; customerId?: string;
+    search?: string; assignedUserId?: string; hasOverdueTasks?: boolean;
+    showArchived?: boolean; sortBy?: string; sortDir?: string;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    if (params?.status) p.set('status', params.status);
+    if (params?.customerId) p.set('customerId', params.customerId);
+    if (params?.search) p.set('search', params.search);
+    if (params?.assignedUserId) p.set('assignedUserId', params.assignedUserId);
+    if (params?.hasOverdueTasks) p.set('hasOverdueTasks', 'true');
+    if (params?.showArchived) p.set('showArchived', 'true');
+    if (params?.sortBy) p.set('sortBy', params.sortBy);
+    if (params?.sortDir) p.set('sortDir', params.sortDir);
+    return request<{ jobs: JobSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+      `/workspaces/${workspaceId}/jobs?${p.toString()}`
+    );
+  },
+
+  createJob: (workspaceId: string, data: {
+    jobNumber: string; name: string; status?: string; customerId?: string | null;
+    description?: string; notes?: string; startDate?: string; targetCompletionDate?: string;
+    memberUserIds?: string[]; aliases?: string[];
+  }) => request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs`, {
+    method: 'POST', body: JSON.stringify(data)
+  }),
+
+  getJob: (workspaceId: string, jobId: string) =>
+    request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`),
+
+  updateJob: (workspaceId: string, jobId: string, data: {
+    name?: string; jobNumber?: string; status?: string; customerId?: string | null;
+    description?: string; notes?: string; startDate?: string | null; targetCompletionDate?: string | null;
+  }) => request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`, {
+    method: 'PUT', body: JSON.stringify(data)
+  }),
+
+  archiveJob: (workspaceId: string, jobId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/archive`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  restoreJob: (workspaceId: string, jobId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/restore`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  assignEmailToJob: (workspaceId: string, jobId: string, data: { messageId?: string; threadId?: string }) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails`, {
+      method: 'POST', body: JSON.stringify(data)
+    }),
+
+  removeEmailFromJob: (workspaceId: string, jobId: string, messageId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails/${messageId}`, {
+      method: 'DELETE'
+    }),
+
+  moveEmailToJob: (workspaceId: string, jobId: string, data: { messageId: string; targetJobId: string }) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails/move`, {
+      method: 'POST', body: JSON.stringify(data)
+    }),
+
+  getJobEmails: (workspaceId: string, jobId: string, page = 1) =>
+    request<{ emails: JobEmail[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/emails?page=${page}&pageSize=25`
+    ),
+
+  getJobTasks: (workspaceId: string, jobId: string) =>
+    request<{ tasks: JobTask[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks`),
+
+  getJobDocuments: (workspaceId: string, jobId: string) =>
+    request<{ documents: JobDocument[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/documents`),
+
+  getJobActivity: (workspaceId: string, jobId: string, page = 1) =>
+    request<{ activity: JobActivity[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/activity?page=${page}&pageSize=50`
+    ),
+
+  addJobMember: (workspaceId: string, jobId: string, userId: string, role?: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/members`, {
+      method: 'POST', body: JSON.stringify({ userId, role })
+    }),
+
+  removeJobMember: (workspaceId: string, jobId: string, userId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/members/${userId}`, {
+      method: 'DELETE'
+    }),
+
+  addJobAlias: (workspaceId: string, jobId: string, alias: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/aliases`, {
+      method: 'POST', body: JSON.stringify({ alias })
+    }),
+
+  removeJobAlias: (workspaceId: string, jobId: string, aliasId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/aliases/${aliasId}`, {
+      method: 'DELETE'
+    }),
 };
 
 export interface ImportResult {
@@ -489,4 +608,81 @@ export interface AdminMember {
   isPlatformAdmin: boolean;
   lastLoginAt: string | null;
   memberSince: string;
+}
+
+export interface JobSummary {
+  id: string;
+  jobNumber: string | null;
+  name: string;
+  status: string;
+  customerId: string | null;
+  customerName: string | null;
+  description: string | null;
+  startDate: string | null;
+  targetCompletionDate: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  emailCount: number;
+  openTaskCount: number;
+  overdueTaskCount: number;
+  lastActivityAt: string | null;
+  nextDueDate: string | null;
+  assignedMembers: Array<{ userId: string; name: string | null; email: string; role: string | null }>;
+}
+
+export interface JobDetail extends JobSummary {
+  notes: string | null;
+  externalRef: string | null;
+  completedTaskCount: number;
+  recentEmails7d: number;
+  recentEmails30d: number;
+  attachmentCount: number;
+  members: Array<{ id: string; userId: string; name: string | null; email: string; role: string | null; createdAt: string }>;
+  aliases: Array<{ id: string; alias: string; normalizedAlias: string }>;
+}
+
+export interface JobEmail {
+  id: string;
+  subject: string | null;
+  senderName: string | null;
+  senderEmail: string;
+  sentAt: string;
+  receivedAt: string | null;
+  mailboxCategory: string;
+  jobAssignmentSource: string | null;
+  jobAssignmentIsManual: boolean;
+  classification: Classification | null;
+}
+
+export interface JobTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  dueAt: string | null;
+  assigneeGuess: string | null;
+  createdAt: string;
+}
+
+export interface JobDocument {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  emailSubject: string | null;
+  emailSenderEmail: string;
+  createdAt: string;
+}
+
+export interface JobActivity {
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  actorUserId: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  previousValue: unknown;
+  newValue: unknown;
+  createdAt: string;
 }

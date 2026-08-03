@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobSummary } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 
@@ -206,8 +206,19 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
   )
 }
 
+function jobSourceLabel(source: string | null | undefined, isManual: boolean | undefined): string {
+  if (isManual || source === 'USER_ASSIGNED') return 'Manual'
+  if (!source) return 'Unknown'
+  if (source.startsWith('AI_')) return 'AI'
+  if (source === 'FOLDER_ALIAS') return 'Folder Alias'
+  if (source === 'JOB_NUMBER_MATCH') return 'Job Number'
+  if (source === 'IMPORT') return 'Import'
+  return source
+}
+
 export function MessageDetailView({ workspaceId, connectionId, messageId, onBack }: Props) {
   const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
+  const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
@@ -216,25 +227,47 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
+  const [jobs, setJobs] = useState<JobSummary[]>([])
+  const [selectedJobId, setSelectedJobId] = useState('')
+  const [jobBusy, setJobBusy] = useState(false)
+  const [jobError, setJobError] = useState<string | null>(null)
+
+  const loadDetail = async () => {
+    const r = await api.getMessageDetail(workspaceId, connectionId, messageId)
+    setMessageDetail(r.data)
+    if (r.data.job?.id) setSelectedJobId(r.data.job.id)
+    else setSelectedJobId('')
+    return r.data
+  }
+
   useEffect(() => {
     setLoading(true)
     setComposeMode(null)
     setSendResult(null)
+    setJobError(null)
 
-    api.getMessageDetail(workspaceId, connectionId, messageId)
-      .then(r => {
-        const threadId = r.data.thread.id
+    loadDetail()
+      .then(detail => {
         api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
-        return api.getThreadMessages(workspaceId, connectionId, threadId)
+        return api.getThreadMessages(workspaceId, connectionId, detail.thread.id)
       })
       .then(td => {
         setThreadData(td)
         const lastMsg = td.messages[td.messages.length - 1]
         setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
       })
-      .catch(() => setThreadData(null))
+      .catch(() => {
+        setThreadData(null)
+        setMessageDetail(null)
+      })
       .finally(() => setLoading(false))
   }, [workspaceId, connectionId, messageId])
+
+  useEffect(() => {
+    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+      .then(r => setJobs(r.jobs))
+      .catch(() => setJobs([]))
+  }, [workspaceId])
 
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading conversation...</p>
   if (!threadData || threadData.messages.length === 0) return <p>Message not found.</p>
@@ -242,6 +275,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const messages = threadData.messages
   const lastMessage = messages[messages.length - 1]!
   const subject = threadData.thread.subject ?? lastMessage.subject ?? '(no subject)'
+  const isBusinessMessage = messageDetail?.message.mailboxCategory === 'BUSINESS'
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {
@@ -296,6 +330,34 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     }
   }
 
+  const handleAssignJob = async () => {
+    if (!selectedJobId || !messageDetail) return
+    setJobBusy(true)
+    setJobError(null)
+    try {
+      await api.assignEmailToJob(workspaceId, selectedJobId, { messageId: messageDetail.message.id })
+      await loadDetail()
+    } catch (e) {
+      setJobError(e instanceof Error ? e.message : 'Failed to assign job')
+    } finally {
+      setJobBusy(false)
+    }
+  }
+
+  const handleRemoveJob = async () => {
+    if (!messageDetail?.job) return
+    setJobBusy(true)
+    setJobError(null)
+    try {
+      await api.removeEmailFromJob(workspaceId, messageDetail.job.id, messageDetail.message.id)
+      await loadDetail()
+    } catch (e) {
+      setJobError(e instanceof Error ? e.message : 'Failed to remove job')
+    } finally {
+      setJobBusy(false)
+    }
+  }
+
   return (
     <div>
       <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12 }}>
@@ -324,6 +386,71 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
         </div>
       </div>
+
+      {/* Job Assignment */}
+      {isBusinessMessage && messageDetail && (
+        <div style={{
+          margin: '0 0 12px', padding: '12px 16px', background: '#fff',
+          border: '1px solid #e5e5e5', borderRadius: 8
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Job Assignment</div>
+          {messageDetail.job ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, fontSize: 13 }}>
+              <span style={{ fontWeight: 500 }}>
+                {messageDetail.job.jobNumber ? `${messageDetail.job.jobNumber} — ` : ''}{messageDetail.job.name}
+              </span>
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                background: messageDetail.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
+                color: messageDetail.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
+              }}>
+                {jobSourceLabel(messageDetail.jobAssignmentSource, messageDetail.jobAssignmentIsManual)}
+              </span>
+              {typeof messageDetail.jobMatchConfidence === 'number' && !messageDetail.jobAssignmentIsManual && (
+                <span style={{ fontSize: 11, color: '#888' }}>
+                  {Math.round(messageDetail.jobMatchConfidence * 100)}% confidence
+                </span>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: '#999', marginBottom: 10 }}>No job assigned</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              value={selectedJobId}
+              onChange={e => setSelectedJobId(e.target.value)}
+              disabled={jobBusy}
+              style={{ padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd', minWidth: 200 }}
+            >
+              <option value="">Select a job…</option>
+              {jobs.map(j => (
+                <option key={j.id} value={j.id}>
+                  {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn btn-sm"
+              disabled={jobBusy || !selectedJobId || selectedJobId === messageDetail.job?.id}
+              onClick={handleAssignJob}
+              style={{ fontSize: 12 }}
+            >
+              {messageDetail.job ? 'Move' : 'Assign'}
+            </button>
+            {messageDetail.job && (
+              <button
+                className="btn btn-sm btn-outline"
+                disabled={jobBusy}
+                onClick={handleRemoveJob}
+                style={{ fontSize: 12 }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {jobError && <div style={{ marginTop: 8, fontSize: 12, color: '#c62828' }}>{jobError}</div>}
+        </div>
+      )}
 
       {/* Thread messages */}
       <div style={{ background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, overflow: 'hidden' }}>

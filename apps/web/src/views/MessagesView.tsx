@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type MessageSummary } from '../api'
+import { api, type JobSummary, type MessageSummary } from '../api'
 import { PriorityBadge, TypeBadge, ActionBadge } from '../components/Badges'
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
@@ -50,6 +50,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>('')
+  const [jobFilter, setJobFilter] = useState('')
+  const [jobs, setJobs] = useState<JobSummary[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
 
@@ -103,11 +105,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       if (inboxTab !== 'ALL_BUSINESS') {
         f.businessTypeGroup = inboxTab
       }
+      if (jobFilter) f.jobId = jobFilter
     }
 
     if (activeSearch) f.search = activeSearch
     return f
-  }, [inboxTab, activeSearch])
+  }, [inboxTab, activeSearch, jobFilter])
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
     if (pageNum === 1) setLoading(true)
@@ -129,6 +132,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   }, [workspaceId, connectionId])
 
   useEffect(() => {
+    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+      .then(r => setJobs(r.jobs))
+      .catch(() => setJobs([]))
+  }, [workspaceId])
+
+  useEffect(() => {
     setMessages([])
     setPage(1)
     setHasMore(true)
@@ -136,6 +145,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setActiveSearch('')
     setInboxTab('ALL_BUSINESS')
     setInboxFilter('')
+    setJobFilter('')
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
 
@@ -145,7 +155,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setPage(1)
     setHasMore(true)
     loadPage(1, filters, false)
-  }, [inboxTab, activeSearch])
+  }, [inboxTab, activeSearch, jobFilter])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -206,7 +216,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       </div>
 
       {/* Filter chips */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
         {INBOX_FILTERS.map(f => (
           <button key={f.key} onClick={() => setInboxFilter(f.key)} style={{
             padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
@@ -215,6 +225,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
             color: inboxFilter === f.key ? '#fff' : '#666', cursor: 'pointer'
           }}>{f.label}</button>
         ))}
+        {isBusiness && (
+          <select
+            value={jobFilter}
+            onChange={e => setJobFilter(e.target.value)}
+            style={{
+              marginLeft: 4, padding: '3px 8px', fontSize: 11, borderRadius: 6,
+              border: '1px solid #ddd', background: '#fff', color: '#444', cursor: 'pointer'
+            }}
+          >
+            <option value="">All Jobs</option>
+            <option value="unassigned">Unassigned</option>
+            {jobs.map(j => (
+              <option key={j.id} value={j.id}>
+                {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Message list */}
@@ -257,7 +285,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                       {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
                     </td>
                     <td style={{ padding: '7px 12px' }}>
-                      <div style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
+                        {isBusiness && (
+                          m.job ? (
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                              background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
+                            }} title={m.job.name}>
+                              {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
+                            </span>
+                          ) : (
+                            <span style={{
+                              fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
+                              background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
+                            }}>Unassigned</span>
+                          )
+                        )}
+                      </div>
                       {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
                       {isBusiness && m.classification?.priority === 'LOW' && (() => {
                         const status = autoResponseStatus[m.id] ?? 'idle'
