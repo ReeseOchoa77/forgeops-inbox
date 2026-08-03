@@ -24,13 +24,15 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
   { key: 'TRASH', label: 'Trash' },
 ]
 
-type BusinessFilter = '' | 'unread' | 'high_priority' | 'needs_review'
+type InboxFilter = '' | 'unread' | 'read' | 'low_priority' | 'medium_priority' | 'high_priority'
 
-const BUSINESS_FILTERS: Array<{ key: BusinessFilter; label: string }> = [
+const INBOX_FILTERS: Array<{ key: InboxFilter; label: string }> = [
   { key: '', label: 'All' },
   { key: 'unread', label: 'Unread' },
+  { key: 'read', label: 'Read' },
+  { key: 'low_priority', label: 'Low Priority' },
+  { key: 'medium_priority', label: 'Medium Priority' },
   { key: 'high_priority', label: 'High Priority' },
-  { key: 'needs_review', label: 'Needs Review' },
 ]
 
 export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Props) {
@@ -42,7 +44,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const [loadingMore, setLoadingMore] = useState(false)
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
-  const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('')
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>('')
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
 
@@ -50,6 +52,20 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+
+  const applyClientFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
+    if (!inboxFilter) return msgs
+    switch (inboxFilter) {
+      case 'unread': return msgs.filter(m => !m.isRead)
+      case 'read': return msgs.filter(m => m.isRead)
+      case 'low_priority': return msgs.filter(m => m.classification?.priority === 'LOW')
+      case 'medium_priority': return msgs.filter(m => m.classification?.priority === 'MEDIUM')
+      case 'high_priority': return msgs.filter(m => m.classification?.priority === 'HIGH' || m.classification?.priority === 'URGENT')
+      default: return msgs
+    }
+  }, [inboxFilter])
+
+  const filteredMessages = applyClientFilter(messages)
 
   const buildFilters = useCallback(() => {
     const f: Parameters<typeof api.getMessages>[4] = {}
@@ -95,7 +111,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setSearch('')
     setActiveSearch('')
     setInboxTab('ALL_BUSINESS')
-    setBusinessFilter('')
+    setInboxFilter('')
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
 
@@ -105,7 +121,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     setPage(1)
     setHasMore(true)
     loadPage(1, filters, false)
-  }, [inboxTab, businessFilter, activeSearch])
+  }, [inboxTab, activeSearch])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -153,7 +169,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', flexShrink: 0 }}>
         {INBOX_TABS.map(tab => (
-          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setBusinessFilter('') }}
+          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setInboxFilter('') }}
             style={{
               padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
               fontWeight: inboxTab === tab.key ? 600 : 400,
@@ -165,25 +181,23 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
         ))}
       </div>
 
-      {/* Business filters (only for business tabs) */}
-      {isBusiness && (
-        <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap' }}>
-          {BUSINESS_FILTERS.map(f => (
-            <button key={f.key} onClick={() => setBusinessFilter(f.key)} style={{
-              padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-              border: businessFilter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
-              background: businessFilter === f.key ? '#1a1a2e' : '#fff',
-              color: businessFilter === f.key ? '#fff' : '#666', cursor: 'pointer'
-            }}>{f.label}</button>
-          ))}
-        </div>
-      )}
+      {/* Filter chips */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap' }}>
+        {INBOX_FILTERS.map(f => (
+          <button key={f.key} onClick={() => setInboxFilter(f.key)} style={{
+            padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+            border: inboxFilter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
+            background: inboxFilter === f.key ? '#1a1a2e' : '#fff',
+            color: inboxFilter === f.key ? '#fff' : '#666', cursor: 'pointer'
+          }}>{f.label}</button>
+        ))}
+      </div>
 
       {/* Message list */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {loading ? (
           <p style={{ color: '#999', padding: 4, fontSize: 13 }}>Loading...</p>
-        ) : messages.length === 0 ? (
+        ) : filteredMessages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
             <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
             <h3>{activeSearch ? 'No results' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
@@ -204,7 +218,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                 </tr>
               </thead>
               <tbody>
-                {messages.map(m => (
+                {filteredMessages.map(m => (
                   <tr key={m.id} onClick={() => onSelectMessage(m.id)}
                     style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
                     onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
@@ -260,7 +274,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
               </tbody>
             </table>
             {loadingMore && <div style={{ padding: 12, textAlign: 'center', color: '#999', fontSize: 13 }}>Loading more...</div>}
-            {!hasMore && messages.length > 0 && <div style={{ padding: 10, textAlign: 'center', color: '#ccc', fontSize: 12 }}>End of list</div>}
+            {!hasMore && filteredMessages.length > 0 && <div style={{ padding: 10, textAlign: 'center', color: '#ccc', fontSize: 12 }}>End of list</div>}
           </div>
         )}
       </div>
