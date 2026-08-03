@@ -9,21 +9,6 @@ interface Props {
   onSelectMessage: (id: string) => void
 }
 
-const reasonLabels: Record<string, string> = {
-  message_needs_review: 'Message flagged for review',
-  classification_requires_review: 'AI requested human review',
-  classification_low_confidence: 'Low classification confidence',
-  task_requires_review: 'Extracted task needs verification',
-  task_low_confidence: 'Low task confidence'
-}
-
-const reasonIcons: Record<string, string> = {
-  message_needs_review: '\u26A0',
-  classification_requires_review: '\uD83E\uDD16',
-  classification_low_confidence: '\uD83D\uDCC9',
-  task_requires_review: '\u2611',
-  task_low_confidence: '\uD83D\uDCC9'
-}
 
 export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [items, setItems] = useState<ReviewItem[]>([])
@@ -119,19 +104,6 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                   onClick={() => handleReview(item, 'REJECTED')}>
                   {actionLoading === rejectKey ? '...' : 'Incorrect'}
                 </button>
-              </div>
-            </div>
-
-            {/* Review reasons — the flags that caused this to be here */}
-            <div style={{ background: '#fffde7', border: '1px solid #fff9c4', borderRadius: 6, padding: '8px 12px', marginBottom: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#f57f17', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Why this needs review</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {item.reviewReasons.map(r => (
-                  <div key={r} style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 14 }}>{reasonIcons[r] ?? '\u2753'}</span>
-                    <span>{reasonLabels[r] ?? r.replace(/_/g, ' ')}</span>
-                  </div>
-                ))}
               </div>
             </div>
 
