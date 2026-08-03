@@ -51,6 +51,14 @@ export interface Classification {
   containsActionRequest: boolean;
   businessTypeKey: string | null;
   businessTypeConfidence: number | null;
+  classificationEvidence: {
+    content?: { probability: number; weight: number; contribution: number; explanation: string };
+    sender?: { probability: number; weight: number; contribution: number; explanation?: string; status?: string };
+    signature?: { probability: number; weight: number; contribution: number; explanation: string };
+    job?: { probability: number; weight: number; contribution: number; explanation: string };
+    subject?: { probability: number; weight: number; contribution: number; explanation: string };
+    finalBusinessProbability?: number;
+  } | null;
 }
 
 export interface TaskSummary {

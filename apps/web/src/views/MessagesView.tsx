@@ -2,6 +2,11 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type MessageSummary } from '../api'
 import { PriorityBadge, TypeBadge, ActionBadge } from '../components/Badges'
 
+type AutoResponseStatus = 'idle' | 'sending' | 'sent'
+
+const AUTO_RESPONSE_YES = "Thank you for your email. We've received your message and will follow up if needed."
+const AUTO_RESPONSE_NO = "Thank you for reaching out. We've reviewed your message and no further action is needed at this time."
+
 interface Props {
   workspaceId: string
   connectionId: string
@@ -48,10 +53,29 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
 
+  const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+
+  const handleAutoResponse = async (msg: MessageSummary, affirm: boolean) => {
+    setAutoResponseStatus(prev => ({ ...prev, [msg.id]: 'sending' }))
+    try {
+      await api.sendMessage(workspaceId, connectionId, {
+        action: 'reply',
+        originalMessageId: msg.id,
+        to: [msg.senderEmail],
+        subject: `Re: ${msg.subject ?? '(no subject)'}`,
+        body: affirm ? AUTO_RESPONSE_YES : AUTO_RESPONSE_NO,
+        bodyFormat: 'text',
+      })
+      setAutoResponseStatus(prev => ({ ...prev, [msg.id]: 'sent' }))
+    } catch {
+      setAutoResponseStatus(prev => ({ ...prev, [msg.id]: 'idle' }))
+    }
+  }
 
   const applyClientFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
     if (!inboxFilter) return msgs
@@ -235,6 +259,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     <td style={{ padding: '7px 12px' }}>
                       <div style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</div>
                       {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
+                      {isBusiness && m.classification?.priority === 'LOW' && (() => {
+                        const status = autoResponseStatus[m.id] ?? 'idle'
+                        if (status === 'sent') return (
+                          <div style={{ marginTop: 4, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
+                        )
+                        if (status === 'sending') return (
+                          <div style={{ marginTop: 4, fontSize: 11, color: '#999' }}>Sending...</div>
+                        )
+                        return (
+                          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+                            <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>Suggested response available</span>
+                            <button onClick={() => handleAutoResponse(m, true)}
+                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', fontWeight: 600 }}>Yes</button>
+                            <button onClick={() => handleAutoResponse(m, false)}
+                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer', fontWeight: 600 }}>No</button>
+                          </div>
+                        )
+                      })()}
                     </td>
                     {isBusiness && (
                       <td style={{ padding: '7px 12px' }}>

@@ -176,6 +176,7 @@ const classificationSummarySchema = z.object({
   containsActionRequest: z.boolean(),
   businessTypeKey: z.string().nullable(),
   businessTypeConfidence: z.number().nullable(),
+  classificationEvidence: z.unknown().nullable(),
   deadline: z.string().datetime().nullable(),
   routingHints: z.unknown().nullable(),
   extractedFields: z.unknown().nullable()
@@ -423,6 +424,7 @@ const serializeClassification = (classification: {
   containsActionRequest: boolean;
   businessTypeKey: string | null;
   businessTypeConfidence: import("@prisma/client").Prisma.Decimal | null;
+  classificationEvidence: unknown;
   deadline: Date | null;
   routingHints: unknown;
   extractedFields: unknown;
@@ -442,6 +444,7 @@ const serializeClassification = (classification: {
         containsActionRequest: classification.containsActionRequest,
         businessTypeKey: classification.businessTypeKey ?? null,
         businessTypeConfidence: classification.businessTypeConfidence ? Number(classification.businessTypeConfidence.toString()) : null,
+        classificationEvidence: classification.classificationEvidence ?? null,
         deadline: serializeDate(classification.deadline),
         routingHints: classification.routingHints ?? null,
         extractedFields: classification.extractedFields ?? null
@@ -1106,6 +1109,7 @@ export const registerInboxReadRoutes = async (
                 containsActionRequest: true,
                 businessTypeKey: true,
                 businessTypeConfidence: true,
+              classificationEvidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true
@@ -1289,6 +1293,7 @@ export const registerInboxReadRoutes = async (
               containsActionRequest: true,
               businessTypeKey: true,
               businessTypeConfidence: true,
+              classificationEvidence: true,
               deadline: true,
               routingHints: true,
               extractedFields: true
@@ -1638,6 +1643,7 @@ export const registerInboxReadRoutes = async (
                 containsActionRequest: true,
                 businessTypeKey: true,
                 businessTypeConfidence: true,
+              classificationEvidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true
@@ -1817,6 +1823,7 @@ export const registerInboxReadRoutes = async (
                 containsActionRequest: true,
                 businessTypeKey: true,
                 businessTypeConfidence: true,
+              classificationEvidence: true,
                 deadline: true,
                 routingHints: true,
                 extractedFields: true

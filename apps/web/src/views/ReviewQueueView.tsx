@@ -135,6 +135,52 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               </div>
             </div>
 
+            {/* Evidence breakdown — scoring metrics from n8n */}
+            {c?.classificationEvidence && (
+              <div style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: 6, padding: '10px 12px', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Classification Evidence</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+                  {(['content', 'sender', 'signature', 'job', 'subject'] as const).map(key => {
+                    const signal = c.classificationEvidence?.[key]
+                    if (!signal) return null
+                    const pct = Math.round(signal.probability * 100)
+                    const contrib = Math.round(signal.contribution * 100)
+                    const barColor = pct >= 70 ? '#4caf50' : pct >= 40 ? '#ff9800' : '#e0e0e0'
+                    return (
+                      <div key={key} style={{ fontSize: 11 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                          <span style={{ fontWeight: 600, textTransform: 'capitalize', color: '#555' }}>{key}</span>
+                          <span style={{ color: '#888' }}>{pct}% <span style={{ color: '#bbb', fontSize: 10 }}>({signal.weight * 100}% wt)</span></span>
+                        </div>
+                        <div style={{ height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 3, transition: 'width 0.3s' }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: '#999', lineHeight: 1.3 }}>
+                          {signal.explanation ?? `Contributes ${contrib}%`}
+                          {key === 'sender' && !!(signal as Record<string, unknown>).status && (
+                            <span style={{ marginLeft: 4, fontWeight: 500, color: '#555' }}>({String((signal as Record<string, unknown>).status)})</span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {c.classificationEvidence.finalBusinessProbability != null && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#333' }}>Final Business Probability</span>
+                    <span style={{
+                      fontSize: 14, fontWeight: 700,
+                      color: c.classificationEvidence.finalBusinessProbability >= 0.85 ? '#2e7d32'
+                        : c.classificationEvidence.finalBusinessProbability <= 0.20 ? '#6a1b9a'
+                        : '#f57f17'
+                    }}>
+                      {Math.round(c.classificationEvidence.finalBusinessProbability * 100)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Classification details */}
             {c && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px 16px', fontSize: 12, marginBottom: 8 }}>
