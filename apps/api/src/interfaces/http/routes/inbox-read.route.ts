@@ -1482,11 +1482,12 @@ export const registerInboxReadRoutes = async (
               reviewQueue: true,
               reviewStatus: true,
               containsActionRequest: true,
+              businessTypeKey: true,
+              businessTypeConfidence: true,
+              classificationEvidence: true,
               deadline: true,
               routingHints: true,
-              extractedFields: true,
-              businessTypeKey: true,
-              businessTypeConfidence: true
+              extractedFields: true
             }
           },
           tasks: {

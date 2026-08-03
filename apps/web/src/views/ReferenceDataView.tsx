@@ -66,7 +66,7 @@ export function ReferenceDataView({ workspaceId }: Props) {
     }
   }
 
-  useEffect(() => { load(tab) }, [tab, workspaceId])
+  useEffect(() => { if (tab !== 'senders') load(tab) }, [tab, workspaceId])
 
   const handlePreview = async () => {
     if (!importText.trim()) return
