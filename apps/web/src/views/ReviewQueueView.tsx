@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ReviewItem } from '../api'
-import { BusinessBadge, ConfidenceBadge, PriorityBadge } from '../components/Badges'
+import { PriorityBadge, ConfidenceBadge } from '../components/Badges'
+import { TypeBadge, ActionBadge } from '../components/Badges'
 
 interface Props {
   workspaceId: string
@@ -10,10 +11,18 @@ interface Props {
 
 const reasonLabels: Record<string, string> = {
   message_needs_review: 'Message flagged for review',
-  classification_requires_review: 'Classification needs human check',
+  classification_requires_review: 'AI requested human review',
   classification_low_confidence: 'Low classification confidence',
-  task_requires_review: 'Task needs human check',
+  task_requires_review: 'Extracted task needs verification',
   task_low_confidence: 'Low task confidence'
+}
+
+const reasonIcons: Record<string, string> = {
+  message_needs_review: '\u26A0',
+  classification_requires_review: '\uD83E\uDD16',
+  classification_low_confidence: '\uD83D\uDCC9',
+  task_requires_review: '\u2611',
+  task_low_confidence: '\uD83D\uDCC9'
 }
 
 export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: Props) {
@@ -63,7 +72,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       <div className="empty-state">
         <div className="empty-icon">&#9878;</div>
         <h3>All clear</h3>
-        <p>No items need human review right now. When the system is unsure about a classification or task, it will appear here for you to confirm or correct.</p>
+        <p>No items need human review right now. When the system is unsure about a classification or task, it will appear here.</p>
       </div>
     )
   }
@@ -73,25 +82,29 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Review Queue</h2>
         <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
-          {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review. Mark each as correct or incorrect.
+          {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
         </p>
       </div>
 
       {items.map(item => {
         const m = item.message
+        const c = m.classification
+        const t = m.taskCandidate
         const approveKey = m.id + 'APPROVED'
         const rejectKey = m.id + 'REJECTED'
 
         return (
-          <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 10 }}>
+          <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17', marginBottom: 10 }}>
+            {/* Header: subject + actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, cursor: 'pointer', color: '#06c' }} onClick={() => onSelectMessage(m.id)}>
+                <div style={{ fontSize: 14, fontWeight: 600, cursor: 'pointer', color: '#06c' }} onClick={() => onSelectMessage(m.id)}>
                   {m.subject ?? '(no subject)'}
                 </div>
-                <div style={{ fontSize: 13, color: '#888', marginTop: 2 }}>
-                  From: {m.senderName ?? m.senderEmail}
-                  <span style={{ color: '#ccc' }}> &middot; </span>
+                <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                  From: <strong>{m.senderName ?? m.senderEmail}</strong>
+                  {m.senderName && <span style={{ color: '#bbb' }}> ({m.senderEmail})</span>}
+                  <span style={{ color: '#ddd' }}> &middot; </span>
                   {formatDate(m.receivedAt ?? m.sentAt)}
                 </div>
               </div>
@@ -109,22 +122,88 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-              {m.classification && <BusinessBadge category={m.classification.businessCategory} />}
-              {m.classification && <PriorityBadge priority={m.classification.priority} />}
-              {m.classification && <ConfidenceBadge confidence={m.classification.confidence} />}
-              {m.taskCandidate && (
-                <span style={{ fontSize: 12, color: '#1565c0' }}>
-                  Task: <ConfidenceBadge confidence={m.taskCandidate.confidence} />
-                </span>
-              )}
+            {/* Review reasons — the flags that caused this to be here */}
+            <div style={{ background: '#fffde7', border: '1px solid #fff9c4', borderRadius: 6, padding: '8px 12px', marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#f57f17', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Why this needs review</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {item.reviewReasons.map(r => (
+                  <div key={r} style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 14 }}>{reasonIcons[r] ?? '\u2753'}</span>
+                    <span>{reasonLabels[r] ?? r.replace(/_/g, ' ')}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{ fontSize: 12, color: '#999' }}>
-              {item.reviewReasons.map(r => (
-                <span key={r} style={{ marginRight: 12 }}>{reasonLabels[r] ?? r}</span>
-              ))}
-            </div>
+            {/* Classification details */}
+            {c && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px 16px', fontSize: 12, marginBottom: 8 }}>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Category</div>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                    background: m.mailboxCategory === 'BUSINESS' ? '#e3f2fd' : '#f3e5f5',
+                    color: m.mailboxCategory === 'BUSINESS' ? '#1565c0' : '#6a1b9a'
+                  }}>{m.mailboxCategory}</span>
+                </div>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Business Type</div>
+                  {c.businessTypeKey ? (
+                    <TypeBadge type={c.emailType} businessTypeKey={c.businessTypeKey} />
+                  ) : (
+                    <span style={{ color: '#ccc' }}>—</span>
+                  )}
+                </div>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Priority</div>
+                  <PriorityBadge priority={c.priority} />
+                </div>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Confidence</div>
+                  <ConfidenceBadge confidence={c.confidence} />
+                </div>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Action State</div>
+                  <ActionBadge emailType={c.emailType} requiresReview={c.requiresReview} />
+                  {!c.requiresReview && c.emailType !== 'ACTIONABLE_REQUEST' && <span style={{ color: '#ccc', fontSize: 11 }}>None</span>}
+                </div>
+                <div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Action Request?</div>
+                  <span style={{ fontWeight: 500, color: c.containsActionRequest ? '#1565c0' : '#ccc' }}>
+                    {c.containsActionRequest ? 'Yes' : 'No'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Summary */}
+            {c?.summary && (
+              <div style={{ fontSize: 12, color: '#666', padding: '6px 10px', background: '#f8f9fa', borderRadius: 4, marginBottom: 8, lineHeight: 1.5 }}>
+                <strong style={{ color: '#888' }}>Summary:</strong> {c.summary}
+              </div>
+            )}
+
+            {/* Task candidate */}
+            {t && (
+              <div style={{ fontSize: 12, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ color: '#1565c0', fontWeight: 600 }}>Extracted Task:</span>
+                  <span style={{ fontWeight: 500 }}>{t.title}</span>
+                  <ConfidenceBadge confidence={t.confidence} />
+                </div>
+                {t.summary && <div style={{ color: '#888', fontSize: 11 }}>{t.summary}</div>}
+                <div style={{ color: '#aaa', fontSize: 11, marginTop: 2 }}>
+                  {t.dueAt && <span>Due: {formatDate(t.dueAt)} &middot; </span>}
+                  {t.assigneeGuess && <span>Assignee: {t.assigneeGuess} &middot; </span>}
+                  Priority: {t.priority}
+                </div>
+              </div>
+            )}
+
+            {/* Snippet */}
+            {m.snippet && !c?.summary && (
+              <div style={{ fontSize: 11, color: '#bbb', marginTop: 4 }}>{m.snippet.slice(0, 120)}</div>
+            )}
           </div>
         )
       })}
@@ -143,7 +222,5 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return iso
-  }
+  } catch { return iso }
 }
