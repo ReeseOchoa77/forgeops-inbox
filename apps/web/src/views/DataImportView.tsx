@@ -3,6 +3,7 @@ import { api, type ImportResult, type ExtractionResult, type ExtractedRecord } f
 
 interface Props {
   workspaceId: string
+  userRole?: string
 }
 
 type ImportTarget = 'customers' | 'vendors' | 'jobs'
@@ -42,7 +43,8 @@ function mapRecordsToImportRows(records: ExtractedRecord[], target: ImportTarget
   })
 }
 
-export function DataImportView({ workspaceId }: Props) {
+export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
+  const isViewer = userRole === 'VIEWER'
   const [step, setStep] = useState<Step>('upload')
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null)
   const [target, setTarget] = useState<ImportTarget>('customers')
@@ -138,24 +140,32 @@ export function DataImportView({ workspaceId }: Props) {
 
       {/* Step 1: Upload */}
       {step === 'upload' && (
-        <div className="card">
-          <h3 style={{ fontSize: 14, margin: '0 0 8px', fontWeight: 600 }}>Upload a Document</h3>
-          <p style={{ fontSize: 12, color: '#888', margin: '0 0 14px', lineHeight: 1.5 }}>
-            Upload a CSV, PDF, or text file containing a list of customers, vendors, contacts, or jobs.
-            AI will analyze the content and suggest records to import.
-          </p>
-          <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
-            Choose File
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.pdf,.txt,text/csv,text/plain,application/pdf"
-              onChange={handleFileSelect}
-              style={{ display: 'none' }}
-            />
-          </label>
-          <span style={{ marginLeft: 12, fontSize: 12, color: '#999' }}>CSV, PDF, or TXT</span>
-        </div>
+        isViewer ? (
+          <div className="empty-state" style={{ padding: 32 }}>
+            <div className="empty-icon">&#128274;</div>
+            <h3>View Only</h3>
+            <p>You don't have permission to import data. Contact an admin for access.</p>
+          </div>
+        ) : (
+          <div className="card">
+            <h3 style={{ fontSize: 14, margin: '0 0 8px', fontWeight: 600 }}>Upload a Document</h3>
+            <p style={{ fontSize: 12, color: '#888', margin: '0 0 14px', lineHeight: 1.5 }}>
+              Upload a CSV, PDF, or text file containing a list of customers, vendors, contacts, or jobs.
+              AI will analyze the content and suggest records to import.
+            </p>
+            <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
+              Choose File
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.pdf,.txt,text/csv,text/plain,application/pdf"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+            </label>
+            <span style={{ marginLeft: 12, fontSize: 12, color: '#999' }}>CSV, PDF, or TXT</span>
+          </div>
+        )
       )}
 
       {/* Step 2: Extracting */}

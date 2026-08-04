@@ -93,7 +93,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   const [newAlias, setNewAlias] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const canEdit = userRole === 'OWNER' || userRole === 'EDITOR'
+  const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
   const loadJob = useCallback(async () => {
     setLoading(true)

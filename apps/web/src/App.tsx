@@ -21,10 +21,12 @@ import { JobDetailView } from './views/JobDetailView'
 
 type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
-const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
+type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
+
+const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean; minRole?: UserRole }> = [
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
-  { page: 'review', label: 'Review Queue', icon: '\u2696' },
+  { page: 'review', label: 'Email Review', icon: '\u2696', minRole: 'ADMIN' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
@@ -34,6 +36,12 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
+
+const ROLE_HIERARCHY: Record<UserRole, number> = { VIEWER: 0, MEMBER: 1, MANAGER: 2, ADMIN: 3, OWNER: 4 }
+
+function hasMinRole(current: UserRole, required: UserRole): boolean {
+  return ROLE_HIERARCHY[current] >= ROLE_HIERARCHY[required]
+}
 
 export default function App() {
   const [session, setSession] = useState<SessionResponse | null>(null)
@@ -253,7 +261,8 @@ export default function App() {
   }
 
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
-  const currentRole = currentWorkspace?.workspaceRole ?? 'VIEWER'
+  const currentRole = (currentWorkspace?.role ?? 'VIEWER') as UserRole
+  const userEmail = session.user?.email ?? ''
   const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
   const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
 
@@ -286,7 +295,8 @@ export default function App() {
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.filter(item => {
-            if (item.adminOnly && !isPlatformAdmin) return false
+            if (item.adminOnly && !(isPlatformAdmin && currentRole === 'OWNER')) return false
+            if (item.minRole && !hasMinRole(currentRole, item.minRole)) return false
             return true
           }).map((item, i, arr) => (
             <div key={item.page}>
@@ -327,7 +337,7 @@ export default function App() {
             </select>
           )}
 
-          {page === 'inbox' && connectionId && (
+          {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
               Compose
             </button>
@@ -363,7 +373,7 @@ export default function App() {
           )}
 
           {!needsConnection && page === 'inbox' && connectionId && (
-            <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+            <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} userEmail={userEmail} connections={connections} />
           )}
           {!needsConnection && page === 'message-detail' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
@@ -377,7 +387,7 @@ export default function App() {
           )}
           {!needsConnection && page === 'tasks' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+              <TasksView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} />
             </div>
           )}
 
@@ -394,7 +404,7 @@ export default function App() {
 
           {page === 'team-access' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TeamAccessView workspaceId={workspaceId} />
+              <TeamAccessView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
           {page === 'workspace' && (
@@ -404,12 +414,12 @@ export default function App() {
           )}
           {page === 'documents' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <DataImportView workspaceId={workspaceId} />
+              <DataImportView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
           {page === 'reference' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <ReferenceDataView workspaceId={workspaceId} />
+              <ReferenceDataView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
           {page === 'settings' && (
@@ -417,7 +427,7 @@ export default function App() {
               <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
             </div>
           )}
-          {page === 'admin' && isPlatformAdmin && (
+          {page === 'admin' && isPlatformAdmin && currentRole === 'OWNER' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <PlatformAdminView />
             </div>

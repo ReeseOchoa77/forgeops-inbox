@@ -888,6 +888,17 @@ const sendWorkspaceAccessDenied = (reply: FastifyReply) =>
     message: "Workspace access denied"
   });
 
+const ROLE_HIERARCHY: Record<string, number> = {
+  VIEWER: 0,
+  MEMBER: 1,
+  MANAGER: 2,
+  ADMIN: 3,
+  OWNER: 4
+};
+
+const hasMinRole = (current: string, required: string): boolean =>
+  (ROLE_HIERARCHY[current] ?? 0) >= (ROLE_HIERARCHY[required] ?? 99);
+
 const loadWorkspaceSession = async (input: {
   app: FastifyInstance;
   request: FastifyRequest;
@@ -1093,6 +1104,34 @@ export const registerInboxReadRoutes = async (
       }
 
       const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
+
+      // Enforce personal email visibility: VIEWER/MEMBER can only see personal emails from their own inbox
+      const isPersonalRequest = query.businessCategory === "NON_BUSINESS";
+      const userRole = membership.role;
+      if (isPersonalRequest && !hasMinRole(userRole, "ADMIN")) {
+        const user = await app.services.prisma.user.findUnique({
+          where: { id: session.userId },
+          select: { email: true }
+        });
+        const userEmail = user?.email?.toLowerCase() ?? "";
+        if (connection && connection.email.toLowerCase() !== userEmail) {
+          return reply.send(
+            messagesListResponseSchema.parse({
+              workspaceId: params.workspaceId,
+              inboxConnectionId: params.id,
+              filters: {
+                classificationType: query.classificationType ?? null,
+                reviewOnly: query.reviewOnly,
+                lowConfidenceOnly: query.lowConfidenceOnly,
+                hasTaskCandidate: query.hasTaskCandidate ?? null
+              },
+              pagination: { page: 1, pageSize: query.pageSize, totalCount: 0, totalPages: 0 },
+              messages: []
+            })
+          );
+        }
+      }
+
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
         inboxConnectionId: params.id,
@@ -1651,6 +1690,12 @@ export const registerInboxReadRoutes = async (
 
       if (!membership) {
         return sendWorkspaceAccessDenied(reply);
+      }
+
+      if (!hasMinRole(membership.role, "ADMIN")) {
+        return reply.code(403).send({
+          message: "Review queue requires Admin or Owner role"
+        });
       }
 
       const connection = await loadWorkspaceConnection({

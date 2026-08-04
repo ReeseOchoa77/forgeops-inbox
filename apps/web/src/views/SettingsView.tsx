@@ -2,44 +2,17 @@ interface Props {
   workspaceName: string
 }
 
-export function SettingsView({ workspaceName }: Props) {
+export function SettingsView({ workspaceName: _workspaceName }: Props) {
   return (
-    <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Settings</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 20px' }}>
-        Workspace settings for <strong>{workspaceName || 'your workspace'}</strong>. These features are being built.
-      </p>
-
-      <div className="card">
-        <h3 style={{ fontSize: 15, margin: '0 0 6px', fontWeight: 600 }}>Review Thresholds</h3>
-        <p style={{ fontSize: 13, color: '#888', margin: 0, lineHeight: 1.5 }}>
-          Control how confident the system needs to be before it auto-approves a classification or task.
-          Items below the threshold are sent to the Review Queue for human confirmation.
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
+      <div style={{ textAlign: 'center', maxWidth: 400 }}>
+        <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.4 }}>&#9881;</div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px', color: '#1a1a2e' }}>
+          Settings &mdash; Coming Soon
+        </h2>
+        <p style={{ fontSize: 14, color: '#888', lineHeight: 1.6, margin: 0 }}>
+          Workspace settings will be available in a future update.
         </p>
-        <div style={{ marginTop: 12, padding: '10px 14px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, color: '#aaa' }}>
-          Coming soon. Currently using default threshold of 75%.
-        </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ fontSize: 15, margin: '0 0 6px', fontWeight: 600 }}>Routing Rules</h3>
-        <p style={{ fontSize: 13, color: '#888', margin: 0, lineHeight: 1.5 }}>
-          Automatically assign, prioritize, or route emails based on their classification.
-          For example: "If category is Support Issue, set priority to High and assign to the support team."
-        </p>
-        <div style={{ marginTop: 12, padding: '10px 14px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, color: '#aaa' }}>
-          Coming soon.
-        </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ fontSize: 15, margin: '0 0 6px', fontWeight: 600 }}>Workspace</h3>
-        <p style={{ fontSize: 13, color: '#888', margin: 0, lineHeight: 1.5 }}>
-          Rename your workspace, set the default timezone, or adjust workspace-level defaults.
-        </p>
-        <div style={{ marginTop: 12, padding: '10px 14px', background: '#f8f9fa', borderRadius: 4, fontSize: 13, color: '#aaa' }}>
-          Coming soon.
-        </div>
       </div>
     </div>
   )

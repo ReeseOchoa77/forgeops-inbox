@@ -9,6 +9,7 @@ interface Props {
   onSelectMessage: (id: string) => void
 }
 
+type ReviewFilter = 'ALL' | 'BUSINESS' | 'PERSONAL'
 
 export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [items, setItems] = useState<ReviewItem[]>([])
@@ -17,6 +18,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [filter, setFilter] = useState<ReviewFilter>('ALL')
 
   const load = () => {
     setLoading(true)
@@ -31,6 +33,13 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
 
   useEffect(() => { setPage(1) }, [connectionId])
   useEffect(load, [workspaceId, connectionId, page])
+
+  const filteredItems = items.filter(item => {
+    if (filter === 'ALL') return true
+    if (filter === 'BUSINESS') return item.message.mailboxCategory === 'BUSINESS'
+    if (filter === 'PERSONAL') return item.message.mailboxCategory === 'PERSONAL'
+    return true
+  })
 
   const handleReview = async (item: ReviewItem, decision: 'APPROVED' | 'REJECTED') => {
     const key = item.message.id + decision
@@ -65,13 +74,24 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Review Queue</h2>
+        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Email Review</h2>
         <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
           {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
         </p>
       </div>
 
-      {items.map(item => {
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+        {(['ALL', 'BUSINESS', 'PERSONAL'] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{
+            padding: '5px 14px', fontSize: 12, fontWeight: 500, borderRadius: 12,
+            border: filter === f ? '1px solid #1a1a2e' : '1px solid #ddd',
+            background: filter === f ? '#1a1a2e' : '#fff',
+            color: filter === f ? '#fff' : '#666', cursor: 'pointer'
+          }}>{f === 'ALL' ? 'All' : f === 'BUSINESS' ? 'Business' : 'Personal'}</button>
+        ))}
+      </div>
+
+      {filteredItems.map(item => {
         const m = item.message
         const c = m.classification
         const t = m.taskCandidate

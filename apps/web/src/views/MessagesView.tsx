@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type JobSummary, type MessageSummary } from '../api'
+import { api, type JobSummary, type MessageSummary, type ConnectionSummary } from '../api'
 import { PriorityBadge, TypeBadge, ActionBadge } from '../components/Badges'
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
@@ -11,6 +11,9 @@ interface Props {
   workspaceId: string
   connectionId: string
   onSelectMessage: (id: string) => void
+  userRole: string
+  userEmail: string
+  connections: ConnectionSummary[]
 }
 
 const PAGE_SIZE = 30
@@ -40,7 +43,11 @@ const INBOX_FILTERS: Array<{ key: InboxFilter; label: string }> = [
   { key: 'high_priority', label: 'High Priority' },
 ]
 
-export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Props) {
+export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections }: Props) {
+  const isViewer = userRole === 'VIEWER'
+  const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
+  const currentConnectionEmail = connections.find(c => c.id === connectionId)?.email ?? ''
+  const isOwnInbox = userEmail.toLowerCase() === currentConnectionEmail.toLowerCase()
   const [messages, setMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -91,7 +98,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
     }
   }, [inboxFilter])
 
-  const filteredMessages = applyClientFilter(messages)
+  const applyRoleFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
+    if (inboxTab !== 'PERSONAL') return msgs
+    if (canSeeAllPersonal) return msgs
+    if (!isOwnInbox) return []
+    return msgs
+  }, [inboxTab, canSeeAllPersonal, isOwnInbox])
+
+  const filteredMessages = applyRoleFilter(applyClientFilter(messages))
 
   const buildFilters = useCallback(() => {
     const f: Parameters<typeof api.getMessages>[4] = {}
@@ -202,7 +216,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', flexShrink: 0 }}>
-        {INBOX_TABS.map(tab => (
+        {INBOX_TABS.filter(tab => {
+          if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
+          return true
+        }).map(tab => (
           <button key={tab.key} onClick={() => { setInboxTab(tab.key); setInboxFilter('') }}
             style={{
               padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
@@ -338,23 +355,25 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage }: Pro
                     )}
                     <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
                     <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
-                        {inboxTab === 'PERSONAL' && (
-                          <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
-                        )}
-                        {isBusiness && (
-                          <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
-                        )}
-                        {inboxTab !== 'TRASH' ? (
-                          <button title="Trash" onClick={() => handleTrash(m.id, false)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
-                        ) : (
-                          <button title="Restore" onClick={() => handleTrash(m.id, true)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
-                        )}
-                      </div>
+                      {!isViewer && (
+                        <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                          {inboxTab === 'PERSONAL' && (
+                            <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
+                          )}
+                          {isBusiness && (
+                            <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
+                          )}
+                          {inboxTab !== 'TRASH' ? (
+                            <button title="Trash" onClick={() => handleTrash(m.id, false)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
+                          ) : (
+                            <button title="Restore" onClick={() => handleTrash(m.id, true)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

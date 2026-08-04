@@ -59,7 +59,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
 
-  const canCreate = userRole === 'OWNER' || userRole === 'EDITOR'
+  const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
   const loadJobs = useCallback(async () => {
     setLoading(true)

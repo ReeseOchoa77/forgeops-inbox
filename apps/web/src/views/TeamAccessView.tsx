@@ -3,9 +3,11 @@ import { api, type ApprovedAccessEntry } from '../api'
 
 interface Props {
   workspaceId: string
+  userRole?: string
 }
 
-export function TeamAccessView({ workspaceId }: Props) {
+export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
+  const canManage = userRole === 'OWNER' || userRole === 'ADMIN'
   const [entries, setEntries] = useState<ApprovedAccessEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -77,30 +79,30 @@ export function TeamAccessView({ workspaceId }: Props) {
         Only people with approved email addresses can sign into this workspace. Add team members here before they try to log in.
       </p>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ fontSize: 14, margin: '0 0 12px' }}>Add a Team Member</h3>
-        <form onSubmit={handleAdd} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            type="email"
-            placeholder="colleague@company.com"
-            value={newEmail}
-            onChange={e => setNewEmail(e.target.value)}
-            required
-            style={{ flex: '1 1 240px', padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}
-          />
-          <select value={newRole} onChange={e => setNewRole(e.target.value)}
-            style={{ padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}>
-            <option value="OWNER">Owner</option>
-            <option value="ADMIN">Admin</option>
-            <option value="MANAGER">Manager</option>
-            <option value="MEMBER">Member</option>
-            <option value="VIEWER">Viewer</option>
-          </select>
-          <button type="submit" className="btn btn-primary" disabled={adding}>
-            {adding ? 'Adding...' : 'Add'}
-          </button>
-        </form>
-      </div>
+      {canManage && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: 14, margin: '0 0 12px' }}>Add a Team Member</h3>
+          <form onSubmit={handleAdd} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              type="email"
+              placeholder="colleague@company.com"
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              required
+              style={{ flex: '1 1 240px', padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}
+            />
+            <select value={newRole} onChange={e => setNewRole(e.target.value)}
+              style={{ padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}>
+              {userRole === 'OWNER' && <option value="ADMIN">Admin</option>}
+              <option value="MEMBER">Member</option>
+              <option value="VIEWER">Viewer</option>
+            </select>
+            <button type="submit" className="btn btn-primary" disabled={adding}>
+              {adding ? 'Adding...' : 'Add'}
+            </button>
+          </form>
+        </div>
+      )}
 
       {activeEntries.length === 0 && (
         <div className="empty-state">
@@ -133,11 +135,13 @@ export function TeamAccessView({ workspaceId }: Props) {
                   {new Date(entry.createdAt).toLocaleDateString()}
                 </td>
                 <td style={{ padding: '8px 10px' }}>
-                  <button className="btn btn-sm btn-danger"
-                    disabled={revoking === entry.id}
-                    onClick={() => handleRevoke(entry.id)}>
-                    {revoking === entry.id ? '...' : 'Revoke'}
-                  </button>
+                  {canManage && (
+                    <button className="btn btn-sm btn-danger"
+                      disabled={revoking === entry.id}
+                      onClick={() => handleRevoke(entry.id)}>
+                      {revoking === entry.id ? '...' : 'Revoke'}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

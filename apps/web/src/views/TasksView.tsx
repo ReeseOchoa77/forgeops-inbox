@@ -6,6 +6,7 @@ interface Props {
   workspaceId: string
   connectionId: string
   onSelectMessage?: (id: string) => void
+  userRole?: string
 }
 
 type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'today' | 'this_week' | 'high_priority'
@@ -46,7 +47,8 @@ function isCreatedThisWeek(createdAt: string): boolean {
   return d >= start && d < end
 }
 
-export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props) {
+export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole }: Props) {
+  const isViewer = userRole === 'VIEWER'
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
@@ -176,15 +178,17 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage }: Props)
                   <span>Created: {formatDate(task.createdAt)}</span>
                 </div>
 
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-                  {!isDone && (
-                    <button className="btn btn-sm btn-success" onClick={() => handleComplete(task.id)}>Complete</button>
-                  )}
-                  {isDone && (
-                    <button className="btn btn-sm btn-outline" onClick={() => handleReopen(task.id)}>Reopen</button>
-                  )}
-                  <button className="btn btn-sm btn-danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => handleRemove(task.id)}>Remove</button>
-                </div>
+                {!isViewer && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+                    {!isDone && (
+                      <button className="btn btn-sm btn-success" onClick={() => handleComplete(task.id)}>Complete</button>
+                    )}
+                    {isDone && (
+                      <button className="btn btn-sm btn-outline" onClick={() => handleReopen(task.id)}>Reopen</button>
+                    )}
+                    <button className="btn btn-sm btn-danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => handleRemove(task.id)}>Remove</button>
+                  </div>
+                )}
               </div>
             )
           })}

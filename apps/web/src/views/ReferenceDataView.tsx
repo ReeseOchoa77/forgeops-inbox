@@ -40,9 +40,10 @@ function formatDate(iso: string): string {
   catch { return iso }
 }
 
-interface Props { workspaceId: string }
+interface Props { workspaceId: string; userRole?: string }
 
-export function ReferenceDataView({ workspaceId }: Props) {
+export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
+  const isViewer = userRole === 'VIEWER'
   const [tab, setTab] = useState<Tab>('customers')
   const [data, setData] = useState<Record<string, unknown[]>>({})
   const [loading, setLoading] = useState(true)
@@ -131,7 +132,7 @@ export function ReferenceDataView({ workspaceId }: Props) {
       </div>
 
       {/* Import controls for customers/vendors */}
-      {(tab === 'customers' || tab === 'vendors') && importStep === 'idle' && (
+      {!isViewer && (tab === 'customers' || tab === 'vendors') && importStep === 'idle' && (
         <div style={{ marginBottom: 16, padding: 12, background: '#f8f9fa', borderRadius: 6, border: '1px solid #eee' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
             <div>
