@@ -557,6 +557,12 @@ export const api = {
 
   getStoredAttachmentDownloadUrl: (workspaceId: string, attachmentId: string, inline = false) =>
     `${BASE}/workspaces/${workspaceId}/attachments/${attachmentId}/download${inline ? '?inline=true' : ''}`,
+
+  getCustomers: (workspaceId: string) =>
+    request<{ customers: CustomerSummary[] }>(`/workspaces/${workspaceId}/reference/customers`),
+
+  getWorkspaceMembers: (workspaceId: string) =>
+    request<{ members: WorkspaceMemberSummary[] }>(`/admin/workspaces/${workspaceId}/members`),
 };
 
 export interface ImportResult {
@@ -709,4 +715,20 @@ export interface StoredAttachment {
   contentId: string | null;
   uploadStatus: 'PENDING' | 'UPLOADED' | 'FAILED' | 'REJECTED';
   createdAt: string;
+}
+
+export interface CustomerSummary {
+  id: string;
+  name: string;
+  normalizedName: string;
+  primaryEmail: string | null;
+  domain: string | null;
+}
+
+export interface WorkspaceMemberSummary {
+  membershipId: string;
+  userId: string;
+  email: string;
+  name: string | null;
+  role: string;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { api, type JobSummary } from '../api'
+import { api, type JobSummary, type CustomerSummary } from '../api'
 
 interface Props {
   workspaceId: string
@@ -49,17 +49,49 @@ function relativeTime(d: string | null) {
   return formatDate(d)
 }
 
+interface CreateJobFormState {
+  jobNumber: string
+  name: string
+  status: string
+  customerId: string
+  description: string
+  startDate: string
+  targetCompletionDate: string
+  aliases: string
+}
+
+const EMPTY_FORM: CreateJobFormState = {
+  jobNumber: '', name: '', status: 'ACTIVE', customerId: '',
+  description: '', startDate: '', targetCompletionDate: '', aliases: ''
+}
+
 export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [customerFilter, setCustomerFilter] = useState('')
+  const [assignedUserFilter, setAssignedUserFilter] = useState('')
+  const [hasOverdueTasks, setHasOverdueTasks] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [sortBy, setSortBy] = useState('createdAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [form, setForm] = useState<CreateJobFormState>(EMPTY_FORM)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState('')
+
+  const [customers, setCustomers] = useState<CustomerSummary[]>([])
 
   const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
+
+  useEffect(() => {
+    api.getCustomers(workspaceId).then(r => setCustomers(r.customers)).catch(() => {})
+  }, [workspaceId])
 
   const loadJobs = useCallback(async () => {
     setLoading(true)
@@ -70,6 +102,11 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
         status: statusFilter !== 'ALL' ? statusFilter : undefined,
         search: search || undefined,
         showArchived: showArchived || undefined,
+        customerId: customerFilter || undefined,
+        assignedUserId: assignedUserFilter || undefined,
+        hasOverdueTasks: hasOverdueTasks || undefined,
+        sortBy,
+        sortDir,
       })
       setJobs(res.jobs)
       setTotalPages(res.pagination.totalPages)
@@ -79,11 +116,59 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, page, statusFilter, search, showArchived])
+  }, [workspaceId, page, statusFilter, search, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
   useEffect(() => { loadJobs() }, [loadJobs])
 
-  useEffect(() => { setPage(1) }, [statusFilter, search, showArchived])
+  useEffect(() => { setPage(1) }, [statusFilter, search, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+
+  const handleSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(col)
+      setSortDir('asc')
+    }
+  }
+
+  const handleCreateJob = async () => {
+    if (!form.jobNumber.trim() || !form.name.trim()) {
+      setCreateError('Job number and name are required.')
+      return
+    }
+    setCreating(true)
+    setCreateError('')
+    try {
+      await api.createJob(workspaceId, {
+        jobNumber: form.jobNumber.trim(),
+        name: form.name.trim(),
+        status: form.status || 'ACTIVE',
+        customerId: form.customerId || undefined,
+        description: form.description || undefined,
+        startDate: form.startDate ? new Date(form.startDate).toISOString() : undefined,
+        targetCompletionDate: form.targetCompletionDate ? new Date(form.targetCompletionDate).toISOString() : undefined,
+        aliases: form.aliases ? form.aliases.split(',').map(a => a.trim()).filter(Boolean) : undefined,
+      })
+      setShowCreateModal(false)
+      setForm(EMPTY_FORM)
+      loadJobs()
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'Failed to create job')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const sortIndicator = (col: string) => {
+    if (sortBy !== col) return ''
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const thStyle = (col: string): React.CSSProperties => ({
+    padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151',
+    cursor: 'pointer', userSelect: 'none',
+    background: sortBy === col ? '#f0f4ff' : undefined,
+  })
 
   return (
     <div style={{ padding: 24 }}>
@@ -92,7 +177,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Jobs</h2>
         {canCreate && (
           <button
-            onClick={() => { /* placeholder for create modal */ }}
+            onClick={() => { setShowCreateModal(true); setCreateError('') }}
             style={{
               padding: '8px 16px', background: '#1a1a2e', color: '#fff', border: 'none',
               borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer'
@@ -124,6 +209,31 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
             <option key={s} value={s}>{s === 'ALL' ? 'All Statuses' : s.replace('_', ' ')}</option>
           ))}
         </select>
+        <select
+          value={customerFilter}
+          onChange={e => setCustomerFilter(e.target.value)}
+          style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}
+        >
+          <option value="">All Customers</option>
+          {customers.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Filter by user ID..."
+          value={assignedUserFilter}
+          onChange={e => setAssignedUserFilter(e.target.value)}
+          style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, width: 140 }}
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={hasOverdueTasks}
+            onChange={e => setHasOverdueTasks(e.target.checked)}
+          />
+          Overdue tasks
+        </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -157,14 +267,15 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Job #</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Name</th>
+                  <th style={thStyle('jobNumber')} onClick={() => handleSort('jobNumber')}>Job #{sortIndicator('jobNumber')}</th>
+                  <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Customer</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Status</th>
+                  <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Emails</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Open Tasks</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Overdue</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Last Activity</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Next Due</th>
                   <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Team</th>
                 </tr>
               </thead>
@@ -189,6 +300,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
                       {job.overdueTaskCount}
                     </td>
                     <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{relativeTime(job.lastActivityAt)}</td>
+                    <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.nextDueDate ? formatDate(job.nextDueDate) : '—'}</td>
                     <td style={{ padding: '10px 12px' }}>
                       <div style={{ display: 'flex', gap: 2 }}>
                         {job.assignedMembers.slice(0, 3).map(m => (
@@ -239,6 +351,88 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
             </div>
           </div>
         </>
+      )}
+
+      {/* Create Job Modal */}
+      {showCreateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 520, maxHeight: '85vh', background: '#fff', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e5e5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Create Job</h3>
+              <button onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#999' }}>&times;</button>
+            </div>
+            <div style={{ padding: 20, overflow: 'auto', flex: 1 }}>
+              <div style={{ display: 'grid', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Job Number *</label>
+                    <input value={form.jobNumber} onChange={e => setForm(f => ({ ...f, jobNumber: e.target.value }))}
+                      placeholder="e.g. JOB-001"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Status</label>
+                    <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                      {['LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE'].map(s => (
+                        <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Job Name *</label>
+                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                    placeholder="e.g. Downtown Office Renovation"
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Customer</label>
+                  <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                    <option value="">— None —</option>
+                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Description</label>
+                  <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2}
+                    placeholder="Brief description of the job..."
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical' }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Start Date</label>
+                    <input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Target Completion</label>
+                    <input type="date" value={form.targetCompletionDate} onChange={e => setForm(f => ({ ...f, targetCompletionDate: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Aliases (comma-separated)</label>
+                  <input value={form.aliases} onChange={e => setForm(f => ({ ...f, aliases: e.target.value }))}
+                    placeholder="e.g. DT Office, Downtown Reno"
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                </div>
+                {createError && <div style={{ color: '#dc2626', fontSize: 13 }}>{createError}</div>}
+              </div>
+            </div>
+            <div style={{ padding: '14px 20px', borderTop: '1px solid #e5e5e5', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setShowCreateModal(false)}
+                style={{ padding: '8px 16px', border: '1px solid #d0d5dd', borderRadius: 6, background: '#fff', fontSize: 13, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={handleCreateJob} disabled={creating}
+                style={{ padding: '8px 20px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: creating ? 0.6 : 1 }}>
+                {creating ? 'Creating...' : 'Create Job'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

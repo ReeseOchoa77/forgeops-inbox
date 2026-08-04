@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity } from '../api'
+import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity, type JobSummary } from '../api'
 
 interface Props {
   workspaceId: string
@@ -76,13 +76,13 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [emailPage, setEmailPage] = useState(1)
   const [emailTotalPages, setEmailTotalPages] = useState(1)
+  const [emailSearch, setEmailSearch] = useState('')
   const [tasks, setTasks] = useState<JobTask[]>([])
   const [documents, setDocuments] = useState<JobDocument[]>([])
   const [activity, setActivity] = useState<JobActivity[]>([])
   const [activityPage, setActivityPage] = useState(1)
   const [activityTotalPages, setActivityTotalPages] = useState(1)
 
-  // Settings state
   const [editName, setEditName] = useState('')
   const [editJobNumber, setEditJobNumber] = useState('')
   const [editStatus, setEditStatus] = useState('')
@@ -92,6 +92,10 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   const [editTargetDate, setEditTargetDate] = useState('')
   const [newAlias, setNewAlias] = useState('')
   const [saving, setSaving] = useState(false)
+
+  const [moveJobId, setMoveJobId] = useState('')
+  const [allJobs, setAllJobs] = useState<JobSummary[]>([])
+  const [showMoveModal, setShowMoveModal] = useState<string | null>(null)
 
   const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
@@ -113,6 +117,12 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   }, [workspaceId, jobId])
 
   useEffect(() => { loadJob() }, [loadJob])
+
+  useEffect(() => {
+    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+      .then(r => setAllJobs(r.jobs))
+      .catch(() => {})
+  }, [workspaceId])
 
   useEffect(() => {
     if (tab === 'emails') {
@@ -195,6 +205,16 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
     setEmails(prev => prev.filter(e => e.id !== messageId))
   }
 
+  const handleMoveEmail = async (messageId: string) => {
+    if (!moveJobId) return
+    try {
+      await api.moveEmailToJob(workspaceId, jobId, { messageId, targetJobId: moveJobId })
+      setEmails(prev => prev.filter(e => e.id !== messageId))
+      setShowMoveModal(null)
+      setMoveJobId('')
+    } catch { /* ignore */ }
+  }
+
   if (loading) {
     return <div style={{ padding: 48, textAlign: 'center', color: '#888' }}>Loading job...</div>
   }
@@ -211,6 +231,18 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
     { key: 'activity', label: 'Activity' },
     { key: 'settings', label: 'Settings' },
   ]
+
+  const filteredEmails = emailSearch
+    ? emails.filter(e =>
+        (e.subject ?? '').toLowerCase().includes(emailSearch.toLowerCase()) ||
+        (e.senderName ?? '').toLowerCase().includes(emailSearch.toLowerCase()) ||
+        e.senderEmail.toLowerCase().includes(emailSearch.toLowerCase())
+      )
+    : emails
+
+  const openTasks = tasks.filter(t => t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'BLOCKED')
+  const completedTasks = tasks.filter(t => t.status === 'DONE')
+  const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
 
   return (
     <div style={{ padding: 24 }}>
@@ -260,6 +292,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
             <MetricCard label="Overdue Tasks" value={job.overdueTaskCount} accent={job.overdueTaskCount > 0 ? '#dc2626' : undefined} />
             <MetricCard label="Completed Tasks" value={job.completedTaskCount} accent="#16a34a" />
             <MetricCard label="Attachments" value={job.attachmentCount} />
+            <MetricCard label="Next Due" value={job.nextDueDate ? formatDate(job.nextDueDate) : '—'} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -316,17 +349,26 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
       {/* Emails Tab */}
       {tab === 'emails' && (
         <div>
-          {emails.length === 0 ? (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Search emails..."
+              value={emailSearch}
+              onChange={e => setEmailSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 180, padding: '7px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }}
+            />
+          </div>
+          {filteredEmails.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>No emails assigned to this job.</div>
           ) : (
             <>
               <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                {emails.map((email, i) => (
+                {filteredEmails.map((email, i) => (
                   <div
                     key={email.id}
                     style={{
                       padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
-                      borderBottom: i < emails.length - 1 ? '1px solid #f0f0f0' : undefined
+                      borderBottom: i < filteredEmails.length - 1 ? '1px solid #f0f0f0' : undefined
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -347,13 +389,22 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
                       </span>
                     )}
                     {canEdit && (
-                      <button
-                        onClick={() => handleRemoveEmail(email.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#999', padding: '4px 8px' }}
-                        title="Remove from job"
-                      >
-                        &times;
-                      </button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          onClick={() => { setShowMoveModal(email.id); setMoveJobId('') }}
+                          style={{ background: 'none', border: '1px solid #d0d5dd', borderRadius: 4, cursor: 'pointer', fontSize: 11, color: '#555', padding: '3px 8px' }}
+                          title="Move to another job"
+                        >
+                          Move
+                        </button>
+                        <button
+                          onClick={() => handleRemoveEmail(email.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#999', padding: '4px 8px' }}
+                          title="Remove from job"
+                        >
+                          &times;
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -367,6 +418,31 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
               )}
             </>
           )}
+
+          {/* Move email modal */}
+          {showMoveModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 400, background: '#fff', borderRadius: 10, padding: 24, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+                <h4 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 600 }}>Move Email to Another Job</h4>
+                <select
+                  value={moveJobId}
+                  onChange={e => setMoveJobId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, marginBottom: 14 }}
+                >
+                  <option value="">Select target job...</option>
+                  {allJobs.filter(j => j.id !== jobId).map(j => (
+                    <option key={j.id} value={j.id}>
+                      {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button onClick={() => setShowMoveModal(null)} style={{ padding: '6px 14px', border: '1px solid #d0d5dd', borderRadius: 5, background: '#fff', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={() => handleMoveEmail(showMoveModal)} disabled={!moveJobId} style={{ padding: '6px 14px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: moveJobId ? 1 : 0.5 }}>Move</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -376,44 +452,91 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
           {tasks.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>No tasks linked to this job.</div>
           ) : (
-            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Title</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Status</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Priority</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Due</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Assignee</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map(task => (
-                    <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '10px 12px', fontWeight: 500 }}>{task.title}</td>
-                      <td style={{ padding: '10px 12px' }}>
-                        <span style={{
-                          padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500,
-                          background: task.status === 'DONE' ? '#dcfce7' : task.status === 'IN_PROGRESS' ? '#dbeafe' : '#f3f4f6',
-                          color: task.status === 'DONE' ? '#16a34a' : task.status === 'IN_PROGRESS' ? '#1d4ed8' : '#374151'
-                        }}>
-                          {task.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 12px' }}>
-                        <span style={{
-                          fontSize: 11, fontWeight: 600,
-                          color: task.priority === 'HIGH' ? '#dc2626' : task.priority === 'MEDIUM' ? '#d97706' : '#6b7280'
-                        }}>
-                          {task.priority}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b7280' }}>{formatDate(task.dueAt)}</td>
-                      <td style={{ padding: '10px 12px', fontSize: 12, color: '#555' }}>{task.assigneeGuess ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              {openTasks.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Open ({openTasks.length})</div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Title</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Status</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Priority</th>
+                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Due</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {openTasks.map(task => (
+                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 500 }}>{task.title}</td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500,
+                                background: task.status === 'IN_PROGRESS' ? '#dbeafe' : task.status === 'BLOCKED' ? '#fef9c3' : '#f3f4f6',
+                                color: task.status === 'IN_PROGRESS' ? '#1d4ed8' : task.status === 'BLOCKED' ? '#a16207' : '#374151'
+                              }}>
+                                {task.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                fontSize: 11, fontWeight: 600,
+                                color: task.priority === 'HIGH' || task.priority === 'URGENT' ? '#dc2626' : task.priority === 'MEDIUM' ? '#d97706' : '#6b7280'
+                              }}>
+                                {task.priority}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px', fontSize: 12, color: task.dueAt && new Date(task.dueAt) < new Date() ? '#dc2626' : '#6b7280' }}>
+                              {formatDate(task.dueAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {completedTasks.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>Completed ({completedTasks.length})</div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <tbody>
+                        {completedTasks.map(task => (
+                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 500, color: '#6b7280', textDecoration: 'line-through' }}>{task.title}</td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: '#dcfce7', color: '#16a34a' }}>DONE</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b7280' }}>{formatDate(task.createdAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {cancelledTasks.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#6b7280', marginBottom: 8 }}>Cancelled ({cancelledTasks.length})</div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <tbody>
+                        {cancelledTasks.map(task => (
+                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 500, color: '#9ca3af', textDecoration: 'line-through' }}>{task.title}</td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: '#f3f4f6', color: '#6b7280' }}>CANCELLED</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', fontSize: 12, color: '#9ca3af' }}>{formatDate(task.createdAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
