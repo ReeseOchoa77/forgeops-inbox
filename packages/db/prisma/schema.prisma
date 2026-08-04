@@ -213,6 +213,7 @@ model Workspace {
 model User {
   id                      String           @id @default(cuid())
   googleSubject           String?          @unique
+  microsoftSubject        String?          @unique
   email                   String           @unique
   name                    String?
   avatarUrl               String?

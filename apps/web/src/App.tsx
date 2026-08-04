@@ -3,7 +3,8 @@ import { api, type SessionResponse, type ConnectionSummary } from './api'
 import { ComposeEditor } from './components/ComposeEditor'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
-const signInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
+const googleSignInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
+const microsoftSignInUrl = `${API_ORIGIN}/api/v1/auth/microsoft/start?redirect=true`
 import { MessagesView } from './views/MessagesView'
 import { MessageDetailView } from './views/MessageDetailView'
 import { ReviewQueueView } from './views/ReviewQueueView'
@@ -121,7 +122,7 @@ export default function App() {
           <h2 style={{ margin: '0 0 10px', fontSize: 22, fontWeight: 700 }}>Access Restricted</h2>
           <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.6 }}>Your email address is not authorized for ForgeOps Inbox.</p>
           <p style={{ color: '#999', margin: '0 0 28px', fontSize: 14, lineHeight: 1.5 }}>This is a private application. Contact your administrator for access.</p>
-          <a href={signInUrl} className="btn btn-outline">Try a different account</a>
+          <a href={googleSignInUrl} className="btn btn-outline">Try a different account</a>
         </div>
       </div>
     )
@@ -133,7 +134,7 @@ export default function App() {
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 460 }}>
           <h2 style={{ margin: '0 0 8px', fontSize: 20 }}>Something went wrong</h2>
           <p style={{ color: '#888', fontSize: 14, margin: '0 0 20px' }}>{error}</p>
-          <a href={signInUrl} className="btn btn-primary">Sign in with Google</a>
+          <a href={googleSignInUrl} className="btn btn-primary">Sign in with Google</a>
         </div>
       </div>
     )
@@ -148,6 +149,8 @@ export default function App() {
   }
 
   if (!session.authenticated) {
+    const showMicrosoft = session.microsoftAuthAvailable
+
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
@@ -155,7 +158,42 @@ export default function App() {
           <h1 style={{ fontSize: 28, margin: '0 0 8px', fontWeight: 700, letterSpacing: '-0.5px', color: '#1a1a2e' }}>ForgeOps Inbox</h1>
           <p style={{ color: '#666', margin: '0 0 6px', fontSize: 16, lineHeight: 1.5 }}>Multi-provider inbox operations platform.</p>
           <p style={{ color: '#999', margin: '0 0 32px', fontSize: 14, lineHeight: 1.5 }}>Sync email from Gmail and Outlook, classify messages automatically, and extract actionable tasks for your team.</p>
-          <a href={signInUrl} className="btn btn-primary" style={{ fontSize: 15, padding: '12px 32px' }}>Sign in with Google</a>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+            <a
+              href={googleSignInUrl}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 10,
+                padding: '12px 28px', fontSize: 15, fontWeight: 500,
+                border: '1px solid #dadce0', borderRadius: 6,
+                background: '#fff', color: '#3c4043',
+                textDecoration: 'none', cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                transition: 'box-shadow 0.2s, background 0.2s',
+                minWidth: 240, justifyContent: 'center'
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 019.5 24c0-1.59.28-3.13.76-4.59l-7.98-6.19A23.9 23.9 0 000 24c0 3.77.9 7.35 2.56 10.53l7.97-5.94z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 5.94C6.51 42.62 14.62 48 24 48z"/></svg>
+              Sign in with Google
+            </a>
+            {showMicrosoft && (
+              <a
+                href={microsoftSignInUrl}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 10,
+                  padding: '12px 28px', fontSize: 15, fontWeight: 500,
+                  border: '1px solid #dadce0', borderRadius: 6,
+                  background: '#fff', color: '#3c4043',
+                  textDecoration: 'none', cursor: 'pointer',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                  transition: 'box-shadow 0.2s, background 0.2s',
+                  minWidth: 240, justifyContent: 'center'
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+                Sign in with Microsoft
+              </a>
+            )}
+          </div>
           <p style={{ color: '#bbb', margin: '20px 0 0', fontSize: 12 }}>Private access only. Contact your administrator for an invite.</p>
         </div>
       </div>
