@@ -54,6 +54,7 @@ import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js"
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
+import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
   const env = loadApiEnv();
@@ -163,6 +164,13 @@ export const buildServer = async () => {
 
   const tokenCipher = new TokenCipher(env.TOKEN_ENCRYPTION_SECRET);
   const auditEventLogger = new AuditEventLogger(prisma);
+  const attachmentStorage = new S3AttachmentStorage({
+    bucket: env.S3_BUCKET,
+    region: env.S3_REGION,
+    accessKeyId: env.S3_ACCESS_KEY_ID,
+    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+    endpoint: env.S3_ENDPOINT,
+  });
 
   const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -211,6 +219,7 @@ export const buildServer = async () => {
     oauthStateStore,
     tokenCipher,
     auditEventLogger,
+    attachmentStorage,
     registerScheduledSync,
     removeScheduledSync
   });

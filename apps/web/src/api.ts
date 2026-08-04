@@ -551,6 +551,12 @@ export const api = {
     request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/aliases/${aliasId}`, {
       method: 'DELETE'
     }),
+
+  getEmailAttachments: (workspaceId: string, emailId: string) =>
+    request<{ attachments: StoredAttachment[] }>(`/workspaces/${workspaceId}/emails/${emailId}/attachments`),
+
+  getStoredAttachmentDownloadUrl: (workspaceId: string, attachmentId: string, inline = false) =>
+    `${BASE}/workspaces/${workspaceId}/attachments/${attachmentId}/download${inline ? '?inline=true' : ''}`,
 };
 
 export interface ImportResult {
@@ -691,5 +697,16 @@ export interface JobActivity {
   actorEmail: string | null;
   previousValue: unknown;
   newValue: unknown;
+  createdAt: string;
+}
+
+export interface StoredAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  isInline: boolean;
+  contentId: string | null;
+  uploadStatus: 'PENDING' | 'UPLOADED' | 'FAILED' | 'REJECTED';
   createdAt: string;
 }

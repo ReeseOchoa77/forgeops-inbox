@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobSummary } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobSummary, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 
@@ -201,6 +201,107 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
             <button className="btn btn-sm btn-outline" onClick={onForward}>Forward</button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function statusBadge(status: StoredAttachment['uploadStatus']) {
+  const styles: Record<string, { bg: string; color: string; label: string }> = {
+    UPLOADED: { bg: '#e6f4ea', color: '#1b7a3d', label: 'Ready' },
+    PENDING: { bg: '#fff8e1', color: '#f57f17', label: 'Uploading…' },
+    FAILED: { bg: '#fce4ec', color: '#c62828', label: 'Failed' },
+    REJECTED: { bg: '#fce4ec', color: '#c62828', label: 'Rejected' },
+  }
+  const s = styles[status] ?? styles.FAILED!
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+      background: s.bg, color: s.color
+    }}>
+      {s.label}
+    </span>
+  )
+}
+
+function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: string; emailId: string }) {
+  const [attachments, setAttachments] = useState<StoredAttachment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showInline, setShowInline] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api.getEmailAttachments(workspaceId, emailId)
+      .then(r => setAttachments(r.attachments))
+      .catch(() => setAttachments([]))
+      .finally(() => setLoading(false))
+  }, [workspaceId, emailId])
+
+  if (loading) return null
+
+  const visible = showInline ? attachments : attachments.filter(a => !a.isInline)
+  const inlineCount = attachments.filter(a => a.isInline).length
+
+  if (attachments.length === 0) return null
+
+  return (
+    <div style={{
+      margin: '12px 0', padding: '12px 16px', background: '#fff',
+      border: '1px solid #e5e5e5', borderRadius: 8
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          Attachments ({attachments.length - inlineCount}{inlineCount > 0 ? ` + ${inlineCount} inline` : ''})
+        </div>
+        {inlineCount > 0 && (
+          <button
+            onClick={() => setShowInline(v => !v)}
+            style={{
+              background: 'none', border: 'none', fontSize: 11, color: '#888',
+              cursor: 'pointer', textDecoration: 'underline'
+            }}
+          >
+            {showInline ? 'Hide inline images' : 'Show inline images'}
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {visible.map(att => (
+          <div
+            key={att.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+              border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa',
+              fontSize: 13
+            }}
+          >
+            <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(att.mimeType)}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {att.filename}
+              </div>
+              <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>
+                {formatSize(att.sizeBytes)} · {att.mimeType.split('/').pop()}
+                {att.isInline && <span style={{ marginLeft: 6, color: '#999' }}>(inline)</span>}
+              </div>
+            </div>
+            {statusBadge(att.uploadStatus)}
+            {att.uploadStatus === 'UPLOADED' && (
+              <a
+                href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: 12, color: '#1565c0', textDecoration: 'none', fontWeight: 500,
+                  padding: '4px 10px', border: '1px solid #1565c0', borderRadius: 4,
+                  flexShrink: 0
+                }}
+              >
+                Download
+              </a>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -468,6 +569,14 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           />
         ))}
       </div>
+
+      {/* Stored attachments */}
+      {messageDetail && (
+        <StoredAttachmentsSection
+          workspaceId={workspaceId}
+          emailId={messageDetail.message.id}
+        />
+      )}
 
       {/* Compose panel */}
       {composeMode && (

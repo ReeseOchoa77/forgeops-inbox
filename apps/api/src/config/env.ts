@@ -67,7 +67,13 @@ const apiEnvSchema = z.object({
     .default("development-token-encryption-secret"),
   FRONTEND_URL: z.string().default("http://localhost:5173"),
   DEV_AUTO_CREATE_WORKSPACE_ON_LOGIN: booleanFromString.default("true"),
-  DEV_ENABLE_BOOTSTRAP_ROUTES: booleanFromString.default("true")
+  DEV_ENABLE_BOOTSTRAP_ROUTES: booleanFromString.default("true"),
+  S3_BUCKET: optionalStringFromEnv,
+  S3_REGION: z.string().default("us-east-1"),
+  S3_ACCESS_KEY_ID: optionalStringFromEnv,
+  S3_SECRET_ACCESS_KEY: optionalStringFromEnv,
+  S3_ENDPOINT: optionalStringFromEnv,
+  ATTACHMENT_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024)
 });
 
 const parsedApiEnvSchema = apiEnvSchema.transform((env) => ({

@@ -1092,12 +1092,14 @@ enum AttachmentUploadStatus {
   PENDING
   UPLOADED
   FAILED
+  REJECTED
 }
 
 model EmailAttachment {
   id                    String                @id @default(cuid())
   workspaceId           String
   emailMessageId        String
+  provider              InboxProvider?
   providerAttachmentId  String?
   filename              String
   sanitizedFilename     String
@@ -1106,6 +1108,7 @@ model EmailAttachment {
   storageKey            String?
   checksum              String?
   isInline              Boolean               @default(false)
+  contentId             String?
   uploadStatus          AttachmentUploadStatus @default(PENDING)
   errorMessage          String?
   createdAt             DateTime              @default(now())
@@ -1113,7 +1116,7 @@ model EmailAttachment {
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   emailMessage          EmailMessage          @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
 
-  @@unique([emailMessageId, providerAttachmentId])
+  @@unique([workspaceId, emailMessageId, providerAttachmentId])
   @@unique([workspaceId, storageKey])
   @@index([workspaceId, emailMessageId])
   @@index([checksum])

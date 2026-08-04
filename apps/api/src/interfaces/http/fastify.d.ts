@@ -10,6 +10,7 @@ import type { ApiEnv } from "../../config/env.js";
 import type { GoogleOAuthService } from "../../infrastructure/google/google-oauth-service.js";
 import type { GoogleOAuthStateStore } from "../../infrastructure/session/google-oauth-state-store.js";
 import type { RedisSessionStore } from "../../infrastructure/session/redis-session-store.js";
+import type { AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -29,6 +30,7 @@ declare module "fastify" {
       oauthStateStore: GoogleOAuthStateStore;
       tokenCipher: TokenCipher;
       auditEventLogger: AuditEventLogger;
+      attachmentStorage: AttachmentStorage;
       registerScheduledSync: (workspaceId: string, connectionId: string) => Promise<void>;
       removeScheduledSync: (connectionId: string) => Promise<void>;
     };
