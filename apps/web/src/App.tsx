@@ -13,11 +13,12 @@ import { TasksView } from './views/TasksView'
 import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
 import { ReferenceDataView } from './views/ReferenceDataView'
+import { TeamAccessView } from './views/TeamAccessView'
 import { DataImportView } from './views/DataImportView'
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean }> = [
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
@@ -27,6 +28,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
+  { page: 'team-access', label: 'Team Access', icon: '\uD83D\uDC65' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
@@ -352,6 +354,11 @@ export default function App() {
             </div>
           )}
 
+          {page === 'team-access' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <TeamAccessView workspaceId={workspaceId} />
+            </div>
+          )}
           {page === 'workspace' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} connectionId={connectionId} />
