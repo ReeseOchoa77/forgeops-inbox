@@ -325,6 +325,12 @@ export const api = {
       body: JSON.stringify({ status: 'REVOKED' })
     }),
 
+  updateAccessRole: (workspaceId: string, accessId: string, role: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/approved-access/${accessId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role })
+    }),
+
   disconnectConnection: (workspaceId: string, connectionId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}`, {
       method: 'DELETE'

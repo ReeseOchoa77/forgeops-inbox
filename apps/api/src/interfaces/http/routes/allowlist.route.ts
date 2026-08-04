@@ -176,6 +176,10 @@ export const registerAllowlistRoutes = async (
 
       if (!entry) return reply.code(404).send({ message: "Approved access entry not found" });
 
+      if (body.role === "OWNER" && membership.role !== "OWNER") {
+        return reply.code(403).send({ message: "Only an Owner can assign the Owner role" });
+      }
+
       const updated = await app.services.prisma.approvedAccess.update({
         where: { id: entry.id },
         data: {
@@ -183,6 +187,19 @@ export const registerAllowlistRoutes = async (
           ...(body.role ? { role: body.role } : {})
         }
       });
+
+      // Sync role change to active Membership so it takes effect immediately
+      if (body.role) {
+        const targetUser = await app.services.prisma.user.findUnique({
+          where: { email: entry.email }
+        });
+        if (targetUser) {
+          await app.services.prisma.membership.updateMany({
+            where: { workspaceId: params.workspaceId, userId: targetUser.id },
+            data: { role: body.role as any }
+          });
+        }
+      }
 
       await app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,

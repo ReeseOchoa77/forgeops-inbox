@@ -15,6 +15,11 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
   const [newRole, setNewRole] = useState('MEMBER')
   const [adding, setAdding] = useState(false)
   const [revoking, setRevoking] = useState<string | null>(null)
+  const [updatingRole, setUpdatingRole] = useState<string | null>(null)
+
+  const allowedRoles = userRole === 'OWNER'
+    ? ['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']
+    : ['ADMIN', 'MEMBER', 'VIEWER']
 
   const load = () => {
     setLoading(true)
@@ -40,6 +45,18 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
       alert(err instanceof Error ? err.message : 'Failed to add')
     } finally {
       setAdding(false)
+    }
+  }
+
+  const handleRoleChange = async (accessId: string, newRoleValue: string) => {
+    setUpdatingRole(accessId)
+    try {
+      await api.updateAccessRole(workspaceId, accessId, newRoleValue)
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update role')
+    } finally {
+      setUpdatingRole(null)
     }
   }
 
@@ -128,7 +145,18 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
               <tr key={entry.id} style={{ borderBottom: '1px solid #eee' }}>
                 <td style={{ padding: '8px 10px', fontWeight: 500 }}>{entry.email}</td>
                 <td style={{ padding: '8px 10px' }}>
-                  <span style={{ background: '#f0f0f0', padding: '2px 8px', borderRadius: 3, fontSize: 12 }}>{entry.role}</span>
+                  {canManage && !(userRole === 'ADMIN' && entry.role === 'OWNER') ? (
+                    <select
+                      value={entry.role}
+                      disabled={updatingRole === entry.id}
+                      onChange={e => handleRoleChange(entry.id, e.target.value)}
+                      style={{ padding: '2px 6px', fontSize: 12, borderRadius: 3, border: '1px solid #d0d0d0', background: updatingRole === entry.id ? '#f5f5f5' : '#fff', cursor: 'pointer' }}
+                    >
+                      {allowedRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  ) : (
+                    <span style={{ background: '#f0f0f0', padding: '2px 8px', borderRadius: 3, fontSize: 12 }}>{entry.role}</span>
+                  )}
                 </td>
                 <td style={{ padding: '8px 10px', fontSize: 13, color: '#888' }}>{entry.invitedBy?.email ?? '—'}</td>
                 <td style={{ padding: '8px 10px', fontSize: 13, color: '#888' }}>
