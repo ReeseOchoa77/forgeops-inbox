@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type JobSummary, type MessageSummary, type ConnectionSummary } from '../api'
-import { PriorityBadge, TypeBadge, ActionBadge } from '../components/Badges'
+import { PriorityBadge, TypeBadge } from '../components/Badges'
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
 
@@ -343,10 +343,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                     {isBusiness && (
                       <td style={{ padding: '7px 12px' }}>
                         {m.classification ? (
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
-                            <ActionBadge emailType={m.classification.emailType} requiresReview={m.classification.requiresReview} />
-                          </div>
+                          <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
                         ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
                       </td>
                     )}
