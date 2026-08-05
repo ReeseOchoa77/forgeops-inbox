@@ -290,6 +290,32 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       }
     }
 
+    const ignoredFolderAliases = await app.services.prisma.discoveredFolder.findMany({
+      where: { workspaceId, status: { in: ["IGNORED", "ARCHIVED"] }, matchedJobId: { not: null } },
+      select: { normalizedFolderName: true, matchedJobId: true }
+    });
+    const ignoredAliasKeys = new Set(ignoredFolderAliases.map(f => `${f.normalizedFolderName}:${f.matchedJobId}`));
+
+    for (const alias of aliases) {
+      if (alias.entityType !== "JOB" || !alias.jobId) continue;
+      if (jobCandidates.some(c => c.id === alias.jobId)) continue;
+      if (ignoredAliasKeys.has(`${alias.normalizedAlias}:${alias.jobId}`)) continue;
+
+      const job = jobs.find(j => j.id === alias.jobId);
+      if (!job) continue;
+
+      if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {
+        jobCandidates.push({ id: job.id, name: job.name, score: 1.0, matchedOn: ["jobNumber"], evidence: [`exact job# ${job.jobNumber} in text`] });
+      } else if (searchText.includes(alias.normalizedAlias)) {
+        jobCandidates.push({ id: job.id, name: job.name, score: 0.9, matchedOn: ["alias"], evidence: [`alias "${alias.normalizedAlias}" in text`] });
+      } else {
+        const sim = computeSimilarity(alias.normalizedAlias, normalizeName(searchText.slice(0, 200)));
+        if (sim >= 0.5) {
+          jobCandidates.push({ id: job.id, name: job.name, score: sim * 0.7, matchedOn: ["aliasName"], evidence: [`alias similarity ${Math.round(sim * 100)}%`] });
+        }
+      }
+    }
+
     for (const job of jobs) {
       if (jobCandidates.some(c => c.id === job.id)) continue;
       if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {

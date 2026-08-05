@@ -812,6 +812,7 @@ enum AliasSource {
   MANUAL
   IMPORT
   REVIEW
+  OUTLOOK_FOLDER
 }
 
 enum DocumentStatus {
@@ -995,6 +996,8 @@ enum FolderStatus {
   DISCOVERED
   APPROVED
   IGNORED
+  MATCHED
+  ARCHIVED
 }
 
 model DiscoveredFolder {
@@ -1004,37 +1007,51 @@ model DiscoveredFolder {
   mailboxEmail            String
   providerFolderId        String
   parentProviderFolderId  String?
-  folderPath              String?
+  folderPath              String
   rawFolderName           String
   normalizedFolderName    String
   detectedJobNumber       String?
+  detectedJobName         String?
   matchedJobId            String?
   status                  FolderStatus @default(DISCOVERED)
   childFolderCount        Int          @default(0)
+  firstSeenAt             DateTime     @default(now())
   lastSeenAt              DateTime     @default(now())
+  approvedAt              DateTime?
+  approvedByUserId        String?
+  ignoredAt               DateTime?
+  ignoredByUserId         String?
   createdAt               DateTime     @default(now())
   updatedAt               DateTime     @updatedAt
   workspace               Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   matchedJob              Job?         @relation(fields: [workspaceId, matchedJobId], references: [workspaceId, id], onDelete: SetNull)
 
-  @@unique([workspaceId, providerFolderId])
+  @@unique([workspaceId, mailboxEmail, providerFolderId])
   @@index([workspaceId, status])
   @@index([workspaceId, normalizedFolderName])
   @@index([matchedJobId])
 }
 
 model JobFolderRoot {
-  id            String    @id @default(cuid())
-  workspaceId   String
-  rootName      String
-  normalizedName String
-  active        Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id              String        @id @default(cuid())
+  workspaceId     String
+  rootName        String
+  normalizedName  String
+  mailboxEmail    String?
+  provider        InboxProvider @default(OUTLOOK)
+  providerFolderId String?
+  folderPath      String?
+  folderName      String?
+  active          Boolean       @default(true)
+  isActive        Boolean       @default(true)
+  createdByUserId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, normalizedName])
   @@index([workspaceId, active])
+  @@index([workspaceId, isActive])
 }
 
 enum SenderStatus {

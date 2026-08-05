@@ -208,6 +208,36 @@ export interface ApprovedAccessEntry {
   updatedAt: string;
 }
 
+export interface DiscoveredFolderItem {
+  id: string;
+  workspaceId: string;
+  mailboxEmail: string;
+  provider: string;
+  providerFolderId: string;
+  folderPath: string | null;
+  rawFolderName: string;
+  normalizedFolderName: string;
+  detectedJobNumber: string | null;
+  detectedJobName: string | null;
+  matchedJobId: string | null;
+  matchedJob: { id: string; name: string; jobNumber: string | null } | null;
+  status: 'DISCOVERED' | 'MATCHED' | 'APPROVED' | 'IGNORED' | 'ARCHIVED';
+  lastSeenAt: string;
+  approvedAt: string | null;
+  createdAt: string;
+}
+
+export interface JobFolderRootItem {
+  id: string;
+  workspaceId: string;
+  rootName: string;
+  normalizedName: string;
+  mailboxEmail: string | null;
+  folderPath: string | null;
+  active: boolean;
+  createdAt: string;
+}
+
 export const api = {
   getSession: () => request<SessionResponse>('/auth/session'),
 
@@ -563,6 +593,60 @@ export const api = {
 
   getWorkspaceMembers: (workspaceId: string) =>
     request<{ members: WorkspaceMemberSummary[] }>(`/admin/workspaces/${workspaceId}/members`),
+
+  // Discovered Folders
+  getDiscoveredFolders: (workspaceId: string, params?: {
+    status?: string; mailboxEmail?: string; search?: string; page?: number; pageSize?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.status) p.set('status', params.status);
+    if (params?.mailboxEmail) p.set('mailboxEmail', params.mailboxEmail);
+    if (params?.search) p.set('search', params.search);
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    return request<{ folders: DiscoveredFolderItem[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+      `/workspaces/${workspaceId}/discovered-folders?${p.toString()}`
+    );
+  },
+
+  matchDiscoveredFolder: (workspaceId: string, folderId: string, jobId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/match`, {
+      method: 'POST', body: JSON.stringify({ jobId })
+    }),
+
+  approveDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/approve`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  createJobFromFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string; jobId: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/create-job`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  ignoreDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/ignore`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  restoreDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/restore`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  // Job Folder Roots
+  getJobFolderRoots: (workspaceId: string) =>
+    request<{ roots: JobFolderRootItem[] }>(`/workspaces/${workspaceId}/job-folder-roots`),
+
+  addJobFolderRoot: (workspaceId: string, data: { rootName: string; mailboxEmail?: string; providerFolderId?: string; folderPath?: string; folderName?: string }) =>
+    request<{ root: JobFolderRootItem }>(`/workspaces/${workspaceId}/job-folder-roots`, {
+      method: 'POST', body: JSON.stringify(data)
+    }),
+
+  removeJobFolderRoot: (workspaceId: string, rootId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/job-folder-roots/${rootId}`, {
+      method: 'DELETE'
+    }),
 };
 
 export interface ImportResult {

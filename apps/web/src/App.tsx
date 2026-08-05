@@ -18,8 +18,9 @@ import { TeamAccessView } from './views/TeamAccessView'
 import { DataImportView } from './views/DataImportView'
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
+import { OutlookFoldersView } from './views/OutlookFoldersView'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -29,6 +30,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'review', label: 'Email Review', icon: '\u2696', minRole: 'ADMIN' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
+  { page: 'outlook-folders', label: 'Outlook Folders', icon: '📂' },
   { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
   { page: 'team-access', label: 'Team Access', icon: '\uD83D\uDC65' },
@@ -399,6 +401,12 @@ export default function App() {
           {page === 'job-detail' && selectedJobId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <JobDetailView workspaceId={workspaceId} jobId={selectedJobId} userRole={currentRole} onBack={() => setPage('jobs')} />
+            </div>
+          )}
+
+          {page === 'outlook-folders' && workspaceId && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <OutlookFoldersView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
 
