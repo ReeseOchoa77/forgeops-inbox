@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobLookup, type StoredAttachment } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 
@@ -334,7 +334,6 @@ function jobSourceLabel(source: string | null | undefined, isManual: boolean | u
 
 export function MessageDetailView({ workspaceId, connectionId, messageId, onBack }: Props) {
   const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
-  const [messageDetail, setMessageDetail] = useState<MessageDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
@@ -348,12 +347,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
 
-  const loadDetail = async () => {
-    const r = await api.getMessageDetail(workspaceId, connectionId, messageId)
-    setMessageDetail(r.data)
-    if (r.data.job?.id) setSelectedJobId(r.data.job.id)
-    else setSelectedJobId('')
-    return r.data
+  const loadThread = async () => {
+    const detail = await api.getMessageDetail(workspaceId, connectionId, messageId)
+    const threadId = detail.data.thread.id
+    const td = await api.getThreadMessages(workspaceId, connectionId, threadId)
+    return td
   }
 
   useEffect(() => {
@@ -362,22 +360,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     setSendResult(null)
     setJobError(null)
 
-    loadDetail()
-      .then(detail => {
-        // Fire-and-forget: markAsRead doesn't affect rendering
-        api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
-        // Load thread messages (only depends on detail.thread.id)
-        return api.getThreadMessages(workspaceId, connectionId, detail.thread.id)
-      })
+    loadThread()
       .then(td => {
         setThreadData(td)
+        api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
+        const clickedMsg = td.messages.find(m => m.id === messageId)
+        if (clickedMsg?.job?.id) setSelectedJobId(clickedMsg.job.id)
+        else setSelectedJobId('')
         const lastMsg = td.messages[td.messages.length - 1]
         setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
       })
-      .catch(() => {
-        setThreadData(null)
-        setMessageDetail(null)
-      })
+      .catch(() => setThreadData(null))
       .finally(() => setLoading(false))
   }, [workspaceId, connectionId, messageId])
 
@@ -387,13 +380,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       .catch(() => setJobs([]))
   }, [workspaceId])
 
+  const clickedMessage = threadData?.messages.find(m => m.id === messageId) ?? threadData?.messages[threadData.messages.length - 1] ?? null
+
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading conversation...</p>
   if (!threadData || threadData.messages.length === 0) return <p>Message not found.</p>
 
   const messages = threadData.messages
   const lastMessage = messages[messages.length - 1]!
   const subject = threadData.thread.subject ?? lastMessage.subject ?? '(no subject)'
-  const isBusinessMessage = messageDetail?.message.mailboxCategory === 'BUSINESS'
+  const isBusinessMessage = clickedMessage?.mailboxCategory === 'BUSINESS'
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {
@@ -449,12 +444,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   }
 
   const handleAssignJob = async () => {
-    if (!selectedJobId || !messageDetail) return
+    if (!selectedJobId || !clickedMessage) return
     setJobBusy(true)
     setJobError(null)
     try {
-      await api.assignEmailToJob(workspaceId, selectedJobId, { messageId: messageDetail.message.id })
-      await loadDetail()
+      await api.assignEmailToJob(workspaceId, selectedJobId, { messageId: clickedMessage.id })
+      const td = await loadThread()
+      setThreadData(td)
+      const updated = td.messages.find(m => m.id === messageId)
+      if (updated?.job?.id) setSelectedJobId(updated.job.id)
     } catch (e) {
       setJobError(e instanceof Error ? e.message : 'Failed to assign job')
     } finally {
@@ -463,12 +461,14 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   }
 
   const handleRemoveJob = async () => {
-    if (!messageDetail?.job) return
+    if (!clickedMessage?.job) return
     setJobBusy(true)
     setJobError(null)
     try {
-      await api.removeEmailFromJob(workspaceId, messageDetail.job.id, messageDetail.message.id)
-      await loadDetail()
+      await api.removeEmailFromJob(workspaceId, clickedMessage.job!.id, clickedMessage.id)
+      const td = await loadThread()
+      setThreadData(td)
+      setSelectedJobId('')
     } catch (e) {
       setJobError(e instanceof Error ? e.message : 'Failed to remove job')
     } finally {
@@ -506,27 +506,27 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       </div>
 
       {/* Job Assignment */}
-      {isBusinessMessage && messageDetail && (
+      {isBusinessMessage && clickedMessage && (
         <div style={{
           margin: '0 0 12px', padding: '12px 16px', background: '#fff',
           border: '1px solid #e5e5e5', borderRadius: 8
         }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Job Assignment</div>
-          {messageDetail.job ? (
+          {clickedMessage.job ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, fontSize: 13 }}>
               <span style={{ fontWeight: 500 }}>
-                {messageDetail.job.jobNumber ? `${messageDetail.job.jobNumber} — ` : ''}{messageDetail.job.name}
+                {clickedMessage.job.jobNumber ? `${clickedMessage.job.jobNumber} — ` : ''}{clickedMessage.job.name}
               </span>
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-                background: messageDetail.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
-                color: messageDetail.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
+                background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
+                color: clickedMessage.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
               }}>
-                {jobSourceLabel(messageDetail.jobAssignmentSource, messageDetail.jobAssignmentIsManual)}
+                {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
               </span>
-              {typeof messageDetail.jobMatchConfidence === 'number' && !messageDetail.jobAssignmentIsManual && (
+              {typeof clickedMessage.jobMatchConfidence === 'number' && !clickedMessage.jobAssignmentIsManual && (
                 <span style={{ fontSize: 11, color: '#888' }}>
-                  {Math.round(messageDetail.jobMatchConfidence * 100)}% confidence
+                  {Math.round(clickedMessage.jobMatchConfidence * 100)}% confidence
                 </span>
               )}
             </div>
@@ -549,13 +549,13 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             </select>
             <button
               className="btn btn-sm"
-              disabled={jobBusy || !selectedJobId || selectedJobId === messageDetail.job?.id}
+              disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
               onClick={handleAssignJob}
               style={{ fontSize: 12 }}
             >
-              {messageDetail.job ? 'Move' : 'Assign'}
+              {clickedMessage.job ? 'Move' : 'Assign'}
             </button>
-            {messageDetail.job && (
+            {clickedMessage.job && (
               <button
                 className="btn btn-sm btn-outline"
                 disabled={jobBusy}
@@ -601,10 +601,10 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       </div>
 
       {/* Stored attachments */}
-      {messageDetail && (
+      {clickedMessage && (
         <StoredAttachmentsSection
           workspaceId={workspaceId}
-          emailId={messageDetail.message.id}
+          emailId={clickedMessage.id}
         />
       )}
 

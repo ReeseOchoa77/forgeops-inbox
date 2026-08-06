@@ -141,6 +141,11 @@ export interface ThreadMessage {
   receivedAt: string | null;
   priority: string | null;
   itemStatus: string;
+  mailboxCategory?: string | null;
+  jobAssignmentSource?: string | null;
+  jobAssignmentIsManual?: boolean;
+  jobMatchConfidence?: number | null;
+  job?: { id: string; jobNumber: string; name: string; status: string } | null;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
 }

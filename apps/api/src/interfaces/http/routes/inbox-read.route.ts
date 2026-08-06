@@ -1588,6 +1588,18 @@ export const registerInboxReadRoutes = async (
           receivedAt: true,
           priority: true,
           itemStatus: true,
+          mailboxCategory: true,
+          jobAssignmentSource: true,
+          jobAssignmentIsManual: true,
+          jobMatchConfidence: true,
+          job: {
+            select: {
+              id: true,
+              jobNumber: true,
+              name: true,
+              status: true
+            }
+          },
           classifications: {
             orderBy: { createdAt: "desc" },
             take: 1,
@@ -1663,6 +1675,11 @@ export const registerInboxReadRoutes = async (
           receivedAt: serializeDate(m.receivedAt),
           priority: m.priority,
           itemStatus: m.itemStatus,
+          mailboxCategory: m.mailboxCategory,
+          jobAssignmentSource: m.jobAssignmentSource,
+          jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
+          jobMatchConfidence: m.jobMatchConfidence,
+          job: m.job ? { id: m.job.id, jobNumber: m.job.jobNumber, name: m.job.name, status: m.job.status } : null,
           classification: serializeClassification(m.classifications[0] ?? null),
           taskCandidate: serializeTask(m.tasks[0] ?? null)
         }))
