@@ -1697,6 +1697,7 @@ export const registerInboxReadRoutes = async (
   app.get(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/thread",
     async (request, reply) => {
+      const t0 = performance.now();
       const params = messageThreadParamsSchema.parse(request.params);
       const { session, membership } = await loadWorkspaceSession({
         app,
@@ -1706,6 +1707,7 @@ export const registerInboxReadRoutes = async (
 
       if (!session) return sendAuthenticationRequired(reply);
       if (!membership) return sendWorkspaceAccessDenied(reply);
+      const tAuth = performance.now();
 
       const message = await app.services.prisma.emailMessage.findFirst({
         where: {
@@ -1713,12 +1715,13 @@ export const registerInboxReadRoutes = async (
           inboxConnectionId: params.id,
           OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
         },
-        select: { threadId: true }
+        select: { id: true, threadId: true }
       });
 
       if (!message?.threadId) {
         return reply.code(404).send({ message: "Message or thread not found" });
       }
+      const tMsgLookup = performance.now();
 
       const thread = await app.services.prisma.emailThread.findFirst({
         where: { id: message.threadId, workspaceId: params.workspaceId },
@@ -1728,8 +1731,8 @@ export const registerInboxReadRoutes = async (
       if (!thread) {
         return reply.code(404).send({ message: "Thread not found" });
       }
+      const tThreadLookup = performance.now();
 
-      // First: get all message IDs + ordering without bodies (fast)
       const messageHeaders = await app.services.prisma.emailMessage.findMany({
         where: { workspaceId: params.workspaceId, inboxConnectionId: params.id, threadId: thread.id },
         orderBy: [{ sentAt: "asc" }, { receivedAt: "asc" }],
@@ -1779,10 +1782,12 @@ export const registerInboxReadRoutes = async (
           }
         }
       });
+      const tHeaders = performance.now();
 
-      // Only fetch bodies for the last 5 messages (the ones we'll actually send)
       const BODY_TAIL_COUNT = 5;
-      const bodyIds = messageHeaders.slice(-BODY_TAIL_COUNT).map(m => m.id);
+      const tailIds = new Set(messageHeaders.slice(-BODY_TAIL_COUNT).map(m => m.id));
+      tailIds.add(message.id);
+      const bodyIds = [...tailIds];
       const bodies = bodyIds.length > 0
         ? await app.services.prisma.emailMessage.findMany({
             where: { id: { in: bodyIds } },
@@ -1790,8 +1795,9 @@ export const registerInboxReadRoutes = async (
           })
         : [];
       const bodyMap = new Map(bodies.map(b => [b.id, b]));
+      const tBodies = performance.now();
 
-      return reply.send({
+      const responsePayload = {
         thread: {
           id: thread.id,
           providerThreadId: thread.gmailThreadId,
@@ -1832,7 +1838,39 @@ export const registerInboxReadRoutes = async (
             taskCandidate: serializeTask(m.tasks[0] ?? null)
           };
         })
+      };
+      const tSerialize = performance.now();
+
+      const timing = {
+        auth: +(tAuth - t0).toFixed(1),
+        msgLookup: +(tMsgLookup - tAuth).toFixed(1),
+        threadLookup: +(tThreadLookup - tMsgLookup).toFixed(1),
+        headers: +(tHeaders - tThreadLookup).toFixed(1),
+        bodies: +(tBodies - tHeaders).toFixed(1),
+        serialize: +(tSerialize - tBodies).toFixed(1),
+        total: +(tSerialize - t0).toFixed(1)
+      };
+
+      reply.header('Server-Timing', [
+        `auth;dur=${timing.auth}`,
+        `msgLookup;dur=${timing.msgLookup}`,
+        `threadLookup;dur=${timing.threadLookup}`,
+        `headers;dur=${timing.headers}`,
+        `bodies;dur=${timing.bodies}`,
+        `serialize;dur=${timing.serialize}`,
+        `total;dur=${timing.total}`
+      ].join(', '));
+
+      request.log.info({
+        event: 'thread_load_timing',
+        messageId: params.messageId,
+        threadId: thread.id,
+        messageCount: messageHeaders.length,
+        bodyCount: bodyIds.length,
+        timing
       });
+
+      return reply.send(responsePayload);
     }
   );
 

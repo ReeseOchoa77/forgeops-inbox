@@ -350,6 +350,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
   useEffect(() => {
+    const t0 = performance.now()
     setLoading(true)
     setComposeMode(null)
     setSendResult(null)
@@ -357,6 +358,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
     loadThread()
       .then(td => {
+        const tApi = performance.now()
+        console.log(`[perf] thread API: ${(tApi - t0).toFixed(0)}ms, ${td.messages.length} messages`)
         setThreadData(td)
         api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
         const clickedMsg = td.messages.find(m => m.id === messageId)
@@ -366,7 +369,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
       })
       .catch(() => setThreadData(null))
-      .finally(() => setLoading(false))
+      .finally(() => {
+        const tRender = performance.now()
+        console.log(`[perf] thread total to render: ${(tRender - t0).toFixed(0)}ms`)
+        setLoading(false)
+      })
   }, [workspaceId, connectionId, messageId])
 
   useEffect(() => {
