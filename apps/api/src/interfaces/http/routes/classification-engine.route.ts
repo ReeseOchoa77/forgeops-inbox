@@ -379,15 +379,17 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
 
     const message = await app.services.prisma.emailMessage.findFirst({
       where: { workspaceId: params.workspaceId, OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }] },
-      select: { id: true, mailboxCategory: true, senderEmail: true, senderName: true, threadId: true,
+      select: { id: true, mailboxCategory: true, previousCategory: true, senderEmail: true, senderName: true, threadId: true,
         classifications: { select: { id: true, mailboxCategory: true, businessTypeKey: true, customerId: true, vendorId: true, jobId: true, priority: true }, take: 1, orderBy: { createdAt: "desc" } }
       }
     });
 
     if (!message) return reply.code(404).send({ message: "Message not found" });
 
-    const previousCategory = message.mailboxCategory;
+    const currentCategory = message.mailboxCategory;
     const classification = message.classifications[0];
+
+    const isRevert = message.previousCategory === body.mailboxCategory;
 
     await app.services.prisma.emailMessage.update({
       where: { id: message.id },
@@ -395,7 +397,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         mailboxCategory: body.mailboxCategory,
         isSpam: false,
         isTrashed: false,
-        previousCategory: previousCategory,
+        previousCategory: isRevert ? null : currentCategory,
         ...(body.priority ? { priority: body.priority } : {})
       }
     });
@@ -405,7 +407,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         data: {
           workspaceId: params.workspaceId,
           classificationId: classification.id,
-          originalMailboxCategory: previousCategory,
+          originalMailboxCategory: currentCategory,
           correctedMailboxCategory: body.mailboxCategory,
           originalBusinessType: classification.businessTypeKey ?? null,
           correctedBusinessType: body.businessType ?? null,
@@ -444,14 +446,14 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     // Sender evidence is NOT auto-updated here.
     // The user must explicitly approve the sender status change via Reference Data or Review Queue.
 
-    if (previousCategory === "BUSINESS" && body.mailboxCategory === "PERSONAL") {
+    if (currentCategory === "BUSINESS" && body.mailboxCategory === "PERSONAL") {
       await app.services.prisma.task.updateMany({
         where: { workspaceId: params.workspaceId, sourceMessageId: message.id, status: "OPEN" },
         data: { status: "CANCELLED", dismissalReason: `Reclassified to PERSONAL` }
       });
     }
 
-    if (previousCategory === "PERSONAL" && body.mailboxCategory === "BUSINESS") {
+    if (currentCategory === "PERSONAL" && body.mailboxCategory === "BUSINESS") {
       await app.services.prisma.task.updateMany({
         where: { workspaceId: params.workspaceId, sourceMessageId: message.id, status: "CANCELLED", dismissalReason: "Reclassified to PERSONAL" },
         data: { status: "OPEN", dismissalReason: null }
@@ -465,7 +467,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       entityId: message.id,
       action: "email.reclassified",
       metadata: {
-        from: previousCategory,
+        from: currentCategory,
         to: body.mailboxCategory,
         businessType: body.businessType ?? null,
         customerId: body.customerId ?? null,
@@ -478,7 +480,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
 
     return reply.send({
       status: "reclassified",
-      from: previousCategory,
+      from: currentCategory,
       to: body.mailboxCategory,
       correctionCreated: !!classification,
       senderEvidenceUpdated: true
