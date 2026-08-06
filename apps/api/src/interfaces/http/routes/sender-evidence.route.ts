@@ -214,4 +214,38 @@ export const registerSenderEvidenceRoutes = async (app: FastifyInstance): Promis
 
     return reply.send({ status: "reset" });
   });
+
+  app.post("/api/v1/workspaces/:workspaceId/sender-evidence/confirm-by-email", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const body = z.object({
+      senderEmail: z.string().email(),
+      senderName: z.string().nullable().optional(),
+      classification: z.enum(["BUSINESS", "PERSONAL"])
+    }).parse(request.body);
+    const session = await getSessionFromRequest(request);
+    if (!session) return reply.code(401).send({ message: "Authentication required" });
+    const membership = await requireWorkspaceMembership(app.services.prisma, session.userId, params.workspaceId);
+    if (!membership || membership.workspaceRole === "VIEWER") return reply.code(403).send({ message: "Edit permission required" });
+
+    await recordSenderEvidence(
+      app.services.prisma,
+      params.workspaceId,
+      body.senderEmail,
+      body.senderName ?? null,
+      body.classification,
+      true
+    );
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: session.userId,
+      entityType: "SENDER_EVIDENCE",
+      entityId: body.senderEmail,
+      action: `sender.confirmed_${body.classification.toLowerCase()}_from_review`,
+      metadata: { email: body.senderEmail },
+      request
+    });
+
+    return reply.send({ status: "confirmed", classification: body.classification });
+  });
 };

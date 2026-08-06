@@ -343,6 +343,12 @@ export const api = {
       body: JSON.stringify({ pinned })
     }),
 
+  confirmSenderEvidence: (workspaceId: string, senderEmail: string, senderName: string | null, classification: 'BUSINESS' | 'PERSONAL') =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/sender-evidence/confirm-by-email`, {
+      method: 'POST',
+      body: JSON.stringify({ senderEmail, senderName, classification })
+    }),
+
   reclassifyMessage: (workspaceId: string, messageId: string, data: {
     mailboxCategory: 'BUSINESS' | 'PERSONAL';
     businessType?: string | null;

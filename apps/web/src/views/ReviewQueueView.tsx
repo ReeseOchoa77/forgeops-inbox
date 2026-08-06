@@ -59,19 +59,35 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
     return true
   })
 
-  const handleReview = async (item: ReviewItem, decision: 'APPROVED' | 'REJECTED') => {
-    const key = item.message.id + decision
-    setActionLoading(key)
+  const handleReclassify = async (item: ReviewItem) => {
+    const m = item.message
+    const newCategory = m.mailboxCategory === 'BUSINESS' ? 'PERSONAL' : 'BUSINESS'
+    setActionLoading(m.id + 'reclassify')
     try {
-      if (item.message.classification?.id) {
-        await api.reviewClassification(workspaceId, item.message.classification.id, decision)
+      await api.reclassifyMessage(workspaceId, m.id, { mailboxCategory: newCategory })
+      loadReview()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Reclassify failed')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleConfirmSender = async (item: ReviewItem) => {
+    const m = item.message
+    const classification = m.mailboxCategory === 'BUSINESS' ? 'BUSINESS' : 'PERSONAL'
+    setActionLoading(m.id + 'confirm')
+    try {
+      await api.confirmSenderEvidence(workspaceId, m.senderEmail, m.senderName, classification as 'BUSINESS' | 'PERSONAL')
+      if (m.classification?.id) {
+        await api.reviewClassification(workspaceId, m.classification.id, 'APPROVED')
       }
-      if (item.message.taskCandidate?.id) {
-        await api.reviewTask(workspaceId, item.message.taskCandidate.id, decision)
+      if (m.taskCandidate?.id) {
+        await api.reviewTask(workspaceId, m.taskCandidate.id, 'APPROVED')
       }
       loadReview()
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Review failed')
+      alert(e instanceof Error ? e.message : 'Confirm failed')
     } finally {
       setActionLoading(null)
     }
@@ -174,8 +190,9 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         const m = item.message
         const c = m.classification
         const t = m.taskCandidate
-        const approveKey = m.id + 'APPROVED'
-        const rejectKey = m.id + 'REJECTED'
+        const reclassifyKey = m.id + 'reclassify'
+        const confirmKey = m.id + 'confirm'
+        const oppositeCategory = m.mailboxCategory === 'BUSINESS' ? 'Personal' : 'Business'
 
         return (
           <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17', marginBottom: 10 }}>
@@ -193,17 +210,23 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                <button className="btn btn-sm btn-success"
-                  disabled={actionLoading === approveKey}
-                  onClick={() => handleReview(item, 'APPROVED')}
-                  style={{ minHeight: 36 }}>
-                  {actionLoading === approveKey ? '...' : 'Correct'}
+                <button
+                  disabled={actionLoading === confirmKey}
+                  onClick={() => handleConfirmSender(item)}
+                  style={{
+                    minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                    border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer'
+                  }}>
+                  {actionLoading === confirmKey ? '...' : `Classify as ${m.mailboxCategory === 'BUSINESS' ? 'Business' : 'Personal'}`}
                 </button>
-                <button className="btn btn-sm btn-danger"
-                  disabled={actionLoading === rejectKey}
-                  onClick={() => handleReview(item, 'REJECTED')}
-                  style={{ minHeight: 36 }}>
-                  {actionLoading === rejectKey ? '...' : 'Incorrect'}
+                <button
+                  disabled={actionLoading === reclassifyKey}
+                  onClick={() => handleReclassify(item)}
+                  style={{
+                    minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                    border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer'
+                  }}>
+                  {actionLoading === reclassifyKey ? '...' : `Switch to ${oppositeCategory}`}
                 </button>
               </div>
             </div>
