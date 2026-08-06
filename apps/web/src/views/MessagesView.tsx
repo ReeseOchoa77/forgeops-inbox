@@ -260,10 +260,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 title={m.isPinned ? 'Unpin' : 'Pin'}
                 onClick={e => { e.stopPropagation(); handlePin(m.id, !!m.isPinned) }}
                 style={{
-                  background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 14,
-                  color: m.isPinned ? '#f5a623' : '#ccc', flexShrink: 0, minHeight: 28,
+                  background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 11,
+                  color: m.isPinned ? '#e09400' : '#d0d0d0', flexShrink: 0, minHeight: 28,
+                  opacity: m.isPinned ? 1 : 0.4, lineHeight: 1,
                 }}
-              >{'\uD83D\uDCCC'}</button>
+              >●</button>
             )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 14 }}>{m.senderName ?? m.senderEmail}</div>
@@ -371,10 +372,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             title={m.isPinned ? 'Unpin' : 'Pin'}
             onClick={() => handlePin(m.id, !!m.isPinned)}
             style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 13,
-              color: m.isPinned ? '#f5a623' : '#ddd',
+              background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 10,
+              color: m.isPinned ? '#e09400' : '#d0d0d0', lineHeight: 1,
+              opacity: m.isPinned ? 1 : 0.35,
             }}
-          >{'\uD83D\uDCCC'}</button>
+          >●</button>
         )}
       </td>
       {isBusiness && (

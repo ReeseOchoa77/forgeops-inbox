@@ -168,7 +168,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
             <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Tasks</h2>
-            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{totalCount} tasks extracted from your inbox.</p>
+            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{filteredTasks.length} {filter === 'all' ? 'tasks' : filter.replace('_', ' ') + ' tasks'}{filter !== 'all' ? ` of ${totalCount}` : ''}</p>
           </div>
         </div>
 
@@ -211,10 +211,13 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
                           title={task.isPinned ? 'Unpin' : 'Pin'}
                           onClick={() => handlePin(task.id, !!task.isPinned)}
                           style={{
-                            background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 14,
-                            color: task.isPinned ? '#f5a623' : '#ccc', flexShrink: 0,
+                            background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 11,
+                            color: task.isPinned ? '#e09400' : '#d0d0d0', flexShrink: 0, lineHeight: 1,
+                            opacity: task.isPinned ? 1 : 0.5, transition: 'opacity 0.15s',
                           }}
-                        >{'\uD83D\uDCCC'}</button>
+                          onMouseEnter={e => { (e.target as HTMLElement).style.opacity = '1' }}
+                          onMouseLeave={e => { if (!task.isPinned) (e.target as HTMLElement).style.opacity = '0.5' }}
+                        >●</button>
                       )}
                       <div style={{ flex: 1 }}>
                         <div style={{
