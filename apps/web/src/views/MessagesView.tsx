@@ -65,6 +65,34 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [activeSearch, setActiveSearch] = useState('')
 
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
+  const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
+  const [jobAssigning, setJobAssigning] = useState(false)
+
+  const handleAssignJob = async (messageId: string, jobId: string) => {
+    setJobAssigning(true)
+    try {
+      await api.assignEmailToJob(workspaceId, jobId, { messageId })
+      const job = jobs.find(j => j.id === jobId)
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, job: job ? { id: job.id, jobNumber: job.jobNumber, name: job.name, status: job.status } : m.job } : m))
+      setJobPickerOpen(null)
+    } catch { /* */ }
+    finally { setJobAssigning(false) }
+  }
+
+  useEffect(() => {
+    if (!jobPickerOpen) return
+    const close = () => setJobPickerOpen(null)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [jobPickerOpen])
+
+  const handleRemoveJob = async (messageId: string, jobId: string) => {
+    try {
+      await api.removeEmailFromJob(workspaceId, jobId, messageId)
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, job: undefined } : m))
+      setJobPickerOpen(null)
+    } catch { /* */ }
+  }
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
@@ -406,19 +434,48 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </td>
       )}
       {isBusiness && !isTablet && (
-        <td style={{ padding: '7px 12px' }}>
-          {m.job ? (
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-              background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
-            }} title={m.job.name}>
-              {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
-            </span>
-          ) : (
-            <span style={{
-              fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
-              background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
-            }}>Unassigned</span>
+        <td style={{ padding: '7px 12px', position: 'relative' }} onClick={e => e.stopPropagation()}>
+          <span
+            onClick={() => !isViewer && setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)}
+            style={{
+              fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
+              background: m.job ? '#e0f2f1' : '#f0f0f0',
+              color: m.job ? '#00695c' : '#999',
+              whiteSpace: 'nowrap', cursor: isViewer ? 'default' : 'pointer',
+            }}
+            title={m.job ? m.job.name : 'Click to assign a job'}
+          >
+            {m.job ? (m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)) : 'Unassigned'}
+          </span>
+          {jobPickerOpen === m.id && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, zIndex: 20,
+              background: '#fff', border: '1px solid #ddd', borderRadius: 6,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.12)', width: 240, maxHeight: 220, overflowY: 'auto',
+            }}>
+              {m.job && (
+                <div
+                  onClick={() => handleRemoveJob(m.id, m.job!.id)}
+                  style={{ padding: '6px 10px', fontSize: 11, color: '#c62828', cursor: 'pointer', borderBottom: '1px solid #f0f0f0' }}
+                >Remove from {m.job.jobNumber ?? m.job.name}</div>
+              )}
+              {jobs.map(j => (
+                <div
+                  key={j.id}
+                  onClick={() => !jobAssigning && handleAssignJob(m.id, j.id)}
+                  style={{
+                    padding: '6px 10px', fontSize: 11, cursor: 'pointer',
+                    background: m.job?.id === j.id ? '#e0f2f1' : 'transparent',
+                    fontWeight: m.job?.id === j.id ? 600 : 400,
+                  }}
+                  onMouseOver={e => { if (m.job?.id !== j.id) (e.currentTarget.style.background = '#f5f5f5') }}
+                  onMouseOut={e => { if (m.job?.id !== j.id) (e.currentTarget.style.background = 'transparent') }}
+                >
+                  {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                </div>
+              ))}
+              {jobs.length === 0 && <div style={{ padding: '8px 10px', fontSize: 11, color: '#999' }}>No jobs available</div>}
+            </div>
           )}
         </td>
       )}
