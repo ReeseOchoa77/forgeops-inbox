@@ -19,7 +19,7 @@ import { TeamAccessView } from './views/TeamAccessView'
 import { DataImportView } from './views/DataImportView'
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
-import { OutlookFoldersView } from './views/OutlookFoldersView'
+import { JobDiscoveryView } from './views/JobDiscoveryView'
 
 type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
@@ -31,7 +31,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'review', label: 'Email Review', icon: '\u2696', minRole: 'ADMIN' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
-  { page: 'outlook-folders', label: 'Outlook Folders', icon: '📂' },
+  { page: 'outlook-folders', label: 'Job Discovery', icon: '📂' },
   { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
   { page: 'team-access', label: 'Team Access', icon: '\uD83D\uDC65' },
@@ -48,7 +48,7 @@ const PAGE_TITLES: Record<Page, string> = {
   tasks: 'Tasks',
   jobs: 'Jobs',
   'job-detail': 'Job Detail',
-  'outlook-folders': 'Outlook Folders',
+  'outlook-folders': 'Job Discovery',
   documents: 'Documents',
   reference: 'Reference Data',
   'team-access': 'Team Access',
@@ -611,7 +611,7 @@ export default function App() {
 
           {page === 'outlook-folders' && workspaceId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <OutlookFoldersView workspaceId={workspaceId} userRole={currentRole} />
+              <JobDiscoveryView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
 

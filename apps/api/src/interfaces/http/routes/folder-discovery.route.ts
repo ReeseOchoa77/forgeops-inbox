@@ -386,6 +386,8 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       status: z.enum(["DISCOVERED", "APPROVED", "IGNORED", "MATCHED", "ARCHIVED"]).optional(),
       mailboxEmail: z.string().optional(),
       search: z.string().optional(),
+      hasMatch: z.enum(["true", "false"]).optional().transform(v => v === "true" ? true : v === "false" ? false : undefined),
+      root: z.string().optional(),
       page: z.coerce.number().int().min(1).default(1),
       pageSize: z.coerce.number().int().min(1).max(200).default(50),
     }).parse(request.query);
@@ -393,15 +395,21 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     const where: Record<string, unknown> = { workspaceId };
     if (query.status) where.status = query.status;
     if (query.mailboxEmail) where.mailboxEmail = query.mailboxEmail.toLowerCase();
+    if (query.hasMatch === true) where.matchedJobId = { not: null };
+    if (query.hasMatch === false) where.matchedJobId = null;
+    if (query.root) {
+      where.folderPath = { startsWith: query.root, mode: "insensitive" };
+    }
     if (query.search) {
       where.OR = [
         { rawFolderName: { contains: query.search, mode: "insensitive" } },
         { folderPath: { contains: query.search, mode: "insensitive" } },
         { detectedJobNumber: { contains: query.search, mode: "insensitive" } },
+        { detectedJobName: { contains: query.search, mode: "insensitive" } },
       ];
     }
 
-    const [folders, total] = await Promise.all([
+    const [folders, total, metrics] = await Promise.all([
       app.services.prisma.discoveredFolder.findMany({
         where,
         orderBy: [{ status: "asc" }, { folderPath: "asc" }],
@@ -410,9 +418,75 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         take: query.pageSize,
       }),
       app.services.prisma.discoveredFolder.count({ where }),
+      app.services.prisma.discoveredFolder.groupBy({
+        by: ["status"],
+        where: { workspaceId },
+        _count: true,
+      }),
     ]);
 
-    return reply.send({ folders, total, page: query.page, pageSize: query.pageSize });
+    const lastSynced = await app.services.prisma.discoveredFolder.findFirst({
+      where: { workspaceId },
+      orderBy: { lastSeenAt: "desc" },
+      select: { lastSeenAt: true },
+    });
+
+    const mailboxes = await app.services.prisma.discoveredFolder.groupBy({
+      by: ["mailboxEmail"],
+      where: { workspaceId },
+    });
+
+    const summary = {
+      total: metrics.reduce((sum, m) => sum + m._count, 0),
+      discovered: metrics.find(m => m.status === "DISCOVERED")?._count ?? 0,
+      matched: metrics.find(m => m.status === "MATCHED")?._count ?? 0,
+      approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
+      ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
+      archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
+      lastSyncAt: lastSynced?.lastSeenAt ?? null,
+      mailboxes: mailboxes.map(m => m.mailboxEmail),
+    };
+    summary.total = summary.discovered + summary.matched + summary.approved + summary.ignored + summary.archived;
+
+    return reply.send({
+      folders,
+      pagination: { page: query.page, pageSize: query.pageSize, totalCount: total, totalPages: Math.ceil(total / query.pageSize) },
+      summary,
+    });
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), folderId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+
+    const folder = await app.services.prisma.discoveredFolder.findFirst({
+      where: { id: params.folderId, workspaceId: params.workspaceId },
+      include: { matchedJob: { select: { id: true, name: true, jobNumber: true, status: true } } },
+    });
+    if (!folder) return reply.code(404).send({ message: "Folder not found" });
+
+    const auditHistory = await app.services.prisma.auditEvent.findMany({
+      where: { workspaceId: params.workspaceId, entityType: "DISCOVERED_FOLDER", entityId: params.folderId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: { actorUser: { select: { id: true, email: true, name: true } } },
+    });
+
+    const alias = folder.matchedJobId
+      ? await app.services.prisma.entityAlias.findFirst({
+          where: {
+            workspaceId: params.workspaceId,
+            entityType: "JOB",
+            jobId: folder.matchedJobId,
+            normalizedAlias: normalizeName(folder.rawFolderName),
+            source: "OUTLOOK_FOLDER",
+          },
+          select: { id: true, alias: true, normalizedAlias: true, createdAt: true },
+        })
+      : null;
+
+    return reply.send({ folder, auditHistory, alias });
   });
 
   app.post("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId/match", async (request, reply) => {
@@ -534,13 +608,26 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       return reply.code(403).send({ message: "Admin permission required" });
     }
 
+    const bodySchema = z.object({
+      jobNumber: z.string().min(1).max(100).optional(),
+      name: z.string().min(1).max(300).optional(),
+      status: z.enum(["LEAD", "BIDDING", "AWARDED", "ACTIVE", "ON_HOLD", "COMPLETE", "ARCHIVED", "COMPLETED", "CANCELLED"]).default("ACTIVE"),
+      customerId: z.string().optional(),
+      description: z.string().max(5000).optional(),
+      startDate: z.string().optional(),
+      targetCompletionDate: z.string().optional(),
+    }).optional();
+
+    const body = bodySchema.parse(request.body);
+
     const folder = await app.services.prisma.discoveredFolder.findFirst({
       where: { id: params.folderId, workspaceId: params.workspaceId }
     });
     if (!folder) return reply.code(404).send({ message: "Folder not found" });
 
     const info = detectJobInfo(folder.rawFolderName);
-    const jobName = info.jobName ?? folder.rawFolderName;
+    const jobName = body?.name ?? info.jobName ?? folder.rawFolderName;
+    const jobNumber = body?.jobNumber ?? info.jobNumber ?? null;
     const normalizedJobName = normalizeName(jobName);
 
     const existingJob = await app.services.prisma.job.findFirst({
@@ -557,8 +644,12 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         workspaceId: params.workspaceId,
         name: jobName,
         normalizedName: normalizedJobName,
-        jobNumber: info.jobNumber ?? null,
-        status: "ACTIVE",
+        jobNumber: jobNumber,
+        status: body?.status ?? "ACTIVE",
+        description: body?.description ?? null,
+        customerId: body?.customerId ?? null,
+        startDate: body?.startDate ? new Date(body.startDate) : null,
+        targetCompletionDate: body?.targetCompletionDate ? new Date(body.targetCompletionDate) : null,
         createdByUserId: auth.userId,
       }
     });
@@ -703,6 +794,50 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     });
 
     return reply.send({ status: newStatus });
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId/archive", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), folderId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+    if (!isAdminOrOwner(auth.role)) {
+      return reply.code(403).send({ message: "Admin permission required" });
+    }
+
+    const folder = await app.services.prisma.discoveredFolder.findFirst({
+      where: { id: params.folderId, workspaceId: params.workspaceId }
+    });
+    if (!folder) return reply.code(404).send({ message: "Folder not found" });
+
+    if (folder.matchedJobId) {
+      const normalizedAlias = normalizeName(folder.rawFolderName);
+      await app.services.prisma.entityAlias.deleteMany({
+        where: {
+          workspaceId: params.workspaceId,
+          entityType: "JOB",
+          normalizedAlias,
+          source: "OUTLOOK_FOLDER",
+          jobId: folder.matchedJobId
+        }
+      });
+    }
+
+    await app.services.prisma.discoveredFolder.update({
+      where: { id: params.folderId },
+      data: { status: "ARCHIVED" }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "DISCOVERED_FOLDER",
+      entityId: params.folderId,
+      action: "discovered_folder.archived",
+      metadata: { folderName: folder.rawFolderName },
+      request
+    });
+
+    return reply.send({ status: "ARCHIVED" });
   });
 
   // =========================================================================

@@ -221,17 +221,46 @@ export interface DiscoveredFolderItem {
   mailboxEmail: string;
   provider: string;
   providerFolderId: string;
+  parentProviderFolderId: string | null;
   folderPath: string | null;
   rawFolderName: string;
   normalizedFolderName: string;
   detectedJobNumber: string | null;
   detectedJobName: string | null;
   matchedJobId: string | null;
-  matchedJob: { id: string; name: string; jobNumber: string | null } | null;
+  matchedJob: { id: string; name: string; jobNumber: string | null; status?: string } | null;
   status: 'DISCOVERED' | 'MATCHED' | 'APPROVED' | 'IGNORED' | 'ARCHIVED';
+  childFolderCount: number;
+  firstSeenAt: string;
   lastSeenAt: string;
   approvedAt: string | null;
+  approvedByUserId: string | null;
+  ignoredAt: string | null;
+  ignoredByUserId: string | null;
   createdAt: string;
+}
+
+export interface FolderSummaryMetrics {
+  total: number;
+  discovered: number;
+  matched: number;
+  approved: number;
+  ignored: number;
+  archived: number;
+  lastSyncAt: string | null;
+  mailboxes: string[];
+}
+
+export interface FolderDetailResponse {
+  folder: DiscoveredFolderItem;
+  auditHistory: Array<{
+    id: string;
+    action: string;
+    actorUser: { id: string; email: string; name: string | null } | null;
+    metadata: unknown;
+    createdAt: string;
+  }>;
+  alias: { id: string; alias: string; normalizedAlias: string; createdAt: string } | null;
 }
 
 export interface JobFolderRootItem {
@@ -617,18 +646,28 @@ export const api = {
 
   // Discovered Folders
   getDiscoveredFolders: (workspaceId: string, params?: {
-    status?: string; mailboxEmail?: string; search?: string; page?: number; pageSize?: number;
+    status?: string; mailboxEmail?: string; search?: string; hasMatch?: boolean;
+    root?: string; page?: number; pageSize?: number;
   }) => {
     const p = new URLSearchParams();
     if (params?.status) p.set('status', params.status);
     if (params?.mailboxEmail) p.set('mailboxEmail', params.mailboxEmail);
     if (params?.search) p.set('search', params.search);
+    if (params?.hasMatch !== undefined) p.set('hasMatch', String(params.hasMatch));
+    if (params?.root) p.set('root', params.root);
     if (params?.page) p.set('page', String(params.page));
     if (params?.pageSize) p.set('pageSize', String(params.pageSize));
-    return request<{ folders: DiscoveredFolderItem[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+    return request<{
+      folders: DiscoveredFolderItem[];
+      pagination: { page: number; pageSize: number; totalCount: number; totalPages: number };
+      summary: FolderSummaryMetrics;
+    }>(
       `/workspaces/${workspaceId}/discovered-folders?${p.toString()}`
     );
   },
+
+  getDiscoveredFolderDetail: (workspaceId: string, folderId: string) =>
+    request<FolderDetailResponse>(`/workspaces/${workspaceId}/discovered-folders/${folderId}`),
 
   matchDiscoveredFolder: (workspaceId: string, folderId: string, jobId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/match`, {
@@ -640,9 +679,12 @@ export const api = {
       method: 'POST', body: JSON.stringify({})
     }),
 
-  createJobFromFolder: (workspaceId: string, folderId: string) =>
-    request<{ status: string; jobId: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/create-job`, {
-      method: 'POST', body: JSON.stringify({})
+  createJobFromFolder: (workspaceId: string, folderId: string, jobData?: {
+    jobNumber?: string; name?: string; status?: string; customerId?: string;
+    description?: string; startDate?: string; targetCompletionDate?: string;
+  }) =>
+    request<{ status: string; job: { id: string; name: string; jobNumber: string | null } }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/create-job`, {
+      method: 'POST', body: JSON.stringify(jobData ?? {})
     }),
 
   ignoreDiscoveredFolder: (workspaceId: string, folderId: string) =>
@@ -652,6 +694,11 @@ export const api = {
 
   restoreDiscoveredFolder: (workspaceId: string, folderId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/restore`, {
+      method: 'POST', body: JSON.stringify({})
+    }),
+
+  archiveDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/archive`, {
       method: 'POST', body: JSON.stringify({})
     }),
 

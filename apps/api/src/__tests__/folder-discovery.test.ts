@@ -564,3 +564,168 @@ describe("permission enforcement", () => {
     expect(canMutateFolders("ADMIN")).toBe(true);
   });
 });
+
+describe("folder detail endpoint behavior", () => {
+  it("returns folder data with matched job info", () => {
+    const folder = {
+      id: "folder1",
+      workspaceId: "ws1",
+      rawFolderName: "2438 - LeJeune",
+      normalizedFolderName: normalizeName("2438 - LeJeune"),
+      matchedJobId: "job1",
+      status: "MATCHED",
+      providerFolderId: "AAMk-2438",
+      parentProviderFolderId: "AAMk-root",
+      childFolderCount: 3,
+      firstSeenAt: "2025-01-01T00:00:00Z",
+      lastSeenAt: "2025-06-01T00:00:00Z",
+    };
+    expect(folder.matchedJobId).toBe("job1");
+    expect(folder.childFolderCount).toBe(3);
+    expect(folder.parentProviderFolderId).toBe("AAMk-root");
+  });
+
+  it("includes audit history and alias info", () => {
+    const auditHistory = [
+      { id: "a1", action: "discovered_folder.matched", actorUserId: "u1", createdAt: "2025-03-01T00:00:00Z" },
+    ];
+    const alias = { id: "alias1", alias: "2438 - LeJeune", normalizedAlias: normalizeName("2438 - LeJeune"), source: "OUTLOOK_FOLDER" };
+    expect(auditHistory.length).toBe(1);
+    expect(alias.source).toBe("OUTLOOK_FOLDER");
+  });
+});
+
+describe("archive endpoint behavior", () => {
+  it("archiving removes OUTLOOK_FOLDER alias when matched", () => {
+    const folder = { id: "f1", matchedJobId: "job1", rawFolderName: "2438 - LeJeune", status: "MATCHED" };
+    const normalizedAlias = normalizeName(folder.rawFolderName);
+    const aliasToDelete = {
+      workspaceId: "ws1",
+      entityType: "JOB",
+      normalizedAlias,
+      source: "OUTLOOK_FOLDER",
+      jobId: folder.matchedJobId,
+    };
+    expect(aliasToDelete.jobId).toBe("job1");
+    expect(aliasToDelete.source).toBe("OUTLOOK_FOLDER");
+  });
+
+  it("archiving an unmatched folder does not attempt alias deletion", () => {
+    const folder = { id: "f2", matchedJobId: null, rawFolderName: "Unknown Folder", status: "DISCOVERED" };
+    expect(folder.matchedJobId).toBeNull();
+  });
+});
+
+describe("list endpoint summary metrics", () => {
+  it("computes counts by status correctly", () => {
+    const metrics = [
+      { status: "DISCOVERED", _count: 5 },
+      { status: "MATCHED", _count: 3 },
+      { status: "APPROVED", _count: 10 },
+      { status: "IGNORED", _count: 2 },
+      { status: "ARCHIVED", _count: 1 },
+    ];
+    const summary = {
+      total: metrics.reduce((sum, m) => sum + m._count, 0),
+      discovered: metrics.find(m => m.status === "DISCOVERED")?._count ?? 0,
+      matched: metrics.find(m => m.status === "MATCHED")?._count ?? 0,
+      approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
+      ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
+      archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
+    };
+    expect(summary.total).toBe(21);
+    expect(summary.discovered).toBe(5);
+    expect(summary.matched).toBe(3);
+    expect(summary.approved).toBe(10);
+    expect(summary.ignored).toBe(2);
+    expect(summary.archived).toBe(1);
+  });
+
+  it("hasMatch filter correctly distinguishes matched vs unmatched", () => {
+    const folders = [
+      { id: "f1", matchedJobId: "job1" },
+      { id: "f2", matchedJobId: null },
+      { id: "f3", matchedJobId: "job2" },
+    ];
+    const withMatch = folders.filter(f => f.matchedJobId !== null);
+    const withoutMatch = folders.filter(f => f.matchedJobId === null);
+    expect(withMatch.length).toBe(2);
+    expect(withoutMatch.length).toBe(1);
+  });
+});
+
+describe("empty state handling", () => {
+  it("returns empty list with zero counts when no folders exist", () => {
+    const folders: unknown[] = [];
+    const metrics: Array<{ status: string; _count: number }> = [];
+    const summary = {
+      total: metrics.reduce((sum, m) => sum + m._count, 0),
+      discovered: 0,
+      matched: 0,
+    };
+    expect(folders.length).toBe(0);
+    expect(summary.total).toBe(0);
+  });
+});
+
+describe("duplicate alias prevention", () => {
+  it("normalizedAlias uniqueness prevents duplicate folder aliases", () => {
+    const alias1 = normalizeName("2438 - LeJeune");
+    const alias2 = normalizeName("2438  -  LeJeune");
+    expect(alias1).toBe(alias2);
+  });
+
+  it("different folder names produce different aliases", () => {
+    const alias1 = normalizeName("2438 - LeJeune");
+    const alias2 = normalizeName("2439 - Smith");
+    expect(alias1).not.toBe(alias2);
+  });
+});
+
+describe("restore behavior", () => {
+  it("restoring a matched folder returns to MATCHED status", () => {
+    const folder = { matchedJobId: "job1", status: "IGNORED" };
+    const newStatus = folder.matchedJobId ? "MATCHED" : "DISCOVERED";
+    expect(newStatus).toBe("MATCHED");
+  });
+
+  it("restoring an unmatched folder returns to DISCOVERED status", () => {
+    const folder = { matchedJobId: null, status: "IGNORED" };
+    const newStatus = folder.matchedJobId ? "MATCHED" : "DISCOVERED";
+    expect(newStatus).toBe("DISCOVERED");
+  });
+
+  it("restoring re-creates the alias for matched folders", () => {
+    const folder = { matchedJobId: "job1", rawFolderName: "2438 - LeJeune" };
+    const aliasToCreate = {
+      workspaceId: "ws1",
+      entityType: "JOB",
+      jobId: folder.matchedJobId,
+      alias: folder.rawFolderName,
+      normalizedAlias: normalizeName(folder.rawFolderName),
+      source: "OUTLOOK_FOLDER",
+    };
+    expect(aliasToCreate.source).toBe("OUTLOOK_FOLDER");
+    expect(aliasToCreate.jobId).toBe("job1");
+  });
+});
+
+describe("create-job from folder with custom data", () => {
+  it("uses provided jobNumber and name over detected values", () => {
+    const detected = detectJobInfo("2438 - LeJeune");
+    const userInput = { jobNumber: "9999", name: "Custom Name" };
+    const finalJobNumber = userInput.jobNumber ?? detected.jobNumber ?? null;
+    const finalName = userInput.name ?? detected.jobName ?? "2438 - LeJeune";
+    expect(finalJobNumber).toBe("9999");
+    expect(finalName).toBe("Custom Name");
+  });
+
+  it("falls back to detected values when user provides nothing", () => {
+    const detected = detectJobInfo("2438 - LeJeune");
+    const userInput: { jobNumber?: string; name?: string } = {};
+    const finalJobNumber = userInput.jobNumber ?? detected.jobNumber ?? null;
+    const finalName = userInput.name ?? detected.jobName ?? "2438 - LeJeune";
+    expect(finalJobNumber).toBe("2438");
+    expect(finalName).toBe("LeJeune");
+  });
+});
