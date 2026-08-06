@@ -123,6 +123,10 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
       case 'high_priority': return (task.priority === 'HIGH' || task.priority === 'URGENT') && task.status !== 'DONE'
       default: return true
     }
+  }).sort((a, b) => {
+    if (a.task.isPinned && !b.task.isPinned) return -1
+    if (!a.task.isPinned && b.task.isPinned) return 1
+    return 0
   })
 
   const handleComplete = async (taskId: string) => {
@@ -146,6 +150,16 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
       setAllTasks(prev => prev.filter(t => t.task.id !== taskId))
       setTotalCount(prev => prev - 1)
     } catch { /* */ }
+  }
+
+  const handlePin = async (taskId: string, currentlyPinned: boolean) => {
+    const newPinned = !currentlyPinned
+    setAllTasks(prev => prev.map(t => t.task.id === taskId ? { ...t, task: { ...t.task, isPinned: newPinned } } : t))
+    try {
+      await api.pinTask(workspaceId, taskId, newPinned)
+    } catch {
+      setAllTasks(prev => prev.map(t => t.task.id === taskId ? { ...t, task: { ...t.task, isPinned: currentlyPinned } } : t))
+    }
   }
 
   return (
@@ -186,20 +200,32 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
               const isDone = task.status === 'DONE'
               return (
                 <div key={task.id} className="card" style={{
-                  borderLeft: `3px solid ${isDone ? '#4caf50' : isOverdue(task.dueAt, task.status) ? '#c62828' : '#1565c0'}`,
+                  borderLeft: `3px solid ${task.isPinned ? '#f5a623' : isDone ? '#4caf50' : isOverdue(task.dueAt, task.status) ? '#c62828' : '#1565c0'}`,
                   marginBottom: 8,
-                  background: isDone ? '#f6fef6' : '#fff'
+                  background: task.isPinned ? '#fffde7' : isDone ? '#f6fef6' : '#fff'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{
-                        fontSize: 14, fontWeight: 600, marginBottom: 4,
-                        color: isDone ? '#4caf50' : '#333'
-                      }}>
-                        {isDone && <span style={{ marginRight: 6 }}>{'\u2705'}</span>}
-                        {task.title}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1 }}>
+                      {!isViewer && (
+                        <button
+                          title={task.isPinned ? 'Unpin' : 'Pin'}
+                          onClick={() => handlePin(task.id, !!task.isPinned)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 14,
+                            color: task.isPinned ? '#f5a623' : '#ccc', flexShrink: 0,
+                          }}
+                        >{'\uD83D\uDCCC'}</button>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontSize: 14, fontWeight: 600, marginBottom: 4,
+                          color: isDone ? '#4caf50' : '#333'
+                        }}>
+                          {isDone && <span style={{ marginRight: 6 }}>{'\u2705'}</span>}
+                          {task.title}
+                        </div>
+                        {task.summary && <div style={{ fontSize: 13, color: '#666', lineHeight: 1.5, marginBottom: 6 }}>{task.summary}</div>}
                       </div>
-                      {task.summary && <div style={{ fontSize: 13, color: '#666', lineHeight: 1.5, marginBottom: 6 }}>{task.summary}</div>}
                     </div>
                     <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
                       <PriorityBadge priority={task.priority} />

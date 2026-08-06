@@ -73,6 +73,7 @@ export interface TaskSummary {
   confidence: number;
   requiresReview: boolean;
   reviewStatus: string;
+  isPinned?: boolean;
   createdAt: string;
 }
 
@@ -99,6 +100,7 @@ export interface MessageSummary {
   isImportant: boolean;
   isSpam: boolean;
   isTrashed: boolean;
+  isPinned?: boolean;
   hasAttachments?: boolean;
   mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
   classification: Classification | null;
@@ -322,6 +324,18 @@ export const api = {
     request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/untrash`, {
       method: 'PATCH',
       body: JSON.stringify({})
+    }),
+
+  pinMessage: (workspaceId: string, connectionId: string, messageId: string, pinned: boolean) =>
+    request<{ id: string; isPinned: boolean }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/pin`, {
+      method: 'PATCH',
+      body: JSON.stringify({ pinned })
+    }),
+
+  pinTask: (workspaceId: string, taskId: string, pinned: boolean) =>
+    request<{ id: string; isPinned: boolean }>(`/workspaces/${workspaceId}/tasks/${taskId}/pin`, {
+      method: 'PATCH',
+      body: JSON.stringify({ pinned })
     }),
 
   reclassifyMessage: (workspaceId: string, messageId: string, data: {

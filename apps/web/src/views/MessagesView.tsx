@@ -213,6 +213,30 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     } catch { /* */ }
   }
 
+  const handlePin = async (messageId: string, currentlyPinned: boolean) => {
+    const newPinned = !currentlyPinned
+    setMessages(prev => {
+      const updated = prev.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
+      return [...updated].sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1
+        if (!a.isPinned && b.isPinned) return 1
+        return 0
+      })
+    })
+    try {
+      await api.pinMessage(workspaceId, connectionId, messageId, newPinned)
+    } catch {
+      setMessages(prev => {
+        const reverted = prev.map(m => m.id === messageId ? { ...m, isPinned: currentlyPinned } : m)
+        return [...reverted].sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1
+          if (!a.isPinned && b.isPinned) return 1
+          return 0
+        })
+      })
+    }
+  }
+
   const renderPhoneCard = (m: MessageSummary) => {
     const status = autoResponseStatus[m.id] ?? 'idle'
     return (
@@ -222,15 +246,28 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         style={{
           padding: '12px 16px',
           borderBottom: '1px solid #f0f0f0',
-          background: m.isRead ? '#fff' : '#f0f4ff',
+          background: m.isPinned ? '#fffde7' : m.isRead ? '#fff' : '#f0f4ff',
+          borderLeft: m.isPinned ? '3px solid #f5a623' : 'none',
           cursor: 'pointer',
           minHeight: 44,
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{m.senderName ?? m.senderEmail}</div>
-            {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 0 }}>
+            {!isViewer && (
+              <button
+                title={m.isPinned ? 'Unpin' : 'Pin'}
+                onClick={e => { e.stopPropagation(); handlePin(m.id, !!m.isPinned) }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 14,
+                  color: m.isPinned ? '#f5a623' : '#ccc', flexShrink: 0, minHeight: 28,
+                }}
+              >{'\uD83D\uDCCC'}</button>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{m.senderName ?? m.senderEmail}</div>
+              {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+            </div>
           </div>
           <div style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap', marginLeft: 8 }}>
             {formatDate(m.receivedAt ?? m.sentAt)}
@@ -313,11 +350,25 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     )
   }
 
-  const renderTableRow = (m: MessageSummary) => (
+  const renderTableRow = (m: MessageSummary) => {
+    const rowBg = m.isPinned ? '#fffde7' : m.isRead ? '' : '#f0f4ff'
+    return (
     <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
+      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: rowBg, borderLeft: m.isPinned ? '3px solid #f5a623' : 'none' }}
       onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-      onMouseOut={e => (e.currentTarget.style.background = m.isRead ? '' : '#f0f4ff')}>
+      onMouseOut={e => (e.currentTarget.style.background = rowBg)}>
+      <td style={{ padding: '7px 4px', textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
+        {!isViewer && (
+          <button
+            title={m.isPinned ? 'Unpin' : 'Pin'}
+            onClick={() => handlePin(m.id, !!m.isPinned)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: 2, fontSize: 13,
+              color: m.isPinned ? '#f5a623' : '#ddd',
+            }}
+          >{'\uD83D\uDCCC'}</button>
+        )}
+      </td>
       {isBusiness && (
         <td style={{ padding: '7px 6px', textAlign: 'center', fontSize: 14 }}>
           {m.isImportant && <span title="Important" style={{ color: '#f5a623' }}>{'\u2605'}</span>}
@@ -399,7 +450,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         )}
       </td>
     </tr>
-  )
+    )
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
@@ -486,6 +538,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0, zIndex: 1 }}>
+                  <th style={{ padding: '8px 4px', width: 28 }}></th>
                   {isBusiness && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>

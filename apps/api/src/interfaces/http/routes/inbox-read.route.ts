@@ -203,6 +203,7 @@ const taskSummarySchema = z.object({
   requiresReview: z.boolean(),
   reviewQueue: z.enum(reviewQueueValues).nullable(),
   reviewStatus: z.enum(reviewStatusValues),
+  isPinned: z.boolean().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime()
 });
@@ -223,6 +224,7 @@ const messageSummarySchema = z.object({
   isImportant: z.boolean(),
   isSpam: z.boolean(),
   isTrashed: z.boolean(),
+  isPinned: z.boolean().optional(),
   hasAttachments: z.boolean().optional(),
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
   classification: classificationSummarySchema.nullable(),
@@ -482,6 +484,7 @@ const serializeTask = (task: {
   requiresReview: boolean;
   reviewQueue: (typeof reviewQueueValues)[number] | null;
   reviewStatus: (typeof reviewStatusValues)[number];
+  isPinned?: boolean;
   createdAt: Date;
   updatedAt: Date;
 } | null) =>
@@ -499,6 +502,7 @@ const serializeTask = (task: {
         requiresReview: task.requiresReview,
         reviewQueue: task.reviewQueue,
         reviewStatus: task.reviewStatus,
+        isPinned: task.isPinned ?? false,
         createdAt: task.createdAt.toISOString(),
         updatedAt: task.updatedAt.toISOString()
       })
@@ -537,6 +541,7 @@ const serializeMessageSummary = (message: {
   isImportant: boolean;
   isSpam: boolean;
   isTrashed: boolean;
+  isPinned?: boolean;
   hasAttachments?: boolean;
   mailboxCategory: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH";
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
@@ -567,6 +572,7 @@ const serializeMessageSummary = (message: {
     isImportant: message.isImportant,
     isSpam: message.isSpam,
     isTrashed: message.isTrashed,
+    isPinned: message.isPinned ?? false,
     hasAttachments: message.hasAttachments ?? false,
     mailboxCategory: message.mailboxCategory,
     classification: serializeClassification(message.classifications[0] ?? null),
@@ -1166,6 +1172,8 @@ export const registerInboxReadRoutes = async (
         app.services.prisma.emailMessage.findMany({
           where,
           orderBy: [
+            { isPinned: "desc" },
+            { pinnedAt: { sort: "desc", nulls: "last" } },
             { receivedAt: "desc" },
             { sentAt: "desc" },
             { createdAt: "desc" }
@@ -1188,6 +1196,7 @@ export const registerInboxReadRoutes = async (
             isImportant: true,
             isSpam: true,
             isTrashed: true,
+            isPinned: true,
             mailboxCategory: true,
             jobAssignmentSource: true,
             jobAssignmentIsManual: true,
@@ -2124,6 +2133,8 @@ export const registerInboxReadRoutes = async (
         app.services.prisma.task.findMany({
           where,
           orderBy: [
+            { isPinned: "desc" },
+            { pinnedAt: { sort: "desc", nulls: "last" } },
             { createdAt: "desc" },
             { updatedAt: "desc" }
           ],
@@ -2142,6 +2153,7 @@ export const registerInboxReadRoutes = async (
             requiresReview: true,
             reviewQueue: true,
             reviewStatus: true,
+            isPinned: true,
             createdAt: true,
             updatedAt: true,
             sourceMessage: {
@@ -2308,6 +2320,93 @@ export const registerInboxReadRoutes = async (
       });
 
       return reply.send({ status: "ok" });
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/pin",
+    async (request, reply) => {
+      const params = messageDetailParamsSchema.parse(request.params);
+      const body = z.object({ pinned: z.boolean() }).parse(request.body);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      if (!hasMinRole(membership.role, "MEMBER")) {
+        return reply.code(403).send({ message: "Viewer role cannot pin messages" });
+      }
+
+      const message = await app.services.prisma.emailMessage.findFirst({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+        },
+        select: { id: true }
+      });
+
+      if (!message) {
+        return reply.code(404).send({ message: "Message not found" });
+      }
+
+      const updated = await app.services.prisma.emailMessage.update({
+        where: { id: message.id },
+        data: {
+          isPinned: body.pinned,
+          pinnedAt: body.pinned ? new Date() : null
+        },
+        select: { id: true, isPinned: true, pinnedAt: true }
+      });
+
+      return reply.send({ id: updated.id, isPinned: updated.isPinned, pinnedAt: serializeDate(updated.pinnedAt) });
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/tasks/:taskId/pin",
+    async (request, reply) => {
+      const params = z.object({
+        workspaceId: z.string().min(1),
+        taskId: z.string().min(1)
+      }).parse(request.params);
+      const body = z.object({ pinned: z.boolean() }).parse(request.body);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      if (!hasMinRole(membership.role, "MEMBER")) {
+        return reply.code(403).send({ message: "Viewer role cannot pin tasks" });
+      }
+
+      const task = await app.services.prisma.task.findFirst({
+        where: { id: params.taskId, workspaceId: params.workspaceId },
+        select: { id: true }
+      });
+
+      if (!task) {
+        return reply.code(404).send({ message: "Task not found" });
+      }
+
+      const updated = await app.services.prisma.task.update({
+        where: { id: task.id },
+        data: {
+          isPinned: body.pinned,
+          pinnedAt: body.pinned ? new Date() : null
+        },
+        select: { id: true, isPinned: true, pinnedAt: true }
+      });
+
+      return reply.send({ id: updated.id, isPinned: updated.isPinned, pinnedAt: serializeDate(updated.pinnedAt) });
     }
   );
 };

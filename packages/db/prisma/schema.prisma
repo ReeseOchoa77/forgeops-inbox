@@ -404,6 +404,8 @@ model EmailMessage {
   jobAssignedAt           DateTime?
   jobAssignedByUserId     String?
   jobAssignmentIsManual   Boolean  @default(false)
+  isPinned         Boolean       @default(false)
+  pinnedAt         DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -559,6 +561,8 @@ model Task {
   dismissedAt      DateTime?
   dismissedBy      String?
   dismissalReason  String?
+  isPinned         Boolean       @default(false)
+  pinnedAt         DateTime?
   customerId       String?
   vendorId         String?
   jobId            String?
