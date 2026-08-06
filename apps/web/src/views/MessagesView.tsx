@@ -336,7 +336,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         })()}
 
         {!isViewer && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
             {inboxTab === 'PERSONAL' && (
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600, minHeight: 28 }}>Biz</button>
@@ -345,6 +345,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2, minHeight: 28 }}>Pers</button>
             )}
+            <span style={{ flex: 1 }} />
             {inboxTab !== 'TRASH' ? (
               <button title="Trash" onClick={() => handleTrash(m.id, false)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2, minHeight: 28 }}>{'\uD83D\uDDD1'}</button>
@@ -446,7 +447,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
       <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
         {!isViewer && (
-          <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+          <div style={{ display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
             {inboxTab === 'PERSONAL' && (
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
@@ -455,6 +456,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
             )}
+            <span style={{ width: 12 }} />
             {inboxTab !== 'TRASH' ? (
               <button title="Trash" onClick={() => handleTrash(m.id, false)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
