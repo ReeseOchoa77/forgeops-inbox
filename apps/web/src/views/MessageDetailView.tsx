@@ -63,6 +63,14 @@ function EmailBody({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: 
             fontSize: 14, lineHeight: 1.6, padding: '8px 0', overflow: 'auto', maxHeight: 600,
             wordBreak: 'break-word'
           }}
+          ref={(el: HTMLDivElement | null) => {
+            if (el) el.querySelectorAll('img').forEach(img => {
+              if (!img.complete || img.naturalWidth === 0) {
+                img.style.display = 'none'
+              }
+              img.onerror = () => { img.style.display = 'none' }
+            })
+          }}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml, { ADD_ATTR: ['target'] }) }}
         />
       ) : (
