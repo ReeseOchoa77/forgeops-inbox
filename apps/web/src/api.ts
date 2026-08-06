@@ -321,6 +321,11 @@ export const api = {
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/threads/${threadId}/messages${expandAll ? '?expandAll=true' : ''}`
     ),
 
+  getMessageThread: (workspaceId: string, connectionId: string, messageId: string) =>
+    request<ThreadDetail>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/thread`
+    ),
+
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
     `${BASE}/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/attachments/${attachmentId}/download`,
 

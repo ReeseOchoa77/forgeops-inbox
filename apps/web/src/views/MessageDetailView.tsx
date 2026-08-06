@@ -347,12 +347,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
 
-  const loadThread = async () => {
-    const detail = await api.getMessageDetail(workspaceId, connectionId, messageId)
-    const threadId = detail.data.thread.id
-    const td = await api.getThreadMessages(workspaceId, connectionId, threadId)
-    return td
-  }
+  const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
   useEffect(() => {
     setLoading(true)

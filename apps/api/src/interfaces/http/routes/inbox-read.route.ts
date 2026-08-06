@@ -1687,6 +1687,155 @@ export const registerInboxReadRoutes = async (
     }
   );
 
+  // Single-call thread loader: resolves thread from messageId, avoids fetching bodies for truncated messages
+  const messageThreadParamsSchema = z.object({
+    workspaceId: z.string().min(1),
+    id: z.string().min(1),
+    messageId: z.string().min(1)
+  });
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/thread",
+    async (request, reply) => {
+      const params = messageThreadParamsSchema.parse(request.params);
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+
+      const message = await app.services.prisma.emailMessage.findFirst({
+        where: {
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+        },
+        select: { threadId: true }
+      });
+
+      if (!message?.threadId) {
+        return reply.code(404).send({ message: "Message or thread not found" });
+      }
+
+      const thread = await app.services.prisma.emailThread.findFirst({
+        where: { id: message.threadId, workspaceId: params.workspaceId },
+        select: { id: true, gmailThreadId: true, subject: true, normalizedSubject: true, messageCount: true }
+      });
+
+      if (!thread) {
+        return reply.code(404).send({ message: "Thread not found" });
+      }
+
+      // First: get all message IDs + ordering without bodies (fast)
+      const messageHeaders = await app.services.prisma.emailMessage.findMany({
+        where: { workspaceId: params.workspaceId, inboxConnectionId: params.id, threadId: thread.id },
+        orderBy: [{ sentAt: "asc" }, { receivedAt: "asc" }],
+        select: {
+          id: true,
+          gmailMessageId: true,
+          gmailThreadId: true,
+          subject: true,
+          senderName: true,
+          senderEmail: true,
+          toAddresses: true,
+          ccAddresses: true,
+          bccAddresses: true,
+          replyToAddresses: true,
+          snippet: true,
+          labelIds: true,
+          hasAttachments: true,
+          attachmentMetadata: true,
+          sentAt: true,
+          receivedAt: true,
+          priority: true,
+          itemStatus: true,
+          mailboxCategory: true,
+          jobAssignmentSource: true,
+          jobAssignmentIsManual: true,
+          jobMatchConfidence: true,
+          job: { select: { id: true, jobNumber: true, name: true, status: true } },
+          classifications: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              id: true, businessCategory: true, emailType: true, priority: true,
+              itemStatus: true, summary: true, confidence: true, requiresReview: true,
+              reviewQueue: true, reviewStatus: true, containsActionRequest: true,
+              businessTypeKey: true, businessTypeConfidence: true, deadline: true
+            }
+          },
+          tasks: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              id: true, title: true, summary: true, assigneeGuess: true,
+              dueAt: true, priority: true, status: true, confidence: true,
+              requiresReview: true, reviewQueue: true, reviewStatus: true,
+              createdAt: true, updatedAt: true
+            }
+          }
+        }
+      });
+
+      // Only fetch bodies for the last 5 messages (the ones we'll actually send)
+      const BODY_TAIL_COUNT = 5;
+      const bodyIds = messageHeaders.slice(-BODY_TAIL_COUNT).map(m => m.id);
+      const bodies = bodyIds.length > 0
+        ? await app.services.prisma.emailMessage.findMany({
+            where: { id: { in: bodyIds } },
+            select: { id: true, bodyText: true, bodyHtml: true }
+          })
+        : [];
+      const bodyMap = new Map(bodies.map(b => [b.id, b]));
+
+      return reply.send({
+        thread: {
+          id: thread.id,
+          providerThreadId: thread.gmailThreadId,
+          subject: thread.subject,
+          normalizedSubject: thread.normalizedSubject,
+          messageCount: thread.messageCount
+        },
+        messages: messageHeaders.map(m => {
+          const body = bodyMap.get(m.id);
+          return {
+            id: m.id,
+            providerMessageId: m.gmailMessageId,
+            providerThreadId: m.gmailThreadId,
+            subject: m.subject,
+            senderName: m.senderName,
+            senderEmail: m.senderEmail,
+            toAddresses: parseStoredAddresses(m.toAddresses),
+            ccAddresses: parseStoredAddresses(m.ccAddresses),
+            bccAddresses: parseStoredAddresses(m.bccAddresses),
+            replyToAddresses: parseStoredAddresses(m.replyToAddresses),
+            snippet: m.snippet,
+            bodyText: body?.bodyText ?? null,
+            bodyHtml: body?.bodyHtml ?? null,
+            bodyTruncated: !body,
+            labelIds: m.labelIds,
+            hasAttachments: m.hasAttachments,
+            attachmentMetadata: parseAttachmentMetadata(m.attachmentMetadata),
+            sentAt: m.sentAt.toISOString(),
+            receivedAt: serializeDate(m.receivedAt),
+            priority: m.priority,
+            itemStatus: m.itemStatus,
+            mailboxCategory: m.mailboxCategory,
+            jobAssignmentSource: m.jobAssignmentSource,
+            jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
+            jobMatchConfidence: m.jobMatchConfidence,
+            job: m.job ? { id: m.job.id, jobNumber: m.job.jobNumber, name: m.job.name, status: m.job.status } : null,
+            classification: serializeClassification(m.classifications[0] ?? null),
+            taskCandidate: serializeTask(m.tasks[0] ?? null)
+          };
+        })
+      });
+    }
+  );
+
   app.get(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/review",
     async (request, reply) => {
