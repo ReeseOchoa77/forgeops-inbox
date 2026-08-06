@@ -341,7 +341,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <span style={{ flex: 1 }} />
             {inboxTab !== 'TRASH' ? (
               <button title="Trash" onClick={() => handleTrash(m.id, false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2, minHeight: 28 }}>{'\uD83D\uDDD1'}</button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#bbb', padding: 2, minHeight: 28, fontWeight: 500 }}>✕</button>
             ) : (
               <button title="Restore" onClick={() => handleTrash(m.id, true)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2, minHeight: 28 }}>{'\u21A9'}</button>
@@ -391,9 +391,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               background: '#ede9fe', color: '#7c3aed', whiteSpace: 'nowrap'
             }}>Reclassified</span>
           )}
-          {isBusiness && !isTablet && m.classification && (
-            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
-          )}
         </div>
         {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
         {isBusiness && m.classification?.priority === 'LOW' && (() => {
@@ -415,6 +412,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )
         })()}
       </td>
+      {isBusiness && !isTablet && (
+        <td style={{ padding: '7px 12px' }}>
+          {m.classification ? (
+            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+          ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+        </td>
+      )}
       {isBusiness && !isTablet && (
         <td style={{ padding: '7px 12px' }}>
           {m.job ? (
@@ -450,7 +454,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <span style={{ width: 12 }} />
             {inboxTab !== 'TRASH' ? (
               <button title="Trash" onClick={() => handleTrash(m.id, false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#bbb', padding: 2, fontWeight: 500 }}>✕</button>
             ) : (
               <button title="Restore" onClick={() => handleTrash(m.id, true)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
@@ -551,6 +555,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   {isBusiness && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
+                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
                   {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
                   {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
