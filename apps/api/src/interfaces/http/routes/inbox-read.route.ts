@@ -184,17 +184,17 @@ const classificationSummarySchema = z.object({
   containsActionRequest: z.boolean(),
   businessTypeKey: z.string().nullable(),
   businessTypeConfidence: z.number().nullable(),
-  classificationEvidence: z.unknown().nullable(),
+  classificationEvidence: z.unknown().nullable().optional(),
   deadline: z.string().datetime().nullable(),
-  routingHints: z.unknown().nullable(),
-  extractedFields: z.unknown().nullable()
+  routingHints: z.unknown().nullable().optional(),
+  extractedFields: z.unknown().nullable().optional()
 });
 
 const taskSummarySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().nullable(),
-  description: z.string().nullable(),
+  description: z.string().nullable().optional(),
   assigneeGuess: z.string().nullable(),
   dueAt: z.string().datetime().nullable(),
   priority: z.enum(priorityValues),
@@ -441,10 +441,10 @@ const serializeClassification = (classification: {
   containsActionRequest: boolean;
   businessTypeKey: string | null;
   businessTypeConfidence: import("@prisma/client").Prisma.Decimal | null;
-  classificationEvidence: unknown;
+  classificationEvidence?: unknown;
   deadline: Date | null;
-  routingHints: unknown;
-  extractedFields: unknown;
+  routingHints?: unknown;
+  extractedFields?: unknown;
 } | null) =>
   classification
     ? classificationSummarySchema.parse({
@@ -461,10 +461,10 @@ const serializeClassification = (classification: {
         containsActionRequest: classification.containsActionRequest,
         businessTypeKey: classification.businessTypeKey ?? null,
         businessTypeConfidence: classification.businessTypeConfidence ? Number(classification.businessTypeConfidence.toString()) : null,
-        classificationEvidence: classification.classificationEvidence ?? null,
+        ...("classificationEvidence" in classification ? { classificationEvidence: classification.classificationEvidence ?? null } : {}),
         deadline: serializeDate(classification.deadline),
-        routingHints: classification.routingHints ?? null,
-        extractedFields: classification.extractedFields ?? null
+        ...("routingHints" in classification ? { routingHints: classification.routingHints ?? null } : {}),
+        ...("extractedFields" in classification ? { extractedFields: classification.extractedFields ?? null } : {})
       })
     : null;
 
@@ -472,7 +472,7 @@ const serializeTask = (task: {
   id: string;
   title: string;
   summary: string | null;
-  description: string | null;
+  description?: string | null;
   assigneeGuess: string | null;
   dueAt: Date | null;
   priority: (typeof priorityValues)[number];
@@ -489,7 +489,7 @@ const serializeTask = (task: {
         id: task.id,
         title: task.title,
         summary: task.summary,
-        description: task.description,
+        ...("description" in task ? { description: task.description } : {}),
         assigneeGuess: task.assigneeGuess,
         dueAt: serializeDate(task.dueAt),
         priority: task.priority,
@@ -1004,7 +1004,7 @@ export const registerInboxReadRoutes = async (
       }
     });
 
-    await app.services.auditEventLogger.log({
+    app.services.auditEventLogger.log({
       workspaceId: params.workspaceId,
       actorUserId: session.userId,
       entityType: "WORKSPACE",
@@ -1014,7 +1014,7 @@ export const registerInboxReadRoutes = async (
         count: connections.length
       },
       request
-    });
+    }).catch(() => {});
 
     return reply.send(
       connectionListResponseSchema.parse({
@@ -1054,14 +1054,14 @@ export const registerInboxReadRoutes = async (
         });
       }
 
-      await app.services.auditEventLogger.log({
+      app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
         entityType: "INBOX_CONNECTION",
         entityId: connection.id,
         action: "inbox_connection.viewed",
         request
-      });
+      }).catch(() => {});
 
       return reply.send(
         connectionDetailResponseSchema.parse({
@@ -1216,10 +1216,7 @@ export const registerInboxReadRoutes = async (
                 containsActionRequest: true,
                 businessTypeKey: true,
                 businessTypeConfidence: true,
-              classificationEvidence: true,
-                deadline: true,
-                routingHints: true,
-                extractedFields: true
+                deadline: true
               }
             },
             tasks: {
@@ -1231,7 +1228,6 @@ export const registerInboxReadRoutes = async (
                 id: true,
                 title: true,
                 summary: true,
-                description: true,
                 assigneeGuess: true,
                 dueAt: true,
                 priority: true,
@@ -1248,7 +1244,7 @@ export const registerInboxReadRoutes = async (
         })
       ]);
 
-      await app.services.auditEventLogger.log({
+      app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
         entityType: "INBOX_CONNECTION",
@@ -1265,7 +1261,7 @@ export const registerInboxReadRoutes = async (
           pageSize: query.pageSize
         },
         request
-      });
+      }).catch(() => {});
 
       return reply.send(
         messagesListResponseSchema.parse({
@@ -1449,14 +1445,14 @@ export const registerInboxReadRoutes = async (
         });
       }
 
-      await app.services.auditEventLogger.log({
+      app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
         entityType: "EMAIL_MESSAGE",
         entityId: message.id,
         action: "email_message.viewed",
         request
-      });
+      }).catch(() => {});
 
       return reply.send(
         messageDetailResponseSchema.parse({
@@ -1530,6 +1526,7 @@ export const registerInboxReadRoutes = async (
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/threads/:threadId/messages",
     async (request, reply) => {
       const params = threadMessagesParamsSchema.parse(request.params);
+      const expandQuery = z.object({ expandAll: z.enum(["true", "false"]).optional().transform(v => v === "true") }).parse(request.query);
       const { session, membership } = await loadWorkspaceSession({
         app,
         request,
@@ -1608,10 +1605,7 @@ export const registerInboxReadRoutes = async (
               containsActionRequest: true,
               businessTypeKey: true,
               businessTypeConfidence: true,
-              classificationEvidence: true,
-              deadline: true,
-              routingHints: true,
-              extractedFields: true
+              deadline: true
             }
           },
           tasks: {
@@ -1621,7 +1615,6 @@ export const registerInboxReadRoutes = async (
               id: true,
               title: true,
               summary: true,
-              description: true,
               assigneeGuess: true,
               dueAt: true,
               priority: true,
@@ -1637,6 +1630,9 @@ export const registerInboxReadRoutes = async (
         }
       });
 
+      const BODY_TAIL_COUNT = 5;
+      const bodyStartIndex = expandQuery.expandAll ? 0 : Math.max(0, messages.length - BODY_TAIL_COUNT);
+
       return reply.send({
         thread: {
           id: thread.id,
@@ -1645,7 +1641,7 @@ export const registerInboxReadRoutes = async (
           normalizedSubject: thread.normalizedSubject,
           messageCount: thread.messageCount
         },
-        messages: messages.map(m => ({
+        messages: messages.map((m, idx) => ({
           id: m.id,
           providerMessageId: m.gmailMessageId,
           providerThreadId: m.gmailThreadId,
@@ -1657,8 +1653,9 @@ export const registerInboxReadRoutes = async (
           bccAddresses: parseStoredAddresses(m.bccAddresses),
           replyToAddresses: parseStoredAddresses(m.replyToAddresses),
           snippet: m.snippet,
-          bodyText: m.bodyText,
-          bodyHtml: m.bodyHtml ?? null,
+          bodyText: idx >= bodyStartIndex ? m.bodyText : null,
+          bodyHtml: idx >= bodyStartIndex ? (m.bodyHtml ?? null) : null,
+          bodyTruncated: idx < bodyStartIndex,
           labelIds: m.labelIds,
           hasAttachments: m.hasAttachments,
           attachmentMetadata: parseAttachmentMetadata(m.attachmentMetadata),
@@ -1837,7 +1834,7 @@ export const registerInboxReadRoutes = async (
         });
       });
 
-      await app.services.auditEventLogger.log({
+      app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
         entityType: "INBOX_CONNECTION",
@@ -1849,7 +1846,7 @@ export const registerInboxReadRoutes = async (
           totalCount
         },
         request
-      });
+      }).catch(() => {});
 
       return reply.send(
         reviewListResponseSchema.parse({
@@ -1975,7 +1972,7 @@ export const registerInboxReadRoutes = async (
         })
       ]);
 
-      await app.services.auditEventLogger.log({
+      app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
         entityType: "INBOX_CONNECTION",
@@ -1991,7 +1988,7 @@ export const registerInboxReadRoutes = async (
           pageSize: query.pageSize
         },
         request
-      });
+      }).catch(() => {});
 
       return reply.send(
         tasksListResponseSchema.parse({

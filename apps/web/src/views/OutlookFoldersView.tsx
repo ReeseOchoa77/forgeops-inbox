@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { api, type DiscoveredFolderItem, type JobFolderRootItem, type JobSummary } from '../api'
+import { api, type DiscoveredFolderItem, type JobFolderRootItem, type JobLookup } from '../api'
 
 interface Props {
   workspaceId: string
@@ -66,7 +66,7 @@ export function OutlookFoldersView({ workspaceId, userRole }: Props) {
   const [totalCount, setTotalCount] = useState(0)
 
   // Jobs for match dropdown
-  const [jobs, setJobs] = useState<JobSummary[]>([])
+  const [jobs, setJobs] = useState<JobLookup[]>([])
   const [matchingFolderId, setMatchingFolderId] = useState<string | null>(null)
   const [selectedJobId, setSelectedJobId] = useState('')
 
@@ -106,7 +106,7 @@ export function OutlookFoldersView({ workspaceId, userRole }: Props) {
   // Load jobs for match dropdown
   const loadJobs = useCallback(async () => {
     try {
-      const res = await api.getJobs(workspaceId, { pageSize: 200 })
+      const res = await api.getJobsLookup(workspaceId)
       setJobs(res.jobs)
     } catch { /* ignore */ }
   }, [workspaceId])

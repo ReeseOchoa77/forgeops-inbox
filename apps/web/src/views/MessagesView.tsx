@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type JobSummary, type MessageSummary, type ConnectionSummary } from '../api'
+import { api, type JobLookup, type MessageSummary, type ConnectionSummary } from '../api'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
@@ -58,7 +58,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>('')
   const [jobFilter, setJobFilter] = useState('')
-  const [jobs, setJobs] = useState<JobSummary[]>([])
+  const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
 
@@ -66,6 +66,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+  const connectionResetRef = useRef(false)
 
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
 
@@ -146,12 +147,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [workspaceId, connectionId])
 
   useEffect(() => {
-    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+    api.getJobsLookup(workspaceId, { showArchived: false })
       .then(r => setJobs(r.jobs))
       .catch(() => setJobs([]))
   }, [workspaceId])
 
   useEffect(() => {
+    connectionResetRef.current = true
     setMessages([])
     setPage(1)
     setHasMore(true)
@@ -164,6 +166,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [workspaceId, connectionId])
 
   useEffect(() => {
+    if (connectionResetRef.current) {
+      connectionResetRef.current = false
+      return
+    }
     const filters = buildFilters()
     setMessages([])
     setPage(1)

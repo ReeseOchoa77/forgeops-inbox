@@ -87,6 +87,37 @@ const emailListQuery = z.object({
 
 export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> => {
 
+  // 0. GET /api/v1/workspaces/:workspaceId/jobs/lookup — Lightweight list for dropdowns (no N+1)
+  app.get("/api/v1/workspaces/:workspaceId/jobs/lookup", async (request, reply) => {
+    const { workspaceId } = wsParams.parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+
+    const query = z.object({
+      showArchived: z.enum(["true", "false"]).optional().transform(v => v === "true"),
+      search: z.string().optional(),
+    }).parse(request.query);
+
+    const where: Record<string, unknown> = { workspaceId };
+    if (!query.showArchived) {
+      where.archivedAt = null;
+    }
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: "insensitive" } },
+        { jobNumber: { contains: query.search, mode: "insensitive" } },
+      ];
+    }
+
+    const jobs = await app.services.prisma.job.findMany({
+      where,
+      orderBy: { name: "asc" },
+      select: { id: true, jobNumber: true, name: true, status: true },
+    });
+
+    return reply.send({ jobs });
+  });
+
   // 1. GET /api/v1/workspaces/:workspaceId/jobs — List jobs with filters
   app.get("/api/v1/workspaces/:workspaceId/jobs", async (request, reply) => {
     const { workspaceId } = wsParams.parse(request.params);

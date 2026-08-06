@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobSummary, type StoredAttachment } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type MessageDetail, type JobLookup, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 
@@ -113,7 +113,7 @@ function AttachmentBar({ attachments, workspaceId, connectionId, messageId }: {
   )
 }
 
-function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward }: {
+function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward, onLoadBody }: {
   msg: ThreadMessage
   expanded: boolean
   onToggle: () => void
@@ -122,6 +122,7 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
   isLast: boolean
   onReply: () => void
   onForward: () => void
+  onLoadBody: () => void
 }) {
   const senderDisplay = msg.senderName ?? msg.senderEmail
   const toDisplay = msg.toAddresses.map(a => a.name ?? a.email).join(', ')
@@ -186,7 +187,21 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
       </div>
 
       <div style={{ paddingLeft: 48 }}>
-        <EmailBody bodyHtml={msg.bodyHtml} bodyText={msg.bodyText} />
+        {msg.bodyTruncated && !msg.bodyText && !msg.bodyHtml ? (
+          <div style={{ padding: '12px 0' }}>
+            <button
+              onClick={onLoadBody}
+              style={{
+                background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 4,
+                padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#555'
+              }}
+            >
+              Show full message
+            </button>
+          </div>
+        ) : (
+          <EmailBody bodyHtml={msg.bodyHtml} bodyText={msg.bodyText} />
+        )}
 
         <AttachmentBar
           attachments={msg.attachmentMetadata}
@@ -328,7 +343,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  const [jobs, setJobs] = useState<JobSummary[]>([])
+  const [jobs, setJobs] = useState<JobLookup[]>([])
   const [selectedJobId, setSelectedJobId] = useState('')
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
@@ -349,7 +364,9 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
     loadDetail()
       .then(detail => {
+        // Fire-and-forget: markAsRead doesn't affect rendering
         api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
+        // Load thread messages (only depends on detail.thread.id)
         return api.getThreadMessages(workspaceId, connectionId, detail.thread.id)
       })
       .then(td => {
@@ -365,7 +382,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   }, [workspaceId, connectionId, messageId])
 
   useEffect(() => {
-    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+    api.getJobsLookup(workspaceId, { showArchived: false })
       .then(r => setJobs(r.jobs))
       .catch(() => setJobs([]))
   }, [workspaceId])
@@ -566,6 +583,19 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             isLast={i === messages.length - 1}
             onReply={openReply}
             onForward={openForward}
+            onLoadBody={() => {
+              api.getMessageDetail(workspaceId, connectionId, msg.id).then(r => {
+                setThreadData(prev => {
+                  if (!prev) return prev
+                  return {
+                    ...prev,
+                    messages: prev.messages.map(m =>
+                      m.id === msg.id ? { ...m, bodyText: r.data.message.bodyText, bodyHtml: r.data.message.bodyHtml, bodyTruncated: false } : m
+                    )
+                  }
+                })
+              }).catch(() => {})
+            }}
           />
         ))}
       </div>

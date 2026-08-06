@@ -1,4 +1,5 @@
 import cookie from "@fastify/cookie";
+import compress from "@fastify/compress";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { OpenAIInboxClassifier, createOpenAIClient } from "@forgeops/ai";
@@ -76,6 +77,8 @@ export const buildServer = async () => {
       done(e as Error, undefined);
     }
   });
+
+  await app.register(compress);
 
   await app.register(cookie, {
     secret: env.SESSION_COOKIE_SECRET

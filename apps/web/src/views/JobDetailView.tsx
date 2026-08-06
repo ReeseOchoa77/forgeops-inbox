@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity, type JobSummary } from '../api'
+import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity, type JobLookup } from '../api'
 
 interface Props {
   workspaceId: string
@@ -94,7 +94,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   const [saving, setSaving] = useState(false)
 
   const [moveJobId, setMoveJobId] = useState('')
-  const [allJobs, setAllJobs] = useState<JobSummary[]>([])
+  const [allJobs, setAllJobs] = useState<JobLookup[]>([])
   const [showMoveModal, setShowMoveModal] = useState<string | null>(null)
 
   const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
@@ -119,7 +119,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   useEffect(() => { loadJob() }, [loadJob])
 
   useEffect(() => {
-    api.getJobs(workspaceId, { pageSize: 100, showArchived: false })
+    api.getJobsLookup(workspaceId, { showArchived: false })
       .then(r => setAllJobs(r.jobs))
       .catch(() => {})
   }, [workspaceId])

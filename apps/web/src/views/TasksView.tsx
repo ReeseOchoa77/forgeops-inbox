@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { api, type TaskListItem } from '../api'
 import { PriorityBadge, StatusBadge } from '../components/Badges'
 
@@ -51,39 +51,51 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
   const isViewer = userRole === 'VIEWER'
   const [allTasks, setAllTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(0)
+  const [, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState<TaskFilter>('open')
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const hasMoreRef = useRef(false)
+  const loadingMoreRef = useRef(false)
 
+  // Load page 1 whenever workspace/connection changes
   useEffect(() => {
     setAllTasks([])
     setPage(1)
     setTotalPages(0)
-  }, [connectionId, filter, workspaceId])
-
-  const fetchPage = useCallback((p: number) => {
-    const isFirst = p === 1
-    if (isFirst) setLoading(true)
-    else setLoadingMore(true)
-
-    api.getTasks(workspaceId, connectionId, p)
+    setLoading(true)
+    api.getTasks(workspaceId, connectionId, 1)
       .then(r => {
-        setAllTasks(prev => isFirst ? r.tasks : [...prev, ...r.tasks])
+        setAllTasks(r.tasks)
         setTotalPages(r.pagination.totalPages)
         setTotalCount(r.pagination.totalCount)
+        hasMoreRef.current = 1 < r.pagination.totalPages
       })
-      .finally(() => {
-        if (isFirst) setLoading(false)
-        else setLoadingMore(false)
-      })
+      .finally(() => setLoading(false))
   }, [workspaceId, connectionId])
 
-  useEffect(() => { fetchPage(page) }, [page, fetchPage])
+  // Load subsequent pages
+  useEffect(() => {
+    if (page <= 1) return
+    setLoadingMore(true)
+    loadingMoreRef.current = true
+    api.getTasks(workspaceId, connectionId, page)
+      .then(r => {
+        setAllTasks(prev => [...prev, ...r.tasks])
+        setTotalPages(r.pagination.totalPages)
+        setTotalCount(r.pagination.totalCount)
+        hasMoreRef.current = page < r.pagination.totalPages
+      })
+      .finally(() => {
+        setLoadingMore(false)
+        loadingMoreRef.current = false
+      })
+  }, [page, workspaceId, connectionId])
 
+  // Intersection observer for infinite scroll
   useEffect(() => {
     const sentinel = sentinelRef.current
     const container = scrollRef.current
@@ -91,7 +103,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
 
     const observer = new IntersectionObserver(
       entries => {
-        if (entries[0].isIntersecting && !loadingMore && page < totalPages) {
+        if (entries[0].isIntersecting && !loadingMoreRef.current && hasMoreRef.current) {
           setPage(p => p + 1)
         }
       },
@@ -99,7 +111,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [loadingMore, page, totalPages])
+  }, [loading])
 
   const filteredTasks = allTasks.filter(({ task }) => {
     switch (filter) {

@@ -434,6 +434,7 @@ model EmailMessage {
   @@index([senderEmail])
   @@index([jobId])
   @@index([workspaceId, jobId, sentAt])
+  @@index([workspaceId, inboxConnectionId, isTrashed, isArchived, receivedAt])
 }
 
 model NormalizedEmail {
@@ -527,6 +528,7 @@ model Classification {
   @@unique([workspaceId, messageId])
   @@index([threadId, createdAt])
   @@index([messageId])
+  @@index([messageId, businessCategory, businessTypeKey])
   @@index([customerId])
   @@index([vendorId])
   @@index([jobId])

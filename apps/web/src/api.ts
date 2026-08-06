@@ -133,6 +133,7 @@ export interface ThreadMessage {
   snippet: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  bodyTruncated?: boolean;
   labelIds: string[];
   hasAttachments: boolean;
   attachmentMetadata: AttachmentMeta[];
@@ -310,9 +311,9 @@ export const api = {
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}`
     ),
 
-  getThreadMessages: (workspaceId: string, connectionId: string, threadId: string) =>
+  getThreadMessages: (workspaceId: string, connectionId: string, threadId: string, expandAll?: boolean) =>
     request<ThreadDetail>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/threads/${threadId}/messages`
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/threads/${threadId}/messages${expandAll ? '?expandAll=true' : ''}`
     ),
 
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
@@ -500,6 +501,15 @@ export const api = {
     if (params?.sortDir) p.set('sortDir', params.sortDir);
     return request<{ jobs: JobSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/jobs?${p.toString()}`
+    );
+  },
+
+  getJobsLookup: (workspaceId: string, params?: { showArchived?: boolean; search?: string }) => {
+    const p = new URLSearchParams();
+    if (params?.showArchived) p.set('showArchived', 'true');
+    if (params?.search) p.set('search', params.search);
+    return request<{ jobs: JobLookup[] }>(
+      `/workspaces/${workspaceId}/jobs/lookup?${p.toString()}`
     );
   },
 
@@ -711,6 +721,13 @@ export interface AdminMember {
   isPlatformAdmin: boolean;
   lastLoginAt: string | null;
   memberSince: string;
+}
+
+export interface JobLookup {
+  id: string;
+  jobNumber: string | null;
+  name: string;
+  status: string;
 }
 
 export interface JobSummary {
