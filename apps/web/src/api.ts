@@ -103,6 +103,7 @@ export interface MessageSummary {
   isPinned?: boolean;
   hasAttachments?: boolean;
   mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
+  previousCategory?: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH' | null;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
   job?: MessageJobSummary | null;
@@ -145,6 +146,7 @@ export interface ThreadMessage {
   priority: string | null;
   itemStatus: string;
   mailboxCategory?: string | null;
+  previousCategory?: string | null;
   jobAssignmentSource?: string | null;
   jobAssignmentIsManual?: boolean;
   jobMatchConfidence?: number | null;
@@ -178,6 +180,7 @@ export interface MessageDetail {
     attachmentMetadata: AttachmentMeta[];
     labelIds: string[];
     mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
+    previousCategory?: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH' | null;
   };
   thread: { id: string; providerThreadId: string; subject: string | null; normalizedSubject: string | null; messageCount: number };
   normalizedEmail: {

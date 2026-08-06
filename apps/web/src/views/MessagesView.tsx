@@ -239,6 +239,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const renderPhoneCard = (m: MessageSummary) => {
     const status = autoResponseStatus[m.id] ?? 'idle'
+    const isReclassified = !!m.previousCategory
     return (
       <div
         key={m.id}
@@ -247,7 +248,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           padding: '12px 16px',
           borderBottom: '1px solid #f0f0f0',
           background: m.isPinned ? '#fffde7' : m.isRead ? '#fff' : '#f0f4ff',
-          borderLeft: m.isPinned ? '3px solid #f5a623' : 'none',
+          borderLeft: isReclassified ? '3px solid #7c3aed' : m.isPinned ? '3px solid #f5a623' : 'none',
           cursor: 'pointer',
           minHeight: 44,
         }}
@@ -286,6 +287,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          {isReclassified && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+              background: '#ede9fe', color: '#7c3aed', whiteSpace: 'nowrap'
+            }}>Reclassified</span>
+          )}
           {isBusiness && m.classification && (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           )}
@@ -351,10 +358,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   const renderTableRow = (m: MessageSummary) => {
+    const isReclassified = !!m.previousCategory
     const rowBg = m.isPinned ? '#fffde7' : m.isRead ? '' : '#f0f4ff'
     return (
     <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: rowBg, borderLeft: m.isPinned ? '3px solid #f5a623' : 'none' }}
+      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: rowBg, borderLeft: isReclassified ? '3px solid #7c3aed' : m.isPinned ? '3px solid #f5a623' : 'none' }}
       onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
       onMouseOut={e => (e.currentTarget.style.background = rowBg)}>
       <td style={{ padding: '7px 4px', textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
@@ -381,6 +389,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
+          {isReclassified && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+              background: '#ede9fe', color: '#7c3aed', whiteSpace: 'nowrap'
+            }}>Reclassified</span>
+          )}
           {isBusiness && (
             m.job ? (
               <span style={{

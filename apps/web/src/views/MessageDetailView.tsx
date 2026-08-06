@@ -355,6 +355,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
 
+  const [reclassifyBusy, setReclassifyBusy] = useState(false)
+
   const isPhone = breakpoint === 'phone'
 
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
@@ -488,6 +490,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     }
   }
 
+  const handleReclassify = async (newCategory: 'BUSINESS' | 'PERSONAL') => {
+    if (!clickedMessage) return
+    setReclassifyBusy(true)
+    try {
+      await api.reclassifyMessage(workspaceId, clickedMessage.id, { mailboxCategory: newCategory })
+      const td = await loadThread()
+      setThreadData(td)
+    } catch { /* */ }
+    finally { setReclassifyBusy(false) }
+  }
+
   return (
     <div>
       <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12, minHeight: 44 }}>
@@ -510,10 +523,50 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       <div style={{ padding: isPhone ? '10px 0' : '12px 16px', marginBottom: 2 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
-          {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+            {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
+            {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
+              <button
+                onClick={() => handleReclassify('PERSONAL')}
+                disabled={reclassifyBusy}
+                style={{
+                  fontSize: 12, padding: '4px 12px', borderRadius: 5,
+                  border: '1px solid #7c3aed', background: '#ede9fe', color: '#7c3aed',
+                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
+                  opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
+                }}
+              >
+                {reclassifyBusy ? 'Updating...' : 'Mark as Personal'}
+              </button>
+            )}
+            {clickedMessage && clickedMessage.mailboxCategory === 'PERSONAL' && (
+              <button
+                onClick={() => handleReclassify('BUSINESS')}
+                disabled={reclassifyBusy}
+                style={{
+                  fontSize: 12, padding: '4px 12px', borderRadius: 5,
+                  border: '1px solid #1565c0', background: '#e3f2fd', color: '#1565c0',
+                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
+                  opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
+                }}
+              >
+                {reclassifyBusy ? 'Updating...' : 'Mark as Business'}
+              </button>
+            )}
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-          {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
+          </span>
+          {clickedMessage?.previousCategory && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 10,
+              background: '#ede9fe', color: '#7c3aed'
+            }}>
+              Manually reclassified from {clickedMessage.previousCategory.toLowerCase()}
+            </span>
+          )}
         </div>
       </div>
 

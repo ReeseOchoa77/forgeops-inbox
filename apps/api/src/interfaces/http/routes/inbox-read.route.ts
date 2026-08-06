@@ -227,6 +227,7 @@ const messageSummarySchema = z.object({
   isPinned: z.boolean().optional(),
   hasAttachments: z.boolean().optional(),
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
+  previousCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]).nullable().optional(),
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable(),
   job: jobSummarySchema.nullable().optional(),
@@ -271,7 +272,8 @@ const messageDetailSchema = z.object({
     receivedAt: z.string().datetime().nullable(),
     priority: z.enum(priorityValues).nullable(),
     itemStatus: z.enum(itemStatusValues),
-    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"])
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
+    previousCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]).nullable().optional()
   }),
   thread: z.object({
     id: z.string().min(1),
@@ -544,6 +546,7 @@ const serializeMessageSummary = (message: {
   isPinned?: boolean;
   hasAttachments?: boolean;
   mailboxCategory: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH";
+  previousCategory?: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH" | null;
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
   tasks: Array<Parameters<typeof serializeTask>[0]>;
   job?: {
@@ -575,6 +578,7 @@ const serializeMessageSummary = (message: {
     isPinned: message.isPinned ?? false,
     hasAttachments: message.hasAttachments ?? false,
     mailboxCategory: message.mailboxCategory,
+    previousCategory: message.previousCategory ?? null,
     classification: serializeClassification(message.classifications[0] ?? null),
     taskCandidate: serializeTask(message.tasks[0] ?? null),
     job: serializeJobSummary(message.job),
@@ -1198,6 +1202,7 @@ export const registerInboxReadRoutes = async (
             isTrashed: true,
             isPinned: true,
             mailboxCategory: true,
+            previousCategory: true,
             jobAssignmentSource: true,
             jobAssignmentIsManual: true,
             jobMatchConfidence: true,
@@ -1362,6 +1367,7 @@ export const registerInboxReadRoutes = async (
           priority: true,
           itemStatus: true,
           mailboxCategory: true,
+          previousCategory: true,
           jobAssignmentSource: true,
           jobAssignmentIsManual: true,
           jobMatchConfidence: true,
@@ -1492,7 +1498,8 @@ export const registerInboxReadRoutes = async (
               receivedAt: serializeDate(message.receivedAt),
               priority: message.priority,
               itemStatus: message.itemStatus,
-              mailboxCategory: message.mailboxCategory
+              mailboxCategory: message.mailboxCategory,
+              previousCategory: message.previousCategory ?? null
             },
             thread: {
               id: message.thread.id,
@@ -1601,6 +1608,7 @@ export const registerInboxReadRoutes = async (
           priority: true,
           itemStatus: true,
           mailboxCategory: true,
+          previousCategory: true,
           jobAssignmentSource: true,
           jobAssignmentIsManual: true,
           jobMatchConfidence: true,
@@ -1688,6 +1696,7 @@ export const registerInboxReadRoutes = async (
           priority: m.priority,
           itemStatus: m.itemStatus,
           mailboxCategory: m.mailboxCategory,
+          previousCategory: m.previousCategory ?? null,
           jobAssignmentSource: m.jobAssignmentSource,
           jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
           jobMatchConfidence: m.jobMatchConfidence,
@@ -1768,6 +1777,7 @@ export const registerInboxReadRoutes = async (
           priority: true,
           itemStatus: true,
           mailboxCategory: true,
+          previousCategory: true,
           jobAssignmentSource: true,
           jobAssignmentIsManual: true,
           jobMatchConfidence: true,
@@ -1842,6 +1852,7 @@ export const registerInboxReadRoutes = async (
             priority: m.priority,
             itemStatus: m.itemStatus,
             mailboxCategory: m.mailboxCategory,
+            previousCategory: m.previousCategory ?? null,
             jobAssignmentSource: m.jobAssignmentSource,
             jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
             jobMatchConfidence: m.jobMatchConfidence,
@@ -1968,6 +1979,7 @@ export const registerInboxReadRoutes = async (
             isSpam: true,
             isTrashed: true,
             mailboxCategory: true,
+            previousCategory: true,
             jobAssignmentSource: true,
             jobAssignmentIsManual: true,
             jobMatchConfidence: true,
