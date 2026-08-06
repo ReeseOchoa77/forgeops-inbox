@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type ReviewItem } from '../api'
+import { api, type ReviewItem, type MessageSummary } from '../api'
 import { PriorityBadge, ConfidenceBadge } from '../components/Badges'
 import { TypeBadge, ActionBadge } from '../components/Badges'
 
@@ -9,18 +9,24 @@ interface Props {
   onSelectMessage: (id: string) => void
 }
 
+type ReviewTab = 'REVIEW' | 'RECLASSIFIED'
 type ReviewFilter = 'ALL' | 'BUSINESS' | 'PERSONAL'
 
 export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [items, setItems] = useState<ReviewItem[]>([])
+  const [reclassifiedMessages, setReclassifiedMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
+  const [reclassifiedPage, setReclassifiedPage] = useState(1)
+  const [reclassifiedTotal, setReclassifiedTotal] = useState(0)
+  const [reclassifiedTotalPages, setReclassifiedTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [tab, setTab] = useState<ReviewTab>('REVIEW')
   const [filter, setFilter] = useState<ReviewFilter>('ALL')
 
-  const load = () => {
+  const loadReview = () => {
     setLoading(true)
     api.getReviewQueue(workspaceId, connectionId, page)
       .then(r => {
@@ -31,8 +37,20 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { setPage(1) }, [connectionId])
-  useEffect(load, [workspaceId, connectionId, page])
+  const loadReclassified = () => {
+    setLoading(true)
+    api.getMessages(workspaceId, connectionId, reclassifiedPage, 25, { reclassifiedOnly: true })
+      .then(r => {
+        setReclassifiedMessages(r.messages)
+        setReclassifiedTotalPages(r.pagination.totalPages)
+        setReclassifiedTotal(r.pagination.totalCount)
+      })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { setPage(1); setReclassifiedPage(1) }, [connectionId])
+  useEffect(() => { if (tab === 'REVIEW') loadReview() }, [workspaceId, connectionId, page, tab])
+  useEffect(() => { if (tab === 'RECLASSIFIED') loadReclassified() }, [workspaceId, connectionId, reclassifiedPage, tab])
 
   const filteredItems = items.filter(item => {
     if (filter === 'ALL') return true
@@ -51,7 +69,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       if (item.message.taskCandidate?.id) {
         await api.reviewTask(workspaceId, item.message.taskCandidate.id, decision)
       }
-      load()
+      loadReview()
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Review failed')
     } finally {
@@ -59,26 +77,87 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
     }
   }
 
-  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading review queue...</p>
+  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading...</p>
 
-  if (items.length === 0) {
-    return (
-      <div className="empty-state">
-        <div className="empty-icon">&#9878;</div>
-        <h3>All clear</h3>
-        <p>No items need human review right now. When the system is unsure about a classification or task, it will appear here.</p>
-      </div>
-    )
-  }
+  const tabStyle = (t: ReviewTab) => ({
+    padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+    border: 'none', borderBottom: tab === t ? '2px solid #1a1a2e' : '2px solid transparent',
+    background: 'none', color: tab === t ? '#1a1a2e' : '#888'
+  })
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Email Review</h2>
-        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
-          {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
-        </p>
       </div>
+
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e5e5', marginBottom: 14 }}>
+        <button style={tabStyle('REVIEW')} onClick={() => setTab('REVIEW')}>
+          Needs Review {totalCount > 0 && <span style={{ marginLeft: 4, fontSize: 11, background: '#f0f0f0', padding: '1px 6px', borderRadius: 8 }}>{totalCount}</span>}
+        </button>
+        <button style={tabStyle('RECLASSIFIED')} onClick={() => setTab('RECLASSIFIED')}>
+          Reclassified {reclassifiedTotal > 0 && <span style={{ marginLeft: 4, fontSize: 11, background: '#f3e8ff', color: '#7c3aed', padding: '1px 6px', borderRadius: 8 }}>{reclassifiedTotal}</span>}
+        </button>
+      </div>
+
+      {tab === 'RECLASSIFIED' && (
+        <div>
+          <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
+            Emails that were manually reclassified. Review sender evidence in Reference Data → Senders to apply changes globally.
+          </p>
+          {reclassifiedMessages.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon" style={{ fontSize: 28 }}>✓</div>
+              <h3>No reclassified emails</h3>
+              <p>When emails are manually changed from Business to Personal or vice versa, they appear here.</p>
+            </div>
+          ) : (
+            <>
+              {reclassifiedMessages.map(m => (
+                <div key={m.id} className="card" style={{
+                  borderLeft: '3px solid #7c3aed', marginBottom: 8, cursor: 'pointer'
+                }} onClick={() => onSelectMessage(m.id)}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{m.subject ?? '(no subject)'}</div>
+                      <div style={{ fontSize: 12, color: '#888' }}>{m.senderName ?? m.senderEmail}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: '#f3e8ff', color: '#7c3aed', fontWeight: 600 }}>
+                        {m.previousCategory} → {m.mailboxCategory}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#aaa' }}>
+                        {m.receivedAt ? new Date(m.receivedAt).toLocaleDateString() : ''}
+                      </span>
+                    </div>
+                  </div>
+                  {m.snippet && <div style={{ fontSize: 12, color: '#999', marginTop: 4, lineHeight: 1.4 }}>{m.snippet.slice(0, 120)}</div>}
+                </div>
+              ))}
+              {reclassifiedTotalPages > 1 && (
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
+                  <button className="btn btn-sm btn-outline" disabled={reclassifiedPage <= 1} onClick={() => setReclassifiedPage(p => p - 1)}>Previous</button>
+                  <span style={{ fontSize: 13, color: '#888' }}>Page {reclassifiedPage} of {reclassifiedTotalPages}</span>
+                  <button className="btn btn-sm btn-outline" disabled={reclassifiedPage >= reclassifiedTotalPages} onClick={() => setReclassifiedPage(p => p + 1)}>Next</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'REVIEW' && (<>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
+        {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
+      </p>
+
+      {items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">&#9878;</div>
+          <h3>All clear</h3>
+          <p>No items need human review right now.</p>
+        </div>
+      ) : (<>
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 14, flexWrap: 'wrap' }}>
         {(['ALL', 'BUSINESS', 'PERSONAL'] as const).map(f => (
@@ -255,6 +334,9 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
           <button className="btn btn-sm btn-outline" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next</button>
         </div>
       )}
+
+      </>)}
+      </>)}
     </div>
   )
 }

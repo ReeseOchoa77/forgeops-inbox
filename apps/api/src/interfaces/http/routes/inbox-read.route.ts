@@ -114,6 +114,7 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
   hasTaskCandidate: booleanQuerySchema.optional(),
+  reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional()
 });
 
@@ -658,6 +659,7 @@ const buildMessagesWhere = (input: {
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
+  reclassifiedOnly?: boolean;
   search?: string;
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
@@ -700,6 +702,10 @@ const buildMessagesWhere = (input: {
         { bodyText: { contains: term, mode: "insensitive" } }
       ]
     });
+  }
+
+  if (input.reclassifiedOnly) {
+    andConditions.push({ previousCategory: { not: null } });
   }
 
   if (input.businessCategory) {
@@ -1164,6 +1170,7 @@ export const registerInboxReadRoutes = async (
           ? { hasTaskCandidate: query.hasTaskCandidate }
           : {}),
         ...(query.search ? { search: query.search } : {}),
+        reclassifiedOnly: query.reclassifiedOnly,
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
       });

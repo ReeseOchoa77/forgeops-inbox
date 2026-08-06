@@ -296,6 +296,7 @@ export const api = {
     businessTypeGroup?: string;
     businessTypeKey?: string;
     jobId?: string;
+    reclassifiedOnly?: boolean;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
@@ -306,6 +307,7 @@ export const api = {
     if (filters?.businessTypeGroup) params.set('businessTypeGroup', filters.businessTypeGroup);
     if (filters?.businessTypeKey) params.set('businessTypeKey', filters.businessTypeKey);
     if (filters?.jobId) params.set('jobId', filters.jobId);
+    if (filters?.reclassifiedOnly) params.set('reclassifiedOnly', 'true');
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
