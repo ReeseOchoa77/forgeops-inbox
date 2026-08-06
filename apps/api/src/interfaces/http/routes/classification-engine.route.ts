@@ -447,15 +447,8 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       });
     }
 
-    const { recordSenderEvidence } = await import("./sender-evidence.route.js");
-    await recordSenderEvidence(
-      app.services.prisma,
-      params.workspaceId,
-      message.senderEmail,
-      message.senderName,
-      body.mailboxCategory,
-      true
-    ).catch(() => {});
+    // Sender evidence is NOT auto-updated here.
+    // The user must explicitly approve the sender status change via Reference Data or Review Queue.
 
     if (previousCategory === "BUSINESS" && body.mailboxCategory === "PERSONAL") {
       await app.services.prisma.task.updateMany({
