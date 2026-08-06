@@ -391,20 +391,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               background: '#ede9fe', color: '#7c3aed', whiteSpace: 'nowrap'
             }}>Reclassified</span>
           )}
-          {isBusiness && (
-            m.job ? (
-              <span style={{
-                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-                background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
-              }} title={m.job.name}>
-                {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
-              </span>
-            ) : (
-              <span style={{
-                fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
-                background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
-              }}>Unassigned</span>
-            )
+          {isBusiness && !isTablet && m.classification && (
+            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           )}
         </div>
         {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
@@ -429,9 +417,19 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       </td>
       {isBusiness && !isTablet && (
         <td style={{ padding: '7px 12px' }}>
-          {m.classification ? (
-            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
-          ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+          {m.job ? (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+              background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
+            }} title={m.job.name}>
+              {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
+            </span>
+          ) : (
+            <span style={{
+              fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
+              background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
+            }}>Unassigned</span>
+          )}
         </td>
       )}
       {isBusiness && (
@@ -553,7 +551,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   {isBusiness && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
-                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
+                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
                   {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
                   <th style={{ padding: '8px 6px', width: 64 }}></th>
