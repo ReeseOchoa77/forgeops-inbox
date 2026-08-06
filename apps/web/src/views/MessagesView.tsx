@@ -215,25 +215,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const handlePin = async (messageId: string, currentlyPinned: boolean) => {
     const newPinned = !currentlyPinned
-    setMessages(prev => {
-      const updated = prev.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
-      return [...updated].sort((a, b) => {
-        if (a.isPinned && !b.isPinned) return -1
-        if (!a.isPinned && b.isPinned) return 1
-        return 0
-      })
+    const sortMessages = (msgs: MessageSummary[]) => [...msgs].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1
+      if (!a.isPinned && b.isPinned) return 1
+      const dateA = new Date(a.receivedAt ?? a.sentAt).getTime()
+      const dateB = new Date(b.receivedAt ?? b.sentAt).getTime()
+      return dateB - dateA
     })
+    setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)))
     try {
       await api.pinMessage(workspaceId, connectionId, messageId, newPinned)
     } catch {
-      setMessages(prev => {
-        const reverted = prev.map(m => m.id === messageId ? { ...m, isPinned: currentlyPinned } : m)
-        return [...reverted].sort((a, b) => {
-          if (a.isPinned && !b.isPinned) return -1
-          if (!a.isPinned && b.isPinned) return 1
-          return 0
-        })
-      })
+      setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: currentlyPinned } : m)))
     }
   }
 
