@@ -434,12 +434,6 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       if (body.jobId !== undefined) classUpdate.jobId = body.jobId;
       if (body.priority) classUpdate.priority = body.priority;
       if (body.containsActionRequest !== undefined) classUpdate.containsActionRequest = body.containsActionRequest;
-      if (body.mailboxCategory === "PERSONAL") {
-        classUpdate.businessTypeKey = null;
-        classUpdate.customerId = null;
-        classUpdate.vendorId = null;
-        classUpdate.jobId = null;
-      }
 
       await app.services.prisma.classification.update({
         where: { id: classification.id },
@@ -453,7 +447,14 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     if (previousCategory === "BUSINESS" && body.mailboxCategory === "PERSONAL") {
       await app.services.prisma.task.updateMany({
         where: { workspaceId: params.workspaceId, sourceMessageId: message.id, status: "OPEN" },
-        data: { dismissedAt: new Date(), dismissedBy: session.userId, dismissalReason: `Reclassified to PERSONAL` }
+        data: { status: "CANCELLED", dismissalReason: `Reclassified to PERSONAL` }
+      });
+    }
+
+    if (previousCategory === "PERSONAL" && body.mailboxCategory === "BUSINESS") {
+      await app.services.prisma.task.updateMany({
+        where: { workspaceId: params.workspaceId, sourceMessageId: message.id, status: "CANCELLED", dismissalReason: "Reclassified to PERSONAL" },
+        data: { status: "OPEN", dismissalReason: null }
       });
     }
 
