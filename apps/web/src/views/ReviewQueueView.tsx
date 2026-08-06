@@ -80,7 +80,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14, flexWrap: 'wrap' }}>
         {(['ALL', 'BUSINESS', 'PERSONAL'] as const).map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
             padding: '5px 14px', fontSize: 12, fontWeight: 500, borderRadius: 12,
@@ -101,8 +101,8 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         return (
           <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17', marginBottom: 10 }}>
             {/* Header: subject + actions */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
-              <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, cursor: 'pointer', color: '#06c' }} onClick={() => onSelectMessage(m.id)}>
                   {m.subject ?? '(no subject)'}
                 </div>
@@ -116,12 +116,14 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <button className="btn btn-sm btn-success"
                   disabled={actionLoading === approveKey}
-                  onClick={() => handleReview(item, 'APPROVED')}>
+                  onClick={() => handleReview(item, 'APPROVED')}
+                  style={{ minHeight: 36 }}>
                   {actionLoading === approveKey ? '...' : 'Correct'}
                 </button>
                 <button className="btn btn-sm btn-danger"
                   disabled={actionLoading === rejectKey}
-                  onClick={() => handleReview(item, 'REJECTED')}>
+                  onClick={() => handleReview(item, 'REJECTED')}
+                  style={{ minHeight: 36 }}>
                   {actionLoading === rejectKey ? '...' : 'Incorrect'}
                 </button>
               </div>

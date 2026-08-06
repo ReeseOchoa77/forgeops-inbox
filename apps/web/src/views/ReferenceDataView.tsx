@@ -120,13 +120,13 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 0, marginBottom: 12, borderBottom: '2px solid #e5e5e5', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 0, marginBottom: 12, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => { setTab(t.key); setImportStep('idle') }} style={{
             padding: '7px 14px', fontSize: 12, fontWeight: tab === t.key ? 600 : 400,
             color: tab === t.key ? '#1a1a2e' : '#888', background: 'none', border: 'none',
             borderBottom: tab === t.key ? '2px solid #1a1a2e' : '2px solid transparent',
-            marginBottom: -2, cursor: 'pointer'
+            marginBottom: -2, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0
           }}>{t.label} {data[t.key] ? `(${(data[t.key] as unknown[]).length})` : ''}</button>
         ))}
       </div>
@@ -214,8 +214,8 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
           <p>{tab === 'customers' || tab === 'vendors' ? 'Import from CSV or paste names above.' : `${tab} will appear here as data is imported.`}</p>
         </div>
       ) : (
-        <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 500 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 500, WebkitOverflowScrolling: 'touch' as never }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 600 }}>
             <thead>
               <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0 }}>
                 {tab === 'customers' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Aliases</th><th style={{ padding: '7px 10px' }}>Contacts</th><th style={{ padding: '7px 10px' }}>Jobs</th></>}

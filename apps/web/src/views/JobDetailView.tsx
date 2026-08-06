@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity, type JobLookup } from '../api'
+import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
   workspaceId: string
   jobId: string
   userRole: string
   onBack: () => void
+  breakpoint?: Breakpoint
 }
 
 type Tab = 'overview' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
@@ -69,7 +71,8 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
   )
 }
 
-export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
+export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint = 'desktop' }: Props) {
+  const isPhone = breakpoint === 'phone'
   const [job, setJob] = useState<JobDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('overview')
@@ -245,17 +248,17 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
   const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: isPhone ? 12 : 24 }}>
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
         <button
           onClick={onBack}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#6b7280', marginBottom: 8, padding: 0 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#6b7280', marginBottom: 8, padding: 0, minHeight: 44, display: 'inline-flex', alignItems: 'center' }}
         >
           &larr; Back to Jobs
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{job.name}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0, fontSize: isPhone ? 18 : 22, fontWeight: 700 }}>{job.name}</h2>
           {job.jobNumber && <span style={{ fontSize: 13, color: '#6b7280', fontFamily: 'monospace' }}>#{job.jobNumber}</span>}
           <StatusBadge status={job.status} />
           {job.archivedAt && <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 500 }}>ARCHIVED</span>}
@@ -263,17 +266,17 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
         {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             style={{
-              padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
+              padding: isPhone ? '10px 12px' : '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: tab === t.key ? 600 : 400,
               color: tab === t.key ? '#1a1a2e' : '#6b7280',
               borderBottom: tab === t.key ? '2px solid #1a1a2e' : '2px solid transparent',
-              marginBottom: -1
+              marginBottom: -1, whiteSpace: 'nowrap', flexShrink: 0,
             }}
           >
             {t.label}
@@ -284,7 +287,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
       {/* Overview Tab */}
       {tab === 'overview' && (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
             <MetricCard label="Total Emails" value={job.emailCount} />
             <MetricCard label="Emails (7d)" value={job.recentEmails7d} />
             <MetricCard label="Emails (30d)" value={job.recentEmails30d} />
@@ -295,7 +298,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
             <MetricCard label="Next Due" value={job.nextDueDate ? formatDate(job.nextDueDate) : '—'} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 16 }}>
             <Card title="Details">
               <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
                 <div><span style={{ color: '#6b7280' }}>Customer:</span> <strong>{job.customerName ?? '—'}</strong></div>
@@ -421,8 +424,8 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
 
           {/* Move email modal */}
           {showMoveModal && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 400, background: '#fff', borderRadius: 10, padding: 24, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isPhone ? 16 : 0 }}>
+              <div style={{ width: isPhone ? '100%' : 400, maxWidth: '100vw', background: '#fff', borderRadius: isPhone ? 8 : 10, padding: isPhone ? 16 : 24, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
                 <h4 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 600 }}>Move Email to Another Job</h4>
                 <select
                   value={moveJobId}
@@ -619,7 +622,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack }: Props) {
 
       {/* Settings Tab */}
       {tab === 'settings' && (
-        <div style={{ maxWidth: 640 }}>
+        <div style={{ maxWidth: isPhone ? '100%' : 640 }}>
           <Card title="Job Details" style={{ marginBottom: 16 }}>
             <div style={{ display: 'grid', gap: 12 }}>
               <div>

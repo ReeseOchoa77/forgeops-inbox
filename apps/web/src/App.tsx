@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type SessionResponse, type ConnectionSummary } from './api'
 import { ComposeEditor } from './components/ComposeEditor'
+import { useBreakpoint, type Breakpoint } from './hooks/useBreakpoint'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
 const googleSignInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
@@ -39,13 +40,33 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
+const PAGE_TITLES: Record<Page, string> = {
+  dashboard: 'Dashboard',
+  inbox: 'Inbox',
+  'message-detail': 'Message',
+  review: 'Email Review',
+  tasks: 'Tasks',
+  jobs: 'Jobs',
+  'job-detail': 'Job Detail',
+  'outlook-folders': 'Outlook Folders',
+  documents: 'Documents',
+  reference: 'Reference Data',
+  'team-access': 'Team Access',
+  workspace: 'Workspace',
+  settings: 'Settings',
+  admin: 'Platform Admin',
+}
+
 const ROLE_HIERARCHY: Record<UserRole, number> = { VIEWER: 0, MEMBER: 1, MANAGER: 2, ADMIN: 3, OWNER: 4 }
 
 function hasMinRole(current: UserRole, required: UserRole): boolean {
   return ROLE_HIERARCHY[current] >= ROLE_HIERARCHY[required]
 }
 
+const SIDEBAR_COLLAPSED_KEY = 'forgeops_sidebar_collapsed'
+
 export default function App() {
+  const bp = useBreakpoint()
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [workspaceId, setWorkspaceId] = useState('')
@@ -58,6 +79,48 @@ export default function App() {
   const [showCompose, setShowCompose] = useState(false)
   const [composeSending, setComposeSending] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
+  })
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  const menuBtnRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed)) } catch { /* */ }
+  }, [sidebarCollapsed])
+
+  // Close drawer on breakpoint change away from phone
+  useEffect(() => {
+    if (bp !== 'phone') setDrawerOpen(false)
+  }, [bp])
+
+  // Lock body scroll when drawer is open
+  useEffect(() => {
+    if (drawerOpen) {
+      document.body.style.overflow = 'hidden'
+      // Focus the drawer
+      setTimeout(() => drawerRef.current?.focus(), 50)
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => { document.body.style.overflow = '' }
+  }, [drawerOpen])
+
+  // Escape key closes drawer
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDrawerOpen(false)
+        menuBtnRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [drawerOpen])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -126,7 +189,7 @@ export default function App() {
 
   if (accessDenied) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8', padding: 16 }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 460 }}>
           <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fce4ec', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 28 }}>&#128274;</div>
           <h2 style={{ margin: '0 0 10px', fontSize: 22, fontWeight: 700 }}>Access Restricted</h2>
@@ -140,7 +203,7 @@ export default function App() {
 
   if (error) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8', padding: 16 }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 460 }}>
           <h2 style={{ margin: '0 0 8px', fontSize: 20 }}>Something went wrong</h2>
           <p style={{ color: '#888', fontSize: 14, margin: '0 0 20px' }}>{error}</p>
@@ -162,7 +225,7 @@ export default function App() {
     const showMicrosoft = session.microsoftAuthAvailable
 
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8', padding: 16 }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
           <div style={{ width: 56, height: 56, borderRadius: 12, background: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 24, color: '#fff' }}>&#9993;</div>
           <h1 style={{ fontSize: 28, margin: '0 0 8px', fontWeight: 700, letterSpacing: '-0.5px', color: '#1a1a2e' }}>ForgeOps Inbox</h1>
@@ -218,7 +281,7 @@ export default function App() {
   // --- Zero workspaces ---
   if (session.memberships.length === 0 && !session.user?.isPlatformAdmin) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f7f7f8', padding: 16 }}>
         <div style={{ textAlign: 'center', padding: 48, maxWidth: 480 }}>
           <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700 }}>Access Approved</h2>
           <p style={{ color: '#666', margin: '0 0 8px', fontSize: 15, lineHeight: 1.5 }}>Your account has been approved, but you haven't been assigned to a workspace yet.</p>
@@ -232,6 +295,7 @@ export default function App() {
   const navigate = (p: Page) => {
     setPage(p)
     if (p !== 'message-detail') setSelectedMessageId('')
+    if (bp === 'phone') setDrawerOpen(false)
   }
 
   const openMessage = (id: string) => {
@@ -268,15 +332,32 @@ export default function App() {
   const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
   const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
 
-  return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <span style={{ fontSize: 16, marginRight: 6 }}>&#9993;</span>
-          ForgeOps
-        </div>
+  const isPhone = bp === 'phone'
+  const isTablet = bp === 'tablet'
+  const effectiveCollapsed = isTablet ? true : sidebarCollapsed
+  const sidebarWidth = effectiveCollapsed ? 56 : 200
 
-        {/* Workspace switcher */}
+  const filteredNav = NAV_ITEMS.filter(item => {
+    if (item.adminOnly && !(isPlatformAdmin && currentRole === 'OWNER')) return false
+    if (item.minRole && !hasMinRole(currentRole, item.minRole)) return false
+    return true
+  })
+
+  const sidebarContent = (forDrawer: boolean) => (
+    <>
+      <div className="sidebar-brand" style={effectiveCollapsed && !forDrawer ? { padding: '16px 0 10px', textAlign: 'center', fontSize: 18 } : undefined}>
+        {effectiveCollapsed && !forDrawer ? (
+          <span style={{ fontSize: 18 }}>&#9993;</span>
+        ) : (
+          <>
+            <span style={{ fontSize: 16, marginRight: 6 }}>&#9993;</span>
+            ForgeOps
+          </>
+        )}
+      </div>
+
+      {/* Workspace switcher */}
+      {(!effectiveCollapsed || forDrawer) && (
         <div style={{ padding: '0 14px 10px' }}>
           {session.memberships.length > 1 ? (
             <select
@@ -294,59 +375,183 @@ export default function App() {
             </div>
           )}
         </div>
+      )}
 
-        <nav className="sidebar-nav">
-          {NAV_ITEMS.filter(item => {
-            if (item.adminOnly && !(isPlatformAdmin && currentRole === 'OWNER')) return false
-            if (item.minRole && !hasMinRole(currentRole, item.minRole)) return false
-            return true
-          }).map((item, i, arr) => (
-            <div key={item.page}>
-              {item.section && (i === 0 || arr[i - 1]?.section !== item.section) && (
+      <nav className="sidebar-nav">
+        {filteredNav.map((item, i, arr) => (
+          <div key={item.page}>
+            {item.section && (i === 0 || arr[i - 1]?.section !== item.section) && (
+              (!effectiveCollapsed || forDrawer) ? (
                 <div className="sidebar-section-label">{item.section}</div>
-              )}
-              <button
-                className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && item.page === 'jobs') ? 'active' : ''}
-                onClick={() => navigate(item.page)}
-              >
-                <span className="nav-icon">{item.icon}</span>
-                {item.label}
-              </button>
-            </div>
-          ))}
-        </nav>
+              ) : (
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '6px 8px' }} />
+              )
+            )}
+            <button
+              className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && item.page === 'jobs') ? 'active' : ''}
+              onClick={() => navigate(item.page)}
+              title={effectiveCollapsed && !forDrawer ? item.label : undefined}
+              style={effectiveCollapsed && !forDrawer ? { justifyContent: 'center', padding: '10px 0' } : undefined}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              {(!effectiveCollapsed || forDrawer) && item.label}
+            </button>
+          </div>
+        ))}
+      </nav>
 
-        <div className="sidebar-footer">
-          <div className="user-email">{session.user?.email}</div>
-          {isPlatformAdmin && <div style={{ fontSize: 9, color: '#5c7cfa', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Platform Admin</div>}
-          <button onClick={handleSignOut}>Sign out</button>
+      {/* Collapse toggle (desktop only, not in drawer) */}
+      {!forDrawer && !isTablet && (
+        <div style={{ padding: '4px 8px' }}>
+          <button
+            onClick={() => setSidebarCollapsed(c => !c)}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            style={{
+              width: '100%', padding: '6px 0', background: 'none', border: 'none',
+              color: '#667', fontSize: 14, cursor: 'pointer', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 4,
+            }}
+          >
+            {sidebarCollapsed ? '\u276F' : '\u276E'}
+            {!sidebarCollapsed && <span style={{ fontSize: 11 }}>Collapse</span>}
+          </button>
         </div>
-      </aside>
+      )}
 
+      <div className="sidebar-footer" style={effectiveCollapsed && !forDrawer ? { padding: '10px 4px', textAlign: 'center' } : undefined}>
+        {(!effectiveCollapsed || forDrawer) && (
+          <>
+            <div className="user-email">{session.user?.email}</div>
+            {isPlatformAdmin && <div style={{ fontSize: 9, color: '#5c7cfa', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Platform Admin</div>}
+          </>
+        )}
+        <button onClick={handleSignOut} style={effectiveCollapsed && !forDrawer ? { padding: '3px 6px', fontSize: 10 } : undefined}>
+          {effectiveCollapsed && !forDrawer ? '✕' : 'Sign out'}
+        </button>
+      </div>
+    </>
+  )
+
+  return (
+    <div className="app-layout">
+      {/* Desktop / Tablet sidebar */}
+      {!isPhone && (
+        <aside
+          className="sidebar"
+          style={{ width: sidebarWidth, transition: 'width 0.2s ease' }}
+        >
+          {sidebarContent(false)}
+        </aside>
+      )}
+
+      {/* Phone drawer overlay */}
+      {isPhone && drawerOpen && (
+        <div
+          className="drawer-backdrop"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900,
+          }}
+          onClick={() => { setDrawerOpen(false); menuBtnRef.current?.focus() }}
+        />
+      )}
+
+      {/* Phone drawer sidebar */}
+      {isPhone && (
+        <aside
+          ref={drawerRef}
+          role="dialog"
+          aria-label="Navigation menu"
+          aria-modal="true"
+          tabIndex={-1}
+          className="sidebar"
+          style={{
+            position: 'fixed', top: 0, left: 0, bottom: 0,
+            width: 280, zIndex: 910,
+            transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)',
+            transition: 'transform 0.25s ease',
+          }}
+        >
+          {sidebarContent(true)}
+        </aside>
+      )}
+
+      {/* Main area */}
       <div className="main-content">
-        <div className="topbar">
-          <span style={{ fontWeight: 600, fontSize: 15 }}>
-            {currentWorkspace?.workspace.name ?? 'ForgeOps Inbox'}
-          </span>
+        {/* Phone top bar */}
+        {isPhone ? (
+          <header className="mobile-header" style={{
+            height: 52, padding: '0 12px', background: '#fff', borderBottom: '1px solid #e5e5e5',
+            display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
+          }}>
+            <button
+              ref={menuBtnRef}
+              onClick={() => setDrawerOpen(o => !o)}
+              aria-label="Open navigation menu"
+              aria-expanded={drawerOpen}
+              style={{
+                background: 'none', border: 'none', fontSize: 22, cursor: 'pointer',
+                padding: '4px 6px', color: '#333', lineHeight: 1,
+                minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              &#9776;
+            </button>
+            <span style={{ flex: 1, fontWeight: 600, fontSize: 15, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {PAGE_TITLES[page]}
+            </span>
+            <span style={{
+              width: 32, height: 32, borderRadius: '50%', background: '#e0e7ff', color: '#4338ca',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 600, flexShrink: 0,
+            }}>
+              {(session.user?.email ?? '?')[0].toUpperCase()}
+            </span>
+          </header>
+        ) : (
+          <div className="topbar">
+            <span style={{ fontWeight: 600, fontSize: 15 }}>
+              {currentWorkspace?.workspace.name ?? 'ForgeOps Inbox'}
+            </span>
 
-          <div style={{ flex: 1 }} />
+            <div style={{ flex: 1 }} />
 
-          {connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
-            <select value={connectionId} onChange={e => setConnectionId(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}>
+            {connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
+              <select value={connectionId} onChange={e => setConnectionId(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}>
+                {connections.map(c => (
+                  <option key={c.id} value={c.id}>{c.email} ({c.counts.messages} msgs)</option>
+                ))}
+              </select>
+            )}
+
+            {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
+              <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
+                Compose
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Phone-only topbar extras (connection selector, compose) */}
+        {isPhone && connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
+          <div style={{ padding: '6px 12px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select
+              value={connectionId}
+              onChange={e => setConnectionId(e.target.value)}
+              style={{ flex: 1, padding: '6px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}
+            >
               {connections.map(c => (
-                <option key={c.id} value={c.id}>{c.email} ({c.counts.messages} msgs)</option>
+                <option key={c.id} value={c.id}>{c.email}</option>
               ))}
             </select>
-          )}
+            {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
+              <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
+                Compose
+              </button>
+            )}
+          </div>
+        )}
 
-          {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
-            <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
-              Compose
-            </button>
-          )}
-        </div>
-
-        <div className="page-content">
+        <div className="page-content" style={isPhone ? { padding: '12px' } : undefined}>
           {connectionNotice && (
             <div style={{
               padding: '10px 16px', marginBottom: 16, borderRadius: 6, fontSize: 14,
@@ -370,16 +575,16 @@ export default function App() {
 
           {page === 'dashboard' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p) => setPage(p)} />
+              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p) => setPage(p)} breakpoint={bp} />
             </div>
           )}
 
           {!needsConnection && page === 'inbox' && connectionId && (
-            <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} userEmail={userEmail} connections={connections} />
+            <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} userEmail={userEmail} connections={connections} breakpoint={bp} />
           )}
           {!needsConnection && page === 'message-detail' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} />
+              <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} breakpoint={bp} />
             </div>
           )}
           {!needsConnection && page === 'review' && connectionId && (
@@ -395,12 +600,12 @@ export default function App() {
 
           {page === 'jobs' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} />
+              <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} breakpoint={bp} />
             </div>
           )}
           {page === 'job-detail' && selectedJobId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <JobDetailView workspaceId={workspaceId} jobId={selectedJobId} userRole={currentRole} onBack={() => setPage('jobs')} />
+              <JobDetailView workspaceId={workspaceId} jobId={selectedJobId} userRole={currentRole} onBack={() => setPage('jobs')} breakpoint={bp} />
             </div>
           )}
 
@@ -447,10 +652,12 @@ export default function App() {
       {showCompose && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 24
+          display: 'flex', alignItems: isPhone ? 'stretch' : 'flex-end', justifyContent: isPhone ? 'stretch' : 'flex-end',
+          padding: isPhone ? 0 : 24
         }}>
           <div style={{
-            width: 560, maxHeight: '80vh', background: '#fff', borderRadius: 10,
+            width: isPhone ? '100%' : 560, maxHeight: isPhone ? '100vh' : '80vh', height: isPhone ? '100%' : undefined,
+            background: '#fff', borderRadius: isPhone ? 0 : 10,
             boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden'
           }}>
             <div style={{
@@ -458,7 +665,7 @@ export default function App() {
               display: 'flex', justifyContent: 'space-between', alignItems: 'center'
             }}>
               <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>New Message</h3>
-              <button onClick={() => setShowCompose(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999' }}>&times;</button>
+              <button onClick={() => setShowCompose(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
             </div>
             <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
               <ComposeEditor

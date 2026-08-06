@@ -106,7 +106,7 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
               value={newEmail}
               onChange={e => setNewEmail(e.target.value)}
               required
-              style={{ flex: '1 1 240px', padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}
+              style={{ flex: '1 1 200px', padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14, minHeight: 44 }}
             />
             <select value={newRole} onChange={e => setNewRole(e.target.value)}
               style={{ padding: '7px 10px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 14 }}>
@@ -130,7 +130,8 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
       )}
 
       {activeEntries.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, minWidth: 480 }}>
           <thead>
             <tr style={{ borderBottom: '2px solid #e5e5e5', textAlign: 'left' }}>
               <th style={{ padding: '8px 10px' }}>Email</th>
@@ -175,6 +176,7 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {revokedEntries.length > 0 && (

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api, type TaskListItem, type MessageSummary, type ReviewItem } from '../api'
+import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
   workspaceId: string
   connectionId: string
   onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin') => void
+  breakpoint?: Breakpoint
 }
 
 function formatDate(iso: string | null): string {
@@ -13,11 +15,13 @@ function formatDate(iso: string | null): string {
   catch { return iso ?? '—' }
 }
 
-export function DashboardView({ workspaceId, connectionId, onNavigate }: Props) {
+export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoint = 'desktop' }: Props) {
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([])
   const [recentMessages, setRecentMessages] = useState<MessageSummary[]>([])
   const [loading, setLoading] = useState(true)
+
+  const isPhone = breakpoint === 'phone'
 
   useEffect(() => {
     if (!workspaceId || !connectionId) { setLoading(false); return }
@@ -54,7 +58,11 @@ export function DashboardView({ workspaceId, connectionId, onNavigate }: Props) 
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px' }}>Operational overview for your workspace.</p>
 
       {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 20 }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(160px, 1fr))',
+        gap: 10, marginBottom: 20
+      }}>
         {[
           { label: 'Open Tasks', value: openTasks.length, color: '#1565c0', onClick: () => onNavigate('tasks') },
           { label: 'Urgent / High', value: urgentTasks.length, color: '#c62828', onClick: () => onNavigate('tasks') },
@@ -62,13 +70,17 @@ export function DashboardView({ workspaceId, connectionId, onNavigate }: Props) 
           { label: 'Needs Review', value: reviewItems.length, color: '#f57f17', onClick: () => onNavigate('review') },
         ].map((stat, i) => (
           <div key={i} onClick={stat.onClick} className="card" style={{ cursor: 'pointer', textAlign: 'center', padding: '14px 12px' }}>
-            <div style={{ fontSize: 28, fontWeight: 700, color: stat.value > 0 ? stat.color : '#ccc' }}>{stat.value}</div>
+            <div style={{ fontSize: isPhone ? 24 : 28, fontWeight: 700, color: stat.value > 0 ? stat.color : '#ccc' }}>{stat.value}</div>
             <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{stat.label}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr',
+        gap: 16
+      }}>
         {/* Urgent tasks */}
         <div className="card">
           <h3 style={{ fontSize: 14, margin: '0 0 10px', fontWeight: 600 }}>Urgent Tasks</h3>
@@ -108,8 +120,8 @@ export function DashboardView({ workspaceId, connectionId, onNavigate }: Props) 
             <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>No business emails synced yet</p>
           ) : (
             recentMessages.map(m => (
-              <div key={m.id} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #f5f5f5', fontSize: 12 }}>
-                <div style={{ flex: 1 }}>
+              <div key={m.id} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #f5f5f5', fontSize: 12, flexWrap: isPhone ? 'wrap' : undefined }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: 500 }}>{m.senderName ?? m.senderEmail}</span>
                   <span style={{ color: '#888', marginLeft: 8 }}>{m.subject ?? '(no subject)'}</span>
                 </div>

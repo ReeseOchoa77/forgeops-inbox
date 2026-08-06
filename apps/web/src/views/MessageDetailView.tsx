@@ -3,12 +3,14 @@ import DOMPurify from 'dompurify'
 import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
+import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
   workspaceId: string
   connectionId: string
   messageId: string
   onBack: () => void
+  breakpoint?: Breakpoint
 }
 
 function formatSize(bytes: number | null): string {
@@ -99,7 +101,8 @@ function AttachmentBar({ attachments, workspaceId, connectionId, messageId }: {
           style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
             border: '1px solid #e5e5e5', borderRadius: 6, background: '#fafafa',
-            textDecoration: 'none', color: '#333', fontSize: 12, maxWidth: 240
+            textDecoration: 'none', color: '#333', fontSize: 12, maxWidth: 240,
+            minHeight: 44,
           }}
         >
           <span style={{ fontSize: 16 }}>{fileIcon(att.mimeType)}</span>
@@ -113,7 +116,7 @@ function AttachmentBar({ attachments, workspaceId, connectionId, messageId }: {
   )
 }
 
-function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward, onLoadBody }: {
+function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward, onLoadBody, isPhone }: {
   msg: ThreadMessage
   expanded: boolean
   onToggle: () => void
@@ -123,6 +126,7 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
   onReply: () => void
   onForward: () => void
   onLoadBody: () => void
+  isPhone?: boolean
 }) {
   const senderDisplay = msg.senderName ?? msg.senderEmail
   const toDisplay = msg.toAddresses.map(a => a.name ?? a.email).join(', ')
@@ -132,8 +136,8 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
       <div
         onClick={onToggle}
         style={{
-          padding: '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
-          borderBottom: '1px solid #f0f0f0', fontSize: 13
+          padding: isPhone ? '12px' : '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
+          borderBottom: '1px solid #f0f0f0', fontSize: 13, minHeight: 44,
         }}
         onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
         onMouseOut={e => (e.currentTarget.style.background = '')}
@@ -146,7 +150,10 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <span style={{ fontWeight: 500 }}>{senderDisplay}</span>
-          <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>
+          {!isPhone && <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>}
+          {isPhone && msg.snippet && (
+            <div style={{ color: '#999', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.snippet.slice(0, 60)}</div>
+          )}
         </div>
         <div style={{ color: '#aaa', fontSize: 11, flexShrink: 0 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</div>
         {msg.hasAttachments && <span style={{ fontSize: 14 }} title="Has attachments">{'\u{1F4CE}'}</span>}
@@ -155,8 +162,8 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
   }
 
   return (
-    <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0' }}>
-      <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+    <div style={{ padding: isPhone ? '12px' : '16px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: isPhone ? 'wrap' : undefined }}>
         <div style={{
           width: 36, height: 36, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15, flexShrink: 0
@@ -164,7 +171,7 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
           {senderDisplay.charAt(0).toUpperCase()}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: isPhone ? 'wrap' : undefined, gap: isPhone ? 4 : 0 }}>
             <div>
               <span style={{ fontWeight: 600, fontSize: 14 }}>{senderDisplay}</span>
               {msg.senderName && <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>&lt;{msg.senderEmail}&gt;</span>}
@@ -175,7 +182,7 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</span>
               {!isLast && (
-                <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#bbb', padding: 0 }} title="Collapse">&#9660;</button>
+                <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#bbb', padding: 0, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Collapse">&#9660;</button>
               )}
             </div>
           </div>
@@ -186,14 +193,15 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
         </div>
       </div>
 
-      <div style={{ paddingLeft: 48 }}>
+      <div style={{ paddingLeft: isPhone ? 0 : 48 }}>
         {msg.bodyTruncated && !msg.bodyText && !msg.bodyHtml ? (
           <div style={{ padding: '12px 0' }}>
             <button
               onClick={onLoadBody}
               style={{
                 background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 4,
-                padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#555'
+                padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#555',
+                minHeight: 44,
               }}
             >
               Show full message
@@ -211,9 +219,9 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
         />
 
         {isLast && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button className="btn btn-sm btn-outline" onClick={onReply}>Reply</button>
-            <button className="btn btn-sm btn-outline" onClick={onForward}>Forward</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button className="btn btn-sm btn-outline" onClick={onReply} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Reply</button>
+            <button className="btn btn-sm btn-outline" onClick={onForward} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Forward</button>
           </div>
         )}
       </div>
@@ -264,7 +272,7 @@ function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: strin
       margin: '12px 0', padding: '12px 16px', background: '#fff',
       border: '1px solid #e5e5e5', borderRadius: 8
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>
           Attachments ({attachments.length - inlineCount}{inlineCount > 0 ? ` + ${inlineCount} inline` : ''})
         </div>
@@ -287,7 +295,7 @@ function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: strin
             style={{
               display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
               border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa',
-              fontSize: 13
+              fontSize: 13, flexWrap: 'wrap',
             }}
           >
             <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(att.mimeType)}</span>
@@ -309,7 +317,7 @@ function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: strin
                 style={{
                   fontSize: 12, color: '#1565c0', textDecoration: 'none', fontWeight: 500,
                   padding: '4px 10px', border: '1px solid #1565c0', borderRadius: 4,
-                  flexShrink: 0
+                  flexShrink: 0, minHeight: 36, display: 'inline-flex', alignItems: 'center',
                 }}
               >
                 Download
@@ -332,7 +340,7 @@ function jobSourceLabel(source: string | null | undefined, isManual: boolean | u
   return source
 }
 
-export function MessageDetailView({ workspaceId, connectionId, messageId, onBack }: Props) {
+export function MessageDetailView({ workspaceId, connectionId, messageId, onBack, breakpoint = 'desktop' }: Props) {
   const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -346,6 +354,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [selectedJobId, setSelectedJobId] = useState('')
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
+
+  const isPhone = breakpoint === 'phone'
 
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
@@ -480,7 +490,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   return (
     <div>
-      <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12 }}>
+      <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12, minHeight: 44 }}>
         &larr; Back to Inbox
       </button>
 
@@ -492,14 +502,14 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           border: `1px solid ${sendResult.type === 'success' ? '#a8d5a2' : '#e8a09a'}`
         }}>
           <span>{sendResult.message}</span>
-          <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>&times;</button>
+          <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
         </div>
       )}
 
       {/* Subject header */}
-      <div style={{ padding: '12px 16px', marginBottom: 2 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-          <h2 style={{ fontSize: 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
+      <div style={{ padding: isPhone ? '10px 0' : '12px 16px', marginBottom: 2 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+          <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
           {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
         </div>
         <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
@@ -510,7 +520,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       {/* Job Assignment */}
       {isBusinessMessage && clickedMessage && (
         <div style={{
-          margin: '0 0 12px', padding: '12px 16px', background: '#fff',
+          margin: '0 0 12px', padding: isPhone ? '12px' : '12px 16px', background: '#fff',
           border: '1px solid #e5e5e5', borderRadius: 8
         }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Job Assignment</div>
@@ -540,7 +550,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
               value={selectedJobId}
               onChange={e => setSelectedJobId(e.target.value)}
               disabled={jobBusy}
-              style={{ padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd', minWidth: 200 }}
+              style={{ padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd', minWidth: isPhone ? 0 : 200, flex: isPhone ? 1 : undefined, minHeight: 44 }}
             >
               <option value="">Select a job…</option>
               {jobs.map(j => (
@@ -553,7 +563,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
               className="btn btn-sm"
               disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
               onClick={handleAssignJob}
-              style={{ fontSize: 12 }}
+              style={{ fontSize: 12, minHeight: 44 }}
             >
               {clickedMessage.job ? 'Move' : 'Assign'}
             </button>
@@ -562,7 +572,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 className="btn btn-sm btn-outline"
                 disabled={jobBusy}
                 onClick={handleRemoveJob}
-                style={{ fontSize: 12 }}
+                style={{ fontSize: 12, minHeight: 44 }}
               >
                 Remove
               </button>
@@ -585,6 +595,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             isLast={i === messages.length - 1}
             onReply={openReply}
             onForward={openForward}
+            isPhone={isPhone}
             onLoadBody={() => {
               api.getMessageDetail(workspaceId, connectionId, msg.id).then(r => {
                 setThreadData(prev => {

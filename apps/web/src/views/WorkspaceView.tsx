@@ -79,7 +79,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
 
       {wsTab === 'overview' && <>
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
         <div className="card" style={{ textAlign: 'center', padding: 14 }}>
           <div style={{ fontSize: 24, fontWeight: 700, color: '#1565c0' }}>{members.filter(m => m.status === 'ACTIVE').length}</div>
           <div style={{ fontSize: 12, color: '#888' }}>Active Members</div>
@@ -98,7 +98,8 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 14, margin: '0 0 10px', fontWeight: 600 }}>Members</h3>
         {!isOwner && <p style={{ fontSize: 11, color: '#999', margin: '0 0 8px' }}>Only workspace owners can manage members.</p>}
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 400 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #eee', textAlign: 'left' }}>
               <th style={{ padding: '6px 8px' }}>Email</th>
@@ -124,6 +125,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Monitored Mailboxes */}
@@ -132,7 +134,8 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
         {connections.length === 0 ? (
           <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>No inboxes connected. Contact your platform admin to add monitored mailboxes.</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #eee', textAlign: 'left' }}>
                 <th style={{ padding: '6px 8px' }}>Email</th>
@@ -175,6 +178,7 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       </>}

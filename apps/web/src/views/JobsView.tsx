@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api, type JobSummary, type CustomerSummary } from '../api'
+import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
   workspaceId: string
   userRole: string
   onSelectJob: (jobId: string) => void
+  breakpoint?: Breakpoint
 }
 
 const STATUSES = ['ALL', 'LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE', 'ARCHIVED'] as const
@@ -65,7 +67,7 @@ const EMPTY_FORM: CreateJobFormState = {
   description: '', startDate: '', targetCompletionDate: '', aliases: ''
 }
 
-export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
+export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -86,6 +88,10 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
   const [createError, setCreateError] = useState('')
 
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
+  const [filtersExpanded, setFiltersExpanded] = useState(false)
+
+  const isPhone = breakpoint === 'phone'
+  const isTablet = breakpoint === 'tablet'
 
   const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
@@ -170,17 +176,323 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
     background: sortBy === col ? '#f0f4ff' : undefined,
   })
 
+  const renderPhoneFilters = () => (
+    <div style={{ marginBottom: 16 }}>
+      <input
+        type="text"
+        placeholder="Search by job number, name, or customer..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        style={{
+          width: '100%', padding: '10px 12px', border: '1px solid #d0d5dd',
+          borderRadius: 6, fontSize: 14, outline: 'none', marginBottom: 10,
+          boxSizing: 'border-box'
+        }}
+      />
+      <button
+        onClick={() => setFiltersExpanded(v => !v)}
+        style={{
+          width: '100%', padding: '10px 14px', border: '1px solid #d0d5dd',
+          borderRadius: 6, fontSize: 13, fontWeight: 600, background: '#f9fafb',
+          cursor: 'pointer', textAlign: 'left', color: '#374151',
+          minHeight: 44, boxSizing: 'border-box'
+        }}
+      >
+        {filtersExpanded ? '▾ Filters' : '▸ Filters'}
+      </button>
+      {filtersExpanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            style={{ padding: '10px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', minHeight: 44 }}
+          >
+            {STATUSES.map(s => (
+              <option key={s} value={s}>{s === 'ALL' ? 'All Statuses' : s.replace('_', ' ')}</option>
+            ))}
+          </select>
+          <select
+            value={customerFilter}
+            onChange={e => setCustomerFilter(e.target.value)}
+            style={{ padding: '10px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', minHeight: 44 }}
+          >
+            <option value="">All Customers</option>
+            {customers.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Filter by user ID..."
+            value={assignedUserFilter}
+            onChange={e => setAssignedUserFilter(e.target.value)}
+            style={{ padding: '10px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, minHeight: 44 }}
+          />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', cursor: 'pointer', minHeight: 44 }}>
+            <input
+              type="checkbox"
+              checked={hasOverdueTasks}
+              onChange={e => setHasOverdueTasks(e.target.checked)}
+            />
+            Overdue tasks
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', cursor: 'pointer', minHeight: 44 }}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={e => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderDesktopFilters = () => (
+    <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+      <input
+        type="text"
+        placeholder="Search by job number, name, or customer..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        style={{
+          flex: 1, minWidth: 220, padding: '8px 12px', border: '1px solid #d0d5dd',
+          borderRadius: 6, fontSize: 13, outline: 'none'
+        }}
+      />
+      <select
+        value={statusFilter}
+        onChange={e => setStatusFilter(e.target.value)}
+        style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}
+      >
+        {STATUSES.map(s => (
+          <option key={s} value={s}>{s === 'ALL' ? 'All Statuses' : s.replace('_', ' ')}</option>
+        ))}
+      </select>
+      <select
+        value={customerFilter}
+        onChange={e => setCustomerFilter(e.target.value)}
+        style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}
+      >
+        <option value="">All Customers</option>
+        {customers.map(c => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+      </select>
+      <input
+        type="text"
+        placeholder="Filter by user ID..."
+        value={assignedUserFilter}
+        onChange={e => setAssignedUserFilter(e.target.value)}
+        style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, width: 140 }}
+      />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={hasOverdueTasks}
+          onChange={e => setHasOverdueTasks(e.target.checked)}
+        />
+        Overdue tasks
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={showArchived}
+          onChange={e => setShowArchived(e.target.checked)}
+        />
+        Show archived
+      </label>
+    </div>
+  )
+
+  const renderPhoneCards = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {jobs.map(job => (
+        <div
+          key={job.id}
+          onClick={() => onSelectJob(job.id)}
+          style={{
+            padding: 14, border: '1px solid #e5e7eb', borderRadius: 8,
+            background: '#fff', cursor: 'pointer', minHeight: 44,
+            width: '100%', boxSizing: 'border-box'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
+              {job.jobNumber ?? '—'}
+            </span>
+            <StatusBadge status={job.status} />
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: '#111', marginBottom: 4 }}>
+            {job.name}
+          </div>
+          <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+            {job.customerName ?? '—'}
+          </div>
+          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#6b7280' }}>
+            <span>✉ {job.emailCount}</span>
+            <span>☐ {job.openTaskCount} open</span>
+            <span style={{ color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
+              ⚠ {job.overdueTaskCount} overdue
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
+  const renderTable = () => {
+    const hideExtraCols = isTablet
+
+    return (
+      <div style={{ overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              <th style={thStyle('jobNumber')} onClick={() => handleSort('jobNumber')}>Job #{sortIndicator('jobNumber')}</th>
+              <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+              <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Customer</th>
+              <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
+              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Emails</th>
+              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Open Tasks</th>
+              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Overdue</th>
+              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Last Activity</th>}
+              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Next Due</th>}
+              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Team</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map(job => (
+              <tr
+                key={job.id}
+                onClick={() => onSelectJob(job.id)}
+                style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}
+              >
+                <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
+                  {job.jobNumber ?? '—'}
+                </td>
+                <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
+                <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
+                <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
+                <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
+                <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
+                <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
+                  {job.overdueTaskCount}
+                </td>
+                {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{relativeTime(job.lastActivityAt)}</td>}
+                {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.nextDueDate ? formatDate(job.nextDueDate) : '—'}</td>}
+                {!hideExtraCols && (
+                  <td style={{ padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      {job.assignedMembers.slice(0, 3).map(m => (
+                        <span
+                          key={m.userId}
+                          title={m.name ?? m.email}
+                          style={{
+                            width: 24, height: 24, borderRadius: '50%', background: '#e0e7ff',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 10, fontWeight: 600, color: '#4338ca'
+                          }}
+                        >
+                          {(m.name ?? m.email)[0].toUpperCase()}
+                        </span>
+                      ))}
+                      {job.assignedMembers.length > 3 && (
+                        <span style={{ fontSize: 11, color: '#888', alignSelf: 'center', marginLeft: 4 }}>
+                          +{job.assignedMembers.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  const renderPagination = () => (
+    <div style={{
+      display: 'flex',
+      flexDirection: isPhone ? 'column' : 'row',
+      justifyContent: 'space-between',
+      alignItems: isPhone ? 'stretch' : 'center',
+      marginTop: 16,
+      fontSize: 13,
+      color: '#555',
+      gap: isPhone ? 12 : undefined
+    }}>
+      <span style={{ textAlign: isPhone ? 'center' : undefined }}>{totalCount} job{totalCount !== 1 ? 's' : ''} total</span>
+      <div style={{
+        display: 'flex',
+        flexDirection: isPhone ? 'column' : 'row',
+        gap: 8,
+        alignItems: 'center'
+      }}>
+        <button
+          disabled={page <= 1}
+          onClick={() => setPage(p => p - 1)}
+          style={{
+            padding: '10px 12px',
+            border: '1px solid #d0d5dd',
+            borderRadius: 4,
+            background: '#fff',
+            cursor: page > 1 ? 'pointer' : 'not-allowed',
+            opacity: page <= 1 ? 0.5 : 1,
+            width: isPhone ? '100%' : undefined,
+            minHeight: isPhone ? 44 : undefined,
+            fontSize: 13
+          }}
+        >
+          Previous
+        </button>
+        <span>Page {page} of {totalPages}</span>
+        <button
+          disabled={page >= totalPages}
+          onClick={() => setPage(p => p + 1)}
+          style={{
+            padding: '10px 12px',
+            border: '1px solid #d0d5dd',
+            borderRadius: 4,
+            background: '#fff',
+            cursor: page < totalPages ? 'pointer' : 'not-allowed',
+            opacity: page >= totalPages ? 0.5 : 1,
+            width: isPhone ? '100%' : undefined,
+            minHeight: isPhone ? 44 : undefined,
+            fontSize: 13
+          }}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  )
+
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: isPhone ? 14 : 24 }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{
+        display: 'flex',
+        flexDirection: isPhone ? 'column' : 'row',
+        justifyContent: 'space-between',
+        alignItems: isPhone ? 'stretch' : 'center',
+        marginBottom: 20,
+        gap: isPhone ? 12 : undefined
+      }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Jobs</h2>
         {canCreate && (
           <button
             onClick={() => { setShowCreateModal(true); setCreateError('') }}
             style={{
               padding: '8px 16px', background: '#1a1a2e', color: '#fff', border: 'none',
-              borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer'
+              borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              width: isPhone ? '100%' : undefined,
+              minHeight: isPhone ? 44 : undefined
             }}
           >
             + Create Job
@@ -189,60 +501,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input
-          type="text"
-          placeholder="Search by job number, name, or customer..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            flex: 1, minWidth: 220, padding: '8px 12px', border: '1px solid #d0d5dd',
-            borderRadius: 6, fontSize: 13, outline: 'none'
-          }}
-        />
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}
-        >
-          {STATUSES.map(s => (
-            <option key={s} value={s}>{s === 'ALL' ? 'All Statuses' : s.replace('_', ' ')}</option>
-          ))}
-        </select>
-        <select
-          value={customerFilter}
-          onChange={e => setCustomerFilter(e.target.value)}
-          style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}
-        >
-          <option value="">All Customers</option>
-          {customers.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Filter by user ID..."
-          value={assignedUserFilter}
-          onChange={e => setAssignedUserFilter(e.target.value)}
-          style={{ padding: '8px 12px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, width: 140 }}
-        />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={hasOverdueTasks}
-            onChange={e => setHasOverdueTasks(e.target.checked)}
-          />
-          Overdue tasks
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#555', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={e => setShowArchived(e.target.checked)}
-          />
-          Show archived
-        </label>
-      </div>
+      {isPhone ? renderPhoneFilters() : renderDesktopFilters()}
 
       {/* Loading */}
       {loading && (
@@ -260,120 +519,45 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
         </div>
       )}
 
-      {/* Table */}
+      {/* Job list */}
       {!loading && jobs.length > 0 && (
         <>
-          <div style={{ overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={thStyle('jobNumber')} onClick={() => handleSort('jobNumber')}>Job #{sortIndicator('jobNumber')}</th>
-                  <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Customer</th>
-                  <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Emails</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Open Tasks</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Overdue</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Last Activity</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Next Due</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Team</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map(job => (
-                  <tr
-                    key={job.id}
-                    onClick={() => onSelectJob(job.id)}
-                    style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '')}
-                  >
-                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
-                      {job.jobNumber ?? '—'}
-                    </td>
-                    <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
-                    <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
-                    <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
-                      {job.overdueTaskCount}
-                    </td>
-                    <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{relativeTime(job.lastActivityAt)}</td>
-                    <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.nextDueDate ? formatDate(job.nextDueDate) : '—'}</td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <div style={{ display: 'flex', gap: 2 }}>
-                        {job.assignedMembers.slice(0, 3).map(m => (
-                          <span
-                            key={m.userId}
-                            title={m.name ?? m.email}
-                            style={{
-                              width: 24, height: 24, borderRadius: '50%', background: '#e0e7ff',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: 10, fontWeight: 600, color: '#4338ca'
-                            }}
-                          >
-                            {(m.name ?? m.email)[0].toUpperCase()}
-                          </span>
-                        ))}
-                        {job.assignedMembers.length > 3 && (
-                          <span style={{ fontSize: 11, color: '#888', alignSelf: 'center', marginLeft: 4 }}>
-                            +{job.assignedMembers.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, fontSize: 13, color: '#555' }}>
-            <span>{totalCount} job{totalCount !== 1 ? 's' : ''} total</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage(p => p - 1)}
-                style={{ padding: '6px 12px', border: '1px solid #d0d5dd', borderRadius: 4, background: '#fff', cursor: page > 1 ? 'pointer' : 'not-allowed', opacity: page <= 1 ? 0.5 : 1 }}
-              >
-                Previous
-              </button>
-              <span>Page {page} of {totalPages}</span>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage(p => p + 1)}
-                style={{ padding: '6px 12px', border: '1px solid #d0d5dd', borderRadius: 4, background: '#fff', cursor: page < totalPages ? 'pointer' : 'not-allowed', opacity: page >= totalPages ? 0.5 : 1 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
+          {isPhone ? renderPhoneCards() : renderTable()}
+          {renderPagination()}
         </>
       )}
 
       {/* Create Job Modal */}
       {showCreateModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 520, maxHeight: '85vh', background: '#fff', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{
+            width: isPhone ? '100%' : 520,
+            maxWidth: isPhone ? '100vw' : undefined,
+            maxHeight: '85vh',
+            background: '#fff',
+            borderRadius: isPhone ? 0 : 12,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e5e5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Create Job</h3>
-              <button onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#999' }}>&times;</button>
+              <button onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#999', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
             </div>
             <div style={{ padding: 20, overflow: 'auto', flex: 1 }}>
               <div style={{ display: 'grid', gap: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Job Number *</label>
                     <input value={form.jobNumber} onChange={e => setForm(f => ({ ...f, jobNumber: e.target.value }))}
                       placeholder="e.g. JOB-001"
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Status</label>
                     <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}>
                       {['LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE'].map(s => (
                         <option key={s} value={s}>{s.replace('_', ' ')}</option>
                       ))}
@@ -384,12 +568,12 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Job Name *</label>
                   <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                     placeholder="e.g. Downtown Office Renovation"
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Customer</label>
                   <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}>
                     <option value="">— None —</option>
                     {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
@@ -398,36 +582,36 @@ export function JobsView({ workspaceId, userRole, onSelectJob }: Props) {
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Description</label>
                   <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2}
                     placeholder="Brief description of the job..."
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical' }} />
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Start Date</label>
                     <input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Target Completion</label>
                     <input type="date" value={form.targetCompletionDate} onChange={e => setForm(f => ({ ...f, targetCompletionDate: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Aliases (comma-separated)</label>
                   <input value={form.aliases} onChange={e => setForm(f => ({ ...f, aliases: e.target.value }))}
                     placeholder="e.g. DT Office, Downtown Reno"
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
                 {createError && <div style={{ color: '#dc2626', fontSize: 13 }}>{createError}</div>}
               </div>
             </div>
-            <div style={{ padding: '14px 20px', borderTop: '1px solid #e5e5e5', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <div style={{ padding: '14px 20px', borderTop: '1px solid #e5e5e5', display: 'flex', flexDirection: isPhone ? 'column-reverse' : 'row', justifyContent: 'flex-end', gap: 10 }}>
               <button onClick={() => setShowCreateModal(false)}
-                style={{ padding: '8px 16px', border: '1px solid #d0d5dd', borderRadius: 6, background: '#fff', fontSize: 13, cursor: 'pointer' }}>
+                style={{ padding: '8px 16px', border: '1px solid #d0d5dd', borderRadius: 6, background: '#fff', fontSize: 13, cursor: 'pointer', minHeight: isPhone ? 44 : undefined }}>
                 Cancel
               </button>
               <button onClick={handleCreateJob} disabled={creating}
-                style={{ padding: '8px 20px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: creating ? 0.6 : 1 }}>
+                style={{ padding: '8px 20px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: creating ? 0.6 : 1, minHeight: isPhone ? 44 : undefined }}>
                 {creating ? 'Creating...' : 'Create Job'}
               </button>
             </div>

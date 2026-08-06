@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type JobLookup, type MessageSummary, type ConnectionSummary } from '../api'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
+import type { Breakpoint } from '../hooks/useBreakpoint'
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
 
@@ -14,6 +15,7 @@ interface Props {
   userRole: string
   userEmail: string
   connections: ConnectionSummary[]
+  breakpoint?: Breakpoint
 }
 
 const PAGE_SIZE = 30
@@ -43,7 +45,7 @@ const INBOX_FILTERS: Array<{ key: InboxFilter; label: string }> = [
   { key: 'high_priority', label: 'High Priority' },
 ]
 
-export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections }: Props) {
+export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop' }: Props) {
   const isViewer = userRole === 'VIEWER'
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
   const currentConnectionEmail = connections.find(c => c.id === connectionId)?.email ?? ''
@@ -69,6 +71,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const connectionResetRef = useRef(false)
 
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+
+  const isPhone = breakpoint === 'phone'
+  const isTablet = breakpoint === 'tablet'
 
   const handleAutoResponse = async (msg: MessageSummary, affirm: boolean) => {
     setAutoResponseStatus(prev => ({ ...prev, [msg.id]: 'sending' }))
@@ -208,6 +213,194 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     } catch { /* */ }
   }
 
+  const renderPhoneCard = (m: MessageSummary) => {
+    const status = autoResponseStatus[m.id] ?? 'idle'
+    return (
+      <div
+        key={m.id}
+        onClick={() => onSelectMessage(m.id)}
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #f0f0f0',
+          background: m.isRead ? '#fff' : '#f0f4ff',
+          cursor: 'pointer',
+          minHeight: 44,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{m.senderName ?? m.senderEmail}</div>
+            {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+          </div>
+          <div style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap', marginLeft: 8 }}>
+            {formatDate(m.receivedAt ?? m.sentAt)}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 4, fontWeight: m.isRead ? 400 : 600, fontSize: 13 }}>
+          {m.subject ?? '(no subject)'}
+          {m.hasAttachments && <span style={{ marginLeft: 6 }} title="Has attachments">📎</span>}
+        </div>
+
+        {m.snippet && (
+          <div style={{ fontSize: 12, color: '#888', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {m.snippet.slice(0, 60)}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          {isBusiness && m.classification && (
+            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+          )}
+          {isBusiness && m.classification && (
+            <PriorityBadge priority={m.classification.priority} />
+          )}
+          {isBusiness && (
+            m.job ? (
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
+              }} title={m.job.name}>
+                {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
+              </span>
+            ) : (
+              <span style={{
+                fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
+                background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
+              }}>Unassigned</span>
+            )
+          )}
+        </div>
+
+        {isBusiness && m.classification?.priority === 'LOW' && (() => {
+          if (status === 'sent') return (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
+          )
+          if (status === 'sending') return (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#999' }}>Sending...</div>
+          )
+          return (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+              <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>Suggested response</span>
+              <button onClick={() => handleAutoResponse(m, true)}
+                style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', fontWeight: 600, minHeight: 28 }}>Yes</button>
+              <button onClick={() => handleAutoResponse(m, false)}
+                style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer', fontWeight: 600, minHeight: 28 }}>No</button>
+            </div>
+          )
+        })()}
+
+        {!isViewer && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 6 }} onClick={e => e.stopPropagation()}>
+            {inboxTab === 'PERSONAL' && (
+              <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600, minHeight: 28 }}>Biz</button>
+            )}
+            {isBusiness && (
+              <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2, minHeight: 28 }}>Pers</button>
+            )}
+            {inboxTab !== 'TRASH' ? (
+              <button title="Trash" onClick={() => handleTrash(m.id, false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2, minHeight: 28 }}>{'\uD83D\uDDD1'}</button>
+            ) : (
+              <button title="Restore" onClick={() => handleTrash(m.id, true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2, minHeight: 28 }}>{'\u21A9'}</button>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderTableRow = (m: MessageSummary) => (
+    <tr key={m.id} onClick={() => onSelectMessage(m.id)}
+      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
+      onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+      onMouseOut={e => (e.currentTarget.style.background = m.isRead ? '' : '#f0f4ff')}>
+      {isBusiness && (
+        <td style={{ padding: '7px 6px', textAlign: 'center', fontSize: 14 }}>
+          {m.isImportant && <span title="Important" style={{ color: '#f5a623' }}>{'\u2605'}</span>}
+        </td>
+      )}
+      <td style={{ padding: '7px 12px' }}>
+        <div style={{ fontWeight: m.isRead ? 500 : 700, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
+        {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+      </td>
+      <td style={{ padding: '7px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
+          {isBusiness && (
+            m.job ? (
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
+              }} title={m.job.name}>
+                {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
+              </span>
+            ) : (
+              <span style={{
+                fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
+                background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
+              }}>Unassigned</span>
+            )
+          )}
+        </div>
+        {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
+        {isBusiness && m.classification?.priority === 'LOW' && (() => {
+          const status = autoResponseStatus[m.id] ?? 'idle'
+          if (status === 'sent') return (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
+          )
+          if (status === 'sending') return (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#999' }}>Sending...</div>
+          )
+          return (
+            <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+              <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>Suggested response available</span>
+              <button onClick={() => handleAutoResponse(m, true)}
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', fontWeight: 600 }}>Yes</button>
+              <button onClick={() => handleAutoResponse(m, false)}
+                style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer', fontWeight: 600 }}>No</button>
+            </div>
+          )
+        })()}
+      </td>
+      {isBusiness && !isTablet && (
+        <td style={{ padding: '7px 12px' }}>
+          {m.classification ? (
+            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+          ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+        </td>
+      )}
+      {isBusiness && (
+        <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+      )}
+      <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
+      <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+        {!isViewer && (
+          <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+            {inboxTab === 'PERSONAL' && (
+              <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
+            )}
+            {isBusiness && (
+              <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
+            )}
+            {inboxTab !== 'TRASH' ? (
+              <button title="Trash" onClick={() => handleTrash(m.id, false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
+            ) : (
+              <button title="Restore" onClick={() => handleTrash(m.id, true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
       {/* Header */}
@@ -217,11 +410,15 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           <span style={{ fontSize: 12, color: '#999' }}>{totalCount} messages</span>
         </div>
         <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)}
-          style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: 220 }} />
+          style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: isPhone ? '100%' : 220 }} />
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', flexShrink: 0 }}>
+      <div style={{
+        display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', flexShrink: 0,
+        overflowX: 'auto',
+        ...(isPhone ? { WebkitOverflowScrolling: 'touch' } as React.CSSProperties : {})
+      }}>
         {INBOX_TABS.filter(tab => {
           if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
           return true
@@ -278,6 +475,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <h3>{activeSearch ? 'No results' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
             <p>{activeSearch ? `No messages match "${activeSearch}"` : 'Emails will appear here after syncing and classification.'}</p>
           </div>
+        ) : isPhone ? (
+          <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>
+            {filteredMessages.map(renderPhoneCard)}
+            {loadingMore && <div style={{ padding: 12, textAlign: 'center', color: '#999', fontSize: 13 }}>Loading more...</div>}
+            {!hasMore && filteredMessages.length > 0 && <div style={{ padding: 10, textAlign: 'center', color: '#ccc', fontSize: 12 }}>End of list</div>}
+          </div>
         ) : (
           <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -286,100 +489,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   {isBusiness && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
-                  {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
+                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
                   {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
                   <th style={{ padding: '8px 6px', width: 64 }}></th>
                 </tr>
               </thead>
               <tbody>
-                {filteredMessages.map(m => (
-                  <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-                    style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: m.isRead ? '' : '#f0f4ff' }}
-                    onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-                    onMouseOut={e => (e.currentTarget.style.background = m.isRead ? '' : '#f0f4ff')}>
-                    {isBusiness && (
-                      <td style={{ padding: '7px 6px', textAlign: 'center', fontSize: 14 }}>
-                        {m.isImportant && <span title="Important" style={{ color: '#f5a623' }}>{'\u2605'}</span>}
-                      </td>
-                    )}
-                    <td style={{ padding: '7px 12px' }}>
-                      <div style={{ fontWeight: m.isRead ? 500 : 700, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
-                      {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
-                    </td>
-                    <td style={{ padding: '7px 12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
-                        {isBusiness && (
-                          m.job ? (
-                            <span style={{
-                              fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-                              background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
-                            }} title={m.job.name}>
-                              {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
-                            </span>
-                          ) : (
-                            <span style={{
-                              fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
-                              background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
-                            }}>Unassigned</span>
-                          )
-                        )}
-                      </div>
-                      {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
-                      {isBusiness && m.classification?.priority === 'LOW' && (() => {
-                        const status = autoResponseStatus[m.id] ?? 'idle'
-                        if (status === 'sent') return (
-                          <div style={{ marginTop: 4, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
-                        )
-                        if (status === 'sending') return (
-                          <div style={{ marginTop: 4, fontSize: 11, color: '#999' }}>Sending...</div>
-                        )
-                        return (
-                          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
-                            <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>Suggested response available</span>
-                            <button onClick={() => handleAutoResponse(m, true)}
-                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', fontWeight: 600 }}>Yes</button>
-                            <button onClick={() => handleAutoResponse(m, false)}
-                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer', fontWeight: 600 }}>No</button>
-                          </div>
-                        )
-                      })()}
-                    </td>
-                    {isBusiness && (
-                      <td style={{ padding: '7px 12px' }}>
-                        {m.classification ? (
-                          <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
-                        ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
-                      </td>
-                    )}
-                    {isBusiness && (
-                      <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
-                    )}
-                    <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
-                    <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                      {!isViewer && (
-                        <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
-                          {inboxTab === 'PERSONAL' && (
-                            <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#1565c0', padding: 2, fontWeight: 600 }}>Biz</button>
-                          )}
-                          {isBusiness && (
-                            <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6a1b9a', padding: 2 }}>Pers</button>
-                          )}
-                          {inboxTab !== 'TRASH' ? (
-                            <button title="Trash" onClick={() => handleTrash(m.id, false)}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#bbb', padding: 2 }}>{'\uD83D\uDDD1'}</button>
-                          ) : (
-                            <button title="Restore" onClick={() => handleTrash(m.id, true)}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#888', padding: 2 }}>{'\u21A9'}</button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filteredMessages.map(renderTableRow)}
               </tbody>
             </table>
             {loadingMore && <div style={{ padding: 12, textAlign: 'center', color: '#999', fontSize: 13 }}>Loading more...</div>}

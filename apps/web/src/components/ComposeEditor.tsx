@@ -153,11 +153,11 @@ export function ComposeEditor({ onSend, sending, sendLabel, onCancel, initialTo,
       )}
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button className="btn btn-primary" onClick={handleSend} disabled={sending || (showRecipients && !to.trim())}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" onClick={handleSend} disabled={sending || (showRecipients && !to.trim())} style={{ minHeight: 44 }}>
           {sending ? 'Sending...' : sendLabel ?? 'Send'}
         </button>
-        {onCancel && <button className="btn btn-outline" onClick={onCancel}>Cancel</button>}
+        {onCancel && <button className="btn btn-outline" onClick={onCancel} style={{ minHeight: 44 }}>Cancel</button>}
       </div>
     </div>
   )

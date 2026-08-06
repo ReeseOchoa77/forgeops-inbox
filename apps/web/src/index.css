@@ -14,6 +14,8 @@ table { border-spacing: 0; }
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-brand {
@@ -39,12 +41,13 @@ table { border-spacing: 0; }
   text-align: left;
   border-left: 3px solid transparent;
   transition: background 0.1s, color 0.1s;
+  min-height: 40px;
 }
 
 .sidebar-nav button:hover { background: rgba(255,255,255,0.05); color: #dde; }
 .sidebar-nav button.active { background: rgba(255,255,255,0.08); color: #fff; border-left-color: #5c7cfa; }
 
-.sidebar-nav .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.sidebar-nav .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
 
 .sidebar-section-label {
   padding: 14px 14px 4px;
@@ -89,6 +92,7 @@ table { border-spacing: 0; }
   align-items: center;
   gap: 10px;
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .topbar select {
@@ -126,7 +130,9 @@ table { border-spacing: 0; }
 .empty-state p { margin: 0 0 12px; font-size: 13px; color: #888; max-width: 340px; margin-left: auto; margin-right: auto; }
 
 .btn {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 16px;
   border: none;
   border-radius: 4px;
@@ -162,3 +168,71 @@ table { border-spacing: 0; }
 .email-html-body a { color: #06c; }
 .email-html-body table { border-collapse: collapse; }
 .email-html-body blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #ddd; color: #666; }
+
+/* Drawer backdrop transitions */
+.drawer-backdrop {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Focus visible styles for accessibility */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #5c7cfa;
+  outline-offset: 2px;
+}
+
+/* Responsive overrides */
+@media (max-width: 768px) {
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .page-content {
+    padding: 12px;
+  }
+
+  .topbar {
+    padding: 8px 12px;
+  }
+
+  .btn {
+    min-height: 44px;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+  }
+
+  table {
+    font-size: 12px;
+  }
+
+  /* Make tables horizontally scrollable */
+  .responsive-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="date"],
+  input[type="search"],
+  select,
+  textarea {
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .page-content {
+    padding: 14px 16px;
+  }
+}

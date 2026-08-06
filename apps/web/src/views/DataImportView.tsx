@@ -199,8 +199,8 @@ export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
               </div>
             </div>
 
-            <div style={{ overflowX: 'auto', border: '1px solid #e5e5e5', borderRadius: 4 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <div style={{ overflowX: 'auto', border: '1px solid #e5e5e5', borderRadius: 4, WebkitOverflowScrolling: 'touch' as never }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
                 <thead>
                   <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left' }}>
                     <th style={{ padding: '6px 8px', width: 30 }}>

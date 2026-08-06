@@ -158,14 +158,14 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
           {FILTERS.map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)} style={{
-              padding: '4px 12px', fontSize: 12, fontWeight: 500, borderRadius: 12,
+              padding: '6px 14px', fontSize: 12, fontWeight: 500, borderRadius: 12,
               border: filter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
               background: filter === f.key ? '#1a1a2e' : '#fff',
               color: filter === f.key ? '#fff' : '#666',
-              cursor: 'pointer'
+              cursor: 'pointer', minHeight: 36,
             }}>{f.label}</button>
           ))}
         </div>
