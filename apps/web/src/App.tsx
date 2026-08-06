@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type SessionResponse, type ConnectionSummary } from './api'
 import { ComposeEditor } from './components/ComposeEditor'
-import { useBreakpoint, type Breakpoint } from './hooks/useBreakpoint'
+import { useBreakpoint } from './hooks/useBreakpoint'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
 const googleSignInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`

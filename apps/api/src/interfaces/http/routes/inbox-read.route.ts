@@ -223,6 +223,7 @@ const messageSummarySchema = z.object({
   isImportant: z.boolean(),
   isSpam: z.boolean(),
   isTrashed: z.boolean(),
+  hasAttachments: z.boolean().optional(),
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable(),
@@ -536,6 +537,7 @@ const serializeMessageSummary = (message: {
   isImportant: boolean;
   isSpam: boolean;
   isTrashed: boolean;
+  hasAttachments?: boolean;
   mailboxCategory: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH";
   classifications: Array<Parameters<typeof serializeClassification>[0]>;
   tasks: Array<Parameters<typeof serializeTask>[0]>;
@@ -565,6 +567,7 @@ const serializeMessageSummary = (message: {
     isImportant: message.isImportant,
     isSpam: message.isSpam,
     isTrashed: message.isTrashed,
+    hasAttachments: message.hasAttachments ?? false,
     mailboxCategory: message.mailboxCategory,
     classification: serializeClassification(message.classifications[0] ?? null),
     taskCandidate: serializeTask(message.tasks[0] ?? null),
