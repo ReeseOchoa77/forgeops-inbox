@@ -211,15 +211,6 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <button
-                  disabled={actionLoading === confirmKey}
-                  onClick={() => handleConfirmSender(item)}
-                  style={{
-                    minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
-                    border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer'
-                  }}>
-                  {actionLoading === confirmKey ? '...' : `Classify as ${m.mailboxCategory === 'BUSINESS' ? 'Business' : 'Personal'}`}
-                </button>
-                <button
                   disabled={actionLoading === reclassifyKey}
                   onClick={() => handleReclassify(item)}
                   style={{
@@ -227,6 +218,15 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                     border: '1px solid #ef5350', background: '#ffebee', color: '#c62828', cursor: 'pointer'
                   }}>
                   {actionLoading === reclassifyKey ? '...' : `Switch to ${oppositeCategory}`}
+                </button>
+                <button
+                  disabled={actionLoading === confirmKey}
+                  onClick={() => handleConfirmSender(item)}
+                  style={{
+                    minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                    border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer'
+                  }}>
+                  {actionLoading === confirmKey ? '...' : 'Confirm Sender'}
                 </button>
               </div>
             </div>
