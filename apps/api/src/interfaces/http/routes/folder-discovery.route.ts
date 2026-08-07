@@ -1205,7 +1205,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
     const roots = await app.services.prisma.jobFolderRoot.findMany({
-      where: { workspaceId },
+      where: { workspaceId, active: true },
       orderBy: { rootName: "asc" }
     });
 
