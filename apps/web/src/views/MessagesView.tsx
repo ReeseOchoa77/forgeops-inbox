@@ -34,16 +34,8 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
   { key: 'TRASH', label: 'Trash' },
 ]
 
-type InboxFilter = '' | 'unread' | 'read' | 'low_priority' | 'medium_priority' | 'high_priority'
-
-const INBOX_FILTERS: Array<{ key: InboxFilter; label: string }> = [
-  { key: '', label: 'All' },
-  { key: 'unread', label: 'Unread' },
-  { key: 'read', label: 'Read' },
-  { key: 'low_priority', label: 'Low Priority' },
-  { key: 'medium_priority', label: 'Medium Priority' },
-  { key: 'high_priority', label: 'High Priority' },
-]
+type ReadFilter = '' | 'unread' | 'read'
+type PriorityKey = 'LOW' | 'MEDIUM' | 'HIGH'
 
 export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop' }: Props) {
   const isViewer = userRole === 'VIEWER'
@@ -58,7 +50,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [loadingMore, setLoadingMore] = useState(false)
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
-  const [inboxFilter, setInboxFilter] = useState<InboxFilter>('')
+  const [readFilter, setReadFilter] = useState<ReadFilter>('')
+  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set())
   const [jobFilter, setJobFilter] = useState('')
   const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
@@ -121,16 +114,21 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   const applyClientFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
-    if (!inboxFilter) return msgs
-    switch (inboxFilter) {
-      case 'unread': return msgs.filter(m => !m.isRead)
-      case 'read': return msgs.filter(m => m.isRead)
-      case 'low_priority': return msgs.filter(m => m.classification?.priority === 'LOW')
-      case 'medium_priority': return msgs.filter(m => m.classification?.priority === 'MEDIUM')
-      case 'high_priority': return msgs.filter(m => m.classification?.priority === 'HIGH' || m.classification?.priority === 'URGENT')
-      default: return msgs
+    let result = msgs
+    if (readFilter === 'unread') result = result.filter(m => !m.isRead)
+    else if (readFilter === 'read') result = result.filter(m => m.isRead)
+    if (priorityFilter.size > 0) {
+      result = result.filter(m => {
+        const p = m.classification?.priority
+        if (!p) return false
+        if (priorityFilter.has('HIGH') && (p === 'HIGH' || p === 'URGENT')) return true
+        if (priorityFilter.has('MEDIUM') && p === 'MEDIUM') return true
+        if (priorityFilter.has('LOW') && p === 'LOW') return true
+        return false
+      })
     }
-  }, [inboxFilter])
+    return result
+  }, [readFilter, priorityFilter])
 
   const applyRoleFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
     if (inboxTab !== 'PERSONAL') return msgs
@@ -193,7 +191,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setSearch('')
     setActiveSearch('')
     setInboxTab('ALL_BUSINESS')
-    setInboxFilter('')
+    setReadFilter('')
+    setPriorityFilter(new Set())
     setJobFilter('')
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
@@ -531,7 +530,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
           return true
         }).map(tab => (
-          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setInboxFilter('') }}
+          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setReadFilter(''); setPriorityFilter(new Set()) }}
             style={{
               padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
               fontWeight: inboxTab === tab.key ? 600 : 400,
@@ -543,22 +542,51 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         ))}
       </div>
 
-      {/* Filter chips */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-        {INBOX_FILTERS.map(f => (
-          <button key={f.key} onClick={() => setInboxFilter(f.key)} style={{
-            padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-            border: inboxFilter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
-            background: inboxFilter === f.key ? '#1a1a2e' : '#fff',
-            color: inboxFilter === f.key ? '#fff' : '#666', cursor: 'pointer'
-          }}>{f.label}</button>
-        ))}
-        {isBusiness && (
+      {/* Filter chips — hidden on Personal tab */}
+      {isBusiness && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Read/Unread filter */}
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {([['', 'All'], ['unread', 'Unread'], ['read', 'Read']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setReadFilter(key as ReadFilter)} style={{
+                padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+                border: readFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
+                background: readFilter === key ? '#1a1a2e' : '#fff',
+                color: readFilter === key ? '#fff' : '#666', cursor: 'pointer'
+              }}>{label}</button>
+            ))}
+          </div>
+
+          <span style={{ color: '#ddd' }}>|</span>
+
+          {/* Priority multi-select */}
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {([['LOW', 'Low'], ['MEDIUM', 'Medium'], ['HIGH', 'High']] as const).map(([key, label]) => {
+              const active = priorityFilter.has(key as PriorityKey)
+              return (
+                <button key={key} onClick={() => setPriorityFilter(prev => {
+                  const next = new Set(prev)
+                  if (next.has(key as PriorityKey)) next.delete(key as PriorityKey)
+                  else next.add(key as PriorityKey)
+                  return next
+                })} style={{
+                  padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+                  border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+                  background: active ? '#1a1a2e' : '#fff',
+                  color: active ? '#fff' : '#666', cursor: 'pointer'
+                }}>{label}</button>
+              )
+            })}
+          </div>
+
+          <span style={{ color: '#ddd' }}>|</span>
+
+          {/* Job filter */}
           <select
             value={jobFilter}
             onChange={e => setJobFilter(e.target.value)}
             style={{
-              marginLeft: 4, padding: '3px 8px', fontSize: 11, borderRadius: 6,
+              padding: '3px 8px', fontSize: 11, borderRadius: 6,
               border: '1px solid #ddd', background: '#fff', color: '#444', cursor: 'pointer'
             }}
           >
@@ -570,8 +598,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               </option>
             ))}
           </select>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Message list */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
