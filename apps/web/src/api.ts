@@ -727,6 +727,17 @@ export const api = {
       method: 'POST', body: JSON.stringify({})
     }),
 
+  deleteDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}`, {
+      method: 'DELETE'
+    }),
+
+  clearDiscoveredFolders: (workspaceId: string) =>
+    request<{ status: string; deletedFolders: number; deletedAliases: number }>(
+      `/workspaces/${workspaceId}/discovered-folders`,
+      { method: 'DELETE' }
+    ),
+
   // Job Folder Roots
   getJobFolderRoots: (workspaceId: string) =>
     request<{ roots: JobFolderRootItem[] }>(`/workspaces/${workspaceId}/job-folder-roots`),

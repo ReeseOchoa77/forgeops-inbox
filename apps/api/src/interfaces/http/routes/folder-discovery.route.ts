@@ -287,7 +287,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     if (!auth) return;
 
     const roots = await app.services.prisma.jobFolderRoot.findMany({
-      where: { workspaceId },
+      where: { workspaceId, active: true },
       orderBy: { rootName: "asc" }
     });
 
@@ -838,6 +838,84 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     });
 
     return reply.send({ status: "ARCHIVED" });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), folderId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+    if (!isAdminOrOwner(auth.role)) {
+      return reply.code(403).send({ message: "Admin permission required" });
+    }
+
+    const folder = await app.services.prisma.discoveredFolder.findFirst({
+      where: { id: params.folderId, workspaceId: params.workspaceId }
+    });
+    if (!folder) return reply.code(404).send({ message: "Folder not found" });
+
+    const normalizedAlias = normalizeName(folder.rawFolderName);
+    await app.services.prisma.entityAlias.deleteMany({
+      where: {
+        workspaceId: params.workspaceId,
+        entityType: "JOB",
+        normalizedAlias,
+        source: "OUTLOOK_FOLDER",
+        ...(folder.matchedJobId ? { jobId: folder.matchedJobId } : {})
+      }
+    });
+
+    await app.services.prisma.discoveredFolder.delete({
+      where: { id: params.folderId }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "DISCOVERED_FOLDER",
+      entityId: params.folderId,
+      action: "discovered_folder.deleted",
+      metadata: { folderName: folder.rawFolderName, matchedJobId: folder.matchedJobId },
+      request
+    });
+
+    return reply.send({ status: "DELETED" });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/discovered-folders", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+    if (!isAdminOrOwner(auth.role)) {
+      return reply.code(403).send({ message: "Admin permission required" });
+    }
+
+    const aliasResult = await app.services.prisma.entityAlias.deleteMany({
+      where: {
+        workspaceId: params.workspaceId,
+        entityType: "JOB",
+        source: "OUTLOOK_FOLDER"
+      }
+    });
+
+    const folderResult = await app.services.prisma.discoveredFolder.deleteMany({
+      where: { workspaceId: params.workspaceId }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "DISCOVERED_FOLDER",
+      entityId: params.workspaceId,
+      action: "discovered_folder.cleared",
+      metadata: { deletedFolders: folderResult.count, deletedAliases: aliasResult.count },
+      request
+    });
+
+    return reply.send({
+      status: "CLEARED",
+      deletedFolders: folderResult.count,
+      deletedAliases: aliasResult.count
+    });
   });
 
   // =========================================================================

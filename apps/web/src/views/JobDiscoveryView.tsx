@@ -95,6 +95,7 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
 
   // Action loading
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [clearingAll, setClearingAll] = useState(false)
 
   const loadFolders = useCallback(async () => {
     setLoading(true)
@@ -218,6 +219,32 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
     }
   }
 
+  const handleDelete = async (folderId: string) => {
+    if (!confirm('Delete this folder from Job Discovery? This cannot be undone.')) return
+    setActionLoading(folderId)
+    try {
+      await api.deleteDiscoveredFolder(workspaceId, folderId)
+      if (detailDrawer?.folder.id === folderId) setDetailDrawer(null)
+      loadFolders()
+    } catch { /* ignore */ } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleClearAll = async () => {
+    const count = summary?.total ?? totalCount
+    if (!confirm(`Clear all ${count} discovered folder${count !== 1 ? 's' : ''}? This permanently deletes them and related folder aliases. This cannot be undone.`)) return
+    setClearingAll(true)
+    try {
+      await api.clearDiscoveredFolders(workspaceId)
+      setDetailDrawer(null)
+      setPage(1)
+      loadFolders()
+    } catch { /* ignore */ } finally {
+      setClearingAll(false)
+    }
+  }
+
   const openDetailDrawer = async (folderId: string) => {
     setDrawerLoading(true)
     try {
@@ -280,12 +307,25 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: isPhone ? 18 : 22, fontWeight: 700 }}>Job Discovery</h2>
         {isAdmin && (
-          <button
-            onClick={() => setShowRoots(!showRoots)}
-            style={{ padding: '6px 14px', background: '#f3f4f6', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
-          >
-            {showRoots ? 'Hide Roots' : 'Manage Folder Roots'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setShowRoots(!showRoots)}
+              style={{ padding: '6px 14px', background: '#f3f4f6', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+            >
+              {showRoots ? 'Hide Roots' : 'Manage Folder Roots'}
+            </button>
+            <button
+              onClick={handleClearAll}
+              disabled={clearingAll || (summary?.total ?? totalCount) === 0}
+              style={{
+                padding: '6px 14px', background: '#fff', border: '1px solid #fca5a5', borderRadius: 6,
+                fontSize: 12, fontWeight: 500, cursor: clearingAll || (summary?.total ?? totalCount) === 0 ? 'not-allowed' : 'pointer',
+                color: '#dc2626', opacity: clearingAll || (summary?.total ?? totalCount) === 0 ? 0.5 : 1,
+              }}
+            >
+              {clearingAll ? 'Clearing...' : 'Clear All'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -413,6 +453,7 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
                           {folder.status === 'MATCHED' && <button onClick={() => setMatchModalFolder(folder)} style={btnStyle('#dbeafe', '#1d4ed8')}>Change</button>}
                           {(folder.status === 'DISCOVERED' || folder.status === 'MATCHED') && <button onClick={() => handleIgnore(folder.id)} style={btnStyle('#fef3c7', '#b45309')}>Ignore</button>}
                           {folder.status === 'IGNORED' && <button onClick={() => handleRestore(folder.id)} style={btnStyle('#f3f4f6', '#374151')}>Restore</button>}
+                          <button onClick={() => handleDelete(folder.id)} style={btnStyle('#fee2e2', '#991b1b')}>Delete</button>
                         </>
                       )}
                     </div>
@@ -466,6 +507,7 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
                                 {folder.status === 'MATCHED' && <button onClick={() => setMatchModalFolder(folder)} style={btnStyle('#dbeafe', '#1d4ed8')}>Change</button>}
                                 {folder.status === 'MATCHED' && <button onClick={() => handleIgnore(folder.id)} style={btnStyle('#fef3c7', '#b45309')}>Ignore</button>}
                                 {folder.status === 'IGNORED' && <button onClick={() => handleRestore(folder.id)} style={btnStyle('#f3f4f6', '#374151')}>Restore</button>}
+                                <button onClick={() => handleDelete(folder.id)} style={btnStyle('#fee2e2', '#991b1b')}>Delete</button>
                               </>
                             )}
                           </div>
@@ -665,11 +707,16 @@ export function JobDiscoveryView({ workspaceId, userRole }: Props) {
                   </div>
                 )}
 
-                {/* Archive action at bottom of drawer */}
-                {isAdmin && detailDrawer.folder.status !== 'ARCHIVED' && (
-                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
-                    <button onClick={() => { handleArchive(detailDrawer.folder.id); setDetailDrawer(null) }} style={{ ...btnStyle('#fee2e2', '#991b1b'), padding: '8px 14px' }}>
-                      Archive Folder
+                {/* Destructive actions at bottom of drawer */}
+                {isAdmin && (
+                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #e5e7eb', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {detailDrawer.folder.status !== 'ARCHIVED' && (
+                      <button onClick={() => { handleArchive(detailDrawer.folder.id); setDetailDrawer(null) }} style={{ ...btnStyle('#f3f4f6', '#374151'), padding: '8px 14px' }}>
+                        Archive Folder
+                      </button>
+                    )}
+                    <button onClick={() => handleDelete(detailDrawer.folder.id)} style={{ ...btnStyle('#fee2e2', '#991b1b'), padding: '8px 14px' }}>
+                      Delete Folder
                     </button>
                   </div>
                 )}
