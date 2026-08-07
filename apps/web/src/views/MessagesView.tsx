@@ -51,7 +51,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
-  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set())
+  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'MEDIUM', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
   const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
@@ -117,7 +117,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     let result = msgs
     if (readFilter === 'unread') result = result.filter(m => !m.isRead)
     else if (readFilter === 'read') result = result.filter(m => m.isRead)
-    if (priorityFilter.size > 0) {
+    const allPriorities = priorityFilter.size === 3
+    if (priorityFilter.size > 0 && !allPriorities) {
       result = result.filter(m => {
         const p = m.classification?.priority
         if (!p) return false
@@ -192,7 +193,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setActiveSearch('')
     setInboxTab('ALL_BUSINESS')
     setReadFilter('')
-    setPriorityFilter(new Set())
+    setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
     setJobFilter('')
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
@@ -530,7 +531,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
           return true
         }).map(tab => (
-          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setReadFilter(''); setPriorityFilter(new Set()) }}
+          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setReadFilter(''); setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH'])) }}
             style={{
               padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
               fontWeight: inboxTab === tab.key ? 600 : 400,
