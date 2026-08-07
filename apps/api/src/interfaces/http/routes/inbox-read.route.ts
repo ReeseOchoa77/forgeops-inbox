@@ -2291,6 +2291,83 @@ export const registerInboxReadRoutes = async (
   );
 
   app.patch(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/trash-personal",
+    async (request, reply) => {
+      const params = workspaceConnectionParamsSchema.parse(request.params);
+      const body = z.object({
+        search: z.string().min(1).optional(),
+        messageIds: z.array(z.string().min(1)).max(500).optional()
+      }).parse(request.body ?? {});
+
+      const { session, membership } = await loadWorkspaceSession({
+        app,
+        request,
+        workspaceId: params.workspaceId
+      });
+
+      if (!session) return sendAuthenticationRequired(reply);
+      if (!membership) return sendWorkspaceAccessDenied(reply);
+      if (!hasMinRole(membership.role, "MEMBER")) {
+        return reply.code(403).send({ message: "Member permission required" });
+      }
+
+      const connection = await loadWorkspaceConnection({
+        app,
+        workspaceId: params.workspaceId,
+        inboxConnectionId: params.id
+      });
+      if (!connection) {
+        return reply.code(404).send({ message: "Inbox connection not found" });
+      }
+
+      if (!hasMinRole(membership.role, "ADMIN")) {
+        const user = await app.services.prisma.user.findUnique({
+          where: { id: session.userId },
+          select: { email: true }
+        });
+        const userEmail = user?.email?.toLowerCase() ?? "";
+        if (connection.email.toLowerCase() !== userEmail) {
+          return reply.code(403).send({ message: "Personal inbox access denied" });
+        }
+      }
+
+      if (body.messageIds && body.messageIds.length > 0) {
+        const result = await app.services.prisma.emailMessage.updateMany({
+          where: {
+            workspaceId: params.workspaceId,
+            inboxConnectionId: params.id,
+            id: { in: body.messageIds },
+            isTrashed: false,
+            isArchived: false,
+            classifications: { some: { businessCategory: "NON_BUSINESS" } }
+          },
+          data: { isTrashed: true }
+        });
+        return reply.send({ status: "ok", trashed: result.count });
+      }
+
+      const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
+      const where = buildMessagesWhere({
+        workspaceId: params.workspaceId,
+        inboxConnectionId: params.id,
+        businessCategory: "NON_BUSINESS",
+        reviewOnly: false,
+        lowConfidenceOnly: false,
+        ...(body.search ? { search: body.search } : {}),
+        classificationThreshold: thresholds.classificationThreshold,
+        taskThreshold: thresholds.taskThreshold
+      });
+
+      const result = await app.services.prisma.emailMessage.updateMany({
+        where,
+        data: { isTrashed: true }
+      });
+
+      return reply.send({ status: "ok", trashed: result.count });
+    }
+  );
+
+  app.patch(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages/:messageId/trash",
     async (request, reply) => {
       const params = messageDetailParamsSchema.parse(request.params);

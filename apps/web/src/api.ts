@@ -325,6 +325,15 @@ export const api = {
       body: JSON.stringify({})
     }),
 
+  trashPersonalMessages: (workspaceId: string, connectionId: string, opts?: {
+    search?: string;
+    messageIds?: string[];
+  }) =>
+    request<{ status: string; trashed: number }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/trash-personal`,
+      { method: 'PATCH', body: JSON.stringify(opts ?? {}) }
+    ),
+
   untrashMessage: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/untrash`, {
       method: 'PATCH',

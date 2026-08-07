@@ -60,6 +60,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
   const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
   const [jobAssigning, setJobAssigning] = useState(false)
+  const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
 
   const handleAssignJob = async (messageId: string, jobId: string) => {
     setJobAssigning(true)
@@ -231,6 +232,26 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => prev - 1)
     } catch { /* */ }
+  }
+
+  const handleDeleteAllPersonal = async () => {
+    if (totalCount === 0 && filteredMessages.length === 0) return
+    const count = Math.max(totalCount, filteredMessages.length)
+    const label = activeSearch
+      ? `${count} personal email${count !== 1 ? 's' : ''} matching "${activeSearch}"`
+      : `${count} personal email${count !== 1 ? 's' : ''}`
+    if (!confirm(`Move ${label} to trash?`)) return
+    setDeletingAllPersonal(true)
+    try {
+      await api.trashPersonalMessages(workspaceId, connectionId, {
+        ...(activeSearch ? { search: activeSearch } : {})
+      })
+      setMessages([])
+      setTotalCount(0)
+      setHasMore(false)
+    } catch { /* */ } finally {
+      setDeletingAllPersonal(false)
+    }
   }
 
   const handleReclassify = async (messageId: string, category: 'BUSINESS' | 'PERSONAL') => {
@@ -517,8 +538,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           <h2 style={{ fontSize: 17, margin: 0 }}>Inbox</h2>
           <span style={{ fontSize: 12, color: '#999' }}>{totalCount} messages</span>
         </div>
-        <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)}
-          style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: isPhone ? '100%' : 220 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {inboxTab === 'PERSONAL' && !isViewer && filteredMessages.length > 0 && (
+            <button
+              onClick={handleDeleteAllPersonal}
+              disabled={deletingAllPersonal}
+              style={{
+                padding: '5px 12px', fontSize: 12, fontWeight: 500, borderRadius: 5,
+                border: '1px solid #fca5a5', background: '#fff', color: '#dc2626',
+                cursor: deletingAllPersonal ? 'not-allowed' : 'pointer',
+                opacity: deletingAllPersonal ? 0.6 : 1, whiteSpace: 'nowrap',
+              }}
+            >
+              {deletingAllPersonal ? 'Deleting...' : 'Delete All'}
+            </button>
+          )}
+          <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)}
+            style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: isPhone ? '100%' : 220 }} />
+        </div>
       </div>
 
       {/* Tab bar */}
