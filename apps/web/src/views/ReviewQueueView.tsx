@@ -65,7 +65,8 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
     setActionLoading(m.id + 'reclassify')
     try {
       await api.reclassifyMessage(workspaceId, m.id, { mailboxCategory: newCategory })
-      loadReview()
+      setItems(prev => prev.filter(i => i.message.id !== m.id))
+      setTotalCount(prev => prev - 1)
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Reclassify failed')
     } finally {
@@ -85,7 +86,8 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       if (m.taskCandidate?.id) {
         await api.reviewTask(workspaceId, m.taskCandidate.id, 'APPROVED')
       }
-      loadReview()
+      setItems(prev => prev.filter(i => i.message.id !== m.id))
+      setTotalCount(prev => prev - 1)
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Confirm failed')
     } finally {
