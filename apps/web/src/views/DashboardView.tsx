@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api, type TaskListItem, type ReviewItem } from '../api'
-import { PriorityBadge, StatusBadge } from '../components/Badges'
+import { api, type TaskListItem, type MessageSummary } from '../api'
+import { PriorityBadge, StatusBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
@@ -43,7 +43,7 @@ const card = {
 
 export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoint = 'desktop' }: Props) {
   const [tasks, setTasks] = useState<TaskListItem[]>([])
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([])
+  const [recentEmails, setRecentEmails] = useState<MessageSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const isPhone = breakpoint === 'phone'
@@ -53,10 +53,10 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
     setLoading(true)
     Promise.all([
       api.getTasks(workspaceId, connectionId, 1).catch(() => ({ tasks: [], pagination: { totalCount: 0, totalPages: 0 } })),
-      api.getReviewQueue(workspaceId, connectionId, 1).catch(() => ({ items: [], pagination: { totalCount: 0, totalPages: 0 }, thresholds: { classification: 0, task: 0 } })),
-    ]).then(([t, r]) => {
+      api.getMessages(workspaceId, connectionId, 1, 5, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 5 } })),
+    ]).then(([t, m]) => {
       setTasks(t.tasks)
-      setReviewItems(r.items.slice(0, 5))
+      setRecentEmails(m.messages)
     }).finally(() => setLoading(false))
   }, [workspaceId, connectionId])
 
@@ -139,7 +139,7 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
           { label: 'Open Tasks', value: openCount, color: '#1565c0', bg: '#e3f2fd', nav: 'tasks' as const },
           { label: 'High Priority', value: priorityTotal, color: '#e65100', bg: '#fff3e0', nav: 'tasks' as const },
           { label: 'Overdue', value: overdueTasks.length, color: '#c62828', bg: '#ffebee', nav: 'tasks' as const },
-          { label: 'Needs Review', value: reviewItems.length, color: '#f57f17', bg: '#fffde7', nav: 'review' as const },
+          { label: 'Recent Emails', value: recentEmails.length, color: '#1565c0', bg: '#e3f2fd', nav: 'inbox' as const },
         ].map((stat, i) => (
           <div key={i} onClick={() => onNavigate(stat.nav)} style={{
             cursor: 'pointer', textAlign: 'center', padding: isPhone ? '14px 8px' : '18px 12px',
@@ -247,55 +247,55 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
           )}
         </div>
 
-        {/* Container 3: Needs Review (unchanged) */}
+        {/* Container 3: Recent Business Emails */}
         <div style={{ ...card, gridColumn: isPhone ? undefined : '1 / -1' }}>
           <div style={{ padding: '14px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>Needs Review</span>
-              {reviewItems.length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#f57f17', color: '#fff' }}>{reviewItems.length}</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>Recent Business Emails</span>
+              {recentEmails.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#e3f2fd', color: '#1565c0' }}>{recentEmails.length}</span>
               )}
             </div>
-            <button onClick={() => onNavigate('review')} style={{ background: 'none', border: 'none', fontSize: 11, color: '#1565c0', cursor: 'pointer', fontWeight: 600 }}>View all →</button>
+            <button onClick={() => onNavigate('inbox')} style={{ background: 'none', border: 'none', fontSize: 11, color: '#1565c0', cursor: 'pointer', fontWeight: 600 }}>View all →</button>
           </div>
 
-          {reviewItems.length === 0 ? (
+          {recentEmails.length === 0 ? (
             <div style={{ padding: '32px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 28, opacity: 0.2, marginBottom: 6 }}>✓</div>
-              <p style={{ color: '#bbb', fontSize: 12, margin: 0 }}>No items need review</p>
+              <div style={{ fontSize: 28, opacity: 0.2, marginBottom: 6 }}>✉</div>
+              <p style={{ color: '#bbb', fontSize: 12, margin: 0 }}>No recent business emails</p>
             </div>
           ) : (
             <div style={{ marginTop: 8 }}>
-              {reviewItems.map(({ message }) => (
+              {recentEmails.map(message => (
                 <div key={message.id} style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px',
                   borderBottom: '1px solid #f5f5f5', cursor: 'pointer',
                   transition: 'background 0.15s',
+                  fontWeight: message.isRead ? 400 : 600,
                 }}
-                  onClick={() => onNavigate('review')}
+                  onClick={() => onNavigate('inbox')}
                   onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
                   onMouseOut={e => (e.currentTarget.style.background = '')}
                 >
                   <div style={{
                     width: 3, height: 28, borderRadius: 2, flexShrink: 0,
-                    background: '#f57f17'
+                    background: message.classification?.priority === 'HIGH' || message.classification?.priority === 'URGENT' ? '#e65100' : '#1565c0'
                   }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ fontSize: 13, fontWeight: message.isRead ? 500 : 700, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {message.subject ?? '(no subject)'}
                     </div>
-                    <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>
+                    <div style={{ fontSize: 11, color: '#aaa', marginTop: 2, fontWeight: 400 }}>
                       {message.senderName ?? message.senderEmail}
                       <span style={{ marginLeft: 8, color: '#ccc' }}>{timeAgo(message.receivedAt ?? message.sentAt)}</span>
                     </div>
                   </div>
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
-                    background: message.mailboxCategory === 'BUSINESS' ? '#e3f2fd' : '#f3e5f5',
-                    color: message.mailboxCategory === 'BUSINESS' ? '#1565c0' : '#6a1b9a'
-                  }}>
-                    {message.mailboxCategory === 'BUSINESS' ? 'Business' : 'Personal'}
-                  </span>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                    {message.classification && (
+                      <TypeBadge type={message.classification.emailType} businessTypeKey={message.classification.businessTypeKey} />
+                    )}
+                    <PriorityBadge priority={message.classification?.priority ?? null} />
+                  </div>
                 </div>
               ))}
             </div>
