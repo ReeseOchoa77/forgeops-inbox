@@ -48,15 +48,19 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
 
   const isPhone = breakpoint === 'phone'
 
+  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
+
   useEffect(() => {
     if (!workspaceId || !connectionId) { setLoading(false); return }
     setLoading(true)
     Promise.all([
       api.getTasks(workspaceId, connectionId, 1).catch(() => ({ tasks: [], pagination: { totalCount: 0, totalPages: 0 } })),
       api.getMessages(workspaceId, connectionId, 1, 5, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 5 } })),
-    ]).then(([t, m]) => {
+      api.getConnections(workspaceId).catch(() => ({ connections: [] })),
+    ]).then(([t, m, c]) => {
       setTasks(t.tasks)
       setRecentEmails(m.messages)
+      setMonitoredEmails(new Set(c.connections.map(conn => conn.email.toLowerCase())))
     }).finally(() => setLoading(false))
   }, [workspaceId, connectionId])
 
@@ -71,16 +75,22 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
 
   if (loading) return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading dashboard...</p>
 
-  const pinnedTasks = tasks.filter(t => t.task.isPinned && t.task.status !== 'DONE')
-  const overdueTasks = tasks.filter(t => isOverdue(t.task.dueAt, t.task.status) && !t.task.isPinned)
-  const highPriorityTasks = tasks.filter(t =>
+  // Exclude tasks from sent/outbound mail (sender is a monitored inbox)
+  const inboxTasks = tasks.filter(t => {
+    const sender = t.sourceMessage?.senderEmail?.toLowerCase()
+    return !sender || !monitoredEmails.has(sender)
+  })
+
+  const pinnedTasks = inboxTasks.filter(t => t.task.isPinned && t.task.status !== 'DONE')
+  const overdueTasks = inboxTasks.filter(t => isOverdue(t.task.dueAt, t.task.status) && !t.task.isPinned)
+  const highPriorityTasks = inboxTasks.filter(t =>
     (t.task.priority === 'HIGH' || t.task.priority === 'URGENT') &&
     t.task.status !== 'DONE' &&
     !t.task.isPinned &&
     !isOverdue(t.task.dueAt, t.task.status)
   )
-  const openCount = tasks.filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS').length
-  const recentTasks = [...tasks]
+  const openCount = inboxTasks.filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS').length
+  const recentTasks = [...inboxTasks]
     .sort((a, b) => new Date(b.task.createdAt).getTime() - new Date(a.task.createdAt).getTime())
     .slice(0, 5)
 
