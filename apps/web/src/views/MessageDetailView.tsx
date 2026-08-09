@@ -510,10 +510,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobError, setJobError] = useState<string | null>(null)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
+  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
 
   const isPhone = breakpoint === 'phone'
 
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
+
+  useEffect(() => {
+    api.getConnections(workspaceId)
+      .then(r => setMonitoredEmails(new Set(r.connections.map(c => c.email.toLowerCase()))))
+      .catch(() => setMonitoredEmails(new Set()))
+  }, [workspaceId])
 
   useEffect(() => {
     const t0 = performance.now()
@@ -706,7 +713,9 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
                 flexShrink: 0, justifyContent: 'flex-end',
               }}>
-                {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
+                {lastMessage.classification && !monitoredEmails.has(lastMessage.senderEmail.toLowerCase()) && (
+                  <PriorityBadge priority={lastMessage.classification.priority} />
+                )}
                 {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
                   <button
                     onClick={() => handleReclassify('PERSONAL')}

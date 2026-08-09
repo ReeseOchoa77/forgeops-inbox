@@ -174,6 +174,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
   const currentConnectionEmail = connections.find(c => c.id === connectionId)?.email ?? ''
   const isOwnInbox = userEmail.toLowerCase() === currentConnectionEmail.toLowerCase()
+  const monitoredEmails = new Set(connections.map(c => c.email.toLowerCase()))
+  const isSentEmail = (m: MessageSummary) => monitoredEmails.has(m.senderEmail.toLowerCase())
   const [messages, setMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -482,7 +484,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           {isBusiness && m.classification && (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           )}
-          {isBusiness && m.classification && (
+          {isBusiness && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
           )}
           {isBusiness && (
@@ -662,7 +664,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </td>
       )}
       {isBusiness && (
-        <td style={{ padding: '7px 12px' }}>{m.classification ? <PriorityBadge priority={m.classification.priority} /> : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}</td>
+        <td style={{ padding: '7px 12px' }}>
+          {m.classification && !isSentEmail(m)
+            ? <PriorityBadge priority={m.classification.priority} />
+            : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+        </td>
       )}
       <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
       <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
