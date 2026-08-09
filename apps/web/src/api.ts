@@ -298,7 +298,6 @@ export const api = {
     jobId?: string;
     reclassifiedOnly?: boolean;
     sentOnly?: boolean;
-    unreadOnly?: boolean;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
@@ -311,7 +310,6 @@ export const api = {
     if (filters?.jobId) params.set('jobId', filters.jobId);
     if (filters?.reclassifiedOnly) params.set('reclassifiedOnly', 'true');
     if (filters?.sentOnly) params.set('sentOnly', 'true');
-    if (filters?.unreadOnly) params.set('unreadOnly', 'true');
     return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
@@ -397,9 +395,9 @@ export const api = {
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
     `${BASE}/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/attachments/${attachmentId}/download`,
 
-  getTasks: (workspaceId: string, connectionId: string, page = 1, pageSize = 25) =>
+  getTasks: (workspaceId: string, connectionId: string, page = 1) =>
     request<{ tasks: TaskListItem[]; pagination: { page: number; totalCount: number; totalPages: number } }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?page=${page}&pageSize=${pageSize}`
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?page=${page}&pageSize=25`
     ),
 
   getReviewQueue: (workspaceId: string, connectionId: string, page = 1) =>
