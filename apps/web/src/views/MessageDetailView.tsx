@@ -616,104 +616,139 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         padding: '8px 0 10px', background: '#f5f5f6',
         borderBottom: '1px solid #e8e8e8',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={onBack} className="btn btn-sm btn-outline" style={{ minHeight: 40 }}>
-            &larr; Back to Inbox
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <button
+            onClick={onBack}
+            title="Back to Inbox"
+            aria-label="Back to Inbox"
+            style={{
+              flexShrink: 0, width: 32, height: 32, marginTop: 2,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              border: '1px solid #d0d5dd', borderRadius: 6, background: '#fff',
+              color: '#374151', fontSize: 16, cursor: 'pointer', padding: 0, lineHeight: 1,
+            }}
+          >
+            ←
           </button>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
-            {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
-              <button
-                onClick={() => handleReclassify('PERSONAL')}
-                disabled={reclassifyBusy}
-                style={{
-                  fontSize: 12, padding: '4px 12px', borderRadius: 5,
-                  border: '1px solid #7c3aed', background: '#ede9fe', color: '#7c3aed',
-                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
-                  opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
-                }}
-              >
-                {reclassifyBusy ? 'Updating...' : 'Mark as Personal'}
-              </button>
-            )}
-            {clickedMessage && clickedMessage.mailboxCategory === 'PERSONAL' && (
-              <button
-                onClick={() => handleReclassify('BUSINESS')}
-                disabled={reclassifyBusy}
-                style={{
-                  fontSize: 12, padding: '4px 12px', borderRadius: 5,
-                  border: '1px solid #1565c0', background: '#e3f2fd', color: '#1565c0',
-                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
-                  opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
-                }}
-              >
-                {reclassifyBusy ? 'Updating...' : 'Mark as Business'}
-              </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+              <h2 style={{
+                fontSize: isPhone ? 16 : 18, margin: 0, lineHeight: 1.3, fontWeight: 600,
+                flex: '1 1 160px', overflow: 'hidden', textOverflow: 'ellipsis',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
+              }}>
+                {subject}
+              </h2>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+                {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
+                {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
+                  <button
+                    onClick={() => handleReclassify('PERSONAL')}
+                    disabled={reclassifyBusy}
+                    style={{
+                      fontSize: 12, padding: '4px 12px', borderRadius: 5,
+                      border: '1px solid #7c3aed', background: '#ede9fe', color: '#7c3aed',
+                      cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
+                      opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
+                    }}
+                  >
+                    {reclassifyBusy ? 'Updating...' : 'Mark as Personal'}
+                  </button>
+                )}
+                {clickedMessage && clickedMessage.mailboxCategory === 'PERSONAL' && (
+                  <button
+                    onClick={() => handleReclassify('BUSINESS')}
+                    disabled={reclassifyBusy}
+                    style={{
+                      fontSize: 12, padding: '4px 12px', borderRadius: 5,
+                      border: '1px solid #1565c0', background: '#e3f2fd', color: '#1565c0',
+                      cursor: reclassifyBusy ? 'not-allowed' : 'pointer', fontWeight: 600,
+                      opacity: reclassifyBusy ? 0.6 : 1, minHeight: 32,
+                    }}
+                  >
+                    {reclassifyBusy ? 'Updating...' : 'Mark as Business'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#999' }}>
+                {messages.length} message{messages.length !== 1 ? 's' : ''}
+              </span>
+              {clickedMessage?.previousCategory && (
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 10,
+                  background: '#ede9fe', color: '#7c3aed'
+                }}>
+                  Reclassified from {clickedMessage.previousCategory.toLowerCase()}
+                </span>
+              )}
+            </div>
+
+            {isBusinessMessage && clickedMessage && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                marginTop: 8, fontSize: 12,
+              }}>
+                <span style={{ color: '#6b7280', fontWeight: 600 }}>Job</span>
+                {clickedMessage.job && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                    background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
+                    color: clickedMessage.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
+                  }}>
+                    {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
+                  </span>
+                )}
+                <select
+                  value={selectedJobId}
+                  onChange={e => setSelectedJobId(e.target.value)}
+                  disabled={jobBusy}
+                  style={{
+                    padding: '4px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
+                    minWidth: isPhone ? 0 : 180, flex: isPhone ? 1 : undefined, minHeight: 32,
+                    background: '#fff', maxWidth: 280,
+                  }}
+                >
+                  <option value="">{clickedMessage.job ? 'Change job…' : 'Select a job…'}</option>
+                  {jobs.map(j => (
+                    <option key={j.id} value={j.id}>
+                      {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
+                  onClick={handleAssignJob}
+                  style={{
+                    fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
+                    border: '1px solid #d0d5dd', background: '#f9fafb', color: '#111',
+                    cursor: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 'not-allowed' : 'pointer',
+                    opacity: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 0.5 : 1,
+                    fontWeight: 500,
+                  }}
+                >
+                  {clickedMessage.job ? 'Move' : 'Assign'}
+                </button>
+                {clickedMessage.job && (
+                  <button
+                    disabled={jobBusy}
+                    onClick={handleRemoveJob}
+                    style={{
+                      fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
+                      border: 'none', background: 'none', color: '#888',
+                      cursor: jobBusy ? 'not-allowed' : 'pointer', textDecoration: 'underline',
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+                {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
+              </div>
             )}
           </div>
         </div>
-
-        {isBusinessMessage && clickedMessage && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-            marginTop: 8, fontSize: 12,
-          }}>
-            <span style={{ color: '#6b7280', fontWeight: 600 }}>Job</span>
-            {clickedMessage.job && (
-              <span style={{
-                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-                background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
-                color: clickedMessage.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
-              }}>
-                {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
-              </span>
-            )}
-            <select
-              value={selectedJobId}
-              onChange={e => setSelectedJobId(e.target.value)}
-              disabled={jobBusy}
-              style={{
-                padding: '4px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
-                minWidth: isPhone ? 0 : 180, flex: isPhone ? 1 : undefined, minHeight: 32,
-                background: '#fff', maxWidth: 280,
-              }}
-            >
-              <option value="">{clickedMessage.job ? 'Change job…' : 'Select a job…'}</option>
-              {jobs.map(j => (
-                <option key={j.id} value={j.id}>
-                  {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
-                </option>
-              ))}
-            </select>
-            <button
-              disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
-              onClick={handleAssignJob}
-              style={{
-                fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
-                border: '1px solid #d0d5dd', background: '#f9fafb', color: '#111',
-                cursor: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 'not-allowed' : 'pointer',
-                opacity: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 0.5 : 1,
-                fontWeight: 500,
-              }}
-            >
-              {clickedMessage.job ? 'Move' : 'Assign'}
-            </button>
-            {clickedMessage.job && (
-              <button
-                disabled={jobBusy}
-                onClick={handleRemoveJob}
-                style={{
-                  fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
-                  border: 'none', background: 'none', color: '#888',
-                  cursor: jobBusy ? 'not-allowed' : 'pointer', textDecoration: 'underline',
-                }}
-              >
-                Remove
-              </button>
-            )}
-            {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
-          </div>
-        )}
       </div>
 
       {sendResult && (
@@ -727,24 +762,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
         </div>
       )}
-
-      {/* Subject header */}
-      <div style={{ padding: isPhone ? '4px 0 10px' : '4px 16px 12px', marginBottom: 8 }}>
-        <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, color: '#999' }}>
-            {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
-          </span>
-          {clickedMessage?.previousCategory && (
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 10,
-              background: '#ede9fe', color: '#7c3aed'
-            }}>
-              Manually reclassified from {clickedMessage.previousCategory.toLowerCase()}
-            </span>
-          )}
-        </div>
-      </div>
 
       {/* Attachments at top — all downloadable files listed before the email body */}
       {clickedMessage && (
