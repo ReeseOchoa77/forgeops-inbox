@@ -610,33 +610,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   return (
     <div>
+      {/* Sticky action bar — always visible while scrolling */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 20, marginBottom: 12,
-        padding: '4px 0 10px', background: '#f5f5f6',
+        padding: '8px 0 10px', background: '#f5f5f6',
         borderBottom: '1px solid #e8e8e8',
       }}>
-        <button onClick={onBack} className="btn btn-sm btn-outline" style={{ minHeight: 44 }}>
-          &larr; Back to Inbox
-        </button>
-      </div>
-
-      {sendResult && (
-        <div style={{
-          padding: '8px 12px', marginBottom: 10, borderRadius: 4, fontSize: 13,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          background: sendResult.type === 'success' ? '#e6f4ea' : '#fce4ec',
-          border: `1px solid ${sendResult.type === 'success' ? '#a8d5a2' : '#e8a09a'}`
-        }}>
-          <span>{sendResult.message}</span>
-          <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
-        </div>
-      )}
-
-      {/* Subject header + compact actions */}
-      <div style={{ padding: isPhone ? '10px 0' : '12px 16px', marginBottom: 8 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600, flex: '1 1 200px' }}>{subject}</h2>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={onBack} className="btn btn-sm btn-outline" style={{ minHeight: 40 }}>
+            &larr; Back to Inbox
+          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
             {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
               <button
@@ -669,25 +653,10 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, color: '#999' }}>
-            {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
-          </span>
-          {clickedMessage?.previousCategory && (
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 10,
-              background: '#ede9fe', color: '#7c3aed'
-            }}>
-              Manually reclassified from {clickedMessage.previousCategory.toLowerCase()}
-            </span>
-          )}
-        </div>
-
-        {/* Compact job assignment — sits with header actions, not a full card */}
         {isBusinessMessage && clickedMessage && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-            marginTop: 10, fontSize: 12,
+            marginTop: 8, fontSize: 12,
           }}>
             <span style={{ color: '#6b7280', fontWeight: 600 }}>Job</span>
             {clickedMessage.job && (
@@ -745,6 +714,36 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
           </div>
         )}
+      </div>
+
+      {sendResult && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 10, borderRadius: 4, fontSize: 13,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: sendResult.type === 'success' ? '#e6f4ea' : '#fce4ec',
+          border: `1px solid ${sendResult.type === 'success' ? '#a8d5a2' : '#e8a09a'}`
+        }}>
+          <span>{sendResult.message}</span>
+          <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
+        </div>
+      )}
+
+      {/* Subject header */}
+      <div style={{ padding: isPhone ? '4px 0 10px' : '4px 16px 12px', marginBottom: 8 }}>
+        <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
+          </span>
+          {clickedMessage?.previousCategory && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 10,
+              background: '#ede9fe', color: '#7c3aed'
+            }}>
+              Manually reclassified from {clickedMessage.previousCategory.toLowerCase()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Attachments at top — all downloadable files listed before the email body */}
