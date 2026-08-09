@@ -1,7 +1,139 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type JobLookup, type MessageSummary, type ConnectionSummary } from '../api'
+import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+
+function formatAttachmentSize(bytes: number | null | undefined): string {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function InboxAttachmentsButton({
+  workspaceId,
+  messageId,
+  open,
+  onToggle,
+}: {
+  workspaceId: string
+  messageId: string
+  open: boolean
+  onToggle: () => void
+}) {
+  const [attachments, setAttachments] = useState<StoredAttachment[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoading(true)
+    setError(false)
+    api.getEmailAttachments(workspaceId, messageId)
+      .then(r => {
+        if (!cancelled) setAttachments(r.attachments)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAttachments([])
+          setError(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [open, workspaceId, messageId])
+
+  const downloadable = (attachments ?? []).filter(a => {
+    const mime = (a.mimeType ?? '').toLowerCase()
+    // Prefer real files; keep pure inline images out of the quick list
+    return !(a.isInline && mime.startsWith('image/'))
+  })
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }} onClick={e => e.stopPropagation()}>
+      <button
+        type="button"
+        title="View attachments"
+        onClick={onToggle}
+        style={{
+          background: open ? '#eef2ff' : 'none',
+          border: open ? '1px solid #c7d2fe' : '1px solid transparent',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontSize: 13,
+          color: open ? '#4338ca' : '#6b7280',
+          padding: '2px 5px',
+          lineHeight: 1,
+          minHeight: 28,
+        }}
+      >
+        📎
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 30,
+            background: '#fff', border: '1px solid #ddd', borderRadius: 8,
+            boxShadow: '0 6px 18px rgba(0,0,0,0.14)', width: 280, maxHeight: 240,
+            overflowY: 'auto', marginTop: 4,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: '#555', borderBottom: '1px solid #f0f0f0' }}>
+            Attachments
+          </div>
+          {loading && <div style={{ padding: '12px 10px', fontSize: 12, color: '#999' }}>Loading…</div>}
+          {!loading && error && (
+            <div style={{ padding: '12px 10px', fontSize: 12, color: '#c62828' }}>Failed to load attachments</div>
+          )}
+          {!loading && !error && downloadable.length === 0 && (
+            <div style={{ padding: '12px 10px', fontSize: 12, color: '#999' }}>
+              No downloadable files yet. Open the email for details.
+            </div>
+          )}
+          {!loading && downloadable.map(att => (
+            <div
+              key={att.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                borderBottom: '1px solid #f5f5f5', fontSize: 12,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {att.filename}
+                </div>
+                <div style={{ fontSize: 10, color: '#999', marginTop: 1 }}>
+                  {formatAttachmentSize(att.sizeBytes)}
+                  {att.uploadStatus !== 'UPLOADED' ? ` · ${att.uploadStatus.toLowerCase()}` : ''}
+                </div>
+              </div>
+              {att.uploadStatus === 'UPLOADED' ? (
+                <a
+                  href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    fontSize: 11, color: '#1565c0', textDecoration: 'none', fontWeight: 600,
+                    padding: '3px 8px', border: '1px solid #90caf9', borderRadius: 4, flexShrink: 0,
+                  }}
+                >
+                  Download
+                </a>
+              ) : (
+                <span style={{ fontSize: 10, color: '#bbb', flexShrink: 0 }}>Unavailable</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  )
+}
 
 type AutoResponseStatus = 'idle' | 'sending' | 'sent'
 
@@ -59,6 +191,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
   const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
+  const [attachmentPickerOpen, setAttachmentPickerOpen] = useState<string | null>(null)
   const [jobAssigning, setJobAssigning] = useState(false)
   const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
 
@@ -74,11 +207,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   useEffect(() => {
-    if (!jobPickerOpen) return
-    const close = () => setJobPickerOpen(null)
+    if (!jobPickerOpen && !attachmentPickerOpen) return
+    const close = () => {
+      setJobPickerOpen(null)
+      setAttachmentPickerOpen(null)
+    }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
-  }, [jobPickerOpen])
+  }, [jobPickerOpen, attachmentPickerOpen])
 
   const handleRemoveJob = async (messageId: string, jobId: string) => {
     try {
@@ -317,9 +453,19 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         </div>
 
-        <div style={{ marginTop: 4, fontWeight: m.isRead ? 400 : 600, fontSize: 13 }}>
-          {m.subject ?? '(no subject)'}
-          {m.hasAttachments && <span style={{ marginLeft: 6 }} title="Has attachments">📎</span>}
+        <div style={{ marginTop: 4, fontWeight: m.isRead ? 400 : 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span>{m.subject ?? '(no subject)'}</span>
+          {m.hasAttachments && (
+            <InboxAttachmentsButton
+              workspaceId={workspaceId}
+              messageId={m.id}
+              open={attachmentPickerOpen === m.id}
+              onToggle={() => {
+                setJobPickerOpen(null)
+                setAttachmentPickerOpen(attachmentPickerOpen === m.id ? null : m.id)
+              }}
+            />
+          )}
         </div>
 
         {m.snippet && (
@@ -426,6 +572,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
+          {m.hasAttachments && (
+            <InboxAttachmentsButton
+              workspaceId={workspaceId}
+              messageId={m.id}
+              open={attachmentPickerOpen === m.id}
+              onToggle={() => {
+                setJobPickerOpen(null)
+                setAttachmentPickerOpen(attachmentPickerOpen === m.id ? null : m.id)
+              }}
+            />
+          )}
         </div>
         {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
         {isBusiness && m.classification?.priority === 'LOW' && (() => {
