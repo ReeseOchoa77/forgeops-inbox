@@ -340,32 +340,74 @@ function statusBadge(status: StoredAttachment['uploadStatus']) {
   )
 }
 
-function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: string; emailId: string }) {
+function isInlineImage(att: StoredAttachment): boolean {
+  const mime = (att.mimeType ?? '').toLowerCase()
+  return att.isInline && mime.startsWith('image/')
+}
+
+function StoredAttachmentsSection({
+  workspaceId,
+  emailIds,
+  compact,
+}: {
+  workspaceId: string
+  emailIds: string[]
+  compact?: boolean
+}) {
   const [attachments, setAttachments] = useState<StoredAttachment[]>([])
   const [loading, setLoading] = useState(true)
-  const [showInline, setShowInline] = useState(false)
+  const [showInlineImages, setShowInlineImages] = useState(false)
+
+  const emailIdsKey = emailIds.join(',')
 
   useEffect(() => {
+    if (emailIds.length === 0) {
+      setAttachments([])
+      setLoading(false)
+      return
+    }
+    let cancelled = false
     setLoading(true)
-    api.getEmailAttachments(workspaceId, emailId)
-      .then(r => setAttachments(r.attachments))
-      .catch(() => setAttachments([]))
-      .finally(() => setLoading(false))
-  }, [workspaceId, emailId])
+    Promise.all(
+      emailIds.map(id =>
+        api.getEmailAttachments(workspaceId, id)
+          .then(r => r.attachments)
+          .catch(() => [] as StoredAttachment[])
+      )
+    )
+      .then(results => {
+        if (cancelled) return
+        const byId = new Map<string, StoredAttachment>()
+        for (const list of results) {
+          for (const att of list) byId.set(att.id, att)
+        }
+        setAttachments([...byId.values()])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [workspaceId, emailIdsKey])
 
-  if (loading) return null
-
-  // Files users typically download: regular attachments + non-image "inline" files (e.g. Outlook PDFs)
-  const downloadable = attachments.filter(a => !a.isInline || !a.mimeType.startsWith('image/'))
-  const inlineImages = attachments.filter(a => a.isInline && a.mimeType.startsWith('image/'))
-  const visible = showInline ? [...downloadable, ...inlineImages] : downloadable
-
-  if (downloadable.length === 0 && inlineImages.length === 0) return null
-  if (downloadable.length === 0 && !showInline) {
+  if (loading) {
     return (
-      <div style={{ margin: '0 0 10px', fontSize: 12, color: '#888' }}>
+      <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#999' }}>
+        Loading attachments…
+      </div>
+    )
+  }
+
+  // Show all real files by default; keep pure inline images optional
+  const downloadable = attachments.filter(a => !isInlineImage(a))
+  const inlineImages = attachments.filter(isInlineImage)
+  const visible = showInlineImages ? [...downloadable, ...inlineImages] : downloadable
+
+  if (attachments.length === 0) return null
+  if (visible.length === 0) {
+    return (
+      <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#888' }}>
         <button
-          onClick={() => setShowInline(true)}
+          onClick={() => setShowInlineImages(true)}
           style={{ background: 'none', border: 'none', padding: 0, fontSize: 12, color: '#888', cursor: 'pointer', textDecoration: 'underline' }}
         >
           Show {inlineImages.length} inline image{inlineImages.length !== 1 ? 's' : ''}
@@ -376,31 +418,35 @@ function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: strin
 
   return (
     <div style={{
-      margin: '0 0 12px', padding: '10px 14px', background: '#fff',
-      border: '1px solid #e5e5e5', borderRadius: 8
+      marginTop: compact ? 8 : 0,
+      marginBottom: compact ? 0 : 12,
+      padding: compact ? '8px 10px' : '10px 14px',
+      background: '#fff',
+      border: '1px solid #e5e5e5',
+      borderRadius: 8,
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
           Attachments ({downloadable.length}{inlineImages.length > 0 ? ` · ${inlineImages.length} inline` : ''})
         </div>
         {inlineImages.length > 0 && (
           <button
-            onClick={() => setShowInline(v => !v)}
+            onClick={() => setShowInlineImages(v => !v)}
             style={{
               background: 'none', border: 'none', fontSize: 11, color: '#888',
               cursor: 'pointer', textDecoration: 'underline', padding: 0
             }}
           >
-            {showInline ? 'Hide inline images' : 'Show inline images'}
+            {showInlineImages ? 'Hide inline images' : 'Show inline images'}
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: compact ? 160 : undefined, overflowY: compact ? 'auto' : undefined }}>
         {visible.map(att => (
           <div
             key={att.id}
             style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
+              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
               border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa',
               fontSize: 13, flexWrap: 'wrap',
             }}
@@ -411,7 +457,8 @@ function StoredAttachmentsSection({ workspaceId, emailId }: { workspaceId: strin
                 {att.filename}
               </div>
               <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>
-                {formatSize(att.sizeBytes)} · {att.mimeType.split('/').pop()}
+                {formatSize(att.sizeBytes)}
+                {att.mimeType ? ` · ${att.mimeType.split('/').pop()}` : ''}
                 {att.isInline && <span style={{ marginLeft: 6, color: '#999' }}>(inline)</span>}
               </div>
             </div>
@@ -747,6 +794,12 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
               </div>
             )}
+
+            <StoredAttachmentsSection
+              workspaceId={workspaceId}
+              emailIds={messages.map(m => m.id)}
+              compact
+            />
           </div>
         </div>
       </div>
@@ -761,14 +814,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           <span>{sendResult.message}</span>
           <button onClick={() => setSendResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
         </div>
-      )}
-
-      {/* Attachments at top — all downloadable files listed before the email body */}
-      {clickedMessage && (
-        <StoredAttachmentsSection
-          workspaceId={workspaceId}
-          emailId={clickedMessage.id}
-        />
       )}
 
       {/* Thread messages */}
