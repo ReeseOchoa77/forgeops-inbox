@@ -121,27 +121,6 @@ function mapPriorityToEnum(priority: string): "LOW" | "MEDIUM" | "HIGH" | "URGEN
   }
 }
 
-/** Sent/outbound: sender matches the mailbox or any monitored inbox in the workspace. */
-async function isSentFromMonitoredInbox(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  senderEmail: string,
-  mailboxEmail: string
-): Promise<boolean> {
-  const sender = senderEmail.trim().toLowerCase();
-  if (!sender) return false;
-  if (sender === mailboxEmail.trim().toLowerCase()) return true;
-
-  const match = await tx.inboxConnection.findFirst({
-    where: {
-      workspaceId,
-      email: { equals: sender, mode: "insensitive" }
-    },
-    select: { id: true }
-  });
-  return !!match;
-}
-
 function generateTaskKey(messageId: string, title: string, index: number): string {
   const normalized = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
   return createHash("sha256")
@@ -366,41 +345,7 @@ async function upsertEmailData(
       }
     });
 
-    const isSent = await isSentFromMonitoredInbox(
-      tx,
-      workspaceId,
-      body.email.senderEmail,
-      body.source.mailboxEmail
-    );
-    let taskIds: string[] = [];
-    if (body.analysis.mailboxCategory === "PERSONAL") {
-      taskIds = [];
-    } else if (isSent) {
-      // Clear any tasks previously created from outbound/sent mail; do not create new ones
-      const emptyTasksBody = {
-        ...body,
-        analysis: { ...body.analysis, tasks: [] as typeof body.analysis.tasks }
-      };
-      taskIds = await upsertTasks(
-        tx,
-        workspaceId,
-        existingMessage.id,
-        existingMessage.threadId,
-        classification.id,
-        emptyTasksBody,
-        priority
-      );
-    } else {
-      taskIds = await upsertTasks(
-        tx,
-        workspaceId,
-        existingMessage.id,
-        existingMessage.threadId,
-        classification.id,
-        body,
-        priority
-      );
-    }
+    const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
 
     return {
       status: "updated",
@@ -515,16 +460,7 @@ async function upsertEmailData(
     }
   });
 
-  const isSent = await isSentFromMonitoredInbox(
-    tx,
-    workspaceId,
-    body.email.senderEmail,
-    body.source.mailboxEmail
-  );
-  const taskIds =
-    body.analysis.mailboxCategory === "PERSONAL" || isSent
-      ? []
-      : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
+  const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
 
   return {
     status: "created",

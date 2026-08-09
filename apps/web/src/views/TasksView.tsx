@@ -9,12 +9,12 @@ interface Props {
   userRole?: string
 }
 
-type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'today' | 'this_week' | 'high_priority' | 'assigned'
+type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'today' | 'this_week' | 'high_priority' | 'requests'
 
 const FILTERS: Array<{ key: TaskFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'open', label: 'Open' },
-  { key: 'assigned', label: 'Assigned' },
+  { key: 'requests', label: 'Requests' },
   { key: 'completed', label: 'Completed' },
   { key: 'overdue', label: 'Overdue' },
   { key: 'today', label: 'Today' },
@@ -121,14 +121,14 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
     return () => observer.disconnect()
   }, [loading])
 
-  const isAssignedTask = (item: TaskListItem) => {
+  const isRequestTask = (item: TaskListItem) => {
     const sender = item.sourceMessage?.senderEmail?.toLowerCase()
     return !!sender && monitoredEmails.has(sender)
   }
 
   const filteredTasks = allTasks.filter((item) => {
     const { task } = item
-    const fromSent = isAssignedTask(item)
+    const fromSent = isRequestTask(item)
     switch (filter) {
       // Default views hide tasks from sent/outbound mail (from monitored inboxes)
       case 'open': return !fromSent && (task.status === 'OPEN' || task.status === 'IN_PROGRESS')
@@ -137,7 +137,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
       case 'today': return !fromSent && isCreatedToday(task.createdAt)
       case 'this_week': return !fromSent && isCreatedThisWeek(task.createdAt)
       case 'high_priority': return !fromSent && (task.priority === 'HIGH' || task.priority === 'URGENT') && task.status !== 'DONE'
-      case 'assigned': return fromSent && task.status !== 'CANCELLED'
+      case 'requests': return fromSent && task.status !== 'CANCELLED'
       case 'all': return !fromSent
       default: return !fromSent
     }
@@ -212,7 +212,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
             <h3>No {filter === 'all' ? '' : filter.replace('_', ' ')} tasks</h3>
             <p>{
               filter === 'open' ? 'All tasks are completed.'
-              : filter === 'assigned' ? 'No tasks from emails you sent. These are separated from regular inbox tasks.'
+              : filter === 'requests' ? 'No request tasks yet. These come from emails sent by monitored inboxes.'
               : filter === 'overdue' ? 'No overdue tasks.'
               : filter === 'today' ? 'No tasks created today.'
               : filter === 'this_week' ? 'No tasks created this week.'
