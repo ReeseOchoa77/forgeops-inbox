@@ -610,9 +610,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   return (
     <div>
-      <button onClick={onBack} className="btn btn-sm btn-outline" style={{ marginBottom: 12, minHeight: 44 }}>
-        &larr; Back to Inbox
-      </button>
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 20, marginBottom: 12,
+        padding: '4px 0 10px', background: '#f5f5f6',
+        borderBottom: '1px solid #e8e8e8',
+      }}>
+        <button onClick={onBack} className="btn btn-sm btn-outline" style={{ minHeight: 44 }}>
+          &larr; Back to Inbox
+        </button>
+      </div>
 
       {sendResult && (
         <div style={{
