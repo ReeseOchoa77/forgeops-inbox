@@ -115,6 +115,7 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
   hasTaskCandidate: booleanQuerySchema.optional(),
   reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
+  sentOnly: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional()
 });
 
@@ -660,6 +661,8 @@ const buildMessagesWhere = (input: {
   lowConfidenceOnly: boolean;
   hasTaskCandidate?: boolean;
   reclassifiedOnly?: boolean;
+  sentOnly?: boolean;
+  mailboxEmail?: string;
   search?: string;
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
@@ -679,6 +682,21 @@ const buildMessagesWhere = (input: {
     andConditions.push({ isTrashed: true });
   } else {
     andConditions.push({ isTrashed: false });
+  }
+
+  // Sent: from this mailbox, and/or provider Sent-folder labels
+  if (input.sentOnly) {
+    const sentLabelConditions: Prisma.EmailMessageWhereInput[] = [
+      { labelIds: { has: "SENT" } },
+      { labelIds: { has: "outlook-folder:sent items" } },
+      { labelIds: { has: "outlook-folder:sentitems" } },
+    ];
+    if (input.mailboxEmail) {
+      sentLabelConditions.push({
+        senderEmail: { equals: input.mailboxEmail, mode: "insensitive" }
+      });
+    }
+    andConditions.push({ OR: sentLabelConditions });
   }
 
   andConditions.push({ isArchived: false });
@@ -1171,6 +1189,8 @@ export const registerInboxReadRoutes = async (
           : {}),
         ...(query.search ? { search: query.search } : {}),
         reclassifiedOnly: query.reclassifiedOnly,
+        sentOnly: query.sentOnly,
+        ...(query.sentOnly ? { mailboxEmail: connection.email } : {}),
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
       });

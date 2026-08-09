@@ -166,7 +166,7 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
   { key: 'TRASH', label: 'Trash' },
 ]
 
-type ReadFilter = '' | 'unread' | 'read'
+type ReadFilter = '' | 'unread' | 'read' | 'sent'
 type PriorityKey = 'LOW' | 'MEDIUM' | 'HIGH'
 
 export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop' }: Props) {
@@ -252,6 +252,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const applyClientFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
     let result = msgs
+    // Sent is applied server-side; skip read/unread client filter when Sent is active
     if (readFilter === 'unread') result = result.filter(m => !m.isRead)
     else if (readFilter === 'read') result = result.filter(m => m.isRead)
     const allPriorities = priorityFilter.size === 3
@@ -292,9 +293,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       if (jobFilter) f.jobId = jobFilter
     }
 
+    if (readFilter === 'sent') f.sentOnly = true
     if (activeSearch) f.search = activeSearch
     return f
-  }, [inboxTab, activeSearch, jobFilter])
+  }, [inboxTab, activeSearch, jobFilter, readFilter])
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
     if (pageNum === 1) setLoading(true)
@@ -335,6 +337,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
 
+  const sentOnly = readFilter === 'sent'
+
   useEffect(() => {
     if (connectionResetRef.current) {
       connectionResetRef.current = false
@@ -345,7 +349,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setPage(1)
     setHasMore(true)
     loadPage(1, filters, false)
-  }, [inboxTab, activeSearch, jobFilter])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -740,10 +744,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       {/* Filter chips — hidden on Personal tab */}
       {isBusiness && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Read/Unread filter */}
+          {/* All / Unread / Read / Sent */}
           <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-            {([['', 'All'], ['unread', 'Unread'], ['read', 'Read']] as const).map(([key, label]) => (
-              <button key={key} onClick={() => setReadFilter(key as ReadFilter)} style={{
+            {([['', 'All'], ['unread', 'Unread'], ['read', 'Read'], ['sent', 'Sent']] as const).map(([key, label]) => (
+              <button key={key || 'all'} onClick={() => setReadFilter(key as ReadFilter)} style={{
                 padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
                 border: readFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
                 background: readFilter === key ? '#1a1a2e' : '#fff',
