@@ -221,8 +221,10 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
           </div>
         ) : (
           <div>
-            {filteredTasks.map(({ task, sourceMessage }) => {
+            {filteredTasks.map((item) => {
+              const { task, sourceMessage } = item
               const isDone = task.status === 'DONE'
+              const isRequest = isRequestTask(item)
               return (
                 <div key={task.id} className="card" style={{
                   borderLeft: `3px solid ${task.isPinned ? '#f5a623' : isDone ? '#4caf50' : isOverdue(task.dueAt, task.status) ? '#c62828' : '#1565c0'}`,
@@ -256,7 +258,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
                       </div>
                     </div>
                     <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
-                      <PriorityBadge priority={task.priority} />
+                      {!isRequest && <PriorityBadge priority={task.priority} />}
                       <StatusBadge status={task.status} />
                     </div>
                   </div>
