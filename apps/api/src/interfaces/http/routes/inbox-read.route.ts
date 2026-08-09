@@ -116,6 +116,7 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   hasTaskCandidate: booleanQuerySchema.optional(),
   reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   sentOnly: booleanQueryWithDefaultFalseSchema,
+  unreadOnly: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional()
 });
 
@@ -662,6 +663,7 @@ const buildMessagesWhere = (input: {
   hasTaskCandidate?: boolean;
   reclassifiedOnly?: boolean;
   sentOnly?: boolean;
+  unreadOnly?: boolean;
   mailboxEmails?: string[];
   search?: string;
   classificationThreshold: Prisma.Decimal;
@@ -684,24 +686,38 @@ const buildMessagesWhere = (input: {
     andConditions.push({ isTrashed: false });
   }
 
-  // Sent: sender matches any monitored/connected inbox in the workspace
-  if (input.sentOnly) {
+  // Sent = sender matches any monitored/connected inbox.
+  // Sent tab: only those. All / Unread / Read: exclude them.
+  {
     const monitoredEmails = (input.mailboxEmails ?? [])
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean);
-    if (monitoredEmails.length > 0) {
+    if (input.sentOnly) {
+      if (monitoredEmails.length > 0) {
+        andConditions.push({
+          OR: monitoredEmails.map((email) => ({
+            senderEmail: { equals: email, mode: "insensitive" as const }
+          }))
+        });
+      } else {
+        andConditions.push({ id: "__no_monitored_inboxes__" });
+      }
+    } else if (monitoredEmails.length > 0) {
       andConditions.push({
-        OR: monitoredEmails.map((email) => ({
-          senderEmail: { equals: email, mode: "insensitive" as const }
-        }))
+        NOT: {
+          OR: monitoredEmails.map((email) => ({
+            senderEmail: { equals: email, mode: "insensitive" as const }
+          }))
+        }
       });
-    } else {
-      // No connected inboxes — return nothing for Sent
-      andConditions.push({ id: "__no_monitored_inboxes__" });
     }
   }
 
   andConditions.push({ isArchived: false });
+
+  if (input.unreadOnly) {
+    andConditions.push({ isRead: false });
+  }
 
   if (input.jobId) {
     if (input.jobId === "unassigned") {
@@ -1171,17 +1187,14 @@ export const registerInboxReadRoutes = async (
         }
       }
 
-      let monitoredInboxEmails: string[] | undefined;
-      if (query.sentOnly) {
-        const monitored = await app.services.prisma.inboxConnection.findMany({
-          where: {
-            workspaceId: params.workspaceId,
-            status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
-          },
-          select: { email: true }
-        });
-        monitoredInboxEmails = monitored.map((c) => c.email);
-      }
+      const monitored = await app.services.prisma.inboxConnection.findMany({
+        where: {
+          workspaceId: params.workspaceId,
+          status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
+        },
+        select: { email: true }
+      });
+      const monitoredInboxEmails = monitored.map((c) => c.email);
 
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
@@ -1204,7 +1217,8 @@ export const registerInboxReadRoutes = async (
         ...(query.search ? { search: query.search } : {}),
         reclassifiedOnly: query.reclassifiedOnly,
         sentOnly: query.sentOnly,
-        ...(query.sentOnly ? { mailboxEmails: monitoredInboxEmails } : {}),
+        unreadOnly: query.unreadOnly,
+        mailboxEmails: monitoredInboxEmails,
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
       });
