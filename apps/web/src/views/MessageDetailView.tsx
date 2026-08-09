@@ -36,13 +36,86 @@ function formatDate(iso: string): string {
   } catch { return iso }
 }
 
-function EmailBody({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: string | null }) {
+function normalizeCid(value: string): string {
+  return value.replace(/^cid:/i, '').replace(/^<|>$/g, '').trim().toLowerCase()
+}
+
+function rewriteCidImages(html: string, cidToUrl: Map<string, string>): string {
+  if (cidToUrl.size === 0) return html
+  return html.replace(
+    /(?:src|SRC)\s*=\s*(["']?)cid:([^"'>\s]+)\1/gi,
+    (match, quote: string, cid: string) => {
+      const url = cidToUrl.get(normalizeCid(cid))
+      if (!url) return match
+      const q = quote || '"'
+      return `src=${q}${url}${q}`
+    }
+  )
+}
+
+function EmailBody({
+  bodyHtml,
+  bodyText,
+  workspaceId,
+  connectionId,
+  emailId,
+  attachmentMetadata,
+}: {
+  bodyHtml: string | null
+  bodyText: string | null
+  workspaceId: string
+  connectionId: string
+  emailId: string
+  attachmentMetadata?: AttachmentMeta[]
+}) {
   const [showHtml, setShowHtml] = useState(!!bodyHtml)
+  const [resolvedHtml, setResolvedHtml] = useState(bodyHtml)
   const hasHtml = !!bodyHtml
+
+  useEffect(() => {
+    setShowHtml(!!bodyHtml)
+    setResolvedHtml(bodyHtml)
+    if (!bodyHtml || !/cid:/i.test(bodyHtml)) return
+
+    let cancelled = false
+    const cidToUrl = new Map<string, string>()
+
+    // Prefer stored attachments (n8n upload path) with contentId
+    api.getEmailAttachments(workspaceId, emailId)
+      .then(r => {
+        for (const a of r.attachments) {
+          if (!a.contentId || a.uploadStatus !== 'UPLOADED') continue
+          if (!a.mimeType.startsWith('image/')) continue
+          cidToUrl.set(
+            normalizeCid(a.contentId),
+            api.getStoredAttachmentDownloadUrl(workspaceId, a.id, true)
+          )
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        // Fallback: provider metadata (native Outlook/Gmail sync)
+        for (const a of attachmentMetadata ?? []) {
+          if (!a.contentId || !a.attachmentId) continue
+          const key = normalizeCid(a.contentId)
+          if (cidToUrl.has(key)) continue
+          if (a.mimeType && !a.mimeType.startsWith('image/') && !a.inline) continue
+          cidToUrl.set(
+            key,
+            api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
+          )
+        }
+        if (!cancelled) setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl))
+      })
+
+    return () => { cancelled = true }
+  }, [bodyHtml, workspaceId, connectionId, emailId, attachmentMetadata])
 
   if (!bodyHtml && !bodyText) {
     return <div style={{ color: '#aaa', fontSize: 13, padding: 16 }}>(empty body)</div>
   }
+
+  const htmlToRender = resolvedHtml ?? bodyHtml
 
   return (
     <div>
@@ -56,7 +129,7 @@ function EmailBody({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: 
           </button>
         </div>
       )}
-      {showHtml && bodyHtml ? (
+      {showHtml && htmlToRender ? (
         <div
           className="email-html-body"
           style={{
@@ -65,13 +138,18 @@ function EmailBody({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: 
           }}
           ref={(el: HTMLDivElement | null) => {
             if (el) el.querySelectorAll('img').forEach(img => {
-              if (!img.complete || img.naturalWidth === 0) {
+              const src = img.getAttribute('src') ?? ''
+              if (src.startsWith('cid:')) {
                 img.style.display = 'none'
+                return
               }
               img.onerror = () => { img.style.display = 'none' }
+              if (img.complete && img.naturalWidth === 0) {
+                img.style.display = 'none'
+              }
             })
           }}
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml, { ADD_ATTR: ['target'] }) }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlToRender, { ADD_ATTR: ['target'] }) }}
         />
       ) : (
         <div style={{
@@ -216,7 +294,14 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
             </button>
           </div>
         ) : (
-          <EmailBody bodyHtml={msg.bodyHtml} bodyText={msg.bodyText} />
+          <EmailBody
+            bodyHtml={msg.bodyHtml}
+            bodyText={msg.bodyText}
+            workspaceId={workspaceId}
+            connectionId={connectionId}
+            emailId={msg.id}
+            attachmentMetadata={msg.attachmentMetadata}
+          />
         )}
 
         <AttachmentBar
@@ -527,10 +612,10 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         </div>
       )}
 
-      {/* Subject header */}
-      <div style={{ padding: isPhone ? '10px 0' : '12px 16px', marginBottom: 2 }}>
+      {/* Subject header + compact actions */}
+      <div style={{ padding: isPhone ? '10px 0' : '12px 16px', marginBottom: 8 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600 }}>{subject}</h2>
+          <h2 style={{ fontSize: isPhone ? 18 : 20, margin: 0, lineHeight: 1.3, fontWeight: 600, flex: '1 1 200px' }}>{subject}</h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
             {lastMessage.classification && <PriorityBadge priority={lastMessage.classification.priority} />}
             {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
@@ -563,7 +648,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: '#999' }}>
             {messages.length} message{messages.length !== 1 ? 's' : ''} in this conversation
           </span>
@@ -576,20 +662,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             </span>
           )}
         </div>
-      </div>
 
-      {/* Job Assignment */}
-      {isBusinessMessage && clickedMessage && (
-        <div style={{
-          margin: '0 0 12px', padding: isPhone ? '12px' : '12px 16px', background: '#fff',
-          border: '1px solid #e5e5e5', borderRadius: 8
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Job Assignment</div>
-          {clickedMessage.job ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, fontSize: 13 }}>
-              <span style={{ fontWeight: 500 }}>
-                {clickedMessage.job.jobNumber ? `${clickedMessage.job.jobNumber} — ` : ''}{clickedMessage.job.name}
-              </span>
+        {/* Compact job assignment — sits with header actions, not a full card */}
+        {isBusinessMessage && clickedMessage && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+            marginTop: 10, fontSize: 12,
+          }}>
+            <span style={{ color: '#6b7280', fontWeight: 600 }}>Job</span>
+            {clickedMessage.job && (
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
                 background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
@@ -597,23 +678,18 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
               }}>
                 {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
               </span>
-              {typeof clickedMessage.jobMatchConfidence === 'number' && !clickedMessage.jobAssignmentIsManual && (
-                <span style={{ fontSize: 11, color: '#888' }}>
-                  {Math.round(clickedMessage.jobMatchConfidence * 100)}% confidence
-                </span>
-              )}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: '#999', marginBottom: 10 }}>No job assigned</div>
-          )}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            )}
             <select
               value={selectedJobId}
               onChange={e => setSelectedJobId(e.target.value)}
               disabled={jobBusy}
-              style={{ padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd', minWidth: isPhone ? 0 : 200, flex: isPhone ? 1 : undefined, minHeight: 44 }}
+              style={{
+                padding: '4px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
+                minWidth: isPhone ? 0 : 180, flex: isPhone ? 1 : undefined, minHeight: 32,
+                background: '#fff', maxWidth: 280,
+              }}
             >
-              <option value="">Select a job…</option>
+              <option value="">{clickedMessage.job ? 'Change job…' : 'Select a job…'}</option>
               {jobs.map(j => (
                 <option key={j.id} value={j.id}>
                   {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
@@ -621,27 +697,35 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
               ))}
             </select>
             <button
-              className="btn btn-sm"
               disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
               onClick={handleAssignJob}
-              style={{ fontSize: 12, minHeight: 44 }}
+              style={{
+                fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
+                border: '1px solid #d0d5dd', background: '#f9fafb', color: '#111',
+                cursor: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 'not-allowed' : 'pointer',
+                opacity: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 0.5 : 1,
+                fontWeight: 500,
+              }}
             >
               {clickedMessage.job ? 'Move' : 'Assign'}
             </button>
             {clickedMessage.job && (
               <button
-                className="btn btn-sm btn-outline"
                 disabled={jobBusy}
                 onClick={handleRemoveJob}
-                style={{ fontSize: 12, minHeight: 44 }}
+                style={{
+                  fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
+                  border: 'none', background: 'none', color: '#888',
+                  cursor: jobBusy ? 'not-allowed' : 'pointer', textDecoration: 'underline',
+                }}
               >
                 Remove
               </button>
             )}
+            {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
           </div>
-          {jobError && <div style={{ marginTop: 8, fontSize: 12, color: '#c62828' }}>{jobError}</div>}
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Thread messages */}
       <div style={{ background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, overflow: 'hidden' }}>
