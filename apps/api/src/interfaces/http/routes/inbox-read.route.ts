@@ -662,7 +662,7 @@ const buildMessagesWhere = (input: {
   hasTaskCandidate?: boolean;
   reclassifiedOnly?: boolean;
   sentOnly?: boolean;
-  mailboxEmail?: string;
+  mailboxEmails?: string[];
   search?: string;
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
@@ -684,19 +684,21 @@ const buildMessagesWhere = (input: {
     andConditions.push({ isTrashed: false });
   }
 
-  // Sent: from this mailbox, and/or provider Sent-folder labels
+  // Sent: sender matches any monitored/connected inbox in the workspace
   if (input.sentOnly) {
-    const sentLabelConditions: Prisma.EmailMessageWhereInput[] = [
-      { labelIds: { has: "SENT" } },
-      { labelIds: { has: "outlook-folder:sent items" } },
-      { labelIds: { has: "outlook-folder:sentitems" } },
-    ];
-    if (input.mailboxEmail) {
-      sentLabelConditions.push({
-        senderEmail: { equals: input.mailboxEmail, mode: "insensitive" }
+    const monitoredEmails = (input.mailboxEmails ?? [])
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    if (monitoredEmails.length > 0) {
+      andConditions.push({
+        OR: monitoredEmails.map((email) => ({
+          senderEmail: { equals: email, mode: "insensitive" as const }
+        }))
       });
+    } else {
+      // No connected inboxes — return nothing for Sent
+      andConditions.push({ id: "__no_monitored_inboxes__" });
     }
-    andConditions.push({ OR: sentLabelConditions });
   }
 
   andConditions.push({ isArchived: false });
@@ -1169,6 +1171,18 @@ export const registerInboxReadRoutes = async (
         }
       }
 
+      let monitoredInboxEmails: string[] | undefined;
+      if (query.sentOnly) {
+        const monitored = await app.services.prisma.inboxConnection.findMany({
+          where: {
+            workspaceId: params.workspaceId,
+            status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
+          },
+          select: { email: true }
+        });
+        monitoredInboxEmails = monitored.map((c) => c.email);
+      }
+
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
         inboxConnectionId: params.id,
@@ -1190,7 +1204,7 @@ export const registerInboxReadRoutes = async (
         ...(query.search ? { search: query.search } : {}),
         reclassifiedOnly: query.reclassifiedOnly,
         sentOnly: query.sentOnly,
-        ...(query.sentOnly ? { mailboxEmail: connection.email } : {}),
+        ...(query.sentOnly ? { mailboxEmails: monitoredInboxEmails } : {}),
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
       });
