@@ -87,7 +87,7 @@ function rewriteCidImages(
   // Also tolerate quoted-printable leftovers: src=3D"cid:..."
   let out = html.replace(
     /\bsrc\s*=\s*(?:3D)?(["']?)cid:([^"'>\s]+)\1/gi,
-    (match, quote: string, cid: string) => {
+    (_match, quote: string, cid: string) => {
       const originalSrc = `cid:${cid}`
       const { url, attachmentId, normalized } = resolve(cid)
       console.info('[CID_DEBUG]', {
@@ -111,7 +111,7 @@ function rewriteCidImages(
   // CSS url(cid:...)
   out = out.replace(
     /url\(\s*(['"]?)cid:([^)'"\s]+)\1\s*\)/gi,
-    (match, quote: string, cid: string) => {
+    (_match, quote: string, cid: string) => {
       const { url, attachmentId, normalized } = resolve(cid)
       console.info('[CID_DEBUG]', {
         emailId: debugCtx.emailId,
