@@ -1948,6 +1948,23 @@ export const registerInboxReadRoutes = async (
         timing
       });
 
+      // TEMPORARY diagnostic logging — remove after production attach debug
+      request.log.info({
+        event: "[ATTACHMENT_DEBUG_THREAD]",
+        workspaceId: params.workspaceId,
+        requestedMessageId: params.messageId,
+        threadId: thread.id,
+        providerThreadId: thread.gmailThreadId,
+        messageCount: responsePayload.messages.length,
+        messages: responsePayload.messages.map((m) => ({
+          id: m.id,
+          subject: m.subject,
+          providerMessageId: m.providerMessageId,
+          providerThreadId: m.providerThreadId,
+          threadId: thread.id,
+        })),
+      });
+
       return reply.send(responsePayload);
     }
   );
