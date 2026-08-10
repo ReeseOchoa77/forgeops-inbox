@@ -56,9 +56,10 @@ function cidMapKeys(value: string | null | undefined): string[] {
 
 type CidDebugAttachment = {
   id: string
-  contentId: string | null
-  isInline: boolean
+  filename: string
   mimeType: string
+  isInline: boolean
+  contentId: string | null
   uploadStatus: string
 }
 
@@ -69,7 +70,6 @@ function rewriteCidImages(
   debugCtx: {
     emailId: string
     availableInlineContentIds: string[]
-    inlineAttachments: CidDebugAttachment[]
   }
 ): string {
   const resolve = (rawCid: string): { url?: string; attachmentId?: string; normalized: string } => {
@@ -97,7 +97,6 @@ function rewriteCidImages(
         availableInlineContentIds: debugCtx.availableInlineContentIds,
         matchedAttachmentId: attachmentId ?? null,
         rewrittenUrl: url ?? null,
-        inlineAttachments: debugCtx.inlineAttachments,
       })
       if (!url) {
         // Neutralize unmatched cid: so the browser never requests cid: scheme
@@ -183,21 +182,24 @@ function EmailBody({
 
         const cidToUrl = new Map<string, string>()
         const cidToAttachmentId = new Map<string, string>()
-        const inlineAttachments: CidDebugAttachment[] = []
         const availableInlineContentIds: string[] = []
+        const storedAttachments: CidDebugAttachment[] = r.attachments.map(a => ({
+          id: a.id,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          isInline: a.isInline,
+          contentId: a.contentId,
+          uploadStatus: a.uploadStatus,
+        }))
+
+        console.info('[CID_DEBUG] stored attachments', {
+          emailId,
+          attachments: storedAttachments,
+        })
 
         for (const a of r.attachments) {
           const mime = (a.mimeType ?? '').toLowerCase()
           const isImage = mime.startsWith('image/')
-          if (a.isInline || isImage || a.contentId) {
-            inlineAttachments.push({
-              id: a.id,
-              contentId: a.contentId,
-              isInline: a.isInline,
-              mimeType: a.mimeType,
-              uploadStatus: a.uploadStatus,
-            })
-          }
 
           if (a.uploadStatus !== 'UPLOADED') continue
           if (!a.contentId) continue
@@ -212,13 +214,6 @@ function EmailBody({
             }
           }
         }
-
-        console.info('[CID_DEBUG] fetch complete', {
-          emailId,
-          attachmentCount: r.attachments.length,
-          availableInlineContentIds,
-          inlineAttachments,
-        })
 
         // Fallback: provider metadata (native Outlook/Gmail sync) when stored rows lack contentId
         for (const a of attachmentMetadata ?? []) {
@@ -237,20 +232,19 @@ function EmailBody({
         setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl, cidToAttachmentId, {
           emailId,
           availableInlineContentIds,
-          inlineAttachments,
         }))
       })
       .catch((err) => {
         console.info('[CID_DEBUG] fetch failed', {
           emailId,
           error: err instanceof Error ? err.message : 'unknown',
+          attachments: [] as CidDebugAttachment[],
         })
         // Never paint unre-written cid: HTML on failure — neutralize cid: sources
         if (!cancelled) {
           setResolvedHtml(rewriteCidImages(bodyHtml, new Map(), new Map(), {
             emailId,
             availableInlineContentIds: [],
-            inlineAttachments: [],
           }))
         }
       })
