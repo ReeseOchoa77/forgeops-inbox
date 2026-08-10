@@ -367,6 +367,14 @@ export const registerEmailAttachmentRoutes = async (
 
       if (!message) return reply.code(404).send({ message: "Email not found" });
 
+      // TEMPORARY diagnostic logging — remove after production attach debug
+      app.log.info({
+        event: "[ATTACHMENT_DEBUG_REQUEST]",
+        workspaceId: params.workspaceId,
+        emailId: params.emailId,
+        resolvedMessageId: message.id,
+      });
+
       const attachments = await app.services.prisma.emailAttachment.findMany({
         where: { workspaceId: params.workspaceId, emailMessageId: message.id },
         orderBy: { createdAt: "asc" },
@@ -378,8 +386,46 @@ export const registerEmailAttachmentRoutes = async (
           isInline: true,
           contentId: true,
           uploadStatus: true,
+          emailMessageId: true,
           createdAt: true,
         },
+      });
+
+      // TEMPORARY diagnostic logging — remove after production attach debug
+      const [totalCount, workspaceCount, emailMessageIdCount, bothCount] = await Promise.all([
+        app.services.prisma.emailAttachment.count(),
+        app.services.prisma.emailAttachment.count({
+          where: { workspaceId: params.workspaceId },
+        }),
+        app.services.prisma.emailAttachment.count({
+          where: { emailMessageId: message.id },
+        }),
+        app.services.prisma.emailAttachment.count({
+          where: {
+            workspaceId: params.workspaceId,
+            emailMessageId: message.id,
+          },
+        }),
+      ]);
+
+      app.log.info({
+        event: "[ATTACHMENT_DEBUG_COUNTS]",
+        totalEmailAttachmentRows: totalCount,
+        matchingWorkspaceId: workspaceCount,
+        matchingEmailMessageId: emailMessageIdCount,
+        matchingBoth: bothCount,
+      });
+
+      app.log.info({
+        event: "[ATTACHMENT_DEBUG_RESULTS]",
+        attachments: attachments.map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          uploadStatus: a.uploadStatus,
+          isInline: a.isInline,
+          contentId: a.contentId,
+          emailMessageId: a.emailMessageId,
+        })),
       });
 
       return reply.send({
