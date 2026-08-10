@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
 import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
@@ -37,20 +37,106 @@ function formatDate(iso: string): string {
 }
 
 function normalizeCid(value: string): string {
-  return value.replace(/^cid:/i, '').replace(/^<|>$/g, '').trim().toLowerCase()
+  return value
+    .replace(/^cid:/i, '')
+    .replace(/^<|>$/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+/** All lookup keys that may appear in HTML cid: refs or Content-ID headers. */
+function cidLookupKeys(value: string | null | undefined): string[] {
+  if (!value) return []
+  const primary = normalizeCid(value)
+  if (!primary) return []
+  const keys = new Set<string>([primary])
+  // Outlook often uses filename@hex — also index local-part / filename
+  const at = primary.indexOf('@')
+  if (at > 0) keys.add(primary.slice(0, at))
+  const base = primary.split('/').pop()
+  if (base) keys.add(base)
+  return [...keys]
+}
+
+function resolveCidUrl(cidRaw: string, cidToUrl: Map<string, string>): string | undefined {
+  for (const key of cidLookupKeys(cidRaw)) {
+    const hit = cidToUrl.get(key)
+    if (hit) return hit
+  }
+  // Last resort: unique partial match (e.g. HTML cid is filename@hex, map has filename)
+  const needle = normalizeCid(cidRaw)
+  if (!needle) return undefined
+  let partial: string | undefined
+  for (const [key, url] of cidToUrl) {
+    if (key === needle || key.startsWith(needle + '@') || needle.startsWith(key + '@') || key.includes(needle) || needle.includes(key)) {
+      if (partial && partial !== url) return undefined // ambiguous
+      partial = url
+    }
+  }
+  return partial
+}
+
+function registerCidUrl(cidToUrl: Map<string, string>, rawKey: string | null | undefined, url: string) {
+  for (const key of cidLookupKeys(rawKey)) {
+    if (!cidToUrl.has(key)) cidToUrl.set(key, url)
+  }
+}
+
+/** Undo common quoted-printable leftovers that break attribute matching. */
+function normalizeEmailHtmlForCid(html: string): string {
+  return html
+    .replace(/=\r?\n/g, '')
+    .replace(/src\s*=\s*3D/gi, 'src=')
+    .replace(/=\?/g, '') // stray QP markers
 }
 
 function rewriteCidImages(html: string, cidToUrl: Map<string, string>): string {
   if (cidToUrl.size === 0) return html
-  return html.replace(
-    /(?:src|SRC)\s*=\s*(["']?)cid:([^"'>\s]+)\1/gi,
-    (match, quote: string, cid: string) => {
-      const url = cidToUrl.get(normalizeCid(cid))
+  // Match src='cid:...', src="cid:...", src=cid:... (quoted or not)
+  let out = html.replace(
+    /\bsrc\s*=\s*(?:(["'])\s*cid:(.+?)\1|cid:([^\s>"']+))/gi,
+    (match, quote: string | undefined, quotedCid: string | undefined, bareCid: string | undefined) => {
+      const cid = quotedCid ?? bareCid ?? ''
+      const url = resolveCidUrl(cid, cidToUrl)
       if (!url) return match
       const q = quote || '"'
       return `src=${q}${url}${q}`
     }
   )
+  // Also rewrite CSS url(cid:...) backgrounds
+  out = out.replace(
+    /url\(\s*(['"]?)cid:([^)'"\s]+)\1\s*\)/gi,
+    (match, quote: string, cid: string) => {
+      const url = resolveCidUrl(cid, cidToUrl)
+      if (!url) return match
+      const q = quote || "'"
+      return `url(${q}${url}${q})`
+    }
+  )
+  return out
+}
+
+/** If cid refs remain and we have image attachments, map leftovers 1:1 by order. */
+function rewriteRemainingCidsByOrder(
+  html: string,
+  orderedUrls: string[]
+): string {
+  if (orderedUrls.length === 0 || !/cid:/i.test(html)) return html
+  let i = 0
+  return html.replace(
+    /\bsrc\s*=\s*(?:(["'])\s*cid:(.+?)\1|cid:([^\s>"']+))/gi,
+    (match, quote: string | undefined) => {
+      if (i >= orderedUrls.length) return match
+      const url = orderedUrls[i++]
+      const q = quote || '"'
+      return `src=${q}${url}${q}`
+    }
+  )
+}
+
+function isInlineImage(att: StoredAttachment): boolean {
+  const mime = (att.mimeType ?? '').toLowerCase()
+  return att.isInline && mime.startsWith('image/')
 }
 
 function EmailBody({
@@ -69,43 +155,70 @@ function EmailBody({
   attachmentMetadata?: AttachmentMeta[]
 }) {
   const [showHtml, setShowHtml] = useState(!!bodyHtml)
-  const [resolvedHtml, setResolvedHtml] = useState(bodyHtml)
+  const [resolvedHtml, setResolvedHtml] = useState<string | null>(
+    bodyHtml && /cid:/i.test(bodyHtml) ? null : bodyHtml
+  )
+  const [cidResolving, setCidResolving] = useState(!!(bodyHtml && /cid:/i.test(bodyHtml)))
   const hasHtml = !!bodyHtml
 
   useEffect(() => {
     setShowHtml(!!bodyHtml)
-    setResolvedHtml(bodyHtml)
-    if (!bodyHtml || !/cid:/i.test(bodyHtml)) return
+    if (!bodyHtml) {
+      setResolvedHtml(null)
+      setCidResolving(false)
+      return
+    }
+    if (!/cid:/i.test(bodyHtml)) {
+      setResolvedHtml(bodyHtml)
+      setCidResolving(false)
+      return
+    }
 
+    // Do not paint raw cid: HTML — it causes ERR_UNKNOWN_URL_SCHEME before rewrite finishes
     let cancelled = false
+    setResolvedHtml(null)
+    setCidResolving(true)
     const cidToUrl = new Map<string, string>()
+    const orderedInlineUrls: string[] = []
 
-    // Prefer stored attachments (n8n upload path) with contentId
+    // Prefer stored EmailAttachment rows (n8n upload path)
     api.getEmailAttachments(workspaceId, emailId)
       .then(r => {
         for (const a of r.attachments) {
-          if (!a.contentId || a.uploadStatus !== 'UPLOADED') continue
-          if (!a.mimeType.startsWith('image/')) continue
-          cidToUrl.set(
-            normalizeCid(a.contentId),
-            api.getStoredAttachmentDownloadUrl(workspaceId, a.id, true)
-          )
+          if (a.uploadStatus !== 'UPLOADED') continue
+          const url = api.getStoredAttachmentDownloadUrl(workspaceId, a.id, true)
+          const mime = (a.mimeType ?? '').toLowerCase()
+          const looksLikeImage =
+            mime.startsWith('image/') ||
+            /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.filename ?? '')
+          const looksInline = a.isInline || !!a.contentId || looksLikeImage
+          // Index by contentId; also filename for Outlook cid:image002.png@HEX refs.
+          if (a.contentId) registerCidUrl(cidToUrl, a.contentId, url)
+          if (looksInline && a.filename) registerCidUrl(cidToUrl, a.filename, url)
+          if (looksInline) orderedInlineUrls.push(url)
         }
       })
       .catch(() => {})
       .finally(() => {
         // Fallback: provider metadata (native Outlook/Gmail sync)
         for (const a of attachmentMetadata ?? []) {
-          if (!a.contentId || !a.attachmentId) continue
-          const key = normalizeCid(a.contentId)
-          if (cidToUrl.has(key)) continue
-          if (a.mimeType && !a.mimeType.startsWith('image/') && !a.inline) continue
-          cidToUrl.set(
-            key,
-            api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
-          )
+          if (!a.attachmentId) continue
+          const url = api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
+          if (a.contentId) registerCidUrl(cidToUrl, a.contentId, url)
+          if (a.filename) registerCidUrl(cidToUrl, a.filename, url)
+          const mime = (a.mimeType ?? '').toLowerCase()
+          if ((a.inline || mime.startsWith('image/') || a.contentId) && !orderedInlineUrls.includes(url)) {
+            orderedInlineUrls.push(url)
+          }
         }
-        if (!cancelled) setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl))
+        if (cancelled) return
+        const normalized = normalizeEmailHtmlForCid(bodyHtml)
+        let rewritten = rewriteCidImages(normalized, cidToUrl)
+        if (/cid:/i.test(rewritten) && orderedInlineUrls.length > 0) {
+          rewritten = rewriteRemainingCidsByOrder(rewritten, orderedInlineUrls)
+        }
+        setResolvedHtml(rewritten)
+        setCidResolving(false)
       })
 
     return () => { cancelled = true }
@@ -115,7 +228,7 @@ function EmailBody({
     return <div style={{ color: '#aaa', fontSize: 13, padding: 16 }}>(empty body)</div>
   }
 
-  const htmlToRender = resolvedHtml ?? bodyHtml
+  const htmlToRender = resolvedHtml
 
   return (
     <div>
@@ -128,6 +241,9 @@ function EmailBody({
             {showHtml ? 'Show plain text' : 'Show HTML'}
           </button>
         </div>
+      )}
+      {showHtml && cidResolving && (
+        <div style={{ fontSize: 12, color: '#999', padding: '8px 0' }}>Resolving inline images…</div>
       )}
       {showHtml && htmlToRender ? (
         <div
@@ -151,7 +267,7 @@ function EmailBody({
           }}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlToRender, { ADD_ATTR: ['target'] }) }}
         />
-      ) : (
+      ) : !cidResolving ? (
         <div style={{
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           fontSize: 13, lineHeight: 1.6, padding: '8px 0',
@@ -159,45 +275,178 @@ function EmailBody({
         }}>
           {bodyText}
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
 
-function AttachmentBar({ attachments, workspaceId, connectionId, messageId }: {
-  attachments: AttachmentMeta[]
+function AttachmentBar({
+  workspaceId,
+  connectionId,
+  messageId,
+  attachmentMetadata,
+  hasAttachments,
+}: {
   workspaceId: string
   connectionId: string
   messageId: string
+  attachmentMetadata: AttachmentMeta[]
+  hasAttachments: boolean
 }) {
-  const nonInline = attachments.filter(a => !a.inline && a.attachmentId)
-  if (nonInline.length === 0) return null
+  const [stored, setStored] = useState<StoredAttachment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [showInlineImages, setShowInlineImages] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(false)
+    api.getEmailAttachments(workspaceId, messageId)
+      .then(r => {
+        if (!cancelled) setStored(r.attachments)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStored([])
+          setError(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [workspaceId, messageId])
+
+  const downloadableStored = stored.filter(a => !isInlineImage(a))
+  const inlineImages = stored.filter(isInlineImage)
+  const visibleStored = showInlineImages
+    ? [...downloadableStored, ...inlineImages]
+    : downloadableStored
+
+  // Native Gmail/Outlook sync fallback (provider attachment ids) — unused by n8n ingest
+  const providerOnly = attachmentMetadata.filter(a =>
+    !a.inline && !!a.attachmentId
+  )
+
+  if (loading) {
+    return (
+      <div style={{ padding: '10px 0', marginTop: 8, borderTop: '1px solid #f0f0f0', fontSize: 12, color: '#999' }}>
+        Loading attachments…
+      </div>
+    )
+  }
+
+  if (error && stored.length === 0 && providerOnly.length === 0) {
+    return (
+      <div style={{ padding: '10px 0', marginTop: 8, borderTop: '1px solid #f0f0f0', fontSize: 12, color: '#c62828' }}>
+        Failed to load attachments
+      </div>
+    )
+  }
+
+  if (visibleStored.length === 0 && providerOnly.length === 0) {
+    if (inlineImages.length > 0) {
+      return (
+        <div style={{ padding: '10px 0', marginTop: 8, borderTop: '1px solid #f0f0f0', fontSize: 12, color: '#888' }}>
+          <button
+            type="button"
+            onClick={() => setShowInlineImages(true)}
+            style={{ background: 'none', border: 'none', padding: 0, fontSize: 12, color: '#888', cursor: 'pointer', textDecoration: 'underline' }}
+          >
+            Show {inlineImages.length} inline image{inlineImages.length !== 1 ? 's' : ''}
+          </button>
+        </div>
+      )
+    }
+    if (hasAttachments || attachmentMetadata.length > 0) {
+      return (
+        <div style={{ padding: '10px 0', marginTop: 8, borderTop: '1px solid #f0f0f0', fontSize: 12, color: '#999' }}>
+          Attachments noted on this email but not stored yet
+        </div>
+      )
+    }
+    return null
+  }
 
   return (
     <div style={{
-      display: 'flex', gap: 8, flexWrap: 'wrap', padding: '10px 0',
+      display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0',
       borderTop: '1px solid #f0f0f0', marginTop: 8
     }}>
-      {nonInline.map((att, i) => (
-        <a
-          key={i}
-          href={api.getAttachmentUrl(workspaceId, connectionId, messageId, att.attachmentId!)}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+          Attachments
+          {downloadableStored.length > 0 || providerOnly.length > 0
+            ? ` (${downloadableStored.length + providerOnly.length}${inlineImages.length > 0 ? ` · ${inlineImages.length} inline` : ''})`
+            : inlineImages.length > 0 ? ` (${inlineImages.length} inline)` : ''}
+        </div>
+        {inlineImages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowInlineImages(v => !v)}
+            style={{ background: 'none', border: 'none', fontSize: 11, color: '#888', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+          >
+            {showInlineImages ? 'Hide inline images' : 'Show inline images'}
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {visibleStored.map(att => {
+          const ready = att.uploadStatus === 'UPLOADED'
+          const content = (
+            <>
+              <span style={{ fontSize: 16 }}>{fileIcon(att.mimeType)}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {att.filename}
+              </span>
+              {att.sizeBytes > 0 && (
+                <span style={{ color: '#999', fontSize: 11, flexShrink: 0 }}>{formatSize(att.sizeBytes)}</span>
+              )}
+            </>
+          )
+          const chipStyle: CSSProperties = {
             display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
             border: '1px solid #e5e5e5', borderRadius: 6, background: '#fafafa',
-            textDecoration: 'none', color: '#333', fontSize: 12, maxWidth: 240,
-            minHeight: 44,
-          }}
-        >
-          <span style={{ fontSize: 16 }}>{fileIcon(att.mimeType)}</span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {att.filename ?? 'attachment'}
-          </span>
-          {att.size && <span style={{ color: '#999', fontSize: 11, flexShrink: 0 }}>{formatSize(att.size)}</span>}
-        </a>
-      ))}
+            textDecoration: 'none', color: ready ? '#333' : '#999',
+            fontSize: 12, maxWidth: 280, minHeight: 44, cursor: ready ? 'pointer' : 'default',
+          }
+          return ready ? (
+            <a
+              key={att.id}
+              href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={chipStyle}
+            >
+              {content}
+            </a>
+          ) : (
+            <div key={att.id} style={chipStyle} title={att.uploadStatus}>
+              {content}
+            </div>
+          )
+        })}
+        {providerOnly.map((att, i) => (
+          <a
+            key={`provider-${att.attachmentId}-${i}`}
+            href={api.getAttachmentUrl(workspaceId, connectionId, messageId, att.attachmentId!)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
+              border: '1px solid #e5e5e5', borderRadius: 6, background: '#fafafa',
+              textDecoration: 'none', color: '#333', fontSize: 12, maxWidth: 280, minHeight: 44,
+            }}
+          >
+            <span style={{ fontSize: 16 }}>{fileIcon(att.mimeType)}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {att.filename ?? 'attachment'}
+            </span>
+            {att.size && <span style={{ color: '#999', fontSize: 11, flexShrink: 0 }}>{formatSize(att.size)}</span>}
+          </a>
+        ))}
+      </div>
     </div>
   )
 }
@@ -305,10 +554,11 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
         )}
 
         <AttachmentBar
-          attachments={msg.attachmentMetadata}
           workspaceId={workspaceId}
           connectionId={connectionId}
           messageId={msg.id}
+          attachmentMetadata={msg.attachmentMetadata}
+          hasAttachments={msg.hasAttachments}
         />
 
         {isLast && (
@@ -340,11 +590,6 @@ function statusBadge(status: StoredAttachment['uploadStatus']) {
   )
 }
 
-function isInlineImage(att: StoredAttachment): boolean {
-  const mime = (att.mimeType ?? '').toLowerCase()
-  return att.isInline && mime.startsWith('image/')
-}
-
 function StoredAttachmentsSection({
   workspaceId,
   emailIds,
@@ -356,6 +601,7 @@ function StoredAttachmentsSection({
 }) {
   const [attachments, setAttachments] = useState<StoredAttachment[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [showInlineImages, setShowInlineImages] = useState(false)
 
   const emailIdsKey = emailIds.join(',')
@@ -364,24 +610,31 @@ function StoredAttachmentsSection({
     if (emailIds.length === 0) {
       setAttachments([])
       setLoading(false)
+      setError(false)
       return
     }
     let cancelled = false
     setLoading(true)
+    setError(false)
     Promise.all(
       emailIds.map(id =>
         api.getEmailAttachments(workspaceId, id)
-          .then(r => r.attachments)
-          .catch(() => [] as StoredAttachment[])
+          .then(r => ({ ok: true as const, attachments: r.attachments }))
+          .catch(() => ({ ok: false as const, attachments: [] as StoredAttachment[] }))
       )
     )
       .then(results => {
         if (cancelled) return
         const byId = new Map<string, StoredAttachment>()
-        for (const list of results) {
-          for (const att of list) byId.set(att.id, att)
+        let anyOk = false
+        let anyFail = false
+        for (const result of results) {
+          if (result.ok) anyOk = true
+          else anyFail = true
+          for (const att of result.attachments) byId.set(att.id, att)
         }
         setAttachments([...byId.values()])
+        setError(anyFail && !anyOk)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -393,6 +646,14 @@ function StoredAttachmentsSection({
     return (
       <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#999' }}>
         Loading attachments…
+      </div>
+    )
+  }
+
+  if (error && attachments.length === 0) {
+    return (
+      <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#c62828' }}>
+        Failed to load attachments
       </div>
     )
   }
