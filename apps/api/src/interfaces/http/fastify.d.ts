@@ -1,6 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import type { OpenAIInboxClassifier } from "@forgeops/ai";
-import type { ProviderRegistry, TokenCipher } from "@forgeops/shared";
+import type {
+  AttachmentIngestJobPayload,
+  AttachmentIngestResult,
+  ProviderRegistry,
+  TokenCipher,
+} from "@forgeops/shared";
 import type { Queue, QueueEvents } from "bullmq";
 import type { Redis } from "ioredis";
 
@@ -24,6 +29,7 @@ declare module "fastify" {
       inboxSyncQueueEvents: QueueEvents;
       inboxAnalysisQueue: Queue;
       inboxAnalysisQueueEvents: QueueEvents;
+      attachmentIngestQueue: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>;
       googleOAuthService: GoogleOAuthService;
       providerRegistry: ProviderRegistry;
       sessionStore: RedisSessionStore;

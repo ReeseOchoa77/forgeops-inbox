@@ -6,7 +6,9 @@ import {
   type InboxSyncJobPayload,
   type InboxSyncResult,
   type InboxAnalysisJobPayload,
-  type InboxAnalysisResult
+  type InboxAnalysisResult,
+  type AttachmentIngestJobPayload,
+  type AttachmentIngestResult,
 } from "@forgeops/shared";
 import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
@@ -54,12 +56,23 @@ export const startInboxSyncWorker = (
     { connection: createBullMqConnection(env.REDIS_URL) }
   );
 
+  const attachmentIngestQueue = new Queue<AttachmentIngestJobPayload, AttachmentIngestResult>(
+    QueueNames.ATTACHMENT_INGEST,
+    { connection: createBullMqConnection(env.REDIS_URL) }
+  );
+
   const syncQueue = new Queue<InboxSyncJobPayload, InboxSyncResult>(
     QueueNames.INBOX_SYNC,
     { connection: createBullMqConnection(env.REDIS_URL) }
   );
 
-  const processor = new InboxSyncProcessor(prisma, providerRegistry, tokenCipher, analysisQueue);
+  const processor = new InboxSyncProcessor(
+    prisma,
+    providerRegistry,
+    tokenCipher,
+    analysisQueue,
+    attachmentIngestQueue
+  );
 
   const worker = new Worker<InboxSyncJobPayload, InboxSyncResult>(
     QueueNames.INBOX_SYNC,

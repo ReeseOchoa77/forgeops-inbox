@@ -14,6 +14,8 @@ export const googleOAuthStateSchema = z.discriminatedUnion("flow", [
     userId: z.string().min(1),
     connectionId: z.string().min(1).optional(),
     reconnect: z.boolean(),
+    /** Targeted upgrade of an existing tokenless (e.g. n8n) Outlook connection. */
+    authorizeExisting: z.boolean().optional().default(false),
     createdAt: z.string().datetime()
   })
 ]);

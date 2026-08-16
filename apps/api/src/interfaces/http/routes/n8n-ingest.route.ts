@@ -1,8 +1,10 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { normalizeEmail } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 
+import { enqueueAttachmentIngestIfEligible } from "../../../application/services/enqueue-attachment-ingest.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
 
 const CLASSIFICATION_REVIEW_THRESHOLD = 0.80;
@@ -182,7 +184,7 @@ async function resolveMailboxOwnership(
   provider: string,
   mailboxEmail: string
 ): Promise<{ connectionId: string; workspaceId: string }> {
-  const normalized = mailboxEmail.toLowerCase();
+  const normalized = normalizeEmail(mailboxEmail);
   const dbProvider = provider === "outlook" ? "OUTLOOK" : "GMAIL";
 
   const mailboxes = await prisma.workspaceMailbox.findMany({
@@ -746,6 +748,26 @@ async function handleN8nIngest(
       request
     });
 
+    // ForgeOps-owned attachment ingestion (token-gated). n8n multipart upload remains fallback.
+    const attachmentEnqueue = await enqueueAttachmentIngestIfEligible({
+      prisma: app.services.prisma,
+      queue: app.services.attachmentIngestQueue,
+      workspaceId,
+      inboxConnectionId: connectionId,
+      emailMessageId: result.messageId,
+      providerMessageId: body.source.providerMessageId,
+      hasAttachments: body.email.hasAttachments,
+      bodyHtml: body.email.bodyHtml ?? null,
+      log: (event, data) => app.log.info({ event, ...data }),
+    }).catch((e) => {
+      app.log.warn({
+        event: "attachment-ingest-enqueue-error",
+        emailMessageId: result.messageId,
+        error: e instanceof Error ? e.message : "unknown",
+      });
+      return { enqueued: false as const, reason: "queue_unavailable" as const };
+    });
+
     reply.code(result.status === "created" ? 201 : 200).send({
       status: result.status,
       workspaceId,
@@ -755,6 +777,7 @@ async function handleN8nIngest(
       taskIds: result.taskIds,
       requiresReview: result.requiresReview,
       deduplicationKey,
+      attachmentIngest: attachmentEnqueue,
       debug: {
         providerMessageId: body.source.providerMessageId,
         internetMessageId: body.source.internetMessageId ?? null,

@@ -79,6 +79,7 @@ export default function App() {
   const [showCompose, setShowCompose] = useState(false)
   const [composeSending, setComposeSending] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
+  const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
@@ -133,7 +134,10 @@ export default function App() {
 
     if (params.get('connected')) {
       const connectedId = params.get('connected')!
-      setConnectionNotice({ type: 'success', message: 'Inbox connected. Syncing messages now...' })
+      setConnectionNotice({
+        type: 'success',
+        message: 'Mailbox authorized and connected. Syncing messages now...',
+      })
       setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
 
@@ -298,7 +302,9 @@ export default function App() {
     if (bp === 'phone') setDrawerOpen(false)
   }
 
-  const openMessage = (id: string) => {
+  const openMessage = (id: string, opts?: { connectionId?: string; backPage?: Page }) => {
+    if (opts?.connectionId) setConnectionId(opts.connectionId)
+    setMessageBackPage(opts?.backPage ?? 'inbox')
     setSelectedMessageId(id)
     setPage('message-detail')
   }
@@ -574,7 +580,7 @@ export default function App() {
           )}
 
           {page === 'dashboard' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p) => setPage(p)} breakpoint={bp} />
             </div>
           )}
@@ -584,7 +590,13 @@ export default function App() {
           )}
           {!needsConnection && page === 'message-detail' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <MessageDetailView workspaceId={workspaceId} connectionId={connectionId} messageId={selectedMessageId} onBack={() => setPage('inbox')} breakpoint={bp} />
+              <MessageDetailView
+                workspaceId={workspaceId}
+                connectionId={connectionId}
+                messageId={selectedMessageId}
+                onBack={() => setPage(messageBackPage === 'job-detail' && selectedJobId ? 'job-detail' : 'inbox')}
+                breakpoint={bp}
+              />
             </div>
           )}
           {!needsConnection && page === 'review' && connectionId && (
@@ -605,7 +617,16 @@ export default function App() {
           )}
           {page === 'job-detail' && selectedJobId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <JobDetailView workspaceId={workspaceId} jobId={selectedJobId} userRole={currentRole} onBack={() => setPage('jobs')} breakpoint={bp} />
+              <JobDetailView
+                workspaceId={workspaceId}
+                jobId={selectedJobId}
+                userRole={currentRole}
+                onBack={() => setPage('jobs')}
+                onOpenMessage={(messageId, inboxConnectionId) =>
+                  openMessage(messageId, { connectionId: inboxConnectionId, backPage: 'job-detail' })
+                }
+                breakpoint={bp}
+              />
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment } from '../api'
 import { PriorityBadge } from '../components/Badges'
@@ -135,6 +135,28 @@ function isInlineImage(att: StoredAttachment): boolean {
   return att.isInline && mime.startsWith('image/')
 }
 
+/** True when src points at our attachment download endpoints (stored or provider). */
+function isAppAttachmentUrl(src: string): boolean {
+  try {
+    const path = new URL(src, window.location.origin).pathname
+    return /\/attachments\/[^/]+\/download\/?$/.test(path)
+      || /\/messages\/[^/]+\/attachments\/[^/]+\/download\/?$/.test(path)
+  } catch {
+    return false
+  }
+}
+
+/** Drop ?inline=true so the API serves Content-Disposition: attachment. */
+function toForceDownloadUrl(src: string): string {
+  try {
+    const u = new URL(src, window.location.origin)
+    u.searchParams.delete('inline')
+    return u.toString()
+  } catch {
+    return src.replace(/([?&])inline=true(&)?/g, (_m, p1: string, p2: string) => (p2 ? p1 : '')).replace(/\?$/, '')
+  }
+}
+
 function EmailBody({
   bodyHtml,
   bodyText,
@@ -156,6 +178,7 @@ function EmailBody({
     bodyHtml && /cid:/i.test(bodyHtml) ? null : bodyHtml
   )
   const [cidResolving, setCidResolving] = useState(!!(bodyHtml && /cid:/i.test(bodyHtml)))
+  const htmlBodyRef = useRef<HTMLDivElement | null>(null)
   const hasHtml = !!bodyHtml
 
   useEffect(() => {
@@ -255,6 +278,64 @@ function EmailBody({
     return () => { cancelled = true }
   }, [bodyHtml, workspaceId, connectionId, emailId, attachmentMetadata])
 
+  // Click inline attachment images to download (same endpoints as the Attachments list)
+  useEffect(() => {
+    const el = htmlBodyRef.current
+    if (!el || !resolvedHtml || !showHtml) return
+
+    el.querySelectorAll('img').forEach(img => {
+      const src = img.getAttribute('src') ?? ''
+      if (src.startsWith('cid:')) {
+        img.style.display = 'none'
+        return
+      }
+      if (!isAppAttachmentUrl(src)) return
+      img.style.cursor = 'pointer'
+      if (!img.title) img.title = 'Click to download'
+      img.setAttribute('role', 'button')
+      img.setAttribute('tabindex', '0')
+      img.setAttribute('aria-label', 'Download image')
+    })
+
+    const downloadFromImg = (img: HTMLImageElement) => {
+      const src = img.currentSrc || img.getAttribute('src') || ''
+      if (!isAppAttachmentUrl(src)) return
+      const a = document.createElement('a')
+      a.href = toForceDownloadUrl(src)
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+
+    const onClick = (e: MouseEvent) => {
+      const target = e.target
+      if (!(target instanceof HTMLImageElement)) return
+      if (!isAppAttachmentUrl(target.currentSrc || target.getAttribute('src') || '')) return
+      e.preventDefault()
+      e.stopPropagation()
+      downloadFromImg(target)
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      const target = e.target
+      if (!(target instanceof HTMLImageElement)) return
+      if (!isAppAttachmentUrl(target.currentSrc || target.getAttribute('src') || '')) return
+      e.preventDefault()
+      e.stopPropagation()
+      downloadFromImg(target)
+    }
+
+    el.addEventListener('click', onClick)
+    el.addEventListener('keydown', onKeyDown)
+    return () => {
+      el.removeEventListener('click', onClick)
+      el.removeEventListener('keydown', onKeyDown)
+    }
+  }, [resolvedHtml, showHtml])
+
   if (!bodyHtml && !bodyText) {
     return <div style={{ color: '#aaa', fontSize: 13, padding: 16 }}>(empty body)</div>
   }
@@ -278,21 +359,11 @@ function EmailBody({
       )}
       {showHtml && htmlToRender ? (
         <div
+          ref={htmlBodyRef}
           className="email-html-body"
           style={{
             fontSize: 14, lineHeight: 1.6, padding: '8px 0', overflow: 'auto', maxHeight: 600,
             wordBreak: 'break-word'
-          }}
-          ref={(el: HTMLDivElement | null) => {
-            if (!el) return
-            // Only hide unresolved cid: leftovers AFTER rewrite. Never hide
-            // rewritten http(s) images based on naturalWidth (that races load).
-            el.querySelectorAll('img').forEach(img => {
-              const src = img.getAttribute('src') ?? ''
-              if (src.startsWith('cid:')) {
-                img.style.display = 'none'
-              }
-            })
           }}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlToRender, { ADD_ATTR: ['target'] }) }}
         />
@@ -324,39 +395,71 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
   const senderDisplay = msg.senderName ?? msg.senderEmail
   const toDisplay = msg.toAddresses.map(a => a.name ?? a.email).join(', ')
 
+  const replyActions = isLast ? (
+    <div style={{
+      display: 'flex', gap: 8, flexWrap: 'wrap',
+      padding: expanded ? undefined : (isPhone ? '0 12px 12px' : '0 16px 12px'),
+      marginTop: expanded ? 12 : 0,
+      borderBottom: expanded ? undefined : '1px solid #f0f0f0',
+    }}>
+      <button className="btn btn-sm btn-outline" onClick={onReply} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Reply</button>
+      <button className="btn btn-sm btn-outline" onClick={onForward} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Forward</button>
+    </div>
+  ) : null
+
   if (!expanded) {
     return (
-      <div
-        onClick={onToggle}
-        style={{
-          padding: isPhone ? '12px' : '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
-          borderBottom: '1px solid #f0f0f0', fontSize: 13, minHeight: 44,
-        }}
-        onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-        onMouseOut={e => (e.currentTarget.style.background = '')}
-      >
-        <div style={{
-          width: 32, height: 32, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14, flexShrink: 0
-        }}>
-          {senderDisplay.charAt(0).toUpperCase()}
+      <div>
+        <div
+          onClick={onToggle}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+          title="Expand message"
+          style={{
+            padding: isPhone ? '12px' : '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
+            borderBottom: isLast ? 'none' : '1px solid #f0f0f0', fontSize: 13, minHeight: 44,
+          }}
+          onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+          onMouseOut={e => (e.currentTarget.style.background = '')}
+        >
+          <div style={{
+            width: 32, height: 32, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14, flexShrink: 0
+          }}>
+            {senderDisplay.charAt(0).toUpperCase()}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ fontWeight: 500 }}>{senderDisplay}</span>
+            {!isPhone && <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>}
+            {isPhone && msg.snippet && (
+              <div style={{ color: '#999', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.snippet.slice(0, 60)}</div>
+            )}
+          </div>
+          <div style={{ color: '#aaa', fontSize: 11, flexShrink: 0 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</div>
+          {msg.hasAttachments && <span style={{ fontSize: 14 }} title="Has attachments">{'\u{1F4CE}'}</span>}
+          <span style={{ fontSize: 12, color: '#bbb', flexShrink: 0 }} aria-hidden>&#9656;</span>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ fontWeight: 500 }}>{senderDisplay}</span>
-          {!isPhone && <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>}
-          {isPhone && msg.snippet && (
-            <div style={{ color: '#999', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.snippet.slice(0, 60)}</div>
-          )}
-        </div>
-        <div style={{ color: '#aaa', fontSize: 11, flexShrink: 0 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</div>
-        {msg.hasAttachments && <span style={{ fontSize: 14 }} title="Has attachments">{'\u{1F4CE}'}</span>}
+        {replyActions}
       </div>
     )
   }
 
   return (
     <div style={{ padding: isPhone ? '12px' : '16px', borderBottom: '1px solid #f0f0f0' }}>
-      <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: isPhone ? 'wrap' : undefined }}>
+      <div
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+        title="Collapse message"
+        style={{
+          display: 'flex', gap: 12, marginBottom: 12, flexWrap: isPhone ? 'wrap' : undefined,
+          cursor: 'pointer', borderRadius: 6, marginLeft: -4, marginRight: -4, padding: '4px',
+        }}
+        onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+        onMouseOut={e => (e.currentTarget.style.background = '')}
+      >
         <div style={{
           width: 36, height: 36, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15, flexShrink: 0
@@ -374,9 +477,18 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</span>
-              {!isLast && (
-                <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#bbb', padding: 0, minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Collapse">&#9660;</button>
-              )}
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onToggle() }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#999',
+                  padding: 0, minWidth: 36, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+                title="Collapse"
+                aria-label="Collapse message"
+              >
+                &#9650;
+              </button>
             </div>
           </div>
           <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
@@ -411,12 +523,7 @@ function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLas
           />
         )}
 
-        {isLast && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-            <button className="btn btn-sm btn-outline" onClick={onReply} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Reply</button>
-            <button className="btn btn-sm btn-outline" onClick={onForward} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Forward</button>
-          </div>
-        )}
+        {replyActions}
       </div>
     </div>
   )
@@ -754,8 +861,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <button
             onClick={onBack}
-            title="Back to Inbox"
-            aria-label="Back to Inbox"
+            title="Back"
+            aria-label="Back"
             style={{
               flexShrink: 0, width: 32, height: 32, marginTop: 2,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

@@ -16,6 +16,7 @@ const graphEmailAddressSchema = z.object({
 
 const graphAttachmentSchema = z.object({
   id: z.string().min(1).optional(),
+  "@odata.type": z.string().optional(),
   contentId: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
   contentType: z.string().nullable().optional(),
@@ -89,7 +90,16 @@ export interface OutlookAttachmentMetadata {
   inline: boolean;
   mimeType: string | null;
   size: number | null;
+  odataType?: string | null;
 }
+
+export type OutlookGraphListAttachmentsResult =
+  | { ok: true; attachments: OutlookAttachmentMetadata[] }
+  | { ok: false; status: number; error: string };
+
+export type OutlookGraphDownloadAttachmentResult =
+  | { ok: true; data: Buffer; contentType: string | null }
+  | { ok: false; status: number; error: string };
 
 export interface OutlookMessageSnapshot {
   outlookMessageId: string;
@@ -389,6 +399,94 @@ export class OutlookClient {
     return Boolean(this.config.clientId && this.config.clientSecret);
   }
 
+  /** Public token refresh for attachment ingestion (same path as mailbox sync). */
+  async acquireAccessToken(refreshToken: string): Promise<{
+    accessToken: string;
+    expiresAt: Date | null;
+    refreshedRefreshToken: string | null;
+  }> {
+    if (!this.config.clientId || !this.config.clientSecret) {
+      throw new Error("Outlook client is not configured");
+    }
+    return this.refreshAccessToken(refreshToken);
+  }
+
+  /**
+   * List attachments for a message. Distinguishes empty success from Graph failure.
+   * Callers must not treat ok:false as "zero attachments".
+   */
+  async listAttachments(
+    accessToken: string,
+    outlookMessageId: string
+  ): Promise<OutlookGraphListAttachmentsResult> {
+    const url =
+      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
+      `/attachments?$select=id,contentId,name,contentType,size,isInline`;
+
+    const response = await this.fetchWithThrottleRetry(url, {
+      Authorization: `Bearer ${accessToken}`,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        status: response.status,
+        error: `Outlook listAttachments failed (${response.status}): ${errorText.slice(0, 500)}`,
+      };
+    }
+
+    const raw = await response.json();
+    const parsed = graphAttachmentsResponseSchema.parse(raw);
+    const attachments: OutlookAttachmentMetadata[] = parsed.value
+      .filter((att) => Boolean(att.id))
+      .map((att) => ({
+        attachmentId: att.id ?? null,
+        contentId: att.contentId ?? null,
+        filename: att.name ?? null,
+        inline: att.isInline ?? false,
+        mimeType: att.contentType ?? null,
+        size: att.size ?? null,
+        odataType: att["@odata.type"] ?? null,
+      }));
+
+    return { ok: true, attachments };
+  }
+
+  /**
+   * Download a file attachment binary via Graph $value.
+   * Sequential use only — do not fan out uncontrolled parallel calls.
+   */
+  async downloadAttachment(
+    accessToken: string,
+    outlookMessageId: string,
+    attachmentId: string
+  ): Promise<OutlookGraphDownloadAttachmentResult> {
+    const url =
+      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
+      `/attachments/${encodeURIComponent(attachmentId)}/$value`;
+
+    const response = await this.fetchWithThrottleRetry(url, {
+      Authorization: `Bearer ${accessToken}`,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        status: response.status,
+        error: `Outlook downloadAttachment failed (${response.status}): ${errorText.slice(0, 500)}`,
+      };
+    }
+
+    const arrayBuf = await response.arrayBuffer();
+    return {
+      ok: true,
+      data: Buffer.from(arrayBuf),
+      contentType: response.headers.get("content-type"),
+    };
+  }
+
   async syncMailbox(
     input: OutlookMailboxSyncInput
   ): Promise<OutlookMailboxSyncSnapshot> {
@@ -487,7 +585,34 @@ export class OutlookClient {
     while (true) {
       const response = await fetch(url, { headers });
 
-      if (response.status !== 429 || attempt >= MAX_THROTTLE_RETRIES) {
+      const shouldRetry =
+        attempt < MAX_THROTTLE_RETRIES &&
+        (response.status === 429 ||
+          response.status === 503 ||
+          response.status === 502 ||
+          response.status === 504 ||
+          (response.status >= 500 && response.status < 600));
+
+      if (!shouldRetry) {
+        // Detect mailbox concurrency errors that sometimes arrive as 429/503 with body text
+        if (
+          attempt < MAX_THROTTLE_RETRIES &&
+          response.status === 400
+        ) {
+          const peek = await response.clone().text().catch(() => "");
+          if (/mailboxconcurrency|applicationthrottled|too many requests/i.test(peek)) {
+            const waitMs = parseRetryAfterMs(response);
+            console.warn("outlook-graph-throttled", {
+              attempt: attempt + 1,
+              retryAfterMs: waitMs,
+              status: response.status,
+              url: url.split("?")[0],
+            });
+            await sleep(waitMs);
+            attempt += 1;
+            continue;
+          }
+        }
         return response;
       }
 
@@ -495,7 +620,8 @@ export class OutlookClient {
       console.warn("outlook-graph-throttled", {
         attempt: attempt + 1,
         retryAfterMs: waitMs,
-        url: url.split("?")[0]
+        status: response.status,
+        url: url.split("?")[0],
       });
 
       await sleep(waitMs);
@@ -603,7 +729,11 @@ export class OutlookClient {
         const parsed = parseMessage(graphMsg, folderMap);
         items.push(parsed);
 
-        if (parsed.hasAttachments) {
+        // Inline CID images may exist even when Graph hasAttachments is false
+        if (
+          parsed.hasAttachments ||
+          /(?:src\s*=\s*(?:3D)?(["']?)cid:|url\(\s*(['"]?)cid:)/i.test(parsed.bodyHtml ?? "")
+        ) {
           hasAttachmentIds.push(graphMsg.id);
         }
       }

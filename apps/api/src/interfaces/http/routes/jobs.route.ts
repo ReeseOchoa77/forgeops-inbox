@@ -899,6 +899,8 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         orderBy: { sentAt: "desc" },
         select: {
           id: true,
+          threadId: true,
+          inboxConnectionId: true,
           subject: true,
           senderName: true,
           senderEmail: true,
@@ -962,16 +964,17 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     if (!existing) return;
 
     const attachments = await app.services.prisma.emailAttachment.findMany({
-      where: { emailMessage: { jobId, workspaceId } },
+      where: {
+        emailMessage: { jobId, workspaceId },
+        isInline: false,
+        uploadStatus: "UPLOADED",
+      },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
         filename: true,
-        sanitizedFilename: true,
         mimeType: true,
         sizeBytes: true,
-        isInline: true,
-        uploadStatus: true,
         createdAt: true,
         emailMessage: {
           select: {
@@ -984,7 +987,19 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       },
     });
 
-    return reply.send({ documents: attachments });
+    return reply.send({
+      documents: attachments.map(a => ({
+        id: a.id,
+        filename: a.filename,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        createdAt: a.createdAt,
+        emailSubject: a.emailMessage.subject,
+        emailSenderEmail: a.emailMessage.senderEmail,
+        emailMessageId: a.emailMessage.id,
+        source: "email" as const,
+      })),
+    });
   });
 
   // 13. GET /api/v1/workspaces/:workspaceId/jobs/:jobId/activity — Activity log

@@ -3,7 +3,13 @@ import type {
   Prisma,
   PrismaClient
 } from "@prisma/client";
-import type { InboxSyncResult, InboxAnalysisJobPayload, InboxAnalysisResult } from "@forgeops/shared";
+import type {
+  InboxSyncResult,
+  InboxAnalysisJobPayload,
+  InboxAnalysisResult,
+  AttachmentIngestJobPayload,
+  AttachmentIngestResult,
+} from "@forgeops/shared";
 import {
   ProviderRegistry,
   QueueNames,
@@ -93,7 +99,8 @@ export class InboxSyncProcessor {
     private readonly prisma: PrismaClient,
     private readonly providerRegistry: ProviderRegistry,
     private readonly tokenCipher: TokenCipher,
-    private readonly analysisQueue?: Queue<InboxAnalysisJobPayload, InboxAnalysisResult>
+    private readonly analysisQueue?: Queue<InboxAnalysisJobPayload, InboxAnalysisResult>,
+    private readonly attachmentIngestQueue?: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>
   ) {}
 
   async process(context: InboxSyncContext): Promise<InboxSyncResult> {
@@ -244,7 +251,44 @@ export class InboxSyncProcessor {
         }
       }
 
-      return syncResult;
+      // Native Outlook sync already has OAuth tokens — enqueue attachment ingest
+      if (
+        this.attachmentIngestQueue &&
+        connection.provider === "OUTLOOK" &&
+        connection.encryptedRefreshToken &&
+        syncResult.attachmentIngestCandidates.length > 0
+      ) {
+        for (const candidate of syncResult.attachmentIngestCandidates) {
+          try {
+            const jobId = `attachment-ingest:${candidate.emailMessageId}`;
+            const payload: AttachmentIngestJobPayload = {
+              workspaceId: context.workspaceId,
+              inboxConnectionId: context.inboxConnectionId,
+              emailMessageId: candidate.emailMessageId,
+              providerMessageId: candidate.providerMessageId,
+            };
+            await this.attachmentIngestQueue.add(QueueNames.ATTACHMENT_INGEST, payload, {
+              jobId,
+              attempts: 5,
+              backoff: { type: "exponential", delay: 15_000 },
+              removeOnComplete: { count: 100 },
+              removeOnFail: { count: 200 },
+            });
+          } catch (e) {
+            console.warn("attachment-ingest-queue-failed", {
+              emailMessageId: candidate.emailMessageId,
+              error: e instanceof Error ? e.message : "unknown",
+            });
+          }
+        }
+        console.info("attachment-ingest-queued-from-sync", {
+          jobId: context.jobId,
+          count: syncResult.attachmentIngestCandidates.length,
+        });
+      }
+
+      const { attachmentIngestCandidates: _candidates, ...result } = syncResult;
+      return result;
     } catch (error) {
       const failure = classifySyncFailure(error);
 

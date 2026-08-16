@@ -12,6 +12,16 @@ interface Props {
 type ReviewTab = 'REVIEW' | 'RECLASSIFIED'
 type ReviewFilter = 'ALL' | 'BUSINESS' | 'PERSONAL'
 
+function senderCategoryFromMessage(mailboxCategory: string): 'BUSINESS' | 'PERSONAL' {
+  return mailboxCategory === 'BUSINESS' ? 'BUSINESS' : 'PERSONAL'
+}
+
+function verifySenderButtonLabel(mailboxCategory: string): string {
+  return senderCategoryFromMessage(mailboxCategory) === 'BUSINESS'
+    ? 'Confirm Business Sender'
+    : 'Confirm Personal Sender'
+}
+
 export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: Props) {
   const [items, setItems] = useState<ReviewItem[]>([])
   const [reclassifiedMessages, setReclassifiedMessages] = useState<MessageSummary[]>([])
@@ -23,6 +33,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
   const [reclassifiedTotalPages, setReclassifiedTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [tab, setTab] = useState<ReviewTab>('REVIEW')
   const [filter, setFilter] = useState<ReviewFilter>('ALL')
 
@@ -74,22 +85,54 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
     }
   }
 
-  const handleConfirmSender = async (item: ReviewItem) => {
-    const m = item.message
-    const classification = m.mailboxCategory === 'BUSINESS' ? 'BUSINESS' : 'PERSONAL'
-    setActionLoading(m.id + 'confirm')
+  /** Push email classification into Reference Data → Senders as CONFIRMED_BUSINESS / CONFIRMED_PERSONAL. */
+  const handleVerifySender = async (
+    message: {
+      id: string
+      senderEmail: string
+      senderName: string | null
+      mailboxCategory: string
+      classification?: { id: string } | null
+      taskCandidate?: { id: string } | null
+    },
+    opts: { dismissReview: boolean; list: 'review' | 'reclassified' }
+  ) => {
+    const classification = senderCategoryFromMessage(message.mailboxCategory)
+    const confirmKey = message.id + 'confirm'
+    setActionLoading(confirmKey)
+    setNotice(null)
     try {
-      await api.confirmSenderEvidence(workspaceId, m.senderEmail, m.senderName, classification as 'BUSINESS' | 'PERSONAL')
-      if (m.classification?.id) {
-        await api.reviewClassification(workspaceId, m.classification.id, 'APPROVED')
+      await api.confirmSenderEvidence(
+        workspaceId,
+        message.senderEmail,
+        message.senderName,
+        classification
+      )
+
+      if (opts.dismissReview) {
+        if (message.classification?.id) {
+          await api.reviewClassification(workspaceId, message.classification.id, 'APPROVED')
+        }
+        if (message.taskCandidate?.id) {
+          await api.reviewTask(workspaceId, message.taskCandidate.id, 'APPROVED')
+        }
       }
-      if (m.taskCandidate?.id) {
-        await api.reviewTask(workspaceId, m.taskCandidate.id, 'APPROVED')
+
+      if (opts.list === 'review') {
+        setItems(prev => prev.filter(i => i.message.id !== message.id))
+        setTotalCount(prev => Math.max(0, prev - 1))
+      } else {
+        setReclassifiedMessages(prev => prev.filter(m => m.id !== message.id))
+        setReclassifiedTotal(prev => Math.max(0, prev - 1))
       }
-      setItems(prev => prev.filter(i => i.message.id !== m.id))
-      setTotalCount(prev => prev - 1)
+
+      setNotice(
+        classification === 'BUSINESS'
+          ? `Updated ${message.senderEmail} to Confirmed Business in Reference Data.`
+          : `Updated ${message.senderEmail} to Confirmed Personal in Reference Data.`
+      )
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Confirm failed')
+      alert(e instanceof Error ? e.message : 'Failed to update sender in Reference Data')
     } finally {
       setActionLoading(null)
     }
@@ -98,7 +141,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading...</p>
 
   const tabStyle = (t: ReviewTab) => ({
-    padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+    padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' as const,
     border: 'none', borderBottom: tab === t ? '2px solid #1a1a2e' : '2px solid transparent',
     background: 'none', color: tab === t ? '#1a1a2e' : '#888'
   })
@@ -118,10 +161,21 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         </button>
       </div>
 
+      {notice && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 12, fontSize: 12, borderRadius: 6,
+          background: '#e6f4ea', border: '1px solid #a8d5a2', color: '#2e7d32',
+          display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center',
+        }}>
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2e7d32' }}>&times;</button>
+        </div>
+      )}
+
       {tab === 'RECLASSIFIED' && (
         <div>
           <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
-            Emails that were manually reclassified. Review sender evidence in Reference Data → Senders to apply changes globally.
+            Emails that were manually reclassified. Use <strong>Confirm Business/Personal Sender</strong> to update that sender in Reference Data → Senders to Confirmed Business or Confirmed Personal.
           </p>
           {reclassifiedMessages.length === 0 ? (
             <div className="empty-state">
@@ -131,27 +185,52 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
             </div>
           ) : (
             <>
-              {reclassifiedMessages.map(m => (
-                <div key={m.id} className="card" style={{
-                  borderLeft: '3px solid #7c3aed', marginBottom: 8, cursor: 'pointer'
-                }} onClick={() => onSelectMessage(m.id)}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{m.subject ?? '(no subject)'}</div>
-                      <div style={{ fontSize: 12, color: '#888' }}>{m.senderName ?? m.senderEmail}</div>
+              {reclassifiedMessages.map(m => {
+                const confirmKey = m.id + 'confirm'
+                const isBusiness = senderCategoryFromMessage(m.mailboxCategory) === 'BUSINESS'
+                return (
+                  <div key={m.id} className="card" style={{
+                    borderLeft: '3px solid #7c3aed', marginBottom: 8,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onSelectMessage(m.id)}>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2, color: '#06c' }}>{m.subject ?? '(no subject)'}</div>
+                        <div style={{ fontSize: 12, color: '#888' }}>
+                          From: <strong>{m.senderName ?? m.senderEmail}</strong>
+                          {m.senderName && <span style={{ color: '#bbb' }}> ({m.senderEmail})</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: '#f3e8ff', color: '#7c3aed', fontWeight: 600 }}>
+                          {m.previousCategory} → {m.mailboxCategory}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={actionLoading === confirmKey}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleVerifySender(m, { dismissReview: false, list: 'reclassified' })
+                          }}
+                          style={{
+                            minHeight: 32, padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                            border: isBusiness ? '1px solid #4caf50' : '1px solid #9c27b0',
+                            background: isBusiness ? '#e8f5e9' : '#f3e5f5',
+                            color: isBusiness ? '#2e7d32' : '#6a1b9a',
+                            cursor: actionLoading === confirmKey ? 'not-allowed' : 'pointer',
+                            opacity: actionLoading === confirmKey ? 0.6 : 1,
+                          }}
+                        >
+                          {actionLoading === confirmKey ? 'Updating…' : verifySenderButtonLabel(m.mailboxCategory)}
+                        </button>
+                        <span style={{ fontSize: 11, color: '#aaa' }}>
+                          {m.receivedAt ? new Date(m.receivedAt).toLocaleDateString() : ''}
+                        </span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: '#f3e8ff', color: '#7c3aed', fontWeight: 600 }}>
-                        {m.previousCategory} → {m.mailboxCategory}
-                      </span>
-                      <span style={{ fontSize: 11, color: '#aaa' }}>
-                        {m.receivedAt ? new Date(m.receivedAt).toLocaleDateString() : ''}
-                      </span>
-                    </div>
+                    {m.snippet && <div style={{ fontSize: 12, color: '#999', marginTop: 4, lineHeight: 1.4 }}>{m.snippet.slice(0, 120)}</div>}
                   </div>
-                  {m.snippet && <div style={{ fontSize: 12, color: '#999', marginTop: 4, lineHeight: 1.4 }}>{m.snippet.slice(0, 120)}</div>}
-                </div>
-              ))}
+                )
+              })}
               {reclassifiedTotalPages > 1 && (
                 <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
                   <button className="btn btn-sm btn-outline" disabled={reclassifiedPage <= 1} onClick={() => setReclassifiedPage(p => p - 1)}>Previous</button>
@@ -167,6 +246,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       {tab === 'REVIEW' && (<>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
         {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
+        Confirm Business/Personal Sender updates that sender in Reference Data and clears the item from this queue.
       </p>
 
       {items.length === 0 ? (
@@ -195,6 +275,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         const reclassifyKey = m.id + 'reclassify'
         const confirmKey = m.id + 'confirm'
         const oppositeCategory = m.mailboxCategory === 'BUSINESS' ? 'Personal' : 'Business'
+        const isBusiness = senderCategoryFromMessage(m.mailboxCategory) === 'BUSINESS'
 
         return (
           <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17', marginBottom: 10 }}>
@@ -211,7 +292,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                   {formatDate(m.receivedAt ?? m.sentAt)}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
                 <button
                   disabled={actionLoading === reclassifyKey}
                   onClick={() => handleReclassify(item)}
@@ -223,12 +304,17 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                 </button>
                 <button
                   disabled={actionLoading === confirmKey}
-                  onClick={() => handleConfirmSender(item)}
+                  onClick={() => handleVerifySender(m, { dismissReview: true, list: 'review' })}
+                  title="Sets this sender to Confirmed Business or Confirmed Personal in Reference Data"
                   style={{
                     minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
-                    border: '1px solid #4caf50', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer'
+                    border: isBusiness ? '1px solid #4caf50' : '1px solid #9c27b0',
+                    background: isBusiness ? '#e8f5e9' : '#f3e5f5',
+                    color: isBusiness ? '#2e7d32' : '#6a1b9a',
+                    cursor: actionLoading === confirmKey ? 'not-allowed' : 'pointer',
+                    opacity: actionLoading === confirmKey ? 0.6 : 1,
                   }}>
-                  {actionLoading === confirmKey ? '...' : 'Confirm Sender'}
+                  {actionLoading === confirmKey ? 'Updating…' : verifySenderButtonLabel(m.mailboxCategory)}
                 </button>
               </div>
             </div>

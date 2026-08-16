@@ -5,6 +5,14 @@ import type {
   ProviderAttachmentMetadata,
   ProviderMailboxSyncResult
 } from "@forgeops/shared";
+import { shouldInspectAttachments } from "@forgeops/shared";
+
+export type AttachmentIngestCandidate = {
+  emailMessageId: string;
+  providerMessageId: string;
+  hasAttachments: boolean;
+  bodyHtml: string | null;
+};
 
 const toPrismaJson = (value: unknown): Prisma.InputJsonValue => {
   const normalized = JSON.parse(JSON.stringify(value ?? null)) as Prisma.JsonValue;
@@ -30,7 +38,7 @@ export const importProviderMailbox = async (input: {
   workspaceId: string;
   inboxConnectionId: string;
   mailbox: ProviderMailboxSyncResult;
-}): Promise<InboxSyncResult> => {
+}): Promise<InboxSyncResult & { attachmentIngestCandidates: AttachmentIngestCandidate[] }> => {
   const providerThreadIds = input.mailbox.threads.map(
     (thread) => thread.providerThreadId
   );
@@ -69,6 +77,7 @@ export const importProviderMailbox = async (input: {
 
   let threadsImported = 0;
   let messagesImported = 0;
+  const attachmentIngestCandidates: AttachmentIngestCandidate[] = [];
 
   const threads = input.mailbox.threads;
 
@@ -145,6 +154,19 @@ export const importProviderMailbox = async (input: {
               where: { id: existingMessageId },
               data: messageData
             });
+            if (
+              shouldInspectAttachments({
+                hasAttachments: message.hasAttachments,
+                bodyHtml: message.bodyHtml,
+              })
+            ) {
+              attachmentIngestCandidates.push({
+                emailMessageId: existingMessageId,
+                providerMessageId: message.providerMessageId,
+                hasAttachments: message.hasAttachments,
+                bodyHtml: message.bodyHtml,
+              });
+            }
             continue;
           }
 
@@ -160,6 +182,19 @@ export const importProviderMailbox = async (input: {
 
           existingMessageIdMap.set(message.providerMessageId, createdMessage.id);
           messagesImported += 1;
+          if (
+            shouldInspectAttachments({
+              hasAttachments: message.hasAttachments,
+              bodyHtml: message.bodyHtml,
+            })
+          ) {
+            attachmentIngestCandidates.push({
+              emailMessageId: createdMessage.id,
+              providerMessageId: message.providerMessageId,
+              hasAttachments: message.hasAttachments,
+              bodyHtml: message.bodyHtml,
+            });
+          }
         }
       }
     }, {
@@ -174,6 +209,7 @@ export const importProviderMailbox = async (input: {
     threadsImported,
     messagesImported,
     duplicatesSkipped: existingThreads.length + existingMessages.length,
-    newestSyncCursor: input.mailbox.newestSyncCursor
+    newestSyncCursor: input.mailbox.newestSyncCursor,
+    attachmentIngestCandidates,
   };
 };

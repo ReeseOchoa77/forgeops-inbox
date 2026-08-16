@@ -29,6 +29,17 @@ export interface SessionResponse {
   memberships: Array<{ id: string; role: string; workspaceRole: string; workspace: { id: string; name: string; slug: string } }>;
 }
 
+export type AuthorizationStatus =
+  | 'REQUIRED'
+  | 'CONNECTED'
+  | 'REAUTHORIZATION_REQUIRED';
+
+export interface InboxConnectionCapabilities {
+  emailIngestion: boolean;
+  directProviderAccess: boolean;
+  attachmentIngestion: boolean;
+}
+
 export interface ConnectionSummary {
   id: string;
   provider: string;
@@ -37,6 +48,9 @@ export interface ConnectionSummary {
   status: string;
   connectedAt: string | null;
   lastSyncedAt: string | null;
+  /** Derived OAuth capability — never token material. */
+  authorizationStatus: AuthorizationStatus;
+  capabilities: InboxConnectionCapabilities;
   counts: { messages: number; threads: number };
 }
 
@@ -458,7 +472,14 @@ export const api = {
     }),
 
   reconnectConnection: (workspaceId: string, connectionId: string) =>
-    request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reconnect`, {
+    request<{ status: string; authorizationUrl: string; flow?: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reconnect`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+
+  /** Targeted Microsoft OAuth for an existing tokenless (e.g. n8n) Outlook connection. */
+  authorizeConnection: (workspaceId: string, connectionId: string) =>
+    request<{ status: string; authorizationUrl: string; flow?: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/authorize`, {
       method: 'POST',
       body: JSON.stringify({})
     }),
@@ -634,9 +655,9 @@ export const api = {
       method: 'POST', body: JSON.stringify(data)
     }),
 
-  getJobEmails: (workspaceId: string, jobId: string, page = 1) =>
+  getJobEmails: (workspaceId: string, jobId: string, page = 1, pageSize = 25) =>
     request<{ emails: JobEmail[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
-      `/workspaces/${workspaceId}/jobs/${jobId}/emails?page=${page}&pageSize=25`
+      `/workspaces/${workspaceId}/jobs/${jobId}/emails?page=${page}&pageSize=${pageSize}`
     ),
 
   getJobTasks: (workspaceId: string, jobId: string) =>
@@ -644,6 +665,74 @@ export const api = {
 
   getJobDocuments: (workspaceId: string, jobId: string) =>
     request<{ documents: JobDocument[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/documents`),
+
+  getJobFiles: (workspaceId: string, jobId: string, folderId?: string | null) => {
+    const q = folderId ? `?folderId=${encodeURIComponent(folderId)}` : ''
+    return request<{
+      folderId: string | null
+      breadcrumb: Array<{ id: string; name: string }>
+      folders: JobFileFolder[]
+      files: JobStoredFile[]
+    }>(`/workspaces/${workspaceId}/jobs/${jobId}/files${q}`)
+  },
+
+  createJobFolder: (workspaceId: string, jobId: string, data: { name: string; parentFolderId?: string | null }) =>
+    request<{ folder: { id: string; name: string; parentFolderId: string | null; createdAt: string } }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/folders`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  renameJobFolder: (workspaceId: string, jobId: string, folderId: string, name: string) =>
+    request<{ folder: { id: string; name: string; parentFolderId: string | null; createdAt: string } }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/folders/${folderId}`,
+      { method: 'PATCH', body: JSON.stringify({ name }) }
+    ),
+
+  deleteJobFolder: async (workspaceId: string, jobId: string, folderId: string) => {
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/jobs/${jobId}/folders/${folderId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(body.message ?? body.error ?? `Request failed: ${res.status}`)
+    }
+  },
+
+  uploadJobFile: async (workspaceId: string, jobId: string, file: File, folderId?: string | null) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (folderId) form.append('folderId', folderId)
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/jobs/${jobId}/files`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(body.message ?? body.error ?? `Upload failed: ${res.status}`)
+    }
+    return res.json() as Promise<{ file: JobStoredFile }>
+  },
+
+  updateJobFile: (workspaceId: string, jobId: string, fileId: string, data: { folderId?: string | null; filename?: string }) =>
+    request<{ file: JobStoredFile }>(`/workspaces/${workspaceId}/jobs/${jobId}/files/${fileId}`, {
+      method: 'PATCH', body: JSON.stringify(data)
+    }),
+
+  deleteJobFile: async (workspaceId: string, jobId: string, fileId: string) => {
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/jobs/${jobId}/files/${fileId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(body.message ?? body.error ?? `Request failed: ${res.status}`)
+    }
+  },
+
+  getJobFileDownloadUrl: (workspaceId: string, jobId: string, fileId: string) =>
+    `${BASE}/workspaces/${workspaceId}/jobs/${jobId}/files/${fileId}/download`,
 
   getJobActivity: (workspaceId: string, jobId: string, page = 1) =>
     request<{ activity: JobActivity[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
@@ -870,15 +959,40 @@ export interface JobDetail extends JobSummary {
 
 export interface JobEmail {
   id: string;
+  threadId: string;
+  inboxConnectionId: string;
   subject: string | null;
   senderName: string | null;
   senderEmail: string;
   sentAt: string;
   receivedAt: string | null;
+  snippet?: string | null;
+  hasAttachments?: boolean;
+  isRead?: boolean;
   mailboxCategory: string;
   jobAssignmentSource: string | null;
   jobAssignmentIsManual: boolean;
-  classification: Classification | null;
+  classification?: Classification | null;
+}
+
+export interface JobFileFolder {
+  id: string;
+  name: string;
+  parentFolderId: string | null;
+  createdAt: string;
+  childFolderCount: number;
+  fileCount: number;
+}
+
+export interface JobStoredFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  folderId: string | null;
+  uploadStatus: string;
+  createdAt: string;
+  createdByUserId: string | null;
 }
 
 export interface JobTask {
@@ -898,6 +1012,8 @@ export interface JobDocument {
   sizeBytes: number;
   emailSubject: string | null;
   emailSenderEmail: string;
+  emailMessageId?: string;
+  source?: 'email';
   createdAt: string;
 }
 

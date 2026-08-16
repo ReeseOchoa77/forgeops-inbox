@@ -1,6 +1,7 @@
 import { prisma } from "@forgeops/db";
 import { QueueNames } from "@forgeops/shared";
 import { loadWorkerEnv } from "./config/env.js";
+import { startAttachmentIngestWorker } from "./jobs/attachment-ingest.worker.js";
 import { startInboxAnalysisWorker } from "./jobs/inbox-analysis.worker.js";
 import { startInboxSyncWorker } from "./jobs/inbox-sync.worker.js";
 
@@ -9,6 +10,7 @@ const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const env = loadWorkerEnv();
 const inboxSync = startInboxSyncWorker(env);
 const inboxAnalysis = startInboxAnalysisWorker(env);
+const attachmentIngest = startAttachmentIngestWorker(env);
 
 async function registerScheduledSyncs(): Promise<void> {
   const connections = await prisma.inboxConnection.findMany({
@@ -61,9 +63,11 @@ const shutdown = async (signal: string): Promise<void> => {
   await Promise.all([
     inboxSync.worker.close(),
     inboxAnalysis.worker.close(),
+    attachmentIngest.worker.close(),
     inboxSync.syncQueue.close(),
     inboxSync.redis.quit(),
-    inboxAnalysis.redis.quit()
+    inboxAnalysis.redis.quit(),
+    attachmentIngest.redis.quit(),
   ]);
   await prisma.$disconnect();
   process.exit(0);
@@ -78,7 +82,9 @@ process.on("SIGTERM", () => {
 });
 
 console.info("worker-started", {
-  queues: ["inbox-sync", "inbox-analysis"],
+  queues: ["inbox-sync", "inbox-analysis", "attachment-ingest"],
   concurrency: env.WORKER_CONCURRENCY,
-  syncIntervalMs: SYNC_INTERVAL_MS
+  attachmentIngestConcurrency: 1,
+  syncIntervalMs: SYNC_INTERVAL_MS,
+  s3Configured: Boolean(env.S3_BUCKET && env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY),
 });

@@ -1,10 +1,15 @@
 import type { InboxConnectionStatus } from "@prisma/client";
 import type { InboxProviderKind } from "@forgeops/shared";
-import { providerKindFromEnum, providerKindToEnum } from "@forgeops/shared";
+import { normalizeEmail, providerKindFromEnum, providerKindToEnum } from "@forgeops/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import {
+  assertTargetedMailboxEmailMatch,
+  buildAuthorizationFields,
+  validateAuthorizeExistingTarget,
+} from "../../../application/services/inbox-authorization-status.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const workspaceParamsSchema = z.object({
@@ -38,6 +43,7 @@ const resolveOAuthProvider = (app: FastifyInstance, kind: InboxProviderKind) =>
 const serializeConnection = (connection: {
   id: string;
   workspaceId: string;
+  provider: string;
   email: string;
   displayName: string | null;
   status: InboxConnectionStatus;
@@ -47,19 +53,31 @@ const serializeConnection = (connection: {
   connectedAt: Date | null;
   disconnectedAt: Date | null;
   lastSyncedAt: Date | null;
-}) => ({
-  id: connection.id,
-  workspaceId: connection.workspaceId,
-  email: connection.email,
-  displayName: connection.displayName,
-  status: connection.status,
-  grantedScopes: connection.grantedScopes,
-  providerAccountId: connection.providerAccountId,
-  accessTokenExpiresAt: connection.accessTokenExpiresAt?.toISOString() ?? null,
-  connectedAt: connection.connectedAt?.toISOString() ?? null,
-  disconnectedAt: connection.disconnectedAt?.toISOString() ?? null,
-  lastSyncedAt: connection.lastSyncedAt?.toISOString() ?? null
-});
+  encryptedRefreshToken?: string | null;
+}) => {
+  const auth = buildAuthorizationFields({
+    provider: connection.provider,
+    status: connection.status,
+    hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+  });
+
+  return {
+    id: connection.id,
+    workspaceId: connection.workspaceId,
+    provider: connection.provider.toLowerCase(),
+    email: connection.email,
+    displayName: connection.displayName,
+    status: connection.status,
+    grantedScopes: connection.grantedScopes,
+    providerAccountId: connection.providerAccountId,
+    accessTokenExpiresAt: connection.accessTokenExpiresAt?.toISOString() ?? null,
+    connectedAt: connection.connectedAt?.toISOString() ?? null,
+    disconnectedAt: connection.disconnectedAt?.toISOString() ?? null,
+    lastSyncedAt: connection.lastSyncedAt?.toISOString() ?? null,
+    authorizationStatus: auth.authorizationStatus,
+    capabilities: auth.capabilities,
+  };
+};
 
 type SerializedConnection = ReturnType<typeof serializeConnection>;
 
@@ -102,6 +120,7 @@ const prepareInboxAuthorization = async (input: {
   workspaceId: string;
   userId: string;
   reconnect: boolean;
+  authorizeExisting?: boolean;
   connectionId?: string;
   providerKind: InboxProviderKind;
 }): Promise<PreparedInboxAuthorization> => {
@@ -112,8 +131,9 @@ const prepareInboxAuthorization = async (input: {
     provider: input.providerKind,
     workspaceId: input.workspaceId,
     userId: input.userId,
-    connectionId: input.connectionId,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     reconnect: input.reconnect,
+    authorizeExisting: input.authorizeExisting ?? false,
     createdAt: new Date().toISOString()
   });
   const authorizationUrl = provider.getAuthorizationUrl({
@@ -129,7 +149,7 @@ const prepareInboxAuthorization = async (input: {
 
 const buildInboxAuthorizationResponse = (input: {
   workspaceId: string;
-  flow: "inbox-connect" | "inbox-reconnect";
+  flow: "inbox-connect" | "inbox-reconnect" | "inbox-authorize";
   authorization: PreparedInboxAuthorization;
   connection?: SerializedConnection;
 }) => ({
@@ -140,6 +160,27 @@ const buildInboxAuthorizationResponse = (input: {
   workspaceId: input.workspaceId,
   ...(input.connection ? { connection: input.connection } : {})
 });
+
+/** Ensure WorkspaceMailbox for this Outlook email points at the canonical connection. */
+async function linkWorkspaceMailboxToConnection(input: {
+  app: FastifyInstance;
+  workspaceId: string;
+  provider: "OUTLOOK" | "GMAIL";
+  mailboxEmail: string;
+  inboxConnectionId: string;
+}): Promise<void> {
+  const normalized = normalizeEmail(input.mailboxEmail);
+  await input.app.services.prisma.workspaceMailbox.updateMany({
+    where: {
+      workspaceId: input.workspaceId,
+      provider: input.provider,
+      normalizedEmail: normalized,
+    },
+    data: {
+      inboxConnectionId: input.inboxConnectionId,
+    },
+  });
+}
 
 export const registerInboxConnectionRoutes = async (
   app: FastifyInstance
@@ -566,35 +607,64 @@ export const registerInboxConnectionRoutes = async (
         throw new Error("Inbox account email must be verified");
       }
 
-      const existingConnection = storedState.connectionId
-        ? await app.services.prisma.inboxConnection.findFirst({
-            where: {
-              id: storedState.connectionId,
-              workspaceId: storedState.workspaceId
-            }
-          })
-        : await app.services.prisma.inboxConnection.findUnique({
+      const microsoftEmail = normalizeEmail(profile.email);
+      const authorizeExisting = Boolean(storedState.authorizeExisting);
+      const isTargetedFlow = Boolean(storedState.reconnect || authorizeExisting);
+
+      let existingConnection =
+        storedState.connectionId
+          ? await app.services.prisma.inboxConnection.findFirst({
+              where: {
+                id: storedState.connectionId,
+                workspaceId: storedState.workspaceId
+              }
+            })
+          : null;
+
+      // Untargeted connect may reconcile by workspace+provider+email.
+      // Targeted flows must never fall back to Microsoft email lookup.
+      if (!isTargetedFlow && !existingConnection) {
+        existingConnection =
+          await app.services.prisma.inboxConnection.findUnique({
             where: {
               workspaceId_provider_email: {
                 workspaceId: storedState.workspaceId,
                 provider: dbProviderEnum as "GMAIL" | "OUTLOOK",
-                email: profile.email
+                email: microsoftEmail
               }
             }
           });
-
-      if (storedState.reconnect && !existingConnection) {
-        throw new Error("Reconnect target inbox connection no longer exists");
       }
 
-      if (
-        storedState.reconnect &&
-        existingConnection &&
-        existingConnection.email !== profile.email
-      ) {
+      if (isTargetedFlow && !storedState.connectionId) {
         throw new Error(
-          "Reconnect flow must authorize the same inbox account"
+          storedState.reconnect
+            ? "Reconnect target inbox connection is missing from OAuth state"
+            : "Authorization target inbox connection is missing from OAuth state"
         );
+      }
+
+      if (isTargetedFlow && !existingConnection) {
+        throw new Error(
+          storedState.reconnect
+            ? "Reconnect target inbox connection no longer exists"
+            : "Authorization target inbox connection no longer exists"
+        );
+      }
+
+      if (isTargetedFlow && existingConnection) {
+        const mismatch = assertTargetedMailboxEmailMatch({
+          expectedEmail: existingConnection.email,
+          microsoftEmail,
+        });
+        if (mismatch) {
+          throw new Error(mismatch);
+        }
+      }
+
+      // Targeted upgrade must never create a different mailbox connection
+      if (authorizeExisting && !existingConnection) {
+        throw new Error("Authorization target inbox connection no longer exists");
       }
 
       const encryptedAccessToken = app.services.tokenCipher.encrypt(
@@ -618,7 +688,7 @@ export const registerInboxConnectionRoutes = async (
               id: existingConnection.id
             },
             data: {
-              email: profile.email,
+              email: microsoftEmail,
               displayName: profile.name,
               providerAccountId: profile.subject,
               grantedScopes: normalizedGrantedScopes,
@@ -636,7 +706,7 @@ export const registerInboxConnectionRoutes = async (
             data: {
               workspaceId: storedState.workspaceId,
               provider: dbProviderEnum as "GMAIL" | "OUTLOOK",
-              email: profile.email,
+              email: microsoftEmail,
               displayName: profile.name,
               providerAccountId: profile.subject,
               grantedScopes: normalizedGrantedScopes,
@@ -648,6 +718,14 @@ export const registerInboxConnectionRoutes = async (
             }
           });
 
+      await linkWorkspaceMailboxToConnection({
+        app,
+        workspaceId: storedState.workspaceId,
+        provider: dbProviderEnum as "GMAIL" | "OUTLOOK",
+        mailboxEmail: connection.email,
+        inboxConnectionId: connection.id,
+      });
+
       await app.services.auditEventLogger.log({
         workspaceId: storedState.workspaceId,
         actorUserId: storedState.userId,
@@ -655,7 +733,9 @@ export const registerInboxConnectionRoutes = async (
         entityId: connection.id,
         action: storedState.reconnect
           ? "inbox_connection.reconnect_succeeded"
-          : "inbox_connection.connect_succeeded",
+          : authorizeExisting
+            ? "inbox_connection.authorize_succeeded"
+            : "inbox_connection.connect_succeeded",
         metadata: buildAuditMetadata({
           email: connection.email,
           provider: providerKind,
@@ -663,7 +743,9 @@ export const registerInboxConnectionRoutes = async (
           normalizedGrantedScopes,
           hasRefreshToken: Boolean(tokens.refreshToken),
           refreshTokenStored: Boolean(encryptedRefreshToken),
-          reconnect: storedState.reconnect
+          reconnect: storedState.reconnect,
+          authorizeExisting,
+          connectionCreated,
         }),
         request
       });
@@ -688,6 +770,7 @@ export const registerInboxConnectionRoutes = async (
         action: "inbox_connection.callback_failed",
         metadata: buildAuditMetadata({
           reconnect: storedState.reconnect,
+          authorizeExisting: Boolean(storedState.authorizeExisting),
           provider: providerKind,
           error: error instanceof Error ? error.message : "Unknown callback error"
         }),
@@ -705,6 +788,105 @@ export const registerInboxConnectionRoutes = async (
       );
     }
   });
+
+  /**
+   * Authorize an existing tokenless Outlook InboxConnection (e.g. n8n-created)
+   * by running the standard Microsoft OAuth flow against that exact mailbox.
+   * Does not replace reconnect — REQUIRES_REAUTH must use /reconnect.
+   */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:id/authorize",
+    async (request, reply) => {
+      const params = workspaceConnectionParamsSchema.parse(request.params);
+      const { session, membership } = await requireAuthenticatedWorkspaceAccess(
+        app,
+        request,
+        params.workspaceId
+      );
+
+      if (!session) {
+        return reply.code(401).send({
+          message: "Authentication required"
+        });
+      }
+
+      if (!membership) {
+        return reply.code(403).send({
+          message: "Workspace access denied"
+        });
+      }
+
+      const connection = await app.services.prisma.inboxConnection.findFirst({
+        where: {
+          id: params.id,
+          workspaceId: params.workspaceId
+        }
+      });
+
+      if (!connection) {
+        return reply.code(404).send({
+          message: "Inbox connection not found"
+        });
+      }
+
+      const targetCheck = validateAuthorizeExistingTarget(connection);
+      if (!targetCheck.ok) {
+        return reply.code(targetCheck.statusCode).send({
+          message: targetCheck.message
+        });
+      }
+
+      const providerKind = providerKindFromEnum(connection.provider);
+      const provider = resolveOAuthProvider(app, providerKind);
+
+      if (!provider.isConfigured()) {
+        return reply.code(503).send({
+          message: "Provider OAuth is not configured for this connection"
+        });
+      }
+
+      const authorization = await prepareInboxAuthorization({
+        app,
+        request,
+        workspaceId: params.workspaceId,
+        userId: session.userId,
+        connectionId: connection.id,
+        reconnect: false,
+        authorizeExisting: true,
+        providerKind
+      });
+
+      if (!authorization.written) {
+        return reply.code(500).send({
+          message: "Failed to persist inbox authorize state"
+        });
+      }
+
+      await app.services.auditEventLogger.log({
+        workspaceId: params.workspaceId,
+        actorUserId: session.userId,
+        entityType: "INBOX_CONNECTION",
+        entityId: connection.id,
+        action: "inbox_connection.authorize_requested",
+        metadata: buildAuditMetadata({
+          email: connection.email,
+          provider: providerKind,
+          scopes: authorization.requestedScopes,
+          authorizeExisting: true
+        }),
+        request
+      });
+
+      return reply.send(
+        buildInboxAuthorizationResponse({
+          workspaceId: params.workspaceId,
+          flow: "inbox-authorize",
+          authorization,
+          connection: serializeConnection(connection)
+        })
+      );
+    }
+  );
 
   app.post(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/reconnect",

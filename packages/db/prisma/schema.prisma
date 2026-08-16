@@ -171,6 +171,12 @@ enum JobActivityAction {
   ALIAS_ADDED
   ALIAS_REMOVED
   CUSTOMER_CHANGED
+  FOLDER_CREATED
+  FOLDER_RENAMED
+  FOLDER_DELETED
+  DOCUMENT_UPLOADED
+  DOCUMENT_MOVED
+  DOCUMENT_DELETED
 }
 
 model Workspace {
@@ -208,6 +214,8 @@ model Workspace {
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
   jobActivityLogs      JobActivityLog[]
+  jobDocumentFolders   JobDocumentFolder[]
+  jobFiles             JobFile[]
 }
 
 model User {
@@ -674,6 +682,8 @@ model Job {
   members               JobMember[]
   activityLogs          JobActivityLog[]
   assignedEmails        EmailMessage[] @relation("MessageJob")
+  documentFolders       JobDocumentFolder[]
+  files                 JobFile[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -683,6 +693,52 @@ model Job {
   @@index([workspaceId, externalRef])
   @@index([workspaceId, archivedAt])
   @@index([createdByUserId])
+}
+
+model JobDocumentFolder {
+  id              String              @id @default(cuid())
+  workspaceId     String
+  jobId           String
+  parentFolderId  String?
+  name            String
+  createdByUserId String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  workspace       Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job             Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  parentFolder    JobDocumentFolder?  @relation("JobFolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  childFolders    JobDocumentFolder[] @relation("JobFolderTree")
+  files           JobFile[]
+
+  @@index([workspaceId, jobId])
+  @@index([jobId, parentFolderId])
+  @@unique([jobId, parentFolderId, name])
+}
+
+model JobFile {
+  id                String                 @id @default(cuid())
+  workspaceId       String
+  jobId             String
+  folderId          String?
+  filename          String
+  sanitizedFilename String
+  mimeType          String
+  sizeBytes         Int
+  storageKey        String?
+  checksum          String?
+  uploadStatus      AttachmentUploadStatus @default(PENDING)
+  errorMessage      String?
+  createdByUserId   String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job               Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  folder            JobDocumentFolder?     @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, storageKey])
+  @@index([workspaceId, jobId])
+  @@index([jobId, folderId])
+  @@index([jobId, createdAt])
 }
 
 model JobMember {

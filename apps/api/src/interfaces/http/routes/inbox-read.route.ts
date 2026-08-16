@@ -6,6 +6,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
+import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = new Prisma.Decimal("0.75");
@@ -167,6 +169,12 @@ const connectionSummarySchema = z.object({
   connectedAt: z.string().datetime().nullable(),
   lastSyncedAt: z.string().datetime().nullable(),
   grantedScopes: z.array(z.string().min(1)),
+  authorizationStatus: z.enum(["REQUIRED", "CONNECTED", "REAUTHORIZATION_REQUIRED"]),
+  capabilities: z.object({
+    emailIngestion: z.boolean(),
+    directProviderAccess: z.boolean(),
+    attachmentIngestion: z.boolean(),
+  }),
   counts: z.object({
     messages: z.number().int().nonnegative(),
     threads: z.number().int().nonnegative()
@@ -414,12 +422,19 @@ const serializeConnection = (connection: {
   connectedAt: Date | null;
   lastSyncedAt: Date | null;
   grantedScopes: string[];
+  encryptedRefreshToken?: string | null;
   _count: {
     messages: number;
     threads: number;
   };
-}) =>
-  connectionSummarySchema.parse({
+}) => {
+  const auth = buildAuthorizationFields({
+    provider: connection.provider,
+    status: connection.status,
+    hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+  });
+
+  return connectionSummarySchema.parse({
     id: connection.id,
     provider: connection.provider.toLowerCase(),
     email: connection.email,
@@ -429,11 +444,14 @@ const serializeConnection = (connection: {
     connectedAt: serializeDate(connection.connectedAt),
     lastSyncedAt: serializeDate(connection.lastSyncedAt),
     grantedScopes: connection.grantedScopes,
+    authorizationStatus: auth.authorizationStatus,
+    capabilities: auth.capabilities,
     counts: {
       messages: connection._count.messages,
       threads: connection._count.threads
     }
   });
+};
 
 const serializeClassification = (classification: {
   id: string;
@@ -744,13 +762,11 @@ const buildMessagesWhere = (input: {
     andConditions.push({ previousCategory: { not: null } });
   }
 
+  // Inbox tabs use EmailMessage.mailboxCategory as source of truth.
+  // (Legacy query param is BUSINESS | NON_BUSINESS; map to mailbox categories.)
   if (input.businessCategory) {
     andConditions.push({
-      classifications: {
-        some: {
-          businessCategory: input.businessCategory
-        }
-      }
+      mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(input.businessCategory),
     });
   }
 
@@ -1000,6 +1016,7 @@ const loadWorkspaceConnection = async (input: {
       connectedAt: true,
       lastSyncedAt: true,
       grantedScopes: true,
+      encryptedRefreshToken: true,
       _count: {
         select: {
           messages: true,
@@ -1050,6 +1067,7 @@ export const registerInboxReadRoutes = async (
         connectedAt: true,
         lastSyncedAt: true,
         grantedScopes: true,
+        encryptedRefreshToken: true,
         _count: {
           select: {
             messages: true,
@@ -2404,7 +2422,7 @@ export const registerInboxReadRoutes = async (
             id: { in: body.messageIds },
             isTrashed: false,
             isArchived: false,
-            classifications: { some: { businessCategory: "NON_BUSINESS" } }
+            mailboxCategory: "PERSONAL"
           },
           data: { isTrashed: true }
         });

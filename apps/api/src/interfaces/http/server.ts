@@ -8,6 +8,8 @@ import {
   ProviderRegistry,
   QueueNames,
   TokenCipher,
+  type AttachmentIngestJobPayload,
+  type AttachmentIngestResult,
   type InboxAnalysisJobPayload,
   type InboxAnalysisResult,
   type InboxSyncJobPayload,
@@ -55,6 +57,7 @@ import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js"
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
+import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -106,6 +109,12 @@ export const buildServer = async () => {
   >(QueueNames.INBOX_ANALYSIS, {
     connection: createBullMqConnection(env.REDIS_URL),
     defaultJobOptions: inboxAnalysisJobOptions
+  });
+  const attachmentIngestQueue = new Queue<
+    AttachmentIngestJobPayload,
+    AttachmentIngestResult
+  >(QueueNames.ATTACHMENT_INGEST, {
+    connection: createBullMqConnection(env.REDIS_URL)
   });
   const inboxSyncQueueEvents = new QueueEvents(QueueNames.INBOX_SYNC, {
     connection: createBullMqConnection(env.REDIS_URL)
@@ -216,6 +225,7 @@ export const buildServer = async () => {
     inboxSyncQueueEvents,
     inboxAnalysisQueue,
     inboxAnalysisQueueEvents,
+    attachmentIngestQueue,
     googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -279,6 +289,7 @@ export const buildServer = async () => {
   await registerEmailAttachmentRoutes(app);
   await registerTestDataAdminRoutes(app);
   await registerJobsRoutes(app);
+  await registerJobFilesRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { api, type TaskListItem, type MessageSummary } from '../api'
 import { PriorityBadge, StatusBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
@@ -42,12 +42,23 @@ function isDueToday(dueAt: string | null, status: string): boolean {
     && due.getDate() === now.getDate()
 }
 
-const card = {
+const card: CSSProperties = {
   background: '#fff',
   borderRadius: 12,
   border: '1px solid #eaedf0',
-  overflow: 'hidden' as const,
+  overflow: 'hidden',
   boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+}
+
+const cardBody: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  marginTop: 8,
+  WebkitOverflowScrolling: 'touch',
 }
 
 export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoint = 'desktop' }: Props) {
@@ -111,7 +122,6 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
   const newTasks = [...inboxTasks]
     .filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS')
     .sort((a, b) => new Date(b.task.createdAt).getTime() - new Date(a.task.createdAt).getTime())
-    .slice(0, 6)
 
   // Requests shown: open first, then recent done
   const recentRequests = [...requestTasks]
@@ -121,7 +131,6 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
       if (aOpen !== bOpen) return aOpen - bOpen
       return new Date(b.task.createdAt).getTime() - new Date(a.task.createdAt).getTime()
     })
-    .slice(0, 6)
 
   // Exclude sent/outbound mail (same rule as inbox All tab)
   const inboxBusinessEmails = recentEmails
@@ -139,19 +148,19 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
     if (seen.has(t.task.id)) return false
     seen.add(t.task.id)
     return true
-  }).slice(0, 8)
+  })
 
   const priorityTotal = priorityTasks.length
 
   const emptyState = (symbol: string, text: string) => (
-    <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px', textAlign: 'center' }}>
       <div style={{ fontSize: 28, opacity: 0.2, marginBottom: 6 }}>{symbol}</div>
       <p style={{ color: '#bbb', fontSize: 12, margin: 0 }}>{text}</p>
     </div>
   )
 
   const sectionHeader = (title: string, count: number | null, countColor: string, countBg: string, nav: Parameters<Props['onNavigate']>[0], linkLabel = 'View all →') => (
-    <div style={{ padding: '14px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ padding: '12px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>{title}</span>
         {count !== null && count > 0 && (
@@ -210,22 +219,32 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
     { label: 'Due Today', value: dueTodayCount, color: '#e65100', bg: '#fff3e0', nav: 'tasks' as const },
   ]
 
+  const phoneCard = isPhone ? { ...card, maxHeight: 280 } : card
+
   return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 22, margin: '0 0 4px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.3px' }}>Dashboard</h2>
-        <p style={{ fontSize: 13, color: '#999', margin: 0 }}>Priority work, new tasks, requests, and recent business mail.</p>
+    <div style={{
+      height: '100%',
+      minHeight: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: isPhone ? 'auto' : 'hidden',
+    }}>
+      <div style={{ flexShrink: 0, marginBottom: 12 }}>
+        <h2 style={{ fontSize: 20, margin: '0 0 2px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.3px' }}>Dashboard</h2>
+        <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Priority work, new tasks, requests, and recent business mail.</p>
       </div>
 
       {/* Metrics */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)',
-        gap: 12, marginBottom: 24
+        gap: 10,
+        marginBottom: 12,
+        flexShrink: 0,
       }}>
         {metrics.map((stat, i) => (
           <div key={i} onClick={() => onNavigate(stat.nav)} style={{
-            cursor: 'pointer', textAlign: 'center', padding: isPhone ? '14px 8px' : '18px 12px',
+            cursor: 'pointer', textAlign: 'center', padding: isPhone ? '12px 8px' : '14px 10px',
             borderRadius: 12, border: '1px solid #eaedf0',
             background: stat.value > 0 ? stat.bg : '#fafafa',
             boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
@@ -234,39 +253,43 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
             onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)' }}
             onMouseOut={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
           >
-            <div style={{ fontSize: isPhone ? 26 : 32, fontWeight: 800, color: stat.value > 0 ? stat.color : '#d0d0d0', lineHeight: 1 }}>{stat.value}</div>
-            <div style={{ fontSize: 10, color: '#999', marginTop: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6 }}>{stat.label}</div>
+            <div style={{ fontSize: isPhone ? 24 : 28, fontWeight: 800, color: stat.value > 0 ? stat.color : '#d0d0d0', lineHeight: 1 }}>{stat.value}</div>
+            <div style={{ fontSize: 10, color: '#999', marginTop: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6 }}>{stat.label}</div>
           </div>
         ))}
       </div>
 
       <div style={{
+        flex: 1,
+        minHeight: 0,
         display: 'grid',
         gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr',
-        gap: 16
+        gridTemplateRows: isPhone ? undefined : '1fr 1fr',
+        gap: 12,
+        overflow: isPhone ? 'visible' : 'hidden',
       }}>
         {/* Priority Tasks */}
-        <div style={card}>
+        <div style={phoneCard}>
           {sectionHeader('Priority Tasks', priorityTotal, '#fff', '#c62828', 'tasks')}
 
           {priorityTotal === 0 ? emptyState('✓', 'No priority tasks right now') : (
-            <div style={{ marginTop: 8 }}>
+            <div style={cardBody}>
               {pinnedTasks.length > 0 && (
                 <>
                   {subHeader('Pinned', '#e09400', '#fffde7')}
-                  {pinnedTasks.slice(0, 4).map(t => taskRow(t))}
+                  {pinnedTasks.map(t => taskRow(t))}
                 </>
               )}
               {overdueTasks.filter(t => !t.task.isPinned).length > 0 && (
                 <>
                   {subHeader('Overdue', '#c62828', '#ffebee')}
-                  {overdueTasks.filter(t => !t.task.isPinned).slice(0, 4).map(t => taskRow(t))}
+                  {overdueTasks.filter(t => !t.task.isPinned).map(t => taskRow(t))}
                 </>
               )}
               {highPriorityTasks.length > 0 && (
                 <>
                   {subHeader('High Priority', '#e65100', '#fff3e0')}
-                  {highPriorityTasks.slice(0, 4).map(t => taskRow(t))}
+                  {highPriorityTasks.map(t => taskRow(t))}
                 </>
               )}
             </div>
@@ -274,11 +297,11 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
         </div>
 
         {/* New Tasks */}
-        <div style={card}>
+        <div style={phoneCard}>
           {sectionHeader('New Tasks', newTasks.length, '#1565c0', '#e3f2fd', 'tasks')}
 
           {newTasks.length === 0 ? emptyState('📋', 'No new open tasks') : (
-            <div style={{ marginTop: 8 }}>
+            <div style={cardBody}>
               {newTasks.map(item => taskRow(item, {
                 subtitle: `${item.sourceMessage?.senderEmail ?? '—'} · ${timeAgo(item.task.createdAt)}`,
               }))}
@@ -287,14 +310,14 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
         </div>
 
         {/* Requests — what you've asked for / assigned via sent mail */}
-        <div style={card}>
+        <div style={phoneCard}>
           {sectionHeader('Requests', openRequests.length, '#00695c', '#e0f2f1', 'tasks')}
-          <p style={{ fontSize: 11, color: '#999', margin: '6px 16px 0' }}>
+          <p style={{ fontSize: 11, color: '#999', margin: '6px 16px 0', flexShrink: 0 }}>
             Reminders from your sent mail — things you've asked for or assigned.
           </p>
 
           {recentRequests.length === 0 ? emptyState('↗', 'No outbound requests yet') : (
-            <div style={{ marginTop: 8 }}>
+            <div style={cardBody}>
               {recentRequests.map(item => taskRow(item, {
                 hidePriority: true,
                 subtitle: item.sourceMessage?.subject
@@ -306,11 +329,11 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
         </div>
 
         {/* Recent Business Emails */}
-        <div style={card}>
+        <div style={phoneCard}>
           {sectionHeader('Recent Business Emails', inboxBusinessEmails.length, '#1565c0', '#e3f2fd', 'inbox')}
 
           {inboxBusinessEmails.length === 0 ? emptyState('✉', 'No recent business emails') : (
-            <div style={{ marginTop: 8 }}>
+            <div style={cardBody}>
               {inboxBusinessEmails.map(message => (
                 <div key={message.id} style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px',

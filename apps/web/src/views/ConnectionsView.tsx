@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { api, type ConnectionSummary } from '../api'
+import { api, type AuthorizationStatus, type ConnectionSummary } from '../api'
+
+/** Full-page navigation to an external OAuth authorize URL. */
+function redirectToOAuth(url: string): void {
+  window.location.assign(url)
+}
 
 interface Props {
   workspaceId: string
@@ -24,6 +29,14 @@ function statusLabel(status: string): string {
     case 'ERROR': return 'Error'
     case 'PAUSED': return 'Paused'
     default: return status
+  }
+}
+
+function authorizationLabel(status: AuthorizationStatus): string {
+  switch (status) {
+    case 'REQUIRED': return 'Additional authorization required'
+    case 'CONNECTED': return 'Fully connected'
+    case 'REAUTHORIZATION_REQUIRED': return 'Reauthorization required'
   }
 }
 
@@ -60,9 +73,20 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
   }
 
   const handleReconnect = async (connectionId: string) => {
+    setActionState({ type: 'loading', connectionId })
     try {
       const result = await api.reconnectConnection(workspaceId, connectionId)
-      window.location.href = result.authorizationUrl
+      redirectToOAuth(result.authorizationUrl)
+    } catch (e) {
+      setActionState({ type: 'error', connectionId, message: e instanceof Error ? e.message : 'Failed' })
+    }
+  }
+
+  const handleAuthorize = async (connectionId: string) => {
+    setActionState({ type: 'loading', connectionId })
+    try {
+      const result = await api.authorizeConnection(workspaceId, connectionId)
+      redirectToOAuth(result.authorizationUrl)
     } catch (e) {
       setActionState({ type: 'error', connectionId, message: e instanceof Error ? e.message : 'Failed' })
     }
@@ -86,34 +110,53 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
         </div>
       )}
 
-      {activeConnections.map(c => (
-        <div key={c.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 18 }}>{providerIcon(c.provider)}</span>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{c.email}</span>
-                <span style={{ fontSize: 10, background: '#f0f0f0', padding: '1px 6px', borderRadius: 3, color: '#666' }}>{providerLabel(c.provider)}</span>
-              </div>
-              <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>
-                <span className={`status-dot ${statusDotClass(c.status)}`} />{statusLabel(c.status)}
-                <span style={{ color: '#ddd' }}> · </span>{c.counts.messages} msgs
-                <span style={{ color: '#ddd' }}> · </span>Synced {formatDate(c.lastSyncedAt)}
+      {activeConnections.map(c => {
+        const actionLoading = actionState.type === 'loading' && actionState.connectionId === c.id
+        return (
+          <div key={c.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 18 }}>{providerIcon(c.provider)}</span>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{c.email}</span>
+                  <span style={{ fontSize: 10, background: '#f0f0f0', padding: '1px 6px', borderRadius: 3, color: '#666' }}>{providerLabel(c.provider)}</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>
+                  <span className={`status-dot ${statusDotClass(c.status)}`} />{statusLabel(c.status)}
+                  <span style={{ color: '#ddd' }}> · </span>{authorizationLabel(c.authorizationStatus)}
+                  <span style={{ color: '#ddd' }}> · </span>{c.counts.messages} msgs
+                  <span style={{ color: '#ddd' }}> · </span>Synced {formatDate(c.lastSyncedAt)}
+                </div>
               </div>
             </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {c.authorizationStatus === 'REQUIRED' && c.provider.toLowerCase() === 'outlook' && (
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={actionLoading}
+                  onClick={() => handleAuthorize(c.id)}
+                >
+                  {actionLoading ? 'Starting…' : 'Authorize Outlook'}
+                </button>
+              )}
+              {c.authorizationStatus === 'REAUTHORIZATION_REQUIRED' && (
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={actionLoading}
+                  onClick={() => handleReconnect(c.id)}
+                >
+                  {actionLoading ? 'Starting…' : 'Reconnect'}
+                </button>
+              )}
+              <button className="btn btn-sm btn-outline"
+                disabled={actionLoading}
+                onClick={() => handleDisconnect(c.id)}>
+                Disconnect
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {c.status === 'REQUIRES_REAUTH' && (
-              <button className="btn btn-sm btn-primary" onClick={() => handleReconnect(c.id)}>Reconnect</button>
-            )}
-            <button className="btn btn-sm btn-outline"
-              disabled={actionState.type === 'loading' && actionState.connectionId === c.id}
-              onClick={() => handleDisconnect(c.id)}>
-              Disconnect
-            </button>
-          </div>
-        </div>
-      ))}
+        )
+      })}
 
       {activeConnections.length === 0 && (
         <div className="empty-state" style={{ padding: 28 }}>
@@ -130,7 +173,7 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
             onClick={async () => {
               try {
                 const result = await api.startInboxConnection(workspaceId, 'google')
-                window.location.href = result.authorizationUrl
+                redirectToOAuth(result.authorizationUrl)
               } catch (e) {
                 setActionState({ type: 'error', connectionId: '', message: e instanceof Error ? e.message : 'Failed' })
               }
@@ -149,7 +192,7 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
             onClick={async () => {
               try {
                 const result = await api.startInboxConnection(workspaceId, 'outlook')
-                window.location.href = result.authorizationUrl
+                redirectToOAuth(result.authorizationUrl)
               } catch (e) {
                 setActionState({ type: 'error', connectionId: '', message: e instanceof Error ? e.message : 'Failed' })
               }

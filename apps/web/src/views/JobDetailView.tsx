@@ -1,5 +1,15 @@
-import { useEffect, useState, useCallback } from 'react'
-import { api, type JobDetail, type JobEmail, type JobTask, type JobDocument, type JobActivity, type JobLookup } from '../api'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import {
+  api,
+  type JobDetail,
+  type JobEmail,
+  type JobTask,
+  type JobDocument,
+  type JobActivity,
+  type JobLookup,
+  type JobFileFolder,
+  type JobStoredFile,
+} from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
@@ -7,7 +17,48 @@ interface Props {
   jobId: string
   userRole: string
   onBack: () => void
+  onOpenMessage?: (messageId: string, inboxConnectionId: string) => void
   breakpoint?: Breakpoint
+}
+
+type ThreadSummary = {
+  threadId: string
+  latestMessageId: string
+  inboxConnectionId: string
+  subject: string | null
+  messageCount: number
+  latestAt: string
+  participants: string[]
+  snippet: string | null
+}
+
+function groupEmailsByThread(emails: JobEmail[]): ThreadSummary[] {
+  const map = new Map<string, JobEmail[]>()
+  for (const email of emails) {
+    const key = email.threadId || email.id
+    const list = map.get(key) ?? []
+    list.push(email)
+    map.set(key, list)
+  }
+  return [...map.entries()]
+    .map(([threadId, msgs]) => {
+      const sorted = [...msgs].sort(
+        (a, b) => new Date(b.sentAt || b.receivedAt || 0).getTime() - new Date(a.sentAt || a.receivedAt || 0).getTime()
+      )
+      const latest = sorted[0]!
+      const participants = [...new Set(msgs.map(m => m.senderName ?? m.senderEmail))]
+      return {
+        threadId,
+        latestMessageId: latest.id,
+        inboxConnectionId: latest.inboxConnectionId,
+        subject: latest.subject,
+        messageCount: msgs.length,
+        latestAt: latest.sentAt || latest.receivedAt || '',
+        participants,
+        snippet: latest.snippet ?? null,
+      }
+    })
+    .sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime())
 }
 
 type Tab = 'overview' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
@@ -71,17 +122,28 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
   )
 }
 
-export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint = 'desktop' }: Props) {
+export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMessage, breakpoint = 'desktop' }: Props) {
   const isPhone = breakpoint === 'phone'
   const [job, setJob] = useState<JobDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('overview')
   const [emails, setEmails] = useState<JobEmail[]>([])
+  const [overviewEmails, setOverviewEmails] = useState<JobEmail[]>([])
   const [emailPage, setEmailPage] = useState(1)
   const [emailTotalPages, setEmailTotalPages] = useState(1)
   const [emailSearch, setEmailSearch] = useState('')
   const [tasks, setTasks] = useState<JobTask[]>([])
   const [documents, setDocuments] = useState<JobDocument[]>([])
+  const [fileFolders, setFileFolders] = useState<JobFileFolder[]>([])
+  const [jobFiles, setJobFiles] = useState<JobStoredFile[]>([])
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
+  const [folderBreadcrumb, setFolderBreadcrumb] = useState<Array<{ id: string; name: string }>>([])
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [showNewFolder, setShowNewFolder] = useState(false)
+  const [fileBusy, setFileBusy] = useState(false)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [activity, setActivity] = useState<JobActivity[]>([])
   const [activityPage, setActivityPage] = useState(1)
   const [activityTotalPages, setActivityTotalPages] = useState(1)
@@ -128,6 +190,14 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
   }, [workspaceId])
 
   useEffect(() => {
+    if (tab === 'overview') {
+      api.getJobEmails(workspaceId, jobId, 1, 100)
+        .then(r => setOverviewEmails(r.emails))
+        .catch(() => setOverviewEmails([]))
+    }
+  }, [tab, workspaceId, jobId])
+
+  useEffect(() => {
     if (tab === 'emails') {
       api.getJobEmails(workspaceId, jobId, emailPage).then(r => {
         setEmails(r.emails)
@@ -142,11 +212,33 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
     }
   }, [tab, workspaceId, jobId])
 
+  const loadJobFiles = useCallback(async (folderId: string | null = null) => {
+    setFilesLoading(true)
+    setFileError(null)
+    try {
+      const [filesRes, emailDocs] = await Promise.all([
+        api.getJobFiles(workspaceId, jobId, folderId),
+        folderId
+          ? Promise.resolve({ documents: [] as JobDocument[] })
+          : api.getJobDocuments(workspaceId, jobId).catch(() => ({ documents: [] as JobDocument[] })),
+      ])
+      setFileFolders(filesRes.folders)
+      setJobFiles(filesRes.files)
+      setFolderBreadcrumb(filesRes.breadcrumb)
+      setCurrentFolderId(filesRes.folderId)
+      if (!folderId) setDocuments(emailDocs.documents)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to load files')
+    } finally {
+      setFilesLoading(false)
+    }
+  }, [workspaceId, jobId])
+
   useEffect(() => {
     if (tab === 'documents') {
-      api.getJobDocuments(workspaceId, jobId).then(r => setDocuments(r.documents)).catch(() => {})
+      void loadJobFiles(null)
     }
-  }, [tab, workspaceId, jobId])
+  }, [tab, workspaceId, jobId, loadJobFiles])
 
   useEffect(() => {
     if (tab === 'activity') {
@@ -218,6 +310,88 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
     } catch { /* ignore */ }
   }
 
+  const openThread = (messageId: string, inboxConnectionId: string) => {
+    if (!inboxConnectionId || !onOpenMessage) return
+    onOpenMessage(messageId, inboxConnectionId)
+  }
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !canEdit) return
+    setFileBusy(true)
+    setFileError(null)
+    try {
+      await api.createJobFolder(workspaceId, jobId, {
+        name: newFolderName.trim(),
+        parentFolderId: currentFolderId,
+      })
+      setNewFolderName('')
+      setShowNewFolder(false)
+      await loadJobFiles(currentFolderId)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to create folder')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
+  const handleUploadFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0 || !canEdit) return
+    setFileBusy(true)
+    setFileError(null)
+    try {
+      for (const file of Array.from(fileList)) {
+        await api.uploadJobFile(workspaceId, jobId, file, currentFolderId)
+      }
+      await loadJobFiles(currentFolderId)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
+      setFileBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDeleteFolder = async (folderId: string, name: string) => {
+    if (!canEdit) return
+    if (!confirm(`Delete folder “${name}” and everything inside it?`)) return
+    setFileBusy(true)
+    try {
+      await api.deleteJobFolder(workspaceId, jobId, folderId)
+      await loadJobFiles(currentFolderId)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to delete folder')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
+  const handleDeleteFile = async (fileId: string, filename: string) => {
+    if (!canEdit) return
+    if (!confirm(`Delete “${filename}”?`)) return
+    setFileBusy(true)
+    try {
+      await api.deleteJobFile(workspaceId, jobId, fileId)
+      await loadJobFiles(currentFolderId)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to delete file')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
+  const handleMoveFileToRoot = async (fileId: string) => {
+    if (!canEdit || !currentFolderId) return
+    setFileBusy(true)
+    try {
+      await api.updateJobFile(workspaceId, jobId, fileId, { folderId: null })
+      await loadJobFiles(currentFolderId)
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to move file')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
   if (loading) {
     return <div style={{ padding: 48, textAlign: 'center', color: '#888' }}>Loading job...</div>
   }
@@ -246,6 +420,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
   const openTasks = tasks.filter(t => t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'BLOCKED')
   const completedTasks = tasks.filter(t => t.status === 'DONE')
   const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
+  const overviewThreads = groupEmailsByThread(overviewEmails)
 
   return (
     <div style={{ padding: isPhone ? 12 : 24 }}>
@@ -346,6 +521,61 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
               </div>
             </Card>
           )}
+
+          <Card title="Emails & Threads" style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: '#6b7280' }}>
+                {overviewThreads.length} thread{overviewThreads.length !== 1 ? 's' : ''}
+                {overviewEmails.length > 0 && ` · ${overviewEmails.length} message${overviewEmails.length !== 1 ? 's' : ''}`}
+              </div>
+              <button
+                onClick={() => setTab('emails')}
+                style={{ background: 'none', border: 'none', color: '#1565c0', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+              >
+                View all →
+              </button>
+            </div>
+            {overviewThreads.length === 0 ? (
+              <div style={{ fontSize: 13, color: '#888', padding: '8px 0' }}>No emails assigned to this job yet.</div>
+            ) : (
+              <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden', maxHeight: 360, overflowY: 'auto' }}>
+                {overviewThreads.slice(0, 12).map((thread, i) => (
+                  <button
+                    key={thread.threadId}
+                    type="button"
+                    onClick={() => openThread(thread.latestMessageId, thread.inboxConnectionId)}
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '12px 14px', display: 'block',
+                      border: 'none', borderBottom: i < Math.min(overviewThreads.length, 12) - 1 ? '1px solid #f3f4f6' : undefined,
+                      background: '#fff', cursor: onOpenMessage ? 'pointer' : 'default',
+                    }}
+                    onMouseOver={e => { if (onOpenMessage) e.currentTarget.style.background = '#f8fafc' }}
+                    onMouseOut={e => { e.currentTarget.style.background = '#fff' }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {thread.subject ?? '(no subject)'}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {thread.participants.slice(0, 3).join(', ')}
+                          {thread.messageCount > 1 && (
+                            <span style={{ marginLeft: 8, color: '#9ca3af' }}>{thread.messageCount} messages</span>
+                          )}
+                        </div>
+                        {thread.snippet && (
+                          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {thread.snippet}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{formatDateTime(thread.latestAt)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
@@ -369,10 +599,14 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
                 {filteredEmails.map((email, i) => (
                   <div
                     key={email.id}
+                    onClick={() => openThread(email.id, email.inboxConnectionId)}
                     style={{
                       padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
-                      borderBottom: i < filteredEmails.length - 1 ? '1px solid #f0f0f0' : undefined
+                      borderBottom: i < filteredEmails.length - 1 ? '1px solid #f0f0f0' : undefined,
+                      cursor: onOpenMessage ? 'pointer' : 'default',
                     }}
+                    onMouseOver={e => { if (onOpenMessage) e.currentTarget.style.background = '#f8fafc' }}
+                    onMouseOut={e => { e.currentTarget.style.background = '' }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -392,7 +626,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
                       </span>
                     )}
                     {canEdit && (
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
                         <button
                           onClick={() => { setShowMoveModal(email.id); setMoveJobId('') }}
                           style={{ background: 'none', border: '1px solid #d0d5dd', borderRadius: 4, cursor: 'pointer', fontSize: 11, color: '#555', padding: '3px 8px' }}
@@ -548,31 +782,258 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, breakpoint
       {/* Documents Tab */}
       {tab === 'documents' && (
         <div>
-          {documents.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>No documents attached to this job.</div>
-          ) : (
-            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-              {documents.map((doc, i) => (
-                <div
-                  key={doc.id}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => loadJobFiles(null)}
+              style={{
+                background: 'none', border: 'none', padding: 0, fontSize: 13, fontWeight: currentFolderId ? 500 : 700,
+                color: currentFolderId ? '#1565c0' : '#111', cursor: 'pointer',
+              }}
+            >
+              Job files
+            </button>
+            {folderBreadcrumb.map(crumb => (
+              <span key={crumb.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <span style={{ color: '#d1d5db' }}>/</span>
+                <button
+                  type="button"
+                  onClick={() => loadJobFiles(crumb.id)}
                   style={{
-                    padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
-                    borderBottom: i < documents.length - 1 ? '1px solid #f0f0f0' : undefined
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    fontWeight: currentFolderId === crumb.id ? 700 : 500,
+                    color: currentFolderId === crumb.id ? '#111' : '#1565c0',
                   }}
                 >
-                  <span style={{ fontSize: 20 }}>📎</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {doc.filename}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                      {doc.mimeType} &middot; {formatBytes(doc.sizeBytes)} &middot; from {doc.emailSenderEmail}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 12, color: '#6b7280' }}>{formatDate(doc.createdAt)}</div>
-                </div>
-              ))}
+                  {crumb.name}
+                </button>
+              </span>
+            ))}
+            <div style={{ flex: 1 }} />
+            {canEdit && (
+              <>
+                <button
+                  type="button"
+                  disabled={fileBusy}
+                  onClick={() => setShowNewFolder(v => !v)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, border: '1px solid #d0d5dd', background: '#fff',
+                    fontSize: 12, fontWeight: 600, cursor: fileBusy ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  New folder
+                </button>
+                <button
+                  type="button"
+                  disabled={fileBusy}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, border: '1px solid #1a1a2e', background: '#1a1a2e',
+                    color: '#fff', fontSize: 12, fontWeight: 600, cursor: fileBusy ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Upload
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={e => handleUploadFiles(e.target.files)}
+                />
+              </>
+            )}
+          </div>
+
+          {showNewFolder && canEdit && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+              <input
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                placeholder="Folder name"
+                autoFocus
+                onKeyDown={e => { if (e.key === 'Enter') void handleCreateFolder() }}
+                style={{ flex: 1, minWidth: 180, padding: '7px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }}
+              />
+              <button
+                type="button"
+                disabled={fileBusy || !newFolderName.trim()}
+                onClick={() => void handleCreateFolder()}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: 'none', background: '#1565c0', color: '#fff',
+                  fontSize: 12, fontWeight: 600, cursor: fileBusy || !newFolderName.trim() ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowNewFolder(false); setNewFolderName('') }}
+                style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid #d0d5dd', background: '#fff', fontSize: 12, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
             </div>
+          )}
+
+          {fileError && (
+            <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: '#fce4ec', color: '#c62828', fontSize: 13 }}>
+              {fileError}
+            </div>
+          )}
+
+          {filesLoading ? (
+            <div style={{ padding: 32, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading files…</div>
+          ) : (
+            <>
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginBottom: 20 }}>
+                {fileFolders.length === 0 && jobFiles.length === 0 ? (
+                  <div style={{ padding: 36, textAlign: 'center', color: '#888', fontSize: 13 }}>
+                    {canEdit
+                      ? 'No files here yet. Upload documents or create a folder to organize them.'
+                      : 'No files in this folder.'}
+                  </div>
+                ) : (
+                  <>
+                    {fileFolders.map((folder, i) => (
+                      <div
+                        key={folder.id}
+                        style={{
+                          padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                          borderBottom: (i < fileFolders.length - 1 || jobFiles.length > 0) ? '1px solid #f0f0f0' : undefined,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => void loadJobFiles(folder.id)}
+                        onMouseOver={e => { e.currentTarget.style.background = '#f8fafc' }}
+                        onMouseOut={e => { e.currentTarget.style.background = '' }}
+                      >
+                        <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>📁</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{folder.name}</div>
+                          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                            {folder.fileCount} file{folder.fileCount !== 1 ? 's' : ''}
+                            {folder.childFolderCount > 0 && ` · ${folder.childFolderCount} folder${folder.childFolderCount !== 1 ? 's' : ''}`}
+                          </div>
+                        </div>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            disabled={fileBusy}
+                            onClick={e => { e.stopPropagation(); void handleDeleteFolder(folder.id, folder.name) }}
+                            style={{
+                              background: 'none', border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 11,
+                              color: '#b91c1c', padding: '3px 8px', cursor: fileBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {jobFiles.map((file, i) => (
+                      <div
+                        key={file.id}
+                        style={{
+                          padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                          borderBottom: i < jobFiles.length - 1 ? '1px solid #f0f0f0' : undefined,
+                        }}
+                      >
+                        <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>📄</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {file.filename}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                            {formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}
+                            {file.uploadStatus !== 'UPLOADED' && ` · ${file.uploadStatus}`}
+                          </div>
+                        </div>
+                        {file.uploadStatus === 'UPLOADED' && (
+                          <a
+                            href={api.getJobFileDownloadUrl(workspaceId, jobId, file.id)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              fontSize: 11, color: '#1565c0', textDecoration: 'none', fontWeight: 600,
+                              padding: '3px 8px', border: '1px solid #1565c0', borderRadius: 4,
+                            }}
+                          >
+                            Download
+                          </a>
+                        )}
+                        {canEdit && currentFolderId && (
+                          <button
+                            type="button"
+                            disabled={fileBusy}
+                            onClick={() => void handleMoveFileToRoot(file.id)}
+                            style={{
+                              background: 'none', border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 11,
+                              color: '#555', padding: '3px 8px', cursor: fileBusy ? 'not-allowed' : 'pointer',
+                            }}
+                            title="Move to job root"
+                          >
+                            To root
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            type="button"
+                            disabled={fileBusy}
+                            onClick={() => void handleDeleteFile(file.id, file.filename)}
+                            style={{
+                              background: 'none', border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 11,
+                              color: '#b91c1c', padding: '3px 8px', cursor: fileBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {!currentFolderId && (
+                <Card title="From emails">
+                  {documents.length === 0 ? (
+                    <div style={{ fontSize: 13, color: '#888' }}>No email attachments linked to this job.</div>
+                  ) : (
+                    <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
+                      {documents.map((doc, i) => (
+                        <div
+                          key={doc.id}
+                          style={{
+                            padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12,
+                            borderBottom: i < documents.length - 1 ? '1px solid #f3f4f6' : undefined,
+                          }}
+                        >
+                          <span style={{ fontSize: 16 }}>📎</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {doc.filename}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                              {formatBytes(doc.sizeBytes)}
+                              {doc.emailSenderEmail ? ` · ${doc.emailSenderEmail}` : ''}
+                              {doc.emailSubject ? ` · ${doc.emailSubject}` : ''}
+                            </div>
+                          </div>
+                          <a
+                            href={api.getStoredAttachmentDownloadUrl(workspaceId, doc.id)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: 11, color: '#1565c0', fontWeight: 600, textDecoration: 'none' }}
+                          >
+                            Download
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              )}
+            </>
           )}
         </div>
       )}

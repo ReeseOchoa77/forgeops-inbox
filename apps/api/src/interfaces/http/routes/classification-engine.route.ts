@@ -11,6 +11,7 @@ import {
 import { getSessionFromRequest } from "../authentication.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import { legacyBusinessCategoryFromMailbox } from "../../../application/services/mailbox-category.js";
 
 const SYSTEM_BUSINESS_TYPES = [
   { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Opportunity", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
@@ -426,6 +427,9 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
 
       const classUpdate: Record<string, unknown> = {
         mailboxCategory: body.mailboxCategory,
+        // Keep legacy businessCategory in sync — classification rows stay consistent
+        // with EmailMessage.mailboxCategory (inbox tabs use the message field).
+        businessCategory: legacyBusinessCategoryFromMailbox(body.mailboxCategory),
         reviewStatus: "APPROVED",
         reviewedByUserId: session.userId,
         reviewedAt: new Date()

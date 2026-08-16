@@ -42,7 +42,17 @@ const workerEnvSchema = z
     GOOGLE_TOKEN_ENCRYPTION_SECRET: z
       .string()
       .min(32)
-      .default("development-token-encryption-secret")
+      .default("development-token-encryption-secret"),
+    S3_BUCKET: optionalStringFromEnv,
+    S3_REGION: z.string().default("us-east-1"),
+    S3_ACCESS_KEY_ID: optionalStringFromEnv,
+    S3_SECRET_ACCESS_KEY: optionalStringFromEnv,
+    S3_ENDPOINT: optionalStringFromEnv,
+    ATTACHMENT_MAX_SIZE_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(25 * 1024 * 1024),
   })
   .transform((env) => ({
     ...env,

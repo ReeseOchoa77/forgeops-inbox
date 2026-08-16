@@ -236,6 +236,20 @@ All n8n operations are logged as `AuditEvent` records:
 | `n8n.concurrent_duplicate_handled` | Race condition resolved by DB constraint |
 | `n8n.ingestion_failed` | Unexpected error |
 
+## Attachment ingestion (ForgeOps-owned, migration in progress)
+
+After email-results persistence, ForgeOps may enqueue an `attachment-ingest` BullMQ job.
+
+| Condition | Behavior |
+|-----------|----------|
+| Linked `InboxConnection` has `encryptedRefreshToken` (OAuth-backed) | ForgeOps worker lists/downloads Outlook attachments via Microsoft Graph and stores `EmailAttachment` + S3 |
+| No refresh token (typical n8n-only mailbox) | Job is **not** enqueued; response includes `attachmentIngest: { enqueued: false, reason: "no_token" }`. Keep using n8n multipart upload to `POST .../emails/:emailId/attachments` |
+| `hasAttachments` or HTML contains `cid:` | Inspection is attempted when tokenized |
+
+**Do not remove the n8n attachment upload workflow until** ForgeOps attachment ingest is verified for your mailboxes (OAuth-connected).
+
+Worker env must include the same `S3_*` variables as the API for binary storage.
+
 ## Disable / Rollback
 
 To disable n8n ingestion:
