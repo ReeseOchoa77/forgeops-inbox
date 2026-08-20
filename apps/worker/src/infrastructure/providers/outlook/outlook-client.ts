@@ -50,8 +50,53 @@ const graphMessageSchema = z.object({
   importance: z.enum(["low", "normal", "high"]).optional(),
   flag: z.object({
     flagStatus: z.enum(["notFlagged", "flagged", "complete"]).optional()
-  }).nullable().optional()
+  }).nullable().optional(),
+  // Delta deletions / folder removals — payload is typically just id + @removed
+  "@removed": z
+    .object({
+      reason: z.string().optional()
+    })
+    .optional()
 });
+
+const MESSAGE_SELECT_FIELDS = [
+  "id",
+  "conversationId",
+  "subject",
+  "bodyPreview",
+  "body",
+  "from",
+  "toRecipients",
+  "ccRecipients",
+  "bccRecipients",
+  "replyTo",
+  "sentDateTime",
+  "receivedDateTime",
+  "isRead",
+  "hasAttachments",
+  "categories",
+  "parentFolderId",
+  "importance",
+  "flag"
+].join(",");
+
+/** Graph delta marks deleted/moved messages with @removed (often id-only). */
+export const isRemovedGraphMessage = (msg: {
+  "@removed"?: unknown;
+}): boolean => msg["@removed"] != null;
+
+/**
+ * Message delta may return partial change records (e.g. isRead-only) that omit
+ * selected fields. Missing `from` (undefined) means incomplete — not the same
+ * as an explicit null sender on a full message.
+ */
+export const isIncompleteGraphMessage = (msg: {
+  from?: unknown | null;
+}): boolean => msg.from === undefined;
+
+export const graphMessageHasSender = (msg: {
+  from?: { emailAddress?: { address?: string } } | null;
+}): boolean => Boolean(msg.from?.emailAddress?.address?.trim());
 
 const graphMessagesResponseSchema = z.object({
   value: z.array(graphMessageSchema),
@@ -648,6 +693,40 @@ export class OutlookClient {
     return map;
   }
 
+  /**
+   * Full message GET — used when delta returns a partial change record.
+   * Returns null when the message is gone (404) or still unusable.
+   */
+  private async fetchFullGraphMessage(
+    accessToken: string,
+    messageId: string
+  ): Promise<GraphMessage | null> {
+    const url =
+      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(messageId)}` +
+      `?$select=${MESSAGE_SELECT_FIELDS}`;
+
+    const response = await this.fetchWithThrottleRetry(url, {
+      Authorization: `Bearer ${accessToken}`
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      console.warn("outlook-message-hydrate-failed", {
+        messageId,
+        status: response.status,
+        error: errorText.slice(0, 300)
+      });
+      return null;
+    }
+
+    const raw = await response.json();
+    return graphMessageSchema.parse(raw);
+  }
+
   private async fetchInboxMessages(
     accessToken: string,
     maxMessages: number,
@@ -659,26 +738,6 @@ export class OutlookClient {
     hasAttachmentIds: string[];
   }> {
     const pageSize = Math.min(maxMessages, 50);
-    const selectFields = [
-      "id",
-      "conversationId",
-      "subject",
-      "bodyPreview",
-      "body",
-      "from",
-      "toRecipients",
-      "ccRecipients",
-      "bccRecipients",
-      "replyTo",
-      "sentDateTime",
-      "receivedDateTime",
-      "isRead",
-      "hasAttachments",
-      "categories",
-      "parentFolderId",
-      "importance",
-      "flag"
-    ].join(",");
 
     let url: string | null;
     let isDelta = false;
@@ -689,7 +748,7 @@ export class OutlookClient {
     } else {
       url =
         `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/inbox/messages/delta` +
-        `?$select=${selectFields}` +
+        `?$select=${MESSAGE_SELECT_FIELDS}` +
         `&$top=${pageSize}`;
     }
 
@@ -724,9 +783,36 @@ export class OutlookClient {
       for (const graphMsg of page.value) {
         if (items.length >= maxMessages) break;
         if (seenMessageIds.has(graphMsg.id)) continue;
-
         seenMessageIds.add(graphMsg.id);
-        const parsed = parseMessage(graphMsg, folderMap);
+
+        // Deletions / moves: id + @removed only — never upsert as empty mail
+        if (isRemovedGraphMessage(graphMsg)) {
+          continue;
+        }
+
+        let resolved: GraphMessage = graphMsg;
+
+        // Partial delta (e.g. isRead-only) omits from/subject; hydrate before upsert
+        // so we do not overwrite real rows with unknown@invalid.local / (no subject).
+        if (isIncompleteGraphMessage(graphMsg)) {
+          const hydrated = await this.fetchFullGraphMessage(
+            accessToken,
+            graphMsg.id
+          );
+          if (!hydrated || isRemovedGraphMessage(hydrated)) {
+            continue;
+          }
+          resolved = hydrated;
+        }
+
+        if (!graphMessageHasSender(resolved)) {
+          console.warn("outlook-message-skipped-no-sender", {
+            messageId: resolved.id
+          });
+          continue;
+        }
+
+        const parsed = parseMessage(resolved, folderMap);
         items.push(parsed);
 
         // Inline CID images may exist even when Graph hasAttachments is false
@@ -734,7 +820,7 @@ export class OutlookClient {
           parsed.hasAttachments ||
           /(?:src\s*=\s*(?:3D)?(["']?)cid:|url\(\s*(['"]?)cid:)/i.test(parsed.bodyHtml ?? "")
         ) {
-          hasAttachmentIds.push(graphMsg.id);
+          hasAttachmentIds.push(resolved.id);
         }
       }
 

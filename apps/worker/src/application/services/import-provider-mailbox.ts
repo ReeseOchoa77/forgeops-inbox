@@ -119,6 +119,12 @@ export const importProviderMailbox = async (input: {
         }
 
         for (const message of thread.messages) {
+          // Guard: never create/overwrite rows from placeholder sender payloads
+          // (e.g. Outlook delta partials that slipped past the client filter).
+          if (message.senderEmail === "unknown@invalid.local") {
+            continue;
+          }
+
           const existingMessageId = existingMessageIdMap.get(message.providerMessageId);
           const messageData = {
             gmailThreadId: message.providerThreadId,
