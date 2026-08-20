@@ -28,10 +28,6 @@ const graphAttachmentSchema = z.object({
 export const OUTLOOK_ATTACHMENT_LIST_SELECT =
   "id,name,contentType,size,isInline";
 
-/** Detail GET for fileAttachment may include contentId. */
-export const OUTLOOK_ATTACHMENT_DETAIL_SELECT =
-  "id,contentId,name,contentType,size,isInline";
-
 const FILE_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.fileAttachment";
 const ITEM_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.itemAttachment";
 const REFERENCE_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.referenceAttachment";
@@ -598,7 +594,11 @@ export class OutlookClient {
   }
 
   /**
-   * Individual attachment GET — fileAttachment responses include contentId.
+   * Individual attachment GET without $select.
+   * Graph still validates $select against microsoft.graph.attachment (base type),
+   * so contentId cannot appear in $select. A bare GET returns the derived
+   * fileAttachment payload including contentId (and may include contentBytes —
+   * never log that).
    * Sequential use only (MailboxConcurrency).
    */
   private async fetchAttachmentDetail(
@@ -608,8 +608,7 @@ export class OutlookClient {
   ): Promise<GraphAttachment | null> {
     const url =
       `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
-      `/attachments/${encodeURIComponent(attachmentId)}` +
-      `?$select=${OUTLOOK_ATTACHMENT_DETAIL_SELECT}`;
+      `/attachments/${encodeURIComponent(attachmentId)}`;
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`,
@@ -626,8 +625,20 @@ export class OutlookClient {
       return null;
     }
 
-    const raw = await response.json();
-    return graphAttachmentSchema.parse(raw);
+    const raw = (await response.json()) as Record<string, unknown>;
+    const parsed = graphAttachmentSchema.parse(raw);
+
+    console.info("outlook-attachment-detail", {
+      attachmentId: parsed.id ?? attachmentId,
+      odataType: parsed["@odata.type"] ?? null,
+      name: parsed.name ?? null,
+      isInline: parsed.isInline ?? null,
+      contentId: parsed.contentId ?? null,
+      hasContentId: Boolean(parsed.contentId),
+      contentType: parsed.contentType ?? null,
+    });
+
+    return parsed;
   }
 
   /**
