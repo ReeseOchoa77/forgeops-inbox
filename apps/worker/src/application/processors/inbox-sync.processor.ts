@@ -46,22 +46,50 @@ const logAuditEvent = async (input: {
   });
 };
 
-const classifySyncFailure = (
+/**
+ * Classify inbox-sync failures.
+ *
+ * REQUIRES_REAUTH = user must reconnect (revoked/expired refresh grant).
+ * ERROR = ops/config problem (wrong client secret, etc.) — reconnect alone will not fix.
+ * ACTIVE = transient; keep mailbox usable.
+ *
+ * Important: do NOT treat bare "unauthorized" / invalid_client as user reauth —
+ * worker/API Outlook secret mismatch surfaces as invalid_client after a successful OAuth.
+ */
+export const classifySyncFailure = (
   error: unknown
 ): {
   message: string;
   status: InboxConnectionStatus;
   clearAccessToken: boolean;
+  classification: "requires_reauth" | "config_error" | "transient";
 } => {
   const message = error instanceof Error ? error.message : "Unknown sync error";
   const normalized = message.toLowerCase();
+
+  // App registration / secret / tenant misconfiguration (common after rotating secrets
+  // on API but not worker).
+  const configError =
+    normalized.includes("invalid_client") ||
+    normalized.includes("unauthorized_client") ||
+    normalized.includes("outlook client is not configured") ||
+    normalized.includes("aadsts7000215") || // Invalid client secret
+    normalized.includes("aadsts700016") || // Application not found in tenant
+    normalized.includes("aadsts70011"); // Invalid scope
+
+  if (configError) {
+    return {
+      message,
+      status: "ERROR",
+      clearAccessToken: false,
+      classification: "config_error",
+    };
+  }
 
   const requiresReauth =
     normalized.includes("invalid_grant") ||
     normalized.includes("invalid credentials") ||
     normalized.includes("login required") ||
-    normalized.includes("invalid_client") ||
-    normalized.includes("unauthorized") ||
     normalized.includes("invalidauthenticationtoken") ||
     normalized.includes("expiredtoken") ||
     normalized.includes("tokenexpired") ||
@@ -78,8 +106,50 @@ const classifySyncFailure = (
   return {
     message,
     status: requiresReauth ? "REQUIRES_REAUTH" : "ACTIVE",
-    clearAccessToken: requiresReauth
+    clearAccessToken: requiresReauth,
+    classification: requiresReauth ? "requires_reauth" : "transient",
   };
+};
+
+/** Extract safe (non-secret) fields from a sync/refresh error message for logs. */
+export const extractSafeSyncFailureDiagnostics = (
+  error: unknown
+): {
+  httpStatus: number | null;
+  microsoftErrorCode: string | null;
+} => {
+  const message = error instanceof Error ? error.message : String(error);
+  const httpStatusMatch = message.match(/\((\d{3})\):/);
+  const httpStatus = httpStatusMatch ? Number(httpStatusMatch[1]) : null;
+
+  let microsoftErrorCode: string | null = null;
+  const jsonMatch = message.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        error?: unknown;
+        error_codes?: unknown;
+      };
+      if (typeof parsed.error === "string") {
+        microsoftErrorCode = parsed.error;
+      }
+      if (
+        microsoftErrorCode == null &&
+        Array.isArray(parsed.error_codes) &&
+        parsed.error_codes.length > 0
+      ) {
+        microsoftErrorCode = String(parsed.error_codes[0]);
+      }
+    } catch {
+      // ignore malformed JSON in error text
+    }
+  }
+  if (!microsoftErrorCode) {
+    const aadsts = message.match(/AADSTS\d+/i);
+    if (aadsts) microsoftErrorCode = aadsts[0].toUpperCase();
+  }
+
+  return { httpStatus, microsoftErrorCode };
 };
 
 const safeDecrypt = (tokenCipher: TokenCipher, value: string | null): string | null => {
@@ -291,6 +361,23 @@ export class InboxSyncProcessor {
       return result;
     } catch (error) {
       const failure = classifySyncFailure(error);
+      const safeDiag = extractSafeSyncFailureDiagnostics(error);
+
+      // SAFE diagnostics — never log tokens/secrets/codes.
+      console.error("inbox-connection-status-transition", {
+        event: "inbox_connection_marked_from_sync_failure",
+        connectionId: connection.id,
+        provider: providerKind,
+        operation: "inbox_sync",
+        fromStatus: "ACTIVE",
+        toStatus: failure.status,
+        classification: failure.classification,
+        httpStatus: safeDiag.httpStatus,
+        microsoftErrorCode: safeDiag.microsoftErrorCode,
+        hasAccessToken: Boolean(connection.encryptedAccessToken),
+        hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+        errorMessage: failure.message.slice(0, 500),
+      });
 
       await this.prisma.inboxConnection.update({
         where: {
@@ -319,7 +406,12 @@ export class InboxSyncProcessor {
           jobId: context.jobId,
           provider: providerKind,
           error: failure.message,
-          status: failure.status
+          status: failure.status,
+          classification: failure.classification,
+          httpStatus: safeDiag.httpStatus,
+          microsoftErrorCode: safeDiag.microsoftErrorCode,
+          hasAccessToken: Boolean(connection.encryptedAccessToken),
+          hasRefreshToken: Boolean(connection.encryptedRefreshToken),
         }
       });
 
@@ -329,7 +421,10 @@ export class InboxSyncProcessor {
         workspaceId: context.workspaceId,
         inboxConnectionId: connection.id,
         error: failure.message,
-        status: failure.status
+        status: failure.status,
+        classification: failure.classification,
+        httpStatus: safeDiag.httpStatus,
+        microsoftErrorCode: safeDiag.microsoftErrorCode,
       });
 
       throw error;

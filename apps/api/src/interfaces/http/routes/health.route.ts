@@ -52,6 +52,14 @@ export const registerHealthRoute = async (
           hasRedirectUri: Boolean(env.OUTLOOK_REDIRECT_URI),
           hasTenantId: Boolean(env.OUTLOOK_TENANT_ID)
         },
+        queues: {
+          redisConfigured: Boolean(env.REDIS_URL),
+          attachmentIngestQueueAvailable: Boolean(
+            app.services.attachmentIngestQueue
+          ),
+          attachmentIngestQueueName:
+            app.services.attachmentIngestQueue?.name ?? null,
+        },
         app: {
           nodeEnv: env.NODE_ENV,
           hasFrontendUrl: Boolean(env.FRONTEND_URL),

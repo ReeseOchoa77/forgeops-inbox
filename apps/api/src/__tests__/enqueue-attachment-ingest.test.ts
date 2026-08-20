@@ -79,4 +79,48 @@ describe("enqueueAttachmentIngestIfEligible", () => {
     expect(outcome).toEqual({ enqueued: false, reason: "no_inspect" });
     expect(queue.add).not.toHaveBeenCalled();
   });
+
+  it("returns queue_unavailable when queue is missing", async () => {
+    const outcome = await enqueueAttachmentIngestIfEligible({
+      prisma: { inboxConnection: { findFirst: vi.fn() } } as never,
+      queue: null,
+      workspaceId: "ws1",
+      inboxConnectionId: "conn1",
+      emailMessageId: "msg1",
+      hasAttachments: true,
+      bodyHtml: null,
+    });
+    expect(outcome).toEqual({ enqueued: false, reason: "queue_unavailable" });
+  });
+
+  it("treats duplicate jobId as enqueued success", async () => {
+    const prisma = {
+      inboxConnection: {
+        findFirst: vi.fn(async () => ({
+          provider: "OUTLOOK",
+          encryptedRefreshToken: "enc-token",
+        })),
+      },
+    };
+    const queue = {
+      add: vi.fn(async () => {
+        throw new Error("Job attachment-ingest:msg1 already exists");
+      }),
+    };
+
+    const outcome = await enqueueAttachmentIngestIfEligible({
+      prisma: prisma as never,
+      queue: queue as never,
+      workspaceId: "ws1",
+      inboxConnectionId: "conn1",
+      emailMessageId: "msg1",
+      hasAttachments: true,
+      bodyHtml: null,
+    });
+
+    expect(outcome).toEqual({
+      enqueued: true,
+      jobId: "attachment-ingest:msg1",
+    });
+  });
 });

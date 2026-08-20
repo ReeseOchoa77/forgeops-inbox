@@ -749,9 +749,18 @@ async function handleN8nIngest(
     });
 
     // ForgeOps-owned attachment ingestion (token-gated). n8n multipart upload remains fallback.
+    const attachmentQueue = app.services.attachmentIngestQueue;
+    if (!attachmentQueue) {
+      app.log.error({
+        event: "attachment_ingest_queue_missing",
+        emailMessageId: result.messageId,
+        detail: "app.services.attachmentIngestQueue is undefined — API queue init failed",
+      });
+    }
+
     const attachmentEnqueue = await enqueueAttachmentIngestIfEligible({
       prisma: app.services.prisma,
-      queue: app.services.attachmentIngestQueue,
+      queue: attachmentQueue,
       workspaceId,
       inboxConnectionId: connectionId,
       emailMessageId: result.messageId,
@@ -760,12 +769,14 @@ async function handleN8nIngest(
       bodyHtml: body.email.bodyHtml ?? null,
       log: (event, data) => app.log.info({ event, ...data }),
     }).catch((e) => {
+      // Do not mislabel Redis/add failures as queue_unavailable (!queue).
       app.log.warn({
         event: "attachment-ingest-enqueue-error",
         emailMessageId: result.messageId,
         error: e instanceof Error ? e.message : "unknown",
+        queueAvailable: Boolean(attachmentQueue),
       });
-      return { enqueued: false as const, reason: "queue_unavailable" as const };
+      return { enqueued: false as const, reason: "enqueue_error" as const };
     });
 
     reply.code(result.status === "created" ? 201 : 200).send({

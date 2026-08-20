@@ -9,7 +9,15 @@ import type { Queue } from "bullmq";
 
 export type AttachmentIngestEnqueueOutcome =
   | { enqueued: true; jobId: string }
-  | { enqueued: false; reason: "no_inspect" | "no_token" | "unsupported_provider" | "queue_unavailable" };
+  | {
+      enqueued: false;
+      reason:
+        | "no_inspect"
+        | "no_token"
+        | "unsupported_provider"
+        | "queue_unavailable"
+        | "enqueue_error";
+    };
 
 /**
  * Token-gated enqueue for ForgeOps-owned Outlook attachment ingestion.
@@ -86,13 +94,33 @@ export async function enqueueAttachmentIngestIfEligible(input: {
     ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
   };
 
-  await input.queue.add(QueueNames.ATTACHMENT_INGEST, payload, {
-    jobId,
-    attempts: 5,
-    backoff: { type: "exponential", delay: 15_000 },
-    removeOnComplete: { count: 100 },
-    removeOnFail: { count: 200 },
-  });
+  // Prefer shared constant; fall back to literal so a stale shared build cannot
+  // pass undefined into BullMQ add().
+  const queueName = QueueNames.ATTACHMENT_INGEST || "attachment-ingest";
+
+  try {
+    await input.queue.add(queueName, payload, {
+      jobId,
+      attempts: 5,
+      backoff: { type: "exponential", delay: 15_000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 200 },
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    // Idempotent re-ingest of the same EmailMessage: treat existing job as success.
+    if (/already exists/i.test(message)) {
+      log("attachment-ingest-enqueued", {
+        jobId,
+        emailMessageId: input.emailMessageId,
+        inboxConnectionId: input.inboxConnectionId,
+        workspaceId: input.workspaceId,
+        deduped: true,
+      });
+      return { enqueued: true, jobId };
+    }
+    throw e;
+  }
 
   log("attachment-ingest-enqueued", {
     jobId,

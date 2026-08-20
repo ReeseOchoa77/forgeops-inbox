@@ -116,6 +116,11 @@ export const buildServer = async () => {
   >(QueueNames.ATTACHMENT_INGEST, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
+  if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
+    throw new Error(
+      `ATTACHMENT_INGEST queue name mismatch: expected ${QueueNames.ATTACHMENT_INGEST}, got ${attachmentIngestQueue.name}`
+    );
+  }
   const inboxSyncQueueEvents = new QueueEvents(QueueNames.INBOX_SYNC, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
@@ -124,6 +129,16 @@ export const buildServer = async () => {
   });
   await inboxSyncQueueEvents.waitUntilReady();
   await inboxAnalysisQueueEvents.waitUntilReady();
+  await attachmentIngestQueue.waitUntilReady();
+
+  app.log.info({
+    event: "queues_initialized",
+    redisConfigured: Boolean(env.REDIS_URL),
+    attachmentIngestQueueAvailable: true,
+    attachmentIngestQueueName: attachmentIngestQueue.name,
+    inboxSyncQueueName: inboxSyncQueue.name,
+    inboxAnalysisQueueName: inboxAnalysisQueue.name,
+  });
 
   const requestInboxSync = new RequestInboxSyncUseCase(
     new BullMQInboxSyncDispatcher(inboxSyncQueue)
