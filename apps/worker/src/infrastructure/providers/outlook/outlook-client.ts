@@ -24,6 +24,37 @@ const graphAttachmentSchema = z.object({
   isInline: z.boolean().optional()
 });
 
+/** Base microsoft.graph.attachment fields only — contentId is fileAttachment-only. */
+export const OUTLOOK_ATTACHMENT_LIST_SELECT =
+  "id,name,contentType,size,isInline";
+
+/** Detail GET for fileAttachment may include contentId. */
+export const OUTLOOK_ATTACHMENT_DETAIL_SELECT =
+  "id,contentId,name,contentType,size,isInline";
+
+const FILE_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.fileAttachment";
+const ITEM_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.itemAttachment";
+const REFERENCE_ATTACHMENT_ODATA_TYPE = "#microsoft.graph.referenceAttachment";
+
+type GraphAttachment = z.infer<typeof graphAttachmentSchema>;
+
+/** item/reference attachments do not expose contentId; fileAttachment (or unknown) may. */
+export const outlookAttachmentNeedsContentIdDetail = (att: {
+  id?: string | undefined;
+  "@odata.type"?: string | undefined;
+}): boolean => {
+  if (!att.id) return false;
+  const type = att["@odata.type"];
+  if (
+    type === ITEM_ATTACHMENT_ODATA_TYPE ||
+    type === REFERENCE_ATTACHMENT_ODATA_TYPE
+  ) {
+    return false;
+  }
+  // Explicit fileAttachment, or type omitted on list — hydrate for CID rewrite.
+  return !type || type === FILE_ATTACHMENT_ODATA_TYPE;
+};
+
 const graphMessageSchema = z.object({
   id: z.string().min(1),
   conversationId: z.string().min(1).nullable().optional(),
@@ -495,6 +526,10 @@ export class OutlookClient {
   /**
    * List attachments for a message. Distinguishes empty success from Graph failure.
    * Callers must not treat ok:false as "zero attachments".
+   *
+   * Collection $select uses only base attachment properties (contentId is not valid
+   * on microsoft.graph.attachment). contentId is hydrated via sequential detail GETs
+   * for fileAttachment items.
    */
   async listAttachments(
     accessToken: string,
@@ -502,7 +537,7 @@ export class OutlookClient {
   ): Promise<OutlookGraphListAttachmentsResult> {
     const url =
       `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
-      `/attachments?$select=id,contentId,name,contentType,size,isInline`;
+      `/attachments?$select=${OUTLOOK_ATTACHMENT_LIST_SELECT}`;
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`,
@@ -519,19 +554,80 @@ export class OutlookClient {
 
     const raw = await response.json();
     const parsed = graphAttachmentsResponseSchema.parse(raw);
-    const attachments: OutlookAttachmentMetadata[] = parsed.value
-      .filter((att) => Boolean(att.id))
-      .map((att) => ({
-        attachmentId: att.id ?? null,
-        contentId: att.contentId ?? null,
-        filename: att.name ?? null,
-        inline: att.isInline ?? false,
-        mimeType: att.contentType ?? null,
-        size: att.size ?? null,
-        odataType: att["@odata.type"] ?? null,
-      }));
+    const attachments: OutlookAttachmentMetadata[] = [];
+
+    for (const att of parsed.value) {
+      if (!att.id) continue;
+
+      let contentId: string | null = null;
+      let name = att.name ?? null;
+      let contentType = att.contentType ?? null;
+      let size = att.size ?? null;
+      let isInline = att.isInline ?? false;
+      let odataType = att["@odata.type"] ?? null;
+
+      if (outlookAttachmentNeedsContentIdDetail(att)) {
+        const detail = await this.fetchAttachmentDetail(
+          accessToken,
+          outlookMessageId,
+          att.id
+        );
+        if (detail) {
+          // Preserve exact Graph contentId for frontend CID rewrite matching.
+          contentId = detail.contentId ?? null;
+          name = detail.name ?? name;
+          contentType = detail.contentType ?? contentType;
+          size = detail.size ?? size;
+          isInline = detail.isInline ?? isInline;
+          odataType = detail["@odata.type"] ?? odataType;
+        }
+      }
+
+      attachments.push({
+        attachmentId: att.id,
+        contentId,
+        filename: name,
+        inline: isInline,
+        mimeType: contentType,
+        size,
+        odataType,
+      });
+    }
 
     return { ok: true, attachments };
+  }
+
+  /**
+   * Individual attachment GET — fileAttachment responses include contentId.
+   * Sequential use only (MailboxConcurrency).
+   */
+  private async fetchAttachmentDetail(
+    accessToken: string,
+    outlookMessageId: string,
+    attachmentId: string
+  ): Promise<GraphAttachment | null> {
+    const url =
+      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
+      `/attachments/${encodeURIComponent(attachmentId)}` +
+      `?$select=${OUTLOOK_ATTACHMENT_DETAIL_SELECT}`;
+
+    const response = await this.fetchWithThrottleRetry(url, {
+      Authorization: `Bearer ${accessToken}`,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      console.warn("outlook-attachment-detail-failed", {
+        messageId: outlookMessageId,
+        attachmentId,
+        status: response.status,
+        error: errorText.slice(0, 300),
+      });
+      return null;
+    }
+
+    const raw = await response.json();
+    return graphAttachmentSchema.parse(raw);
   }
 
   /**
@@ -886,30 +982,16 @@ export class OutlookClient {
       if (!msg) continue;
 
       try {
-        const response = await this.fetchWithThrottleRetry(
-          `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${messageId}/attachments?$select=id,contentId,name,contentType,size,isInline`,
-          { Authorization: `Bearer ${accessToken}` }
-        );
-
-        if (!response.ok) {
+        const result = await this.listAttachments(accessToken, messageId);
+        if (!result.ok) {
           console.warn("outlook-attachment-fetch-failed", {
             messageId,
-            status: response.status
+            status: result.status,
+            error: result.error.slice(0, 300),
           });
           continue;
         }
-
-        const raw = await response.json();
-        const parsed = graphAttachmentsResponseSchema.parse(raw);
-
-        msg.attachmentMetadata = parsed.value.map((att) => ({
-          attachmentId: att.id ?? null,
-          contentId: att.contentId ?? null,
-          filename: att.name ?? null,
-          inline: att.isInline ?? false,
-          mimeType: att.contentType ?? null,
-          size: att.size ?? null
-        }));
+        msg.attachmentMetadata = result.attachments;
       } catch (error) {
         console.warn("outlook-attachment-fetch-error", {
           messageId,
