@@ -1,19 +1,7 @@
 /**
- * Bridge between EmailMessage.mailboxCategory (BUSINESS | PERSONAL | …)
- * and legacy Classification.businessCategory (BUSINESS | NON_BUSINESS).
- *
- * Inbox list tabs filter by mailboxCategory; keep businessCategory in sync
- * on reclassify so classification rows stay consistent.
+ * Re-export shared mailbox category helpers for API routes/tests.
  */
-
-export function legacyBusinessCategoryFromMailbox(
-  mailboxCategory: "BUSINESS" | "PERSONAL"
-): "BUSINESS" | "NON_BUSINESS" {
-  return mailboxCategory === "PERSONAL" ? "NON_BUSINESS" : "BUSINESS";
-}
-
-export function mailboxCategoryFromLegacyBusinessFilter(
-  businessCategory: "BUSINESS" | "NON_BUSINESS"
-): "BUSINESS" | "PERSONAL" {
-  return businessCategory === "NON_BUSINESS" ? "PERSONAL" : "BUSINESS";
-}
+export {
+  legacyBusinessCategoryFromMailbox,
+  mailboxCategoryFromLegacyBusinessFilter,
+} from "@forgeops/shared";

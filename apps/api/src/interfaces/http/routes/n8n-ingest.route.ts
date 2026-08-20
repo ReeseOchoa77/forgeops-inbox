@@ -347,6 +347,16 @@ async function upsertEmailData(
       }
     });
 
+    // Keep tab source-of-truth in sync when n8n re-classifies an existing message.
+    await tx.emailMessage.update({
+      where: { id: existingMessage.id },
+      data: {
+        mailboxCategory: body.analysis.mailboxCategory ?? "BUSINESS",
+        priority,
+        itemStatus: classificationRequiresReview ? "NEEDS_REVIEW" : "NEW",
+      }
+    });
+
     const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
 
     return {

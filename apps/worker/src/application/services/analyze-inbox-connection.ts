@@ -1,5 +1,8 @@
 import { Prisma, type PrismaClient, type ReviewQueue, type ReviewStatus } from "@prisma/client";
-import type { InboxAnalysisResult } from "@forgeops/shared";
+import {
+  mailboxCategoryFromLegacyBusinessFilter,
+  type InboxAnalysisResult,
+} from "@forgeops/shared";
 
 import { classifyNormalizedEmail } from "./classify-normalized-email.js";
 import { extractTaskCandidate } from "./extract-task-candidate.js";
@@ -248,6 +251,9 @@ export const analyzeInboxConnection = async (input: {
         update: {
           threadId: message.threadId,
           businessCategory: classification.businessCategory,
+          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
+            classification.businessCategory
+          ),
           emailType: classification.emailType,
           priority: classification.priority,
           itemStatus: classification.itemStatus,
@@ -279,6 +285,9 @@ export const analyzeInboxConnection = async (input: {
           threadId: message.threadId,
           messageId: message.id,
           businessCategory: classification.businessCategory,
+          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
+            classification.businessCategory
+          ),
           emailType: classification.emailType,
           priority: classification.priority,
           itemStatus: classification.itemStatus,
@@ -376,7 +385,11 @@ export const analyzeInboxConnection = async (input: {
         },
         data: {
           priority: classification.priority,
-          itemStatus: classification.itemStatus
+          itemStatus: classification.itemStatus,
+          // Tabs filter EmailMessage.mailboxCategory — keep in sync with Classification.
+          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
+            classification.businessCategory
+          ),
         }
       });
 

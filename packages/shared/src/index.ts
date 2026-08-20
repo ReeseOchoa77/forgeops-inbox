@@ -8,3 +8,4 @@ export * from "./types/tenant.js";
 export * from "./reference/normalize.js";
 export * from "./reference/evidence-scoring.js";
 export * from "./attachments/cid.js";
+export * from "./mailbox-category.js";
