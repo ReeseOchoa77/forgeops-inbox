@@ -32,6 +32,25 @@ describe("Outlook OAuth scopes", () => {
     }
   });
 
+  it("authorization URL uses select_account and does not force consent", () => {
+    const provider = new OutlookOAuthProvider({
+      clientId: "test-client-id",
+      clientSecret: "test-secret",
+      redirectUri: "https://api.example.com/callback",
+      tenantId: "common",
+    });
+
+    const url = new URL(
+      provider.getAuthorizationUrl({ state: "state-authorize-existing" })
+    );
+
+    expect(url.searchParams.get("prompt")).toBe("select_account");
+    expect(url.searchParams.get("prompt")).not.toBe("consent");
+    // Delegated OAuth authorize endpoint (not client-credentials / app-only).
+    expect(url.pathname).toContain("/oauth2/v2.0/authorize");
+    expect(url.searchParams.get("response_type")).toBe("code");
+  });
+
   it("getRequiredScopes matches the authorize URL scope list", () => {
     const provider = new OutlookOAuthProvider({
       clientId: "test-client-id",

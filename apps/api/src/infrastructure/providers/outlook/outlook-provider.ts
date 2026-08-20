@@ -120,7 +120,10 @@ export class OutlookOAuthProvider implements InboxOAuthProvider {
     );
     url.searchParams.set("state", input.state);
     url.searchParams.set("response_mode", "query");
-    url.searchParams.set("prompt", "consent");
+    // select_account: let the user pick the exact mailbox for targeted authorize.
+    // Do NOT use prompt=consent — that re-forces consent UI and can demand admin
+    // approval again even after tenant-wide admin consent for this app.
+    url.searchParams.set("prompt", "select_account");
 
     return url.toString();
   }
