@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import {
   QueueNames,
+  buildAttachmentIngestJobId,
   shouldInspectAttachments,
   type AttachmentIngestJobPayload,
   type AttachmentIngestResult,
@@ -86,7 +87,7 @@ export async function enqueueAttachmentIngestIfEligible(input: {
     return { enqueued: false, reason: "no_token" };
   }
 
-  const jobId = `attachment-ingest:${input.emailMessageId}`;
+  const jobId = buildAttachmentIngestJobId(input.emailMessageId);
   const payload: AttachmentIngestJobPayload = {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,

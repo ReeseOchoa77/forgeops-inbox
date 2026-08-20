@@ -384,7 +384,7 @@ describe("authorize-existing upgrade flow", () => {
         inboxConnectionId: connectionId,
         emailMessageId: "msg_after",
       }),
-      expect.objectContaining({ jobId: "attachment-ingest:msg_after" })
+      expect.objectContaining({ jobId: "attachment-ingest-msg_after" })
     );
   });
 });

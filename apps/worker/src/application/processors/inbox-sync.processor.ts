@@ -19,6 +19,7 @@ import {
 import type { Queue } from "bullmq";
 
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
+import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import type { InboxSyncContext } from "../../domain/inbox-sync-context.js";
 
 const toPrismaJson = (value: unknown): Prisma.InputJsonValue => {
@@ -328,32 +329,15 @@ export class InboxSyncProcessor {
         connection.encryptedRefreshToken &&
         syncResult.attachmentIngestCandidates.length > 0
       ) {
-        for (const candidate of syncResult.attachmentIngestCandidates) {
-          try {
-            const jobId = `attachment-ingest:${candidate.emailMessageId}`;
-            const payload: AttachmentIngestJobPayload = {
-              workspaceId: context.workspaceId,
-              inboxConnectionId: context.inboxConnectionId,
-              emailMessageId: candidate.emailMessageId,
-              providerMessageId: candidate.providerMessageId,
-            };
-            await this.attachmentIngestQueue.add(QueueNames.ATTACHMENT_INGEST, payload, {
-              jobId,
-              attempts: 5,
-              backoff: { type: "exponential", delay: 15_000 },
-              removeOnComplete: { count: 100 },
-              removeOnFail: { count: 200 },
-            });
-          } catch (e) {
-            console.warn("attachment-ingest-queue-failed", {
-              emailMessageId: candidate.emailMessageId,
-              error: e instanceof Error ? e.message : "unknown",
-            });
-          }
-        }
+        const { enqueuedCount } = await enqueueAttachmentIngestFromSync({
+          queue: this.attachmentIngestQueue,
+          workspaceId: context.workspaceId,
+          inboxConnectionId: context.inboxConnectionId,
+          candidates: syncResult.attachmentIngestCandidates,
+        });
         console.info("attachment-ingest-queued-from-sync", {
           jobId: context.jobId,
-          count: syncResult.attachmentIngestCandidates.length,
+          count: enqueuedCount,
         });
       }
 

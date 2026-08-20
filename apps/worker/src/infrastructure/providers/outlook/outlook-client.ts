@@ -95,7 +95,12 @@ export const isIncompleteGraphMessage = (msg: {
 }): boolean => msg.from === undefined;
 
 export const graphMessageHasSender = (msg: {
-  from?: { emailAddress?: { address?: string } } | null;
+  from: {
+    emailAddress: {
+      name: string | null;
+      address: string;
+    };
+  } | null;
 }): boolean => Boolean(msg.from?.emailAddress?.address?.trim());
 
 const graphMessagesResponseSchema = z.object({
@@ -115,6 +120,37 @@ const tokenResponseSchema = z.object({
 });
 
 type GraphMessage = z.infer<typeof graphMessageSchema>;
+
+/**
+ * Normalize Graph `from` so internals use null (absent sender) rather than
+ * undefined — required under exactOptionalPropertyTypes.
+ * Also normalizes optional `name` to null when present on a sender.
+ */
+export function normalizeGraphMessageFrom(msg: GraphMessage): GraphMessage & {
+  from: {
+    emailAddress: {
+      address: string;
+      name: string | null;
+    };
+  } | null;
+} {
+  if (msg.from == null) {
+    return {
+      ...msg,
+      from: null
+    };
+  }
+
+  return {
+    ...msg,
+    from: {
+      emailAddress: {
+        address: msg.from.emailAddress.address,
+        name: msg.from.emailAddress.name ?? null
+      }
+    }
+  };
+}
 
 export interface OutlookClientConfig {
   clientId?: string;
@@ -724,7 +760,7 @@ export class OutlookClient {
     }
 
     const raw = await response.json();
-    return graphMessageSchema.parse(raw);
+    return normalizeGraphMessageFrom(graphMessageSchema.parse(raw));
   }
 
   private async fetchInboxMessages(
@@ -805,14 +841,17 @@ export class OutlookClient {
           resolved = hydrated;
         }
 
-        if (!graphMessageHasSender(resolved)) {
+        // Graph may omit `from`; internals require from: Sender | null (not undefined).
+        const normalized = normalizeGraphMessageFrom(resolved);
+
+        if (!graphMessageHasSender(normalized)) {
           console.warn("outlook-message-skipped-no-sender", {
-            messageId: resolved.id
+            messageId: normalized.id
           });
           continue;
         }
 
-        const parsed = parseMessage(resolved, folderMap);
+        const parsed = parseMessage(normalized, folderMap);
         items.push(parsed);
 
         // Inline CID images may exist even when Graph hasAttachments is false
@@ -820,7 +859,7 @@ export class OutlookClient {
           parsed.hasAttachments ||
           /(?:src\s*=\s*(?:3D)?(["']?)cid:|url\(\s*(['"]?)cid:)/i.test(parsed.bodyHtml ?? "")
         ) {
-          hasAttachmentIds.push(resolved.id);
+          hasAttachmentIds.push(normalized.id);
         }
       }
 

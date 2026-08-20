@@ -61,7 +61,7 @@ describe("enqueueAttachmentIngestIfEligible", () => {
         emailMessageId: "msg1",
         providerMessageId: "AAMk",
       }),
-      expect.objectContaining({ jobId: "attachment-ingest:msg1" })
+      expect.objectContaining({ jobId: "attachment-ingest-msg1" })
     );
   });
 
@@ -93,6 +93,40 @@ describe("enqueueAttachmentIngestIfEligible", () => {
     expect(outcome).toEqual({ enqueued: false, reason: "queue_unavailable" });
   });
 
+  it("uses colon-free deterministic jobId", async () => {
+    const prisma = {
+      inboxConnection: {
+        findFirst: vi.fn(async () => ({
+          provider: "OUTLOOK",
+          encryptedRefreshToken: "enc-token",
+        })),
+      },
+    };
+    const queue = { add: vi.fn(async () => ({ id: "job1" })) };
+
+    const outcome = await enqueueAttachmentIngestIfEligible({
+      prisma: prisma as never,
+      queue: queue as never,
+      workspaceId: "ws1",
+      inboxConnectionId: "conn1",
+      emailMessageId: "cmt1nfdq5003kjgoc8d8o7001",
+      hasAttachments: true,
+      bodyHtml: null,
+    });
+
+    expect(outcome).toEqual({
+      enqueued: true,
+      jobId: "attachment-ingest-cmt1nfdq5003kjgoc8d8o7001",
+    });
+    expect(queue.add).toHaveBeenCalledWith(
+      "attachment-ingest",
+      expect.any(Object),
+      expect.objectContaining({
+        jobId: "attachment-ingest-cmt1nfdq5003kjgoc8d8o7001",
+      })
+    );
+  });
+
   it("treats duplicate jobId as enqueued success", async () => {
     const prisma = {
       inboxConnection: {
@@ -104,7 +138,7 @@ describe("enqueueAttachmentIngestIfEligible", () => {
     };
     const queue = {
       add: vi.fn(async () => {
-        throw new Error("Job attachment-ingest:msg1 already exists");
+        throw new Error("Job attachment-ingest-msg1 already exists");
       }),
     };
 
@@ -120,7 +154,7 @@ describe("enqueueAttachmentIngestIfEligible", () => {
 
     expect(outcome).toEqual({
       enqueued: true,
-      jobId: "attachment-ingest:msg1",
+      jobId: "attachment-ingest-msg1",
     });
   });
 });
