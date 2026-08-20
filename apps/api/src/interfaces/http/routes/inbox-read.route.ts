@@ -119,7 +119,9 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   sentOnly: booleanQueryWithDefaultFalseSchema,
   unreadOnly: booleanQueryWithDefaultFalseSchema,
-  search: z.string().min(1).optional()
+  search: z.string().min(1).optional(),
+  /** Restrict free-text search to sender name/email when "sender". Default: all fields. */
+  searchIn: z.enum(["all", "sender"]).optional().default("all")
 });
 
 const jobSummarySchema = z.object({
@@ -684,6 +686,7 @@ const buildMessagesWhere = (input: {
   unreadOnly?: boolean;
   mailboxEmails?: string[];
   search?: string;
+  searchIn?: "all" | "sender";
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
 }): Prisma.EmailMessageWhereInput => {
@@ -747,15 +750,24 @@ const buildMessagesWhere = (input: {
 
   if (input.search) {
     const term = input.search.trim();
-    andConditions.push({
-      OR: [
-        { subject: { contains: term, mode: "insensitive" } },
-        { senderEmail: { contains: term, mode: "insensitive" } },
-        { senderName: { contains: term, mode: "insensitive" } },
-        { snippet: { contains: term, mode: "insensitive" } },
-        { bodyText: { contains: term, mode: "insensitive" } }
-      ]
-    });
+    if (input.searchIn === "sender") {
+      andConditions.push({
+        OR: [
+          { senderEmail: { contains: term, mode: "insensitive" } },
+          { senderName: { contains: term, mode: "insensitive" } },
+        ],
+      });
+    } else {
+      andConditions.push({
+        OR: [
+          { subject: { contains: term, mode: "insensitive" } },
+          { senderEmail: { contains: term, mode: "insensitive" } },
+          { senderName: { contains: term, mode: "insensitive" } },
+          { snippet: { contains: term, mode: "insensitive" } },
+          { bodyText: { contains: term, mode: "insensitive" } },
+        ],
+      });
+    }
   }
 
   if (input.reclassifiedOnly) {
@@ -1233,6 +1245,7 @@ export const registerInboxReadRoutes = async (
           ? { hasTaskCandidate: query.hasTaskCandidate }
           : {}),
         ...(query.search ? { search: query.search } : {}),
+        searchIn: query.searchIn,
         reclassifiedOnly: query.reclassifiedOnly,
         sentOnly: query.sentOnly,
         unreadOnly: query.unreadOnly,

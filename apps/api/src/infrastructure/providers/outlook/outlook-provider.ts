@@ -19,6 +19,26 @@ export const outlookInboxConnectionScopes = [
   "https://graph.microsoft.com/User.Read"
 ] as const;
 
+/**
+ * Microsoft often omits OIDC / offline_access from the token response `scope`
+ * even when they were granted. Presence of a refresh_token is the signal for
+ * offline_access; id_token for openid.
+ */
+export function coalesceMicrosoftGrantedScopes(input: {
+  scope?: string | undefined;
+  refreshToken?: string | null | undefined;
+  idToken?: string | null | undefined;
+}): string[] {
+  const granted = input.scope?.split(/\s+/).filter(Boolean) ?? [];
+  if (input.refreshToken && !granted.includes("offline_access")) {
+    granted.push("offline_access");
+  }
+  if (input.idToken && !granted.includes("openid")) {
+    granted.push("openid");
+  }
+  return granted;
+}
+
 const microsoftTokenSchema = z.object({
   access_token: z.string(),
   refresh_token: z.string().optional(),
@@ -141,7 +161,11 @@ export class OutlookOAuthProvider implements InboxOAuthProvider {
 
     const raw = await response.json();
     const tokens = microsoftTokenSchema.parse(raw);
-    const grantedScopes = tokens.scope?.split(" ").filter(Boolean) ?? [];
+    const grantedScopes = coalesceMicrosoftGrantedScopes({
+      scope: tokens.scope,
+      refreshToken: tokens.refresh_token,
+      idToken: tokens.id_token
+    });
 
     return {
       accessToken: tokens.access_token,
@@ -181,4 +205,26 @@ export class OutlookOAuthProvider implements InboxOAuthProvider {
   }
 
   async disconnect(): Promise<void> {}
+}
+
+/**
+ * Callback-side Outlook required-scope check. Re-applies refresh/id-token
+ * coalescing so validation does not depend solely on tokenResponse.scope.
+ */
+export function findMissingOutlookRequiredScopes(input: {
+  grantedScopes: readonly string[];
+  hasRefreshToken: boolean;
+  hasIdToken: boolean;
+}): string[] {
+  const coalesced = coalesceMicrosoftGrantedScopes({
+    scope: input.grantedScopes.join(" "),
+    refreshToken: input.hasRefreshToken ? "present" : null,
+    idToken: input.hasIdToken ? "present" : null,
+  });
+
+  const provider = new OutlookOAuthProvider({});
+  const normalized = provider.normalizeGrantedScopes(coalesced);
+  return outlookInboxConnectionScopes.filter(
+    (scope) => !normalized.includes(scope)
+  );
 }

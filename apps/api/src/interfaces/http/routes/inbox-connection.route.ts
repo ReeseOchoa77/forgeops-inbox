@@ -10,6 +10,10 @@ import {
   buildAuthorizationFields,
   validateAuthorizeExistingTarget,
 } from "../../../application/services/inbox-authorization-status.js";
+import {
+  coalesceMicrosoftGrantedScopes,
+  findMissingOutlookRequiredScopes,
+} from "../../../infrastructure/providers/outlook/outlook-provider.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const workspaceParamsSchema = z.object({
@@ -587,15 +591,60 @@ export const registerInboxConnectionRoutes = async (
         throw new Error("Provider did not return an access token");
       }
 
+      const hasRefreshToken = Boolean(tokens.refreshToken);
+      const hasIdToken = Boolean(tokens.idToken);
+
+      // Temporary SAFE diagnostics — scope names + booleans only; never tokens/codes.
+      request.log.info({
+        event: "inbox_oauth_scope_validation",
+        validator: "inbox-connection.route.ts:/api/v1/inbox-connections/google/callback",
+        provider: providerKind,
+        authorizeExisting: Boolean(storedState.authorizeExisting),
+        reconnect: Boolean(storedState.reconnect),
+        connectionIdPresent: Boolean(storedState.connectionId),
+        returnedScopes: tokens.grantedScopes,
+        hasRefreshToken,
+        hasIdToken,
+      });
+
+      let scopesForValidation = tokens.grantedScopes;
+      if (providerKind === "outlook") {
+        // Belt-and-suspenders: coalesce again at the only live validator so we
+        // do not depend solely on tokenResponse.scope echoing offline_access.
+        scopesForValidation = coalesceMicrosoftGrantedScopes({
+          scope: tokens.grantedScopes.join(" "),
+          refreshToken: tokens.refreshToken,
+          idToken: tokens.idToken,
+        });
+      }
+
       const normalizedGrantedScopes = provider.normalizeGrantedScopes(
-        tokens.grantedScopes
+        scopesForValidation
       );
       const requiredScopes = new Set(provider.getRequiredScopes());
-      const missingRequiredScopes = [...requiredScopes].filter(
-        (scope) => !normalizedGrantedScopes.includes(scope)
-      );
+      const missingRequiredScopes =
+        providerKind === "outlook"
+          ? findMissingOutlookRequiredScopes({
+              grantedScopes: tokens.grantedScopes,
+              hasRefreshToken,
+              hasIdToken,
+            })
+          : [...requiredScopes].filter(
+              (scope) => !normalizedGrantedScopes.includes(scope)
+            );
 
       if (missingRequiredScopes.length > 0) {
+        request.log.warn({
+          event: "inbox_oauth_scope_validation_failed",
+          validator: "inbox-connection.route.ts:/api/v1/inbox-connections/google/callback",
+          provider: providerKind,
+          returnedScopes: tokens.grantedScopes,
+          coalescedScopes: scopesForValidation,
+          normalizedGrantedScopes,
+          missingRequiredScopes,
+          hasRefreshToken,
+          hasIdToken,
+        });
         throw new Error(
           `Missing required scopes: ${missingRequiredScopes.join(", ")}`
         );

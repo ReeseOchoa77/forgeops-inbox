@@ -190,6 +190,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
+  const [searchIn, setSearchIn] = useState<'all' | 'sender'>('all')
 
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
   const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
@@ -296,9 +297,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     }
 
     if (readFilter === 'sent') f.sentOnly = true
-    if (activeSearch) f.search = activeSearch
+    if (activeSearch) {
+      f.search = activeSearch
+      if (searchIn === 'sender') f.searchIn = 'sender'
+    }
     return f
-  }, [inboxTab, activeSearch, jobFilter, readFilter])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn])
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
     if (pageNum === 1) setLoading(true)
@@ -332,6 +336,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setHasMore(true)
     setSearch('')
     setActiveSearch('')
+    setSearchIn('all')
     setInboxTab('ALL_BUSINESS')
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
@@ -351,7 +356,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setPage(1)
     setHasMore(true)
     loadPage(1, filters, false)
-  }, [inboxTab, activeSearch, jobFilter, sentOnly])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly, searchIn])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -720,8 +725,30 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {deletingAllPersonal ? 'Deleting...' : 'Delete All'}
             </button>
           )}
-          <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)}
-            style={{ padding: '5px 10px', border: '1px solid #ddd', borderRadius: 5, fontSize: 13, width: isPhone ? '100%' : 220 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 5, overflow: 'hidden', background: '#fff' }}>
+            <select
+              value={searchIn}
+              onChange={e => setSearchIn(e.target.value as 'all' | 'sender')}
+              aria-label="Search in"
+              style={{
+                padding: '5px 6px 5px 8px', fontSize: 12, border: 'none', borderRight: '1px solid #eee',
+                background: '#fafafa', color: '#555', cursor: 'pointer', outline: 'none',
+              }}
+            >
+              <option value="all">All</option>
+              <option value="sender">Sender</option>
+            </select>
+            <input
+              type="text"
+              placeholder={searchIn === 'sender' ? 'Filter by sender name or email…' : 'Search emails…'}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{
+                padding: '5px 10px', border: 'none', fontSize: 13, outline: 'none',
+                width: isPhone ? 140 : 200, background: 'transparent',
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -814,7 +841,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           <div className="empty-state" style={{ padding: 32 }}>
             <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
             <h3>{activeSearch ? 'No results' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
-            <p>{activeSearch ? `No messages match "${activeSearch}"` : 'Emails will appear here after syncing and classification.'}</p>
+            <p>{activeSearch
+              ? (searchIn === 'sender'
+                ? `No senders match "${activeSearch}"`
+                : `No messages match "${activeSearch}"`)
+              : 'Emails will appear here after syncing and classification.'}</p>
           </div>
         ) : isPhone ? (
           <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>

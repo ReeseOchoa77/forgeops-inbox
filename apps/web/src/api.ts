@@ -303,6 +303,7 @@ export const api = {
 
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;
+    searchIn?: 'all' | 'sender';
     businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
     classificationType?: string;
     hasTaskCandidate?: boolean;
@@ -316,6 +317,7 @@ export const api = {
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
+    if (filters?.searchIn && filters.searchIn !== 'all') params.set('searchIn', filters.searchIn);
     if (filters?.businessCategory) params.set('businessCategory', filters.businessCategory);
     if (filters?.classificationType) params.set('classificationType', filters.classificationType);
     if (filters?.hasTaskCandidate !== undefined) params.set('hasTaskCandidate', String(filters.hasTaskCandidate));
