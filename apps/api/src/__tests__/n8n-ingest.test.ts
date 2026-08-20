@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
+import {
+  providerIngestRecipientListSchema,
+  sanitizeProviderIngestRecipients,
+} from "../application/services/sanitize-provider-ingest-recipients.js";
 
 const MAX_SUBJECT_LENGTH = 500;
 const MAX_SUMMARY_LENGTH = 300;
@@ -22,8 +26,8 @@ const n8nEmailResultSchema = z.object({
     senderName: z.string().max(200).nullable().optional(),
     senderEmail: z.string().email(),
     senderDomain: z.string().max(200),
-    to: z.array(z.string().email()).max(MAX_RECIPIENTS),
-    cc: z.array(z.string().email()).max(MAX_RECIPIENTS).default([]),
+    to: providerIngestRecipientListSchema("to", MAX_RECIPIENTS),
+    cc: providerIngestRecipientListSchema("cc", MAX_RECIPIENTS).default([]),
     receivedAt: z.string().datetime(),
     bodyText: z.string().max(MAX_BODY_LENGTH),
     bodyHtml: z.string().max(MAX_BODY_LENGTH).nullable().optional(),
@@ -459,5 +463,112 @@ describe("n8n email-results schema validation", () => {
       expect(result.data.analysis.mailboxCategory).toBe("PERSONAL");
       expect(result.data.analysis.mailboxConfidence).toBe(0.95);
     }
+  });
+});
+
+describe("provider-ingest recipient sanitization", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a valid to recipient unchanged (normalized)", () => {
+    const result = sanitizeProviderIngestRecipients(["  Valid@Example.COM  "]);
+    expect(result.recipients).toEqual(["valid@example.com"]);
+    expect(result.dropped).toEqual([]);
+  });
+
+  it("drops a malformed to recipient and still allows schema parse", () => {
+    const logs: Array<{ event: string; data: Record<string, unknown> }> = [];
+    const result = sanitizeProviderIngestRecipients(["rob@checkpointwelding"], {
+      field: "to",
+      log: (event, data) => logs.push({ event, data }),
+    });
+    expect(result.recipients).toEqual([]);
+    expect(result.dropped).toHaveLength(1);
+    expect(logs[0]?.event).toBe("n8n-ingest-recipient-dropped");
+    expect(logs[0]?.data.reason).toBe("invalid_email");
+    expect(String(logs[0]?.data.recipientPreview)).toContain("rob@checkpointwelding");
+    expect(JSON.stringify(logs)).not.toMatch(/Bearer |refresh_token|access_token/i);
+
+    const payload = makeValidPayload();
+    (payload.email as Record<string, unknown>).to = ["rob@checkpointwelding"];
+    const parsed = n8nEmailResultSchema.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.email.to).toEqual([]);
+    }
+  });
+
+  it("preserves valid recipients when mixed with malformed to", () => {
+    const result = sanitizeProviderIngestRecipients([
+      "valid@example.com",
+      "rob@checkpointwelding",
+      "also.ok@tekstl.net",
+    ]);
+    expect(result.recipients).toEqual([
+      "valid@example.com",
+      "also.ok@tekstl.net",
+    ]);
+    expect(result.dropped).toHaveLength(1);
+  });
+
+  it("drops malformed cc the same way", () => {
+    const payload = makeValidPayload();
+    (payload.email as Record<string, unknown>).cc = [
+      "ok@example.com",
+      "bad@singlelabel",
+    ];
+    const parsed = n8nEmailResultSchema.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.email.cc).toEqual(["ok@example.com"]);
+    }
+  });
+
+  it("succeeds when multiple recipients are malformed", () => {
+    const payload = makeValidPayload();
+    (payload.email as Record<string, unknown>).to = [
+      "a@nodot",
+      "rob@checkpointwelding",
+      "@@@",
+    ];
+    (payload.email as Record<string, unknown>).cc = ["also@bad"];
+    const parsed = n8nEmailResultSchema.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.email.to).toEqual([]);
+      expect(parsed.data.email.cc).toEqual([]);
+    }
+  });
+
+  it("NDR example: malformed to does not return schema validation failure", () => {
+    const payload = makeValidPayload();
+    (payload.email as Record<string, unknown>).senderEmail =
+      "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@tekstl.net";
+    (payload.email as Record<string, unknown>).senderDomain = "tekstl.net";
+    (payload.email as Record<string, unknown>).to = ["rob@checkpointwelding"];
+    const parsed = n8nEmailResultSchema.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.email.to).toEqual([]);
+      expect(parsed.data.email.senderEmail).toBe(
+        "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@tekstl.net"
+      );
+    }
+  });
+
+  it("outbound-style strict email() still rejects single-label domains", () => {
+    // Mirrors apps/api send.route.ts: z.array(z.string().email())
+    const outboundTo = z.array(z.string().email()).min(1);
+    expect(outboundTo.safeParse(["rob@checkpointwelding"]).success).toBe(false);
+    expect(outboundTo.safeParse(["valid@example.com"]).success).toBe(true);
+  });
+
+  it("dedupes normalized recipients", () => {
+    const result = sanitizeProviderIngestRecipients([
+      "A@Example.com",
+      "a@example.com",
+    ]);
+    expect(result.recipients).toEqual(["a@example.com"]);
   });
 });

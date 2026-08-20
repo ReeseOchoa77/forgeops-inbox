@@ -6,7 +6,9 @@ import {
   normalizeEmail,
   extractDomain,
   findDuplicates,
-  computeSimilarity
+  computeSimilarity,
+  rankJobMatchCandidates,
+  JOB_MATCHER_VERSION
 } from "@forgeops/shared";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
@@ -457,8 +459,12 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
         select: { id: true, name: true, normalizedName: true, domain: true, primaryEmail: true }
       }),
       app.services.prisma.job.findMany({
-        where: { workspaceId },
-        select: { id: true, name: true, normalizedName: true, jobNumber: true, customerId: true }
+        where: {
+          workspaceId,
+          archivedAt: null,
+          status: { notIn: ["ARCHIVED", "CANCELLED"] },
+        },
+        select: { id: true, name: true, normalizedName: true, jobNumber: true, customerId: true, externalRef: true }
       })
     ]);
 
@@ -538,16 +544,38 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
       }
     }
 
-    const searchText = `${body.subject ?? ""} ${body.cleanBody ?? ""}`.toLowerCase();
-    for (const job of jobs) {
-      if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {
-        jobCandidates.push({ id: job.id, name: job.name, matchedOn: ["jobNumber"], score: 0.95 });
-      } else {
-        const sim = computeSimilarity(normalizeName(job.name), normalizeName(searchText.slice(0, 200)));
-        if (sim >= 0.5) {
-          jobCandidates.push({ id: job.id, name: job.name, matchedOn: ["name"], score: sim * 0.7 });
-        }
-      }
+    // Legacy/debug candidate endpoint — job scoring via shared JobMatcher candidate ranker.
+    const rankedJobs = rankJobMatchCandidates({
+      subject: body.subject,
+      cleanBody: body.cleanBody,
+      senderDomain: senderDomain || null,
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        jobNumber: j.jobNumber,
+        name: j.name,
+        normalizedName: j.normalizedName,
+        customerId: j.customerId,
+        externalRef: j.externalRef,
+      })),
+      aliases: aliases
+        .filter((a) => a.entityType === "JOB" && a.jobId)
+        .map((a) => ({
+          jobId: a.jobId!,
+          alias: a.alias,
+          normalizedAlias: a.normalizedAlias,
+        })),
+      limit: 5,
+    });
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
+    for (const ranked of rankedJobs) {
+      const job = jobById.get(ranked.jobId);
+      if (!job) continue;
+      jobCandidates.push({
+        id: job.id,
+        name: job.name,
+        matchedOn: ranked.evidence.map((e) => e.type),
+        score: ranked.score,
+      });
     }
 
     for (const [, entry] of scored) {
@@ -562,6 +590,7 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
 
     return reply.send({
       knownSender,
+      matcherVersion: JOB_MATCHER_VERSION,
       customerCandidates: customerCandidates.slice(0, 5),
       vendorCandidates: vendorCandidates.slice(0, 5),
       jobCandidates: jobCandidates.slice(0, 5)

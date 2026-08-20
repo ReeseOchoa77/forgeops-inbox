@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient, type ReviewQueue, type ReviewStatus } from "@prisma/client";
 import {
+  extractDomain,
   mailboxCategoryFromLegacyBusinessFilter,
   type InboxAnalysisResult,
 } from "@forgeops/shared";
@@ -7,6 +8,8 @@ import {
 import { classifyNormalizedEmail } from "./classify-normalized-email.js";
 import { extractTaskCandidate } from "./extract-task-candidate.js";
 import { normalizeEmailMessage } from "./normalize-email-message.js";
+import { persistJobMatchResult } from "./persist-job-match.js";
+import { createJobMatcherService } from "./prisma-job-match-loader.js";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
 
@@ -109,6 +112,9 @@ export const analyzeInboxConnection = async (input: {
           labelIds: true,
           sentAt: true,
           receivedAt: true,
+          jobId: true,
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: true,
           thread: {
             select: {
               subject: true
@@ -160,10 +166,55 @@ export const analyzeInboxConnection = async (input: {
 
   let taskCandidatesCreated = 0;
   let lowConfidenceItemsFlaggedForReview = 0;
+  const jobMatcher = createJobMatcherService(input.prisma);
 
   const BATCH_SIZE = 25;
   for (let batchStart = 0; batchStart < importedMessages.length; batchStart += BATCH_SIZE) {
     const batch = importedMessages.slice(batchStart, batchStart + BATCH_SIZE);
+
+    // Precompute job matches outside the DB transaction (same JobMatcherService as n8n).
+    const batchJobMatches = new Map<
+      string,
+      Awaited<ReturnType<typeof jobMatcher.match>>
+    >();
+    for (const message of batch) {
+      try {
+        const normalizedForMatch = normalizeEmailMessage({
+          subject: message.subject,
+          threadSubject: message.thread.subject,
+          snippet: message.snippet,
+          bodyText: message.bodyText,
+          receivedAt: message.receivedAt ?? message.sentAt,
+          senderName: message.senderName,
+          senderEmail: message.senderEmail,
+          toAddresses: message.toAddresses,
+          ccAddresses: message.ccAddresses,
+          bccAddresses: message.bccAddresses,
+          replyToAddresses: message.replyToAddresses,
+          labelIds: message.labelIds
+        });
+        const match = await jobMatcher.match({
+          workspaceId: input.workspaceId,
+          emailMessageId: message.id,
+          subject: message.subject,
+          normalizedSubject: normalizedForMatch.normalizedSubject,
+          bodyText: message.bodyText,
+          cleanBody: normalizedForMatch.cleanTextBody,
+          senderEmail: message.senderEmail,
+          senderDomain:
+            normalizedForMatch.senderDomain ??
+            extractDomain(message.senderEmail ?? "") ??
+            null,
+          threadId: message.threadId,
+        });
+        batchJobMatches.set(message.id, match);
+      } catch (e) {
+        console.warn("job-match-failed", {
+          emailMessageId: message.id,
+          error: e instanceof Error ? e.message : "unknown",
+        });
+      }
+    }
 
   await input.prisma.$transaction(async (tx) => {
     for (const message of batch) {
@@ -192,10 +243,6 @@ export const analyzeInboxConnection = async (input: {
         members,
         taskThreshold,
         now: message.receivedAt ?? message.sentAt
-      });
-      const classificationReviewState = buildReviewState({
-        requiresReview: classification.requiresReview,
-        reviewQueue
       });
       const taskReviewState = taskCandidate
         ? buildReviewState({
@@ -241,6 +288,21 @@ export const analyzeInboxConnection = async (input: {
         }
       });
 
+      const mailboxCategory = mailboxCategoryFromLegacyBusinessFilter(
+        classification.businessCategory
+      );
+      const jobMatch =
+        mailboxCategory === "PERSONAL"
+          ? undefined
+          : batchJobMatches.get(message.id);
+      const jobMatchRequiresReview = Boolean(jobMatch?.requiresReview);
+      const requiresReview =
+        classification.requiresReview || jobMatchRequiresReview;
+      const reviewStateForPersist = buildReviewState({
+        requiresReview,
+        reviewQueue
+      });
+
       const persistedClassification = await tx.classification.upsert({
         where: {
           workspaceId_messageId: {
@@ -251,12 +313,10 @@ export const analyzeInboxConnection = async (input: {
         update: {
           threadId: message.threadId,
           businessCategory: classification.businessCategory,
-          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
-            classification.businessCategory
-          ),
+          mailboxCategory,
           emailType: classification.emailType,
           priority: classification.priority,
-          itemStatus: classification.itemStatus,
+          itemStatus: requiresReview ? "NEEDS_REVIEW" : classification.itemStatus,
           summary: classification.summary,
           deadline: taskCandidate?.dueAt ?? null,
           containsActionRequest: classification.containsActionRequest,
@@ -272,9 +332,9 @@ export const analyzeInboxConnection = async (input: {
             taskCandidate
           }),
           confidence: toConfidence(classification.confidence),
-          requiresReview: classification.requiresReview,
-          reviewQueue: classificationReviewState.reviewQueue,
-          reviewStatus: classificationReviewState.reviewStatus,
+          requiresReview,
+          reviewQueue: reviewStateForPersist.reviewQueue,
+          reviewStatus: reviewStateForPersist.reviewStatus,
           reviewedByUserId: null,
           reviewedAt: null,
           modelName: "rules-normalizer",
@@ -285,12 +345,10 @@ export const analyzeInboxConnection = async (input: {
           threadId: message.threadId,
           messageId: message.id,
           businessCategory: classification.businessCategory,
-          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
-            classification.businessCategory
-          ),
+          mailboxCategory,
           emailType: classification.emailType,
           priority: classification.priority,
-          itemStatus: classification.itemStatus,
+          itemStatus: requiresReview ? "NEEDS_REVIEW" : classification.itemStatus,
           summary: classification.summary,
           deadline: taskCandidate?.dueAt ?? null,
           containsActionRequest: classification.containsActionRequest,
@@ -306,13 +364,26 @@ export const analyzeInboxConnection = async (input: {
             taskCandidate
           }),
           confidence: toConfidence(classification.confidence),
-          requiresReview: classification.requiresReview,
-          reviewQueue: classificationReviewState.reviewQueue,
-          reviewStatus: classificationReviewState.reviewStatus,
+          requiresReview,
+          reviewQueue: reviewStateForPersist.reviewQueue,
+          reviewStatus: reviewStateForPersist.reviewStatus,
           modelName: "rules-normalizer",
           modelVersion: "v1"
         }
       });
+
+      if (jobMatch) {
+        await persistJobMatchResult(tx, {
+          classificationId: persistedClassification.id,
+          emailMessageId: message.id,
+          match: jobMatch,
+          existing: {
+            jobId: message.jobId,
+            jobAssignmentIsManual: message.jobAssignmentIsManual,
+            jobAssignmentSource: message.jobAssignmentSource,
+          },
+        });
+      }
 
       if (taskCandidate) {
         const taskExisted = existingTaskMessageIds.has(message.id);
@@ -385,32 +456,30 @@ export const analyzeInboxConnection = async (input: {
         },
         data: {
           priority: classification.priority,
-          itemStatus: classification.itemStatus,
+          itemStatus: requiresReview ? "NEEDS_REVIEW" : classification.itemStatus,
           // Tabs filter EmailMessage.mailboxCategory — keep in sync with Classification.
-          mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(
-            classification.businessCategory
-          ),
+          mailboxCategory,
         }
       });
 
       threadReviewState.set(message.threadId, {
         priority: taskCandidate?.priority ?? classification.priority,
         itemStatus:
-          classification.requiresReview || taskCandidate?.requiresReview
+          requiresReview || taskCandidate?.requiresReview
             ? "NEEDS_REVIEW"
             : classification.itemStatus,
         latestClassificationConfidence: toConfidence(classification.confidence),
         reviewQueue:
-          classification.requiresReview || taskCandidate?.requiresReview
+          requiresReview || taskCandidate?.requiresReview
             ? reviewQueue
             : null,
         reviewStatus:
-          classification.requiresReview || taskCandidate?.requiresReview
+          requiresReview || taskCandidate?.requiresReview
             ? "PENDING"
             : "NOT_REQUIRED"
       });
 
-      if (classification.requiresReview || taskCandidate?.requiresReview) {
+      if (requiresReview || taskCandidate?.requiresReview) {
         lowConfidenceItemsFlaggedForReview += 1;
       }
     }

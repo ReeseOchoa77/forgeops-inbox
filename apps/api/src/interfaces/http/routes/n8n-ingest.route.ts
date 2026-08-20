@@ -5,6 +5,9 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 
 import { enqueueAttachmentIngestIfEligible } from "../../../application/services/enqueue-attachment-ingest.js";
+import { persistJobMatchResult } from "../../../application/services/persist-job-match.js";
+import { createJobMatcherService } from "../../../application/services/prisma-job-match-loader.js";
+import { providerIngestRecipientListSchema } from "../../../application/services/sanitize-provider-ingest-recipients.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
 
 const CLASSIFICATION_REVIEW_THRESHOLD = 0.80;
@@ -33,8 +36,10 @@ const n8nEmailResultSchema = z.object({
     senderName: z.string().max(200).nullable().optional(),
     senderEmail: z.string().email(),
     senderDomain: z.string().max(200),
-    to: z.array(z.string().email()).max(MAX_RECIPIENTS),
-    cc: z.array(z.string().email()).max(MAX_RECIPIENTS).default([]),
+    // Provider-ingested To/Cc: sanitize per-address (NDRs may include invalid recipients).
+    // Do not use strict .email() on the array — that rejects the whole message.
+    to: providerIngestRecipientListSchema("to", MAX_RECIPIENTS),
+    cc: providerIngestRecipientListSchema("cc", MAX_RECIPIENTS).default([]),
     receivedAt: z.string().datetime(),
     bodyText: z.string().max(MAX_BODY_LENGTH),
     bodyHtml: z.string().max(MAX_BODY_LENGTH).nullable().optional(),
@@ -145,7 +150,8 @@ function shouldRequireReview(body: N8nEmailResult): boolean {
   const btc = body.analysis.businessTypeConfidence;
   if (btc != null && btc < CLASSIFICATION_REVIEW_THRESHOLD && body.analysis.mailboxCategory === "BUSINESS") return true;
   const emc = body.analysis.entityMatchConfidence;
-  if (emc != null && emc < CLASSIFICATION_REVIEW_THRESHOLD && (body.analysis.selectedCustomerId || body.analysis.selectedVendorId || body.analysis.selectedJobId)) return true;
+  // Job assignment is ForgeOps-owned; n8n selectedJobId is not authoritative for review.
+  if (emc != null && emc < CLASSIFICATION_REVIEW_THRESHOLD && (body.analysis.selectedCustomerId || body.analysis.selectedVendorId)) return true;
   return false;
 }
 
@@ -168,13 +174,14 @@ function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM
     mailboxConfidence: body.analysis.mailboxConfidence ? toConfidence(body.analysis.mailboxConfidence) : null,
     businessTypeKey: body.analysis.businessType ?? null,
     businessTypeConfidence: body.analysis.businessTypeConfidence ? toConfidence(body.analysis.businessTypeConfidence) : null,
+    // Job fields set by JobMatcherService after upsert (not n8n selectedJobId).
     entityMatchConfidence: body.analysis.entityMatchConfidence ? toConfidence(body.analysis.entityMatchConfidence) : null,
     matchEvidence: body.analysis.matchEvidence ? toPrismaJson(body.analysis.matchEvidence) : Prisma.JsonNull,
     rawAiPayload: toPrismaJson(body.analysis),
     classificationEvidence: body.analysis.classificationEvidence ? toPrismaJson(body.analysis.classificationEvidence) : Prisma.JsonNull,
     customerId: body.analysis.selectedCustomerId ?? null,
     vendorId: body.analysis.selectedVendorId ?? null,
-    jobId: body.analysis.selectedJobId ?? null,
+    jobId: null,
     processedAt: new Date()
   };
 }
@@ -693,20 +700,68 @@ async function handleN8nIngest(
         return;
       }
     }
-    if (body.analysis.selectedJobId) {
-      const exists = await app.services.prisma.job.findFirst({
-        where: { workspaceId, id: body.analysis.selectedJobId },
-        select: { id: true }
-      });
-      if (!exists) {
-        reply.code(400).send({ message: `Job ID ${body.analysis.selectedJobId} not found in workspace` });
-        return;
-      }
-    }
+    // n8n selectedJobId is a weak compatibility hint only — ForgeOps JobMatcher decides.
 
     const result = await app.services.prisma.$transaction(async (tx) => {
       return upsertEmailData(tx, workspaceId, connectionId, body);
     }, { timeout: 30_000 });
+
+    // ForgeOps-owned job matching for BUSINESS mail (same service as native analysis).
+    if (body.analysis.mailboxCategory !== "PERSONAL") {
+      try {
+        const existingAssignment = await app.services.prisma.emailMessage.findUnique({
+          where: { id: result.messageId },
+          select: {
+            jobId: true,
+            jobAssignmentIsManual: true,
+            jobAssignmentSource: true,
+            threadId: true,
+          },
+        });
+
+        const matcher = createJobMatcherService(app.services.prisma);
+        const match = await matcher.match({
+          workspaceId,
+          emailMessageId: result.messageId,
+          subject: body.email.subject,
+          normalizedSubject: body.email.normalizedSubject,
+          bodyText: body.email.bodyText,
+          cleanBody: body.email.cleanBody,
+          senderEmail: body.email.senderEmail,
+          senderDomain: body.email.senderDomain,
+          recipients: [...body.email.to, ...body.email.cc],
+          threadId: existingAssignment?.threadId ?? result.threadId,
+          n8nSelectedJobIdHint: body.analysis.selectedJobId ?? null,
+        });
+
+        if (result.classificationId) {
+          await persistJobMatchResult(app.services.prisma, {
+            classificationId: result.classificationId,
+            emailMessageId: result.messageId,
+            match,
+            existing: existingAssignment,
+          });
+        }
+
+        if (match.requiresReview && !result.requiresReview) {
+          await app.services.prisma.classification.update({
+            where: { id: result.classificationId },
+            data: {
+              requiresReview: true,
+              itemStatus: "NEEDS_REVIEW",
+              reviewQueue: "TRIAGE",
+              reviewStatus: "PENDING",
+            },
+          }).catch(() => {});
+        }
+      } catch (e) {
+        app.log.warn({
+          event: "job-match-failed",
+          emailMessageId: result.messageId,
+          error: e instanceof Error ? e.message : "unknown",
+        });
+      }
+    }
 
     await app.services.prisma.inboxConnection.update({
       where: { id: connectionId },

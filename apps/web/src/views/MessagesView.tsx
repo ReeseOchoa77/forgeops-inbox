@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
+import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
@@ -232,6 +233,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const connectionResetRef = useRef(false)
 
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+  const isSentView = readFilter === 'sent'
+  /** Business subtype chrome (priority/job/type columns) — not on Personal, Trash, or global Sent. */
+  const showBusinessChrome = isBusiness && !isSentView
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
@@ -282,27 +286,34 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const filteredMessages = applyRoleFilter(applyClientFilter(messages))
 
   const buildFilters = useCallback(() => {
-    const f: Parameters<typeof api.getMessages>[4] = {}
-
-    if (inboxTab === 'PERSONAL') {
-      f.businessCategory = 'NON_BUSINESS'
-    } else if (inboxTab === 'TRASH') {
-      f.category = 'trash'
-    } else {
-      f.businessCategory = 'BUSINESS'
-      if (inboxTab !== 'ALL_BUSINESS') {
-        f.businessTypeGroup = inboxTab
-      }
-      if (jobFilter) f.jobId = jobFilter
-    }
-
-    if (readFilter === 'sent') f.sentOnly = true
-    if (activeSearch) {
-      f.search = activeSearch
-      if (searchIn === 'sender') f.searchIn = 'sender'
-    }
-    return f
+    return buildInboxMessageListFilters({
+      inboxTab,
+      readFilter,
+      jobFilter,
+      activeSearch,
+      searchIn,
+    })
   }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn])
+
+  const selectDirectionFilter = (key: ReadFilter) => {
+    if (key === 'sent') {
+      // Global Sent: clear Business/Personal category + job so they cannot stale-combine.
+      setReadFilter('sent')
+      setInboxTab('ALL_BUSINESS')
+      setJobFilter('')
+      setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
+      return
+    }
+    setReadFilter(key)
+  }
+
+  const selectInboxTab = (tab: InboxTab) => {
+    // Leaving Sent (or switching category) always clears sentOnly.
+    setInboxTab(tab)
+    setReadFilter('')
+    setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
+    if (tab === 'PERSONAL' || tab === 'TRASH') setJobFilter('')
+  }
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
     if (pageNum === 1) setLoading(true)
@@ -486,13 +497,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-          {isBusiness && m.classification && (
+          {showBusinessChrome && m.classification && (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           )}
-          {isBusiness && m.classification && !isSentEmail(m) && (
+          {showBusinessChrome && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
           )}
-          {isBusiness && (
+          {showBusinessChrome && (
             m.job ? (
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
@@ -509,7 +520,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </div>
 
-        {isBusiness && m.classification?.priority === 'LOW' && (() => {
+        {showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
           if (status === 'sent') return (
             <div style={{ marginTop: 6, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
           )
@@ -533,7 +544,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', minHeight: 28 }}>Biz</button>
             )}
-            {isBusiness && (
+            {showBusinessChrome && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', minHeight: 28 }}>Pers</button>
             )}
@@ -571,7 +582,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           >●</button>
         )}
       </td>
-      {isBusiness && (
+      {showBusinessChrome && (
         <td style={{ padding: '7px 6px', textAlign: 'center', fontSize: 14 }}>
           {m.isImportant && <span title="Important" style={{ color: '#f5a623' }}>{'\u2605'}</span>}
         </td>
@@ -596,7 +607,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </div>
         {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
-        {isBusiness && m.classification?.priority === 'LOW' && (() => {
+        {showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
           const status = autoResponseStatus[m.id] ?? 'idle'
           if (status === 'sent') return (
             <div style={{ marginTop: 4, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
@@ -615,14 +626,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )
         })()}
       </td>
-      {isBusiness && !isTablet && (
+      {showBusinessChrome && !isTablet && (
         <td style={{ padding: '7px 12px' }}>
           {m.classification ? (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
         </td>
       )}
-      {isBusiness && !isTablet && (
+      {showBusinessChrome && !isTablet && (
         <td style={{ padding: '7px 12px', position: 'relative' }} onClick={e => e.stopPropagation()}>
           <span
             onClick={() => !isViewer && setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)}
@@ -668,7 +679,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </td>
       )}
-      {isBusiness && (
+      {showBusinessChrome && (
         <td style={{ padding: '7px 12px' }}>
           {m.classification && !isSentEmail(m)
             ? <PriorityBadge priority={m.classification.priority} />
@@ -683,7 +694,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer' }}>Biz</button>
             )}
-            {isBusiness && (
+            {showBusinessChrome && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer' }}>Pers</button>
             )}
@@ -761,26 +772,28 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         {INBOX_TABS.filter(tab => {
           if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
           return true
-        }).map(tab => (
-          <button key={tab.key} onClick={() => { setInboxTab(tab.key); setReadFilter(''); setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH'])) }}
+        }).map(tab => {
+          const tabActive = !isSentView && inboxTab === tab.key
+          return (
+          <button key={tab.key} onClick={() => selectInboxTab(tab.key)}
             style={{
               padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
-              fontWeight: inboxTab === tab.key ? 600 : 400,
-              color: inboxTab === tab.key ? '#1a1a2e' : '#888',
+              fontWeight: tabActive ? 600 : 400,
+              color: tabActive ? '#1a1a2e' : '#888',
               background: 'none', border: 'none',
-              borderBottom: inboxTab === tab.key ? '2px solid #1a1a2e' : '2px solid transparent',
+              borderBottom: tabActive ? '2px solid #1a1a2e' : '2px solid transparent',
               marginBottom: -2, cursor: 'pointer'
             }}>{tab.label}</button>
-        ))}
+          )
+        })}
       </div>
 
-      {/* Filter chips — hidden on Personal tab */}
-      {isBusiness && (
+      {/* Global direction chips (All/Unread/Read/Sent). Sent omits Business/Personal category. */}
+      {inboxTab !== 'TRASH' && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* All / Unread / Read / Sent */}
           <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
             {([['', 'All'], ['unread', 'Unread'], ['read', 'Read'], ['sent', 'Sent']] as const).map(([key, label]) => (
-              <button key={key || 'all'} onClick={() => setReadFilter(key as ReadFilter)} style={{
+              <button key={key || 'all'} onClick={() => selectDirectionFilter(key as ReadFilter)} style={{
                 padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
                 border: readFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
                 background: readFilter === key ? '#1a1a2e' : '#fff',
@@ -789,47 +802,51 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             ))}
           </div>
 
-          <span style={{ color: '#ddd' }}>|</span>
+          {showBusinessChrome && (
+            <>
+              <span style={{ color: '#ddd' }}>|</span>
 
-          {/* Priority multi-select */}
-          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-            {([['LOW', 'Low'], ['MEDIUM', 'Medium'], ['HIGH', 'High']] as const).map(([key, label]) => {
-              const active = priorityFilter.has(key as PriorityKey)
-              return (
-                <button key={key} onClick={() => setPriorityFilter(prev => {
-                  const next = new Set(prev)
-                  if (next.has(key as PriorityKey)) next.delete(key as PriorityKey)
-                  else next.add(key as PriorityKey)
-                  return next
-                })} style={{
-                  padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-                  border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
-                  background: active ? '#1a1a2e' : '#fff',
-                  color: active ? '#fff' : '#666', cursor: 'pointer'
-                }}>{label}</button>
-              )
-            })}
-          </div>
+              {/* Priority multi-select */}
+              <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                {([['LOW', 'Low'], ['MEDIUM', 'Medium'], ['HIGH', 'High']] as const).map(([key, label]) => {
+                  const active = priorityFilter.has(key as PriorityKey)
+                  return (
+                    <button key={key} onClick={() => setPriorityFilter(prev => {
+                      const next = new Set(prev)
+                      if (next.has(key as PriorityKey)) next.delete(key as PriorityKey)
+                      else next.add(key as PriorityKey)
+                      return next
+                    })} style={{
+                      padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+                      border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+                      background: active ? '#1a1a2e' : '#fff',
+                      color: active ? '#fff' : '#666', cursor: 'pointer'
+                    }}>{label}</button>
+                  )
+                })}
+              </div>
 
-          <span style={{ color: '#ddd' }}>|</span>
+              <span style={{ color: '#ddd' }}>|</span>
 
-          {/* Job filter */}
-          <select
-            value={jobFilter}
-            onChange={e => setJobFilter(e.target.value)}
-            style={{
-              padding: '3px 8px', fontSize: 11, borderRadius: 6,
-              border: '1px solid #ddd', background: '#fff', color: '#444', cursor: 'pointer'
-            }}
-          >
-            <option value="">All Jobs</option>
-            <option value="unassigned">Unassigned</option>
-            {jobs.map(j => (
-              <option key={j.id} value={j.id}>
-                {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
-              </option>
-            ))}
-          </select>
+              {/* Job filter */}
+              <select
+                value={jobFilter}
+                onChange={e => setJobFilter(e.target.value)}
+                style={{
+                  padding: '3px 8px', fontSize: 11, borderRadius: 6,
+                  border: '1px solid #ddd', background: '#fff', color: '#444', cursor: 'pointer'
+                }}
+              >
+                <option value="">All Jobs</option>
+                <option value="unassigned">Unassigned</option>
+                {jobs.map(j => (
+                  <option key={j.id} value={j.id}>
+                    {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
       )}
 
@@ -839,8 +856,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           <p style={{ color: '#999', padding: 4, fontSize: 13 }}>Loading...</p>
         ) : filteredMessages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
-            <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
-            <h3>{activeSearch ? 'No results' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
+            <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : isSentView ? '\uD83D\uDCE4' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
+            <h3>{activeSearch ? 'No results' : isSentView ? 'No sent emails' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
             <p>{activeSearch
               ? (searchIn === 'sender'
                 ? `No senders match "${activeSearch}"`
@@ -859,12 +876,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <thead>
                 <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0, zIndex: 1 }}>
                   <th style={{ padding: '8px 4px', width: 28 }}></th>
-                  {isBusiness && <th style={{ padding: '8px 6px', width: 28 }}></th>}
+                  {showBusinessChrome && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
-                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
-                  {isBusiness && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
-                  {isBusiness && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
+                  {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
+                  {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
+                  {showBusinessChrome && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
                   <th style={{ padding: '8px 6px', width: 64 }}></th>
                 </tr>

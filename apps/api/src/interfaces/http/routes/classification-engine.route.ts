@@ -5,7 +5,9 @@ import {
   normalizeName,
   normalizeEmail,
   extractDomain,
-  computeSimilarity
+  computeSimilarity,
+  rankJobMatchCandidates,
+  JOB_MATCHER_VERSION
 } from "@forgeops/shared";
 
 import { getSessionFromRequest } from "../authentication.js";
@@ -183,8 +185,12 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         select: { id: true, name: true, normalizedName: true, domain: true, primaryEmail: true }
       }),
       app.services.prisma.job.findMany({
-        where: { workspaceId },
-        select: { id: true, name: true, normalizedName: true, jobNumber: true, customerId: true }
+        where: {
+          workspaceId,
+          archivedAt: null,
+          status: { notIn: ["ARCHIVED", "CANCELLED"] },
+        },
+        select: { id: true, name: true, normalizedName: true, jobNumber: true, customerId: true, externalRef: true }
       }),
       app.services.prisma.businessType.findMany({
         where: { OR: [{ workspaceId: null }, { workspaceId }], active: true },
@@ -291,42 +297,50 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
       }
     }
 
-    const ignoredFolderAliases = await app.services.prisma.discoveredFolder.findMany({
-      where: { workspaceId, status: { in: ["IGNORED", "ARCHIVED"] }, matchedJobId: { not: null } },
-      select: { normalizedFolderName: true, matchedJobId: true }
+    // Canonical job candidate scoring (JobMatcherService / rankJobMatchCandidates).
+    const jobAliasRecords = aliases
+      .filter((a) => a.entityType === "JOB" && a.jobId)
+      .map((a) => ({
+        jobId: a.jobId!,
+        alias: a.normalizedAlias,
+        normalizedAlias: a.normalizedAlias,
+      }));
+
+    const rankedJobs = rankJobMatchCandidates({
+      subject: body.subject,
+      cleanBody: body.cleanBody,
+      bodyText: body.cleanBody,
+      senderDomain: senderDomain || null,
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        jobNumber: j.jobNumber,
+        name: j.name,
+        normalizedName: j.normalizedName,
+        customerId: j.customerId,
+        externalRef: j.externalRef,
+      })),
+      aliases: jobAliasRecords,
+      limit: 10,
     });
-    const ignoredAliasKeys = new Set(ignoredFolderAliases.map(f => `${f.normalizedFolderName}:${f.matchedJobId}`));
 
-    for (const alias of aliases) {
-      if (alias.entityType !== "JOB" || !alias.jobId) continue;
-      if (jobCandidates.some(c => c.id === alias.jobId)) continue;
-      if (ignoredAliasKeys.has(`${alias.normalizedAlias}:${alias.jobId}`)) continue;
-
-      const job = jobs.find(j => j.id === alias.jobId);
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
+    for (const ranked of rankedJobs) {
+      if (jobCandidates.some((c) => c.id === ranked.jobId)) {
+        const existing = jobCandidates.find((c) => c.id === ranked.jobId)!;
+        existing.score = Math.max(existing.score, ranked.score);
+        existing.matchedOn.push(...ranked.evidence.map((e) => e.type));
+        existing.evidence.push(...ranked.evidence.map((e) => `${e.type}: ${e.value}`));
+        continue;
+      }
+      const job = jobById.get(ranked.jobId);
       if (!job) continue;
-
-      if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {
-        jobCandidates.push({ id: job.id, name: job.name, score: 1.0, matchedOn: ["jobNumber"], evidence: [`exact job# ${job.jobNumber} in text`] });
-      } else if (searchText.includes(alias.normalizedAlias)) {
-        jobCandidates.push({ id: job.id, name: job.name, score: 0.9, matchedOn: ["alias"], evidence: [`alias "${alias.normalizedAlias}" in text`] });
-      } else {
-        const sim = computeSimilarity(alias.normalizedAlias, normalizeName(searchText.slice(0, 200)));
-        if (sim >= 0.5) {
-          jobCandidates.push({ id: job.id, name: job.name, score: sim * 0.7, matchedOn: ["aliasName"], evidence: [`alias similarity ${Math.round(sim * 100)}%`] });
-        }
-      }
-    }
-
-    for (const job of jobs) {
-      if (jobCandidates.some(c => c.id === job.id)) continue;
-      if (job.jobNumber && searchText.includes(job.jobNumber.toLowerCase())) {
-        jobCandidates.push({ id: job.id, name: job.name, score: 0.95, matchedOn: ["jobNumber"], evidence: [`job# ${job.jobNumber} in text`] });
-      } else {
-        const sim = computeSimilarity(normalizeName(job.name), normalizeName(searchText.slice(0, 200)));
-        if (sim >= 0.5) {
-          jobCandidates.push({ id: job.id, name: job.name, score: sim * 0.7, matchedOn: ["name"], evidence: [`project name similarity ${Math.round(sim * 100)}%`] });
-        }
-      }
+      jobCandidates.push({
+        id: job.id,
+        name: job.name,
+        score: ranked.score,
+        matchedOn: ranked.evidence.map((e) => e.type),
+        evidence: ranked.evidence.map((e) => `${e.type}: ${e.value}`),
+      });
     }
 
     const customerCandidates: typeof jobCandidates = [];
@@ -345,6 +359,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     return reply.send({
       workspaceId,
       knownSender,
+      matcherVersion: JOB_MATCHER_VERSION,
       customerCandidates: customerCandidates.slice(0, 5),
       vendorCandidates: vendorCandidates.slice(0, 5),
       jobCandidates: jobCandidates.slice(0, 5),

@@ -669,7 +669,8 @@ const buildReviewMessageConditions = (input: {
   ]
 });
 
-const buildMessagesWhere = (input: {
+/** Exported for unit tests — Sent + mailboxCategory filters compose independently. */
+export const buildMessagesWhere = (input: {
   workspaceId: string;
   inboxConnectionId: string;
   businessCategory?: (typeof businessCategoryValues)[number];
