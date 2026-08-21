@@ -54,11 +54,11 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
 
   const loadReclassified = () => {
     setLoading(true)
-    api.getMessages(workspaceId, connectionId, reclassifiedPage, 25, { reclassifiedOnly: true })
+    api.getMessages(workspaceId, connectionId, reclassifiedPage, 25, { reclassifiedOnly: true, includeTotal: true })
       .then(r => {
         setReclassifiedMessages(r.messages)
-        setReclassifiedTotalPages(r.pagination.totalPages)
-        setReclassifiedTotal(r.pagination.totalCount)
+        setReclassifiedTotalPages(r.pagination.totalPages ?? 0)
+        setReclassifiedTotal(r.pagination.totalCount ?? 0)
       })
       .finally(() => setLoading(false))
   }

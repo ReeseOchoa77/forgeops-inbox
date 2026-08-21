@@ -119,6 +119,8 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   sentOnly: booleanQueryWithDefaultFalseSchema,
   unreadOnly: booleanQueryWithDefaultFalseSchema,
+  /** When true, also run COUNT(*) and return totalCount/totalPages (not on default Inbox path). */
+  includeTotal: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional(),
   /** Restrict free-text search to sender name/email when "sender". Default: all fields. */
   searchIn: z.enum(["all", "sender"]).optional().default("all")
@@ -351,8 +353,10 @@ const messagesListResponseSchema = z.object({
   pagination: z.object({
     page: z.number().int().positive(),
     pageSize: z.number().int().positive(),
-    totalCount: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative()
+    /** Exact total; null when includeTotal was not requested (default Inbox path). */
+    totalCount: z.number().int().nonnegative().nullable(),
+    totalPages: z.number().int().nonnegative().nullable(),
+    hasMore: z.boolean()
   }),
   messages: z.array(messageSummarySchema)
 });
@@ -611,6 +615,101 @@ const serializeMessageSummary = (message: {
     jobAssignmentIsManual: message.jobAssignmentIsManual ?? false,
     jobMatchConfidence: message.jobMatchConfidence ?? null
   });
+
+/**
+ * Inbox list row serializer — narrow classification, no taskCandidate.
+ * Satisfies messageSummarySchema with stubs for unused classification fields.
+ */
+const serializeInboxListMessage = (message: {
+  id: string;
+  gmailMessageId: string;
+  gmailThreadId: string;
+  subject: string | null;
+  snippet: string | null;
+  senderName: string | null;
+  senderEmail: string;
+  receivedAt: Date | null;
+  sentAt: Date;
+  priority: (typeof priorityValues)[number] | null;
+  itemStatus: (typeof itemStatusValues)[number];
+  isRead: boolean;
+  isImportant: boolean;
+  isSpam: boolean;
+  isTrashed: boolean;
+  isPinned?: boolean;
+  hasAttachments?: boolean;
+  mailboxCategory: "BUSINESS" | "PERSONAL" | "SPAM" | "TRASH";
+  classifications: Array<{
+    id: string;
+    emailType: EmailType;
+    priority: (typeof priorityValues)[number] | null;
+    businessTypeKey: string | null;
+  }>;
+  job?: {
+    id: string;
+    jobNumber: string | null;
+    name: string;
+    status: string;
+  } | null;
+}) => {
+  const c = message.classifications[0] ?? null;
+  return messageSummarySchema.parse({
+    id: message.id,
+    providerMessageId: message.gmailMessageId,
+    providerThreadId: message.gmailThreadId,
+    subject: message.subject,
+    snippet: message.snippet,
+    senderName: message.senderName,
+    senderEmail: message.senderEmail,
+    receivedAt: serializeDate(message.receivedAt),
+    sentAt: message.sentAt.toISOString(),
+    priority: message.priority,
+    itemStatus: message.itemStatus,
+    isRead: message.isRead,
+    isImportant: message.isImportant,
+    isSpam: message.isSpam,
+    isTrashed: message.isTrashed,
+    isPinned: message.isPinned ?? false,
+    hasAttachments: message.hasAttachments ?? false,
+    mailboxCategory: message.mailboxCategory,
+    previousCategory: null,
+    classification: c
+      ? {
+          id: c.id,
+          businessCategory: null,
+          emailType: c.emailType,
+          priority: c.priority,
+          itemStatus: null,
+          summary: null,
+          confidence: 0,
+          requiresReview: false,
+          reviewQueue: null,
+          reviewStatus: "NOT_REQUIRED",
+          containsActionRequest: false,
+          businessTypeKey: c.businessTypeKey,
+          businessTypeConfidence: null,
+          deadline: null
+        }
+      : null,
+    taskCandidate: null,
+    job: serializeJobSummary(message.job),
+    jobAssignmentSource: null,
+    jobAssignmentIsManual: false,
+    jobMatchConfidence: null
+  });
+};
+
+/** take = pageSize + 1 → hasMore without COUNT(*). */
+export function paginateTakePlusOne<T>(
+  rows: T[],
+  pageSize: number
+): { items: T[]; hasMore: boolean } {
+  const hasMore = rows.length > pageSize;
+  return {
+    items: hasMore ? rows.slice(0, pageSize) : rows,
+    hasMore
+  };
+}
 
 const getWorkspaceThresholds = async (
   app: FastifyInstance,
@@ -1163,13 +1262,19 @@ export const registerInboxReadRoutes = async (
   app.get(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/messages",
     async (request, reply) => {
+      const t0 = performance.now();
+      const timings: Record<string, number> = {};
+
       const params = workspaceConnectionParamsSchema.parse(request.params);
       const query = messagesListQuerySchema.parse(request.query);
+
+      const tSession0 = performance.now();
       const { session, membership } = await loadWorkspaceSession({
         app,
         request,
         workspaceId: params.workspaceId
       });
+      timings.sessionMs = Math.round(performance.now() - tSession0);
 
       if (!session) {
         return sendAuthenticationRequired(reply);
@@ -1179,19 +1284,26 @@ export const registerInboxReadRoutes = async (
         return sendWorkspaceAccessDenied(reply);
       }
 
-      const connection = await loadWorkspaceConnection({
-        app,
-        workspaceId: params.workspaceId,
-        inboxConnectionId: params.id
+      // List path: no _count.messages/threads (those belong on connection detail/list).
+      const tConn0 = performance.now();
+      const connection = await app.services.prisma.inboxConnection.findFirst({
+        where: {
+          id: params.id,
+          workspaceId: params.workspaceId
+        },
+        select: {
+          id: true,
+          email: true,
+          status: true
+        }
       });
+      timings.connectionMs = Math.round(performance.now() - tConn0);
 
       if (!connection) {
         return reply.code(404).send({
           message: "Inbox connection not found"
         });
       }
-
-      const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
 
       // Enforce personal email visibility: VIEWER/MEMBER can only see personal emails from their own inbox
       const isPersonalRequest = query.businessCategory === "NON_BUSINESS";
@@ -1202,7 +1314,7 @@ export const registerInboxReadRoutes = async (
           select: { email: true }
         });
         const userEmail = user?.email?.toLowerCase() ?? "";
-        if (connection && connection.email.toLowerCase() !== userEmail) {
+        if (connection.email.toLowerCase() !== userEmail) {
           return reply.send(
             messagesListResponseSchema.parse({
               workspaceId: params.workspaceId,
@@ -1213,13 +1325,33 @@ export const registerInboxReadRoutes = async (
                 lowConfidenceOnly: query.lowConfidenceOnly,
                 hasTaskCandidate: query.hasTaskCandidate ?? null
               },
-              pagination: { page: 1, pageSize: query.pageSize, totalCount: 0, totalPages: 0 },
+              pagination: {
+                page: 1,
+                pageSize: query.pageSize,
+                totalCount: 0,
+                totalPages: 0,
+                hasMore: false
+              },
               messages: []
             })
           );
         }
       }
 
+      const needsThresholds = query.reviewOnly || query.lowConfidenceOnly;
+      let thresholds = {
+        classificationThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
+        taskThreshold: DEFAULT_CONFIDENCE_THRESHOLD
+      };
+      if (needsThresholds) {
+        const tThresh0 = performance.now();
+        thresholds = await getWorkspaceThresholds(app, params.workspaceId);
+        timings.thresholdsMs = Math.round(performance.now() - tThresh0);
+      } else {
+        timings.thresholdsMs = 0;
+      }
+
+      const tMonitored0 = performance.now();
       const monitored = await app.services.prisma.inboxConnection.findMany({
         where: {
           workspaceId: params.workspaceId,
@@ -1227,6 +1359,7 @@ export const registerInboxReadRoutes = async (
         },
         select: { email: true }
       });
+      timings.monitoredMs = Math.round(performance.now() - tMonitored0);
       const monitoredInboxEmails = monitored.map((c) => c.email);
 
       const where = buildMessagesWhere({
@@ -1258,97 +1391,124 @@ export const registerInboxReadRoutes = async (
       });
       const skip = (query.page - 1) * query.pageSize;
 
-      const [totalCount, messages] = await Promise.all([
-        app.services.prisma.emailMessage.count({
-          where
-        }),
-        app.services.prisma.emailMessage.findMany({
-          where,
-          orderBy: [
-            { isPinned: "desc" },
-            { pinnedAt: { sort: "desc", nulls: "last" } },
-            { receivedAt: "desc" },
-            { sentAt: "desc" },
-            { createdAt: "desc" }
-          ],
-          skip,
-          take: query.pageSize,
-          select: {
-            id: true,
-            gmailMessageId: true,
-            gmailThreadId: true,
-            subject: true,
-            snippet: true,
-            senderName: true,
-            senderEmail: true,
-            receivedAt: true,
-            sentAt: true,
-            priority: true,
-            itemStatus: true,
-            isRead: true,
-            isImportant: true,
-            isSpam: true,
-            isTrashed: true,
-            isPinned: true,
-            mailboxCategory: true,
-            previousCategory: true,
-            jobAssignmentSource: true,
-            jobAssignmentIsManual: true,
-            jobMatchConfidence: true,
-            job: {
-              select: {
-                id: true,
-                jobNumber: true,
-                name: true,
-                status: true
-              }
+      const tFind0 = performance.now();
+      const rawRows = await app.services.prisma.emailMessage.findMany({
+        where,
+        orderBy: [
+          { isPinned: "desc" },
+          { pinnedAt: { sort: "desc", nulls: "last" } },
+          { receivedAt: "desc" },
+          { sentAt: "desc" },
+          { createdAt: "desc" }
+        ],
+        skip,
+        take: query.pageSize + 1,
+        select: {
+          id: true,
+          gmailMessageId: true,
+          gmailThreadId: true,
+          subject: true,
+          snippet: true,
+          senderName: true,
+          senderEmail: true,
+          receivedAt: true,
+          sentAt: true,
+          priority: true,
+          itemStatus: true,
+          isRead: true,
+          isImportant: true,
+          isSpam: true,
+          isTrashed: true,
+          isPinned: true,
+          hasAttachments: true,
+          mailboxCategory: true,
+          job: {
+            select: {
+              id: true,
+              jobNumber: true,
+              name: true,
+              status: true
+            }
+          },
+          classifications: {
+            orderBy: {
+              createdAt: "desc"
             },
-            classifications: {
-              orderBy: {
-                createdAt: "desc"
-              },
-              take: 1,
-              select: {
-                id: true,
-                businessCategory: true,
-                emailType: true,
-                priority: true,
-                itemStatus: true,
-                summary: true,
-                confidence: true,
-                requiresReview: true,
-                reviewQueue: true,
-                reviewStatus: true,
-                containsActionRequest: true,
-                businessTypeKey: true,
-                businessTypeConfidence: true,
-                deadline: true
-              }
-            },
-            tasks: {
-              orderBy: {
-                createdAt: "desc"
-              },
-              take: 1,
-              select: {
-                id: true,
-                title: true,
-                summary: true,
-                assigneeGuess: true,
-                dueAt: true,
-                priority: true,
-                status: true,
-                confidence: true,
-                requiresReview: true,
-                reviewQueue: true,
-                reviewStatus: true,
-                createdAt: true,
-                updatedAt: true
-              }
+            take: 1,
+            select: {
+              id: true,
+              emailType: true,
+              priority: true,
+              businessTypeKey: true
             }
           }
-        })
-      ]);
+        }
+      });
+      timings.findManyMs = Math.round(performance.now() - tFind0);
+
+      const { items: pageRows, hasMore } = paginateTakePlusOne(
+        rawRows,
+        query.pageSize
+      );
+
+      let totalCount: number | null = null;
+      let totalPages: number | null = null;
+      if (query.includeTotal) {
+        const tCount0 = performance.now();
+        totalCount = await app.services.prisma.emailMessage.count({ where });
+        timings.countMs = Math.round(performance.now() - tCount0);
+        totalPages =
+          totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize);
+      } else {
+        timings.countMs = 0;
+      }
+
+      const tSer0 = performance.now();
+      const messages = pageRows.map(serializeInboxListMessage);
+      const payload = messagesListResponseSchema.parse({
+        workspaceId: params.workspaceId,
+        inboxConnectionId: params.id,
+        filters: {
+          classificationType: query.classificationType ?? null,
+          reviewOnly: query.reviewOnly,
+          lowConfidenceOnly: query.lowConfidenceOnly,
+          hasTaskCandidate: query.hasTaskCandidate ?? null
+        },
+        pagination: {
+          page: query.page,
+          pageSize: query.pageSize,
+          totalCount,
+          totalPages,
+          hasMore
+        },
+        messages
+      });
+      timings.serializationMs = Math.round(performance.now() - tSer0);
+
+      const payloadBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+      const totalMs = Math.round(performance.now() - t0);
+
+      request.log.info({
+        event: "inbox-list-performance",
+        workspaceId: params.workspaceId,
+        inboxConnectionId: params.id,
+        totalMs,
+        prismaMs:
+          (timings.sessionMs ?? 0) +
+          (timings.connectionMs ?? 0) +
+          (timings.thresholdsMs ?? 0) +
+          (timings.monitoredMs ?? 0) +
+          (timings.findManyMs ?? 0) +
+          (timings.countMs ?? 0),
+        serializationMs: timings.serializationMs,
+        resultCount: messages.length,
+        pageSize: query.pageSize,
+        page: query.page,
+        payloadBytes,
+        hasMore,
+        includeTotal: query.includeTotal,
+        stages: timings
+      });
 
       app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
@@ -1369,25 +1529,7 @@ export const registerInboxReadRoutes = async (
         request
       }).catch(() => {});
 
-      return reply.send(
-        messagesListResponseSchema.parse({
-          workspaceId: params.workspaceId,
-          inboxConnectionId: params.id,
-          filters: {
-            classificationType: query.classificationType ?? null,
-            reviewOnly: query.reviewOnly,
-            lowConfidenceOnly: query.lowConfidenceOnly,
-            hasTaskCandidate: query.hasTaskCandidate ?? null
-          },
-          pagination: {
-            page: query.page,
-            pageSize: query.pageSize,
-            totalCount,
-            totalPages: totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize)
-          },
-          messages: messages.map(serializeMessageSummary)
-        })
-      );
+      return reply.send(payload);
     }
   );
 

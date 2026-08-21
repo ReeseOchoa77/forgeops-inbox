@@ -317,6 +317,7 @@ export const api = {
     reclassifiedOnly?: boolean;
     sentOnly?: boolean;
     unreadOnly?: boolean;
+    includeTotal?: boolean;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
@@ -331,7 +332,17 @@ export const api = {
     if (filters?.reclassifiedOnly) params.set('reclassifiedOnly', 'true');
     if (filters?.sentOnly) params.set('sentOnly', 'true');
     if (filters?.unreadOnly) params.set('unreadOnly', 'true');
-    return request<{ messages: MessageSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
+    if (filters?.includeTotal) params.set('includeTotal', 'true');
+    return request<{
+      messages: MessageSummary[];
+      pagination: {
+        page: number;
+        pageSize: number;
+        totalCount: number | null;
+        totalPages: number | null;
+        hasMore: boolean;
+      };
+    }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
     );
   },

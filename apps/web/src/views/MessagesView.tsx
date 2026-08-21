@@ -179,7 +179,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const isSentEmail = (m: MessageSummary) => monitoredEmails.has(m.senderEmail.toLowerCase())
   const [messages, setMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
-  const [totalCount, setTotalCount] = useState(0)
+  const [totalCount, setTotalCount] = useState<number | null>(null)
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -259,9 +259,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const applyClientFilter = useCallback((msgs: MessageSummary[]): MessageSummary[] => {
     let result = msgs
-    // Sent is applied server-side; skip read/unread client filter when Sent is active
-    if (readFilter === 'unread') result = result.filter(m => !m.isRead)
-    else if (readFilter === 'read') result = result.filter(m => m.isRead)
+    // Unread is server-side (unreadOnly). Read remains client-side (no readOnly API yet).
+    if (readFilter === 'read') result = result.filter(m => m.isRead)
     const allPriorities = priorityFilter.size === 3
     if (priorityFilter.size > 0 && !allPriorities) {
       result = result.filter(m => {
@@ -326,7 +325,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         setMessages(r.messages)
       }
       setTotalCount(r.pagination.totalCount)
-      setHasMore(pageNum < r.pagination.totalPages)
+      setHasMore(r.pagination.hasMore)
       setPage(pageNum)
     } finally {
       setLoading(false)
@@ -345,6 +344,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setMessages([])
     setPage(1)
     setHasMore(true)
+    setTotalCount(null)
     setSearch('')
     setActiveSearch('')
     setSearchIn('all')
@@ -356,6 +356,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [workspaceId, connectionId])
 
   const sentOnly = readFilter === 'sent'
+  const unreadOnly = readFilter === 'unread'
 
   useEffect(() => {
     if (connectionResetRef.current) {
@@ -366,8 +367,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setMessages([])
     setPage(1)
     setHasMore(true)
+    setTotalCount(null)
     loadPage(1, filters, false)
-  }, [inboxTab, activeSearch, jobFilter, sentOnly, searchIn])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -388,17 +390,27 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       if (isTrashed) await api.untrashMessage(workspaceId, connectionId, messageId)
       else await api.trashMessage(workspaceId, connectionId, messageId)
       setMessages(prev => prev.filter(m => m.id !== messageId))
-      setTotalCount(prev => prev - 1)
+      setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch { /* */ }
   }
 
   const handleDeleteAllPersonal = async () => {
-    if (totalCount === 0 && filteredMessages.length === 0) return
-    const count = Math.max(totalCount, filteredMessages.length)
-    const label = activeSearch
-      ? `${count} personal email${count !== 1 ? 's' : ''} matching "${activeSearch}"`
-      : `${count} personal email${count !== 1 ? 's' : ''}`
-    if (!confirm(`Move ${label} to trash?`)) return
+    if (filteredMessages.length === 0 && !hasMore) return
+    let countLabel = 'matching personal emails'
+    try {
+      const countRes = await api.getMessages(workspaceId, connectionId, 1, 1, {
+        ...buildFilters(),
+        includeTotal: true,
+      })
+      if (countRes.pagination.totalCount != null) {
+        const n = countRes.pagination.totalCount
+        countLabel = `${n} personal email${n !== 1 ? 's' : ''}`
+      }
+    } catch {
+      /* generic label */
+    }
+    if (activeSearch) countLabel += ` matching "${activeSearch}"`
+    if (!confirm(`Move ${countLabel} to trash?`)) return
     setDeletingAllPersonal(true)
     try {
       await api.trashPersonalMessages(workspaceId, connectionId, {
@@ -416,7 +428,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     try {
       await api.reclassifyMessage(workspaceId, messageId, { mailboxCategory: category })
       setMessages(prev => prev.filter(m => m.id !== messageId))
-      setTotalCount(prev => prev - 1)
+      setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch { /* */ }
   }
 
@@ -719,7 +731,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <h2 style={{ fontSize: 17, margin: 0 }}>Inbox</h2>
-          <span style={{ fontSize: 12, color: '#999' }}>{totalCount} messages</span>
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {totalCount != null
+              ? `${totalCount} messages`
+              : hasMore
+                ? `${filteredMessages.length}+ loaded`
+                : `${filteredMessages.length} loaded`}
+          </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {inboxTab === 'PERSONAL' && !isViewer && filteredMessages.length > 0 && (
@@ -853,7 +871,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       {/* Message list */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {loading ? (
-          <p style={{ color: '#999', padding: 4, fontSize: 13 }}>Loading...</p>
+          <div className="inbox-skeleton" aria-busy="true" aria-label="Loading inbox">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="inbox-skeleton-row">
+                <div className="inbox-skeleton-bar" style={{ width: '18%' }} />
+                <div className="inbox-skeleton-bar" style={{ width: '42%' }} />
+                <div className="inbox-skeleton-bar" style={{ width: '12%' }} />
+                <div className="inbox-skeleton-bar" style={{ width: '14%' }} />
+              </div>
+            ))}
+          </div>
         ) : filteredMessages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
             <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : isSentView ? '\uD83D\uDCE4' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>

@@ -1,6 +1,7 @@
 /**
  * Builds query params for GET .../messages.
  * Sent is a global direction filter: sentOnly=true and no businessCategory.
+ * Unread uses server-side unreadOnly (not client-only filtering).
  */
 
 export type InboxListTab =
@@ -22,6 +23,7 @@ export type InboxMessageListFilters = {
   jobId?: string;
   category?: "trash";
   sentOnly?: true;
+  unreadOnly?: true;
   search?: string;
   searchIn?: "all" | "sender";
 };
@@ -55,6 +57,11 @@ export function buildInboxMessageListFilters(input: {
       f.businessTypeGroup = input.inboxTab;
     }
     if (input.jobFilter) f.jobId = input.jobFilter;
+  }
+
+  // Server-side unread (API has unreadOnly; no readOnly yet — Read stays client-side).
+  if (input.readFilter === "unread") {
+    f.unreadOnly = true;
   }
 
   if (input.activeSearch) {

@@ -75,13 +75,14 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
     setLoading(true)
     Promise.all([
       api.getTasks(workspaceId, connectionId, 1, 100).catch(() => ({ tasks: [], pagination: { totalCount: 0, totalPages: 0 } })),
-      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 6 } })),
-      api.getMessages(workspaceId, connectionId, 1, 1, { businessCategory: 'BUSINESS', unreadOnly: true }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 1 } })),
+      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 6, hasMore: false } })),
+      api.getMessages(workspaceId, connectionId, 1, 1, { businessCategory: 'BUSINESS', unreadOnly: true, includeTotal: true }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 1, hasMore: false } })),
       api.getConnections(workspaceId).catch(() => ({ connections: [] })),
     ]).then(([t, m, unread, c]) => {
       setTasks(t.tasks)
       setRecentEmails(m.messages)
-      setUnreadBusinessCount(unread.pagination.totalCount)
+      const unreadTotal = unread.pagination.totalCount
+      setUnreadBusinessCount(typeof unreadTotal === 'number' ? unreadTotal : 0)
       setMonitoredEmails(new Set(c.connections.map(conn => conn.email.toLowerCase())))
     }).finally(() => setLoading(false))
   }, [workspaceId, connectionId])

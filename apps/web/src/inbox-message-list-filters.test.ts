@@ -53,13 +53,28 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       }).sentOnly
     ).toBeUndefined();
 
-    // Leaving Sent for Personal clears sentOnly
+    // Leaving Sent for Personal clears sentOnly; unread is server-side
     expect(
       buildInboxMessageListFilters({
         inboxTab: "PERSONAL",
         readFilter: "unread",
-      }).sentOnly
-    ).toBeUndefined();
+      })
+    ).toEqual({
+      businessCategory: "NON_BUSINESS",
+      unreadOnly: true,
+    });
+  });
+
+  it("Unread on Business tab sets unreadOnly with BUSINESS category", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "unread",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      unreadOnly: true,
+    });
   });
 
   it("Business subtype + job only apply when not Sent", () => {
