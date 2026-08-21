@@ -840,8 +840,9 @@ export const registerInboxConnectionRoutes = async (
   });
 
   /**
-   * Authorize an existing tokenless Outlook InboxConnection (e.g. n8n-created)
-   * by running the standard Microsoft OAuth flow against that exact mailbox.
+   * Authorize / upgrade an existing Outlook InboxConnection via Microsoft OAuth.
+   * Used for tokenless (n8n) mailboxes and CONNECTED mailboxes that need
+   * incremental scopes such as Mail.Send — updates the SAME connection id.
    * Does not replace reconnect — REQUIRES_REAUTH must use /reconnect.
    */
   app.post(

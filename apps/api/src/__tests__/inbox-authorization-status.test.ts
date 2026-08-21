@@ -121,6 +121,18 @@ describe("buildAuthorizationFields capabilities", () => {
     });
   });
 
+  it("Mail.Send absence does not force REAUTHORIZATION_REQUIRED", () => {
+    const fields = buildAuthorizationFields({
+      provider: "OUTLOOK",
+      status: "ACTIVE",
+      hasRefreshToken: true,
+      grantedScopes: ["Mail.Read", "User.Read", "offline_access"],
+    });
+    expect(fields.authorizationStatus).toBe("CONNECTED");
+    expect(fields.capabilities.attachmentIngestion).toBe(true);
+    expect(fields.capabilities.emailSending).toBe(false);
+  });
+
   it("CONNECTED with Mail.Send enables emailSending", () => {
     expect(
       buildAuthorizationFields({
@@ -137,9 +149,15 @@ describe("buildAuthorizationFields capabilities", () => {
 });
 
 describe("validateAuthorizeExistingTarget", () => {
-  it("allows Outlook ACTIVE", () => {
+  it("allows Outlook ACTIVE (tokenless or CONNECTED needing Mail.Send)", () => {
     expect(
       validateAuthorizeExistingTarget({ provider: "OUTLOOK", status: "ACTIVE" })
+    ).toEqual({ ok: true });
+  });
+
+  it("allows Outlook PAUSED for incremental authorize (not reconnect)", () => {
+    expect(
+      validateAuthorizeExistingTarget({ provider: "OUTLOOK", status: "PAUSED" })
     ).toEqual({ ok: true });
   });
 

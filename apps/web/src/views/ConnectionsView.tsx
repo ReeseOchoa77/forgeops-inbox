@@ -1,5 +1,9 @@
 import { useState } from 'react'
-import { api, type AuthorizationStatus, type ConnectionSummary } from '../api'
+import { api, type ConnectionSummary } from '../api'
+import {
+  mailboxAuthorizationLabel,
+  needsSendingAuthorization,
+} from '../mailbox-authorization-display'
 
 /** Full-page navigation to an external OAuth authorize URL. */
 function redirectToOAuth(url: string): void {
@@ -29,14 +33,6 @@ function statusLabel(status: string): string {
     case 'ERROR': return 'Error'
     case 'PAUSED': return 'Paused'
     default: return status
-  }
-}
-
-function authorizationLabel(status: AuthorizationStatus): string {
-  switch (status) {
-    case 'REQUIRED': return 'Additional authorization required'
-    case 'CONNECTED': return 'Fully connected'
-    case 'REAUTHORIZATION_REQUIRED': return 'Reauthorization required'
   }
 }
 
@@ -123,7 +119,11 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
                 </div>
                 <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>
                   <span className={`status-dot ${statusDotClass(c.status)}`} />{statusLabel(c.status)}
-                  <span style={{ color: '#ddd' }}> · </span>{authorizationLabel(c.authorizationStatus)}
+                  <span style={{ color: '#ddd' }}> · </span>
+                  {mailboxAuthorizationLabel({
+                    authorizationStatus: c.authorizationStatus,
+                    emailSending: c.capabilities.emailSending,
+                  })}
                   <span style={{ color: '#ddd' }}> · </span>{c.counts.messages} msgs
                   <span style={{ color: '#ddd' }}> · </span>Synced {formatDate(c.lastSyncedAt)}
                 </div>
@@ -137,6 +137,20 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
                   onClick={() => handleAuthorize(c.id)}
                 >
                   {actionLoading ? 'Starting…' : 'Authorize Outlook'}
+                </button>
+              )}
+              {needsSendingAuthorization({
+                provider: c.provider,
+                authorizationStatus: c.authorizationStatus,
+                emailSending: c.capabilities.emailSending,
+              }) && (
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={actionLoading}
+                  onClick={() => handleAuthorize(c.id)}
+                  title="Grant Mail.Send on this Outlook mailbox"
+                >
+                  {actionLoading ? 'Starting…' : 'Authorize sending'}
                 </button>
               )}
               {c.authorizationStatus === 'REAUTHORIZATION_REQUIRED' && (

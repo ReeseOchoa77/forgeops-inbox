@@ -100,7 +100,8 @@ export function wrongMailboxAuthorizationError(expectedEmail: string): string {
 
 /**
  * Validate that an InboxConnection can be targeted by the authorize-existing flow.
- * Reconnect remains the path for REQUIRES_REAUTH.
+ * Allowed for tokenless (REQUIRED) and CONNECTED Outlook mailboxes that need
+ * incremental scopes (e.g. Mail.Send). Reconnect remains the path for REQUIRES_REAUTH.
  */
 export function validateAuthorizeExistingTarget(connection: {
   provider: InboxProvider | string;

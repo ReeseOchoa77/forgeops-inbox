@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { api, type ApprovedAccessEntry, type AuthorizationStatus, type ConnectionSummary } from '../api'
+import { api, type ApprovedAccessEntry, type ConnectionSummary } from '../api'
+import {
+  mailboxAuthorizationLabel,
+  mailboxAuthorizationTone,
+  needsSendingAuthorization,
+} from '../mailbox-authorization-display'
 import { FoldersView } from './FoldersView'
 
 /** Full-page navigation to an external OAuth authorize URL. */
@@ -18,28 +23,6 @@ function formatDate(iso: string | null): string {
   if (!iso) return '—'
   try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
   catch { return iso ?? '—' }
-}
-
-function authorizationLabel(status: AuthorizationStatus): string {
-  switch (status) {
-    case 'REQUIRED':
-      return 'Additional authorization required'
-    case 'CONNECTED':
-      return 'Fully connected'
-    case 'REAUTHORIZATION_REQUIRED':
-      return 'Reauthorization required'
-  }
-}
-
-function authorizationTone(status: AuthorizationStatus): { bg: string; color: string } {
-  switch (status) {
-    case 'REQUIRED':
-      return { bg: '#fff8e1', color: '#f57f17' }
-    case 'CONNECTED':
-      return { bg: '#e6f4ea', color: '#2e7d32' }
-    case 'REAUTHORIZATION_REQUIRED':
-      return { bg: '#fce4ec', color: '#c62828' }
-  }
 }
 
 type AuthActionState =
@@ -233,7 +216,10 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
             </thead>
             <tbody>
               {connections.map(c => {
-                const authTone = authorizationTone(c.authorizationStatus)
+                const authTone = mailboxAuthorizationTone({
+                  authorizationStatus: c.authorizationStatus,
+                  emailSending: c.capabilities.emailSending,
+                })
                 const actionLoading = authAction.type === 'loading' && authAction.connectionId === c.id
                 return (
                   <tr key={c.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
@@ -251,7 +237,10 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
                         display: 'inline-block', padding: '2px 8px', borderRadius: 4,
                         fontSize: 10, fontWeight: 600, background: authTone.bg, color: authTone.color,
                       }}>
-                        {authorizationLabel(c.authorizationStatus)}
+                        {mailboxAuthorizationLabel({
+                          authorizationStatus: c.authorizationStatus,
+                          emailSending: c.capabilities.emailSending,
+                        })}
                       </span>
                     </td>
                     <td style={{ padding: '5px 8px' }}>{c.counts.messages.toLocaleString()}</td>
@@ -267,6 +256,22 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
                             onClick={() => handleAuthorize(c)}
                           >
                             {actionLoading ? 'Starting…' : 'Authorize Outlook'}
+                          </button>
+                        )}
+                        {needsSendingAuthorization({
+                          provider: c.provider,
+                          authorizationStatus: c.authorizationStatus,
+                          emailSending: c.capabilities.emailSending,
+                        }) && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            style={{ fontSize: 10, padding: '2px 8px' }}
+                            disabled={actionLoading}
+                            onClick={() => handleAuthorize(c)}
+                            title="Grant Mail.Send on this Outlook mailbox"
+                          >
+                            {actionLoading ? 'Starting…' : 'Authorize sending'}
                           </button>
                         )}
                         {c.authorizationStatus === 'REAUTHORIZATION_REQUIRED' && (
