@@ -130,6 +130,7 @@ export const importProviderMailbox = async (input: {
             gmailThreadId: message.providerThreadId,
             providerMessageId: message.providerMessageId,
             providerThreadId: message.providerThreadId,
+            internetMessageId: message.internetMessageId ?? null,
             historyId: message.historyId,
             subject: message.subject,
             senderName: message.senderName,

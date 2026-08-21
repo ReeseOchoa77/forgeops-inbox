@@ -41,6 +41,7 @@ const mapMessage = (
   })),
   providerLabels: msg.folderLabels,
   sentAt: msg.sentAt,
+  internetMessageId: msg.internetMessageId,
   receivedAt: msg.receivedAt,
   sizeEstimate: null
 });

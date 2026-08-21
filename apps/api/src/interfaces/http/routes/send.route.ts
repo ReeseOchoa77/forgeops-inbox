@@ -32,6 +32,132 @@ interface ParsedAttachment {
   data: Buffer;
 }
 
+function escapeODataString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * Graph REST message IDs go stale (folder moves) and n8n may store ImmutableIds.
+ * Resolve a live /me message id before /reply. Never logs tokens.
+ */
+export async function resolveOutlookGraphMessageId(input: {
+  accessToken: string;
+  storedMessageId: string;
+  internetMessageId: string | null;
+  conversationId: string | null;
+  sentAt: Date | null;
+}): Promise<{ id: string; resolvedVia: string; useImmutableIdPrefer: boolean }> {
+  const getMessage = async (messageId: string, immutable: boolean) => {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}?$select=id`,
+      {
+        headers: {
+          Authorization: `Bearer ${input.accessToken}`,
+          ...(immutable ? { Prefer: 'IdType="ImmutableId"' } : {}),
+        },
+      }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { id?: string };
+    return data.id ?? messageId;
+  };
+
+  const restId = await getMessage(input.storedMessageId, false);
+  if (restId) {
+    return {
+      id: restId,
+      resolvedVia: "stored_rest_id",
+      useImmutableIdPrefer: false,
+    };
+  }
+
+  const immutableId = await getMessage(input.storedMessageId, true);
+  if (immutableId) {
+    return {
+      id: immutableId,
+      resolvedVia: "stored_immutable_id",
+      useImmutableIdPrefer: true,
+    };
+  }
+
+  if (input.internetMessageId) {
+    const imidCandidates = [input.internetMessageId];
+    if (
+      input.internetMessageId.startsWith("<") &&
+      input.internetMessageId.endsWith(">")
+    ) {
+      imidCandidates.push(input.internetMessageId.slice(1, -1));
+    } else {
+      imidCandidates.push(`<${input.internetMessageId}>`);
+    }
+
+    for (const imid of imidCandidates) {
+      const filter = `internetMessageId eq '${escapeODataString(imid)}'`;
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages?$filter=${encodeURIComponent(filter)}&$select=id&$top=1`,
+        { headers: { Authorization: `Bearer ${input.accessToken}` } }
+      );
+      if (!res.ok) continue;
+      const data = (await res.json()) as { value?: Array<{ id: string }> };
+      const id = data.value?.[0]?.id;
+      if (id) {
+        return {
+          id,
+          resolvedVia: "internet_message_id",
+          useImmutableIdPrefer: false,
+        };
+      }
+    }
+  }
+
+  if (input.conversationId) {
+    const filter = `conversationId eq '${escapeODataString(input.conversationId)}'`;
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages?$filter=${encodeURIComponent(filter)}&$select=id,sentDateTime&$top=50&$orderby=sentDateTime desc`,
+      { headers: { Authorization: `Bearer ${input.accessToken}` } }
+    );
+    if (res.ok) {
+      const data = (await res.json()) as {
+        value?: Array<{ id: string; sentDateTime?: string }>;
+      };
+      const messages = data.value ?? [];
+
+      if (input.sentAt && messages.length > 0) {
+        const targetMs = input.sentAt.getTime();
+        let best: { id: string; delta: number } | null = null;
+        for (const message of messages) {
+          if (!message.sentDateTime) continue;
+          const delta = Math.abs(
+            new Date(message.sentDateTime).getTime() - targetMs
+          );
+          if (!best || delta < best.delta) {
+            best = { id: message.id, delta };
+          }
+        }
+        if (best && best.delta <= 60_000) {
+          return {
+            id: best.id,
+            resolvedVia: "conversation_sent_at",
+            useImmutableIdPrefer: false,
+          };
+        }
+      }
+
+      if (messages.length === 1 && messages[0]) {
+        return {
+          id: messages[0].id,
+          resolvedVia: "conversation_single",
+          useImmutableIdPrefer: false,
+        };
+      }
+    }
+  }
+
+  throw new Error(
+    "Outlook message not found in mailbox for reply. It may have been deleted or moved; sync the mailbox and try again."
+  );
+}
+
 function buildMimeBoundary(): string {
   return `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
@@ -156,8 +282,15 @@ async function sendViaOutlook(input: {
   body: string;
   bodyFormat: "text" | "html";
   replyToMessageId: string | null;
+  internetMessageId: string | null;
+  conversationId: string | null;
+  sentAt: Date | null;
   isReply: boolean;
   attachments: ParsedAttachment[];
+  onReplyResolved?: (info: {
+    resolvedVia: string;
+    useImmutableIdPrefer: boolean;
+  }) => void;
 }): Promise<{ providerMessageId: string }> {
   const tokenUrl = `https://login.microsoftonline.com/${input.tenantId}/oauth2/v2.0/token`;
   const tokenBody = new URLSearchParams({
@@ -188,13 +321,28 @@ async function sendViaOutlook(input: {
   // Use /reply (Mail.Send) — not createReply/PATCH/send (Mail.ReadWrite).
   // Compose already works with sendMail under Mail.Send only.
   if (input.isReply && input.replyToMessageId) {
+    const resolved = await resolveOutlookGraphMessageId({
+      accessToken: tokens.access_token,
+      storedMessageId: input.replyToMessageId,
+      internetMessageId: input.internetMessageId,
+      conversationId: input.conversationId,
+      sentAt: input.sentAt,
+    });
+    input.onReplyResolved?.({
+      resolvedVia: resolved.resolvedVia,
+      useImmutableIdPrefer: resolved.useImmutableIdPrefer,
+    });
+
     const replyRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(input.replyToMessageId)}/reply`,
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(resolved.id)}/reply`,
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...(resolved.useImmutableIdPrefer
+            ? { Prefer: 'IdType="ImmutableId"' }
+            : {}),
         },
         // Graph forbids both comment and message.body — use body only.
         body: JSON.stringify({
@@ -406,7 +554,15 @@ export const registerSendRoutes = async (
         body = sendBodySchema.parse(request.body);
       }
 
-      let originalMessage: { id: string; gmailMessageId: string; gmailThreadId: string; subject: string | null } | null = null;
+      let originalMessage: {
+        id: string;
+        gmailMessageId: string;
+        gmailThreadId: string;
+        providerMessageId: string | null;
+        internetMessageId: string | null;
+        sentAt: Date | null;
+        subject: string | null;
+      } | null = null;
       if (body.action !== "new" && body.originalMessageId) {
         originalMessage = await app.services.prisma.emailMessage.findFirst({
           where: {
@@ -414,7 +570,15 @@ export const registerSendRoutes = async (
             inboxConnectionId: params.connectionId,
             OR: [{ id: body.originalMessageId }, { gmailMessageId: body.originalMessageId }]
           },
-          select: { id: true, gmailMessageId: true, gmailThreadId: true, subject: true }
+          select: {
+            id: true,
+            gmailMessageId: true,
+            gmailThreadId: true,
+            providerMessageId: true,
+            internetMessageId: true,
+            sentAt: true,
+            subject: true,
+          }
         });
 
         if (!originalMessage) return reply.code(404).send({ message: "Original message not found" });
@@ -464,9 +628,30 @@ export const registerSendRoutes = async (
             subject: body.subject,
             body: body.body,
             bodyFormat: body.bodyFormat,
-            replyToMessageId: body.action === "reply" && originalMessage ? originalMessage.gmailMessageId : null,
+            replyToMessageId:
+              body.action === "reply" && originalMessage
+                ? (originalMessage.providerMessageId ??
+                    originalMessage.gmailMessageId)
+                : null,
+            internetMessageId: originalMessage?.internetMessageId ?? null,
+            conversationId: originalMessage?.gmailThreadId ?? null,
+            sentAt: originalMessage?.sentAt ?? null,
             isReply: body.action === "reply",
-            attachments
+            attachments,
+            onReplyResolved: (info) => {
+              request.log.info({
+                event: "outlook_reply_message_resolved",
+                resolvedVia: info.resolvedVia,
+                useImmutableIdPrefer: info.useImmutableIdPrefer,
+                hasInternetMessageId: Boolean(
+                  originalMessage?.internetMessageId
+                ),
+                hasConversationId: Boolean(originalMessage?.gmailThreadId),
+                connectionId: params.connectionId,
+                workspaceId: params.workspaceId,
+                emailMessageId: originalMessage?.id ?? null,
+              });
+            },
           });
         } else {
           return reply.code(400).send({ message: "Unsupported provider for sending" });

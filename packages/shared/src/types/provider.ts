@@ -58,6 +58,8 @@ export interface ProviderMessageSnapshot {
   attachmentMetadata: ProviderAttachmentMetadata[];
   providerLabels: string[];
   sentAt: Date;
+  /** RFC 822 Message-ID when the provider exposes it (Outlook Graph). */
+  internetMessageId?: string | null;
   receivedAt: Date | null;
   sizeEstimate: number | null;
 }

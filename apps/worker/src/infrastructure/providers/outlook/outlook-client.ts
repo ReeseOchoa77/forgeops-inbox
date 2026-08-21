@@ -54,6 +54,7 @@ export const outlookAttachmentNeedsContentIdDetail = (att: {
 const graphMessageSchema = z.object({
   id: z.string().min(1),
   conversationId: z.string().min(1).nullable().optional(),
+  internetMessageId: z.string().min(1).nullable().optional(),
   subject: z.string().nullable().optional(),
   bodyPreview: z.string().nullable().optional(),
   body: z
@@ -89,6 +90,7 @@ const graphMessageSchema = z.object({
 const MESSAGE_SELECT_FIELDS = [
   "id",
   "conversationId",
+  "internetMessageId",
   "subject",
   "bodyPreview",
   "body",
@@ -212,6 +214,7 @@ export type OutlookGraphDownloadAttachmentResult =
 export interface OutlookMessageSnapshot {
   outlookMessageId: string;
   conversationId: string;
+  internetMessageId: string | null;
   subject: string | null;
   senderName: string | null;
   senderEmail: string;
@@ -421,6 +424,7 @@ const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): Outloo
   return {
     outlookMessageId: msg.id,
     conversationId: msg.conversationId ?? msg.id,
+    internetMessageId: msg.internetMessageId ?? null,
     subject: msg.subject ?? null,
     senderName: from?.name ?? null,
     senderEmail: from?.email ?? "unknown@invalid.local",
