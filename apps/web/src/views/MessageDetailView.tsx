@@ -54,33 +54,16 @@ function cidMapKeys(value: string | null | undefined): string[] {
   return keys
 }
 
-type CidDebugAttachment = {
-  id: string
-  filename: string
-  mimeType: string
-  isInline: boolean
-  contentId: string | null
-  uploadStatus: string
-}
-
 function rewriteCidImages(
   html: string,
-  cidToUrl: Map<string, string>,
-  cidToAttachmentId: Map<string, string>,
-  debugCtx: {
-    emailId: string
-    availableInlineContentIds: string[]
-  }
+  cidToUrl: Map<string, string>
 ): string {
-  const resolve = (rawCid: string): { url?: string; attachmentId?: string; normalized: string } => {
-    const normalized = normalizeCid(rawCid)
+  const resolveUrl = (rawCid: string): string | undefined => {
     for (const key of cidMapKeys(rawCid)) {
       const url = cidToUrl.get(key)
-      if (url) {
-        return { url, attachmentId: cidToAttachmentId.get(key), normalized }
-      }
+      if (url) return url
     }
-    return { normalized }
+    return undefined
   }
 
   // src="cid:...", src='cid:...', src=cid:...
@@ -88,16 +71,7 @@ function rewriteCidImages(
   let out = html.replace(
     /\bsrc\s*=\s*(?:3D)?(["']?)cid:([^"'>\s]+)\1/gi,
     (_match, quote: string, cid: string) => {
-      const originalSrc = `cid:${cid}`
-      const { url, attachmentId, normalized } = resolve(cid)
-      console.info('[CID_DEBUG]', {
-        emailId: debugCtx.emailId,
-        originalSrc,
-        normalizedCid: normalized,
-        availableInlineContentIds: debugCtx.availableInlineContentIds,
-        matchedAttachmentId: attachmentId ?? null,
-        rewrittenUrl: url ?? null,
-      })
+      const url = resolveUrl(cid)
       if (!url) {
         // Neutralize unmatched cid: so the browser never requests cid: scheme
         const q = quote || '"'
@@ -112,15 +86,7 @@ function rewriteCidImages(
   out = out.replace(
     /url\(\s*(['"]?)cid:([^)'"\s]+)\1\s*\)/gi,
     (_match, quote: string, cid: string) => {
-      const { url, attachmentId, normalized } = resolve(cid)
-      console.info('[CID_DEBUG]', {
-        emailId: debugCtx.emailId,
-        originalSrc: `cid:${cid}`,
-        normalizedCid: normalized,
-        availableInlineContentIds: debugCtx.availableInlineContentIds,
-        matchedAttachmentId: attachmentId ?? null,
-        rewrittenUrl: url ?? null,
-      })
+      const url = resolveUrl(cid)
       if (!url) return `url(${quote || "'"}${quote || "'"})`
       const q = quote || "'"
       return `url(${q}${url}${q})`
@@ -204,21 +170,6 @@ function EmailBody({
         if (cancelled) return
 
         const cidToUrl = new Map<string, string>()
-        const cidToAttachmentId = new Map<string, string>()
-        const availableInlineContentIds: string[] = []
-        const storedAttachments: CidDebugAttachment[] = r.attachments.map(a => ({
-          id: a.id,
-          filename: a.filename,
-          mimeType: a.mimeType,
-          isInline: a.isInline,
-          contentId: a.contentId,
-          uploadStatus: a.uploadStatus,
-        }))
-
-        console.info('[CID_DEBUG] stored attachments', {
-          emailId,
-          attachments: storedAttachments,
-        })
 
         for (const a of r.attachments) {
           const mime = (a.mimeType ?? '').toLowerCase()
@@ -228,13 +179,9 @@ function EmailBody({
           if (!a.contentId) continue
           if (!isImage) continue
 
-          availableInlineContentIds.push(a.contentId)
           const url = api.getStoredAttachmentDownloadUrl(workspaceId, a.id, true)
           for (const key of cidMapKeys(a.contentId)) {
-            if (!cidToUrl.has(key)) {
-              cidToUrl.set(key, url)
-              cidToAttachmentId.set(key, a.id)
-            }
+            if (!cidToUrl.has(key)) cidToUrl.set(key, url)
           }
         }
 
@@ -245,30 +192,20 @@ function EmailBody({
           if (mime && !mime.startsWith('image/') && !a.inline) continue
           const url = api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
           for (const key of cidMapKeys(a.contentId)) {
-            if (!cidToUrl.has(key)) {
-              cidToUrl.set(key, url)
-              cidToAttachmentId.set(key, a.attachmentId)
-            }
+            if (!cidToUrl.has(key)) cidToUrl.set(key, url)
           }
         }
 
-        setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl, cidToAttachmentId, {
-          emailId,
-          availableInlineContentIds,
-        }))
+        setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl))
       })
       .catch((err) => {
-        console.info('[CID_DEBUG] fetch failed', {
+        console.error('[ForgeOps] Failed to load attachments for CID rewrite', {
           emailId,
           error: err instanceof Error ? err.message : 'unknown',
-          attachments: [] as CidDebugAttachment[],
         })
         // Never paint unre-written cid: HTML on failure — neutralize cid: sources
         if (!cancelled) {
-          setResolvedHtml(rewriteCidImages(bodyHtml, new Map(), new Map(), {
-            emailId,
-            availableInlineContentIds: [],
-          }))
+          setResolvedHtml(rewriteCidImages(bodyHtml, new Map()))
         }
       })
       .finally(() => {
@@ -699,6 +636,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
   const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
+  /** Prevents duplicate ForgeOps Email Debug logs across React rerenders for the same open. */
+  const emailDebugLoggedForId = useRef<string | null>(null)
 
   const isPhone = breakpoint === 'phone'
 
@@ -711,16 +650,14 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   }, [workspaceId])
 
   useEffect(() => {
-    const t0 = performance.now()
     setLoading(true)
     setComposeMode(null)
     setSendResult(null)
     setJobError(null)
+    emailDebugLoggedForId.current = null
 
     loadThread()
       .then(td => {
-        const tApi = performance.now()
-        console.log(`[perf] thread API: ${(tApi - t0).toFixed(0)}ms, ${td.messages.length} messages`)
         setThreadData(td)
         api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
         const clickedMsg = td.messages.find(m => m.id === messageId)
@@ -731,11 +668,40 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       })
       .catch(() => setThreadData(null))
       .finally(() => {
-        const tRender = performance.now()
-        console.log(`[perf] thread total to render: ${(tRender - t0).toFixed(0)}ms`)
         setLoading(false)
       })
   }, [workspaceId, connectionId, messageId])
+
+  // TEMP V1 DEBUG:
+  // Remove or gate behind development/debug flag after pilot stabilization.
+  // Logs the complete thread/message payload already loaded for MessageDetailView (no extra API call).
+  // Does not log OAuth tokens, session cookies, or credentials.
+  useEffect(() => {
+    if (loading || !threadData || threadData.messages.length === 0) return
+    if (emailDebugLoggedForId.current === messageId) return
+
+    const message =
+      threadData.messages.find(m => m.id === messageId) ??
+      threadData.messages[threadData.messages.length - 1]
+    if (!message) return
+
+    emailDebugLoggedForId.current = messageId
+
+    console.groupCollapsed(`[ForgeOps Email Debug] ${message.id}`)
+    console.log({
+      emailId: message.id,
+      threadId: threadData.thread.id,
+      openedMessageId: messageId,
+      message,
+      thread: threadData.thread,
+      threadMessages: threadData.messages,
+      classification: message.classification,
+      job: message.job,
+      attachments: message.attachmentMetadata,
+      taskCandidate: message.taskCandidate,
+    })
+    console.groupEnd()
+  }, [loading, threadData, messageId])
 
   useEffect(() => {
     api.getJobsLookup(workspaceId, { showArchived: false })
