@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ReviewItem, type MessageSummary } from '../api'
-import { PriorityBadge, ConfidenceBadge } from '../components/Badges'
+import { ConfidenceBadge } from '../components/Badges'
 import { TypeBadge, ActionBadge } from '../components/Badges'
 import { ClassificationEvidencePanel } from '../components/ClassificationEvidencePanel'
 import { PriorityDecisionPanel } from '../components/PriorityDecisionPanel'
@@ -366,10 +366,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                     <span style={{ color: '#ccc' }}>—</span>
                   )}
                 </div>
-                <div>
-                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Priority</div>
-                  <PriorityBadge priority={c.priority} />
-                </div>
+                {/* TEMP: priority tag hidden — PriorityBadge returns null */}
                 <div>
                   <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>
                     {confidenceLabel}
@@ -407,9 +404,8 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                 </div>
                 {t.summary && <div style={{ color: '#888', fontSize: 11 }}>{t.summary}</div>}
                 <div style={{ color: '#aaa', fontSize: 11, marginTop: 2 }}>
-                  {t.dueAt && <span>Due: {formatDate(t.dueAt)} &middot; </span>}
-                  {t.assigneeGuess && <span>Assignee: {t.assigneeGuess} &middot; </span>}
-                  Priority: {t.priority}
+                  {t.dueAt && <span>Due: {formatDate(t.dueAt)}{t.assigneeGuess ? ' · ' : ''}</span>}
+                  {t.assigneeGuess && <span>Assignee: {t.assigneeGuess}</span>}
                 </div>
               </div>
             )}

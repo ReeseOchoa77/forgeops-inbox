@@ -717,12 +717,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
                               </span>
                             </td>
                             <td style={{ padding: '10px 12px' }}>
-                              <span style={{
-                                fontSize: 11, fontWeight: 600,
-                                color: task.priority === 'HIGH' || task.priority === 'URGENT' ? '#dc2626' : task.priority === 'MEDIUM' ? '#d97706' : '#6b7280'
-                              }}>
-                                {task.priority}
-                              </span>
+                              {/* TEMP: hide priority tag visually */}
                             </td>
                             <td style={{ padding: '10px 12px', fontSize: 12, color: task.dueAt && new Date(task.dueAt) < new Date() ? '#dc2626' : '#6b7280' }}>
                               {formatDate(task.dueAt)}

@@ -9,8 +9,13 @@ type Props = {
   priorityDecision?: PriorityDecisionPayload | null
 }
 
+/** TEMP: hide priority UI — set true to restore Priority Reason panel. */
+const SHOW_PRIORITY_UI = false
+
 /** Email Review — n8n priority explanation (absent for historical records). */
 export function PriorityDecisionPanel({ priority, evidence, priorityDecision }: Props) {
+  if (!SHOW_PRIORITY_UI) return null
+
   const vm = buildPriorityDecisionViewModel({ priority, evidence, priorityDecision })
   if (!vm) return null
 

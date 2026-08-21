@@ -84,7 +84,11 @@ const priorityLabels: Record<string, string> = {
   LOW: 'Low'
 }
 
+/** TEMP: hide priority tags visually — set true to restore. */
+const SHOW_PRIORITY_BADGE = false
+
 export function PriorityBadge({ priority }: { priority: string | null }) {
+  if (!SHOW_PRIORITY_BADGE) return null
   if (!priority) return <span style={{ ...badgeBase, background: '#f5f5f5', color: '#aaa' }}>Not set</span>
   const colors: Record<string, { bg: string; fg: string }> = {
     URGENT: { bg: '#c62828', fg: '#fff' },
