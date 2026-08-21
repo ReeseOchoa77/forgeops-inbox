@@ -5,6 +5,8 @@ import {
   findMissingOutlookRequiredScopes,
   OutlookOAuthProvider,
   outlookInboxConnectionScopes,
+  peekMicrosoftIdTokenIdentityClaims,
+  resolveOutlookGraphProfileEmail,
 } from "../infrastructure/providers/outlook/outlook-provider.js";
 
 describe("Outlook OAuth scopes", () => {
@@ -111,5 +113,63 @@ describe("Outlook OAuth scopes", () => {
 
     expect(missing).toContain("offline_access");
     expect(missing).not.toContain("openid");
+  });
+});
+
+describe("resolveOutlookGraphProfileEmail", () => {
+  it("prefers Graph mail over userPrincipalName", () => {
+    const resolved = resolveOutlookGraphProfileEmail({
+      mail: "ed@tekstl.net",
+      userPrincipalName: "admin@tekstl.net",
+    });
+    expect(resolved.email).toBe("ed@tekstl.net");
+    expect(resolved.emailSource).toBe("mail");
+    expect(resolved.graphMail).toBe("ed@tekstl.net");
+    expect(resolved.graphUserPrincipalName).toBe("admin@tekstl.net");
+  });
+
+  it("falls back to userPrincipalName when mail is null/empty", () => {
+    expect(
+      resolveOutlookGraphProfileEmail({
+        mail: null,
+        userPrincipalName: "ed@tekstl.net",
+      }).emailSource
+    ).toBe("userPrincipalName");
+    expect(
+      resolveOutlookGraphProfileEmail({
+        mail: "  ",
+        userPrincipalName: "Ed@Tekstl.net",
+      })
+    ).toMatchObject({
+      email: "ed@tekstl.net",
+      emailSource: "userPrincipalName",
+      graphMail: null,
+    });
+  });
+});
+
+describe("peekMicrosoftIdTokenIdentityClaims", () => {
+  it("extracts preferred_username and email without using them for matching", () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        preferred_username: "admin@tekstl.net",
+        email: "admin@tekstl.net",
+      }),
+      "utf8"
+    ).toString("base64url");
+    const claims = peekMicrosoftIdTokenIdentityClaims(`hdr.${payload}.sig`);
+    expect(claims.preferredUsername).toBe("admin@tekstl.net");
+    expect(claims.emailClaim).toBe("admin@tekstl.net");
+  });
+
+  it("returns nulls for invalid tokens", () => {
+    expect(peekMicrosoftIdTokenIdentityClaims(null)).toEqual({
+      preferredUsername: null,
+      emailClaim: null,
+    });
+    expect(peekMicrosoftIdTokenIdentityClaims("not-a-jwt")).toEqual({
+      preferredUsername: null,
+      emailClaim: null,
+    });
   });
 });

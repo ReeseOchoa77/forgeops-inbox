@@ -56,6 +56,43 @@ const microsoftUserProfileSchema = z.object({
   displayName: z.string().nullable().optional()
 });
 
+/**
+ * Resolve the Microsoft Graph /me identity email used for mailbox matching.
+ * Precedence: `mail` (primary SMTP) if present, else `userPrincipalName`.
+ * Does not use preferred_username / other ID token claims — Graph /me only.
+ */
+export function resolveOutlookGraphProfileEmail(profile: {
+  mail?: string | null | undefined;
+  userPrincipalName: string;
+}): {
+  email: string;
+  emailSource: "mail" | "userPrincipalName";
+  graphMail: string | null;
+  graphUserPrincipalName: string;
+} {
+  const graphMail =
+    typeof profile.mail === "string" && profile.mail.trim()
+      ? profile.mail.trim()
+      : null;
+  const graphUserPrincipalName = profile.userPrincipalName.trim();
+
+  if (graphMail) {
+    return {
+      email: graphMail.toLowerCase(),
+      emailSource: "mail",
+      graphMail,
+      graphUserPrincipalName,
+    };
+  }
+
+  return {
+    email: graphUserPrincipalName.toLowerCase(),
+    emailSource: "userPrincipalName",
+    graphMail: null,
+    graphUserPrincipalName,
+  };
+}
+
 export interface OutlookOAuthProviderConfig {
   clientId?: string;
   clientSecret?: string;
@@ -184,6 +221,19 @@ export class OutlookOAuthProvider implements InboxOAuthProvider {
   }
 
   async fetchUserProfile(accessToken: string): Promise<ProviderUserProfile> {
+    const { profile } =
+      await this.fetchUserProfileWithIdentityDiagnostics(accessToken);
+    return profile;
+  }
+
+  /**
+   * Graph /me profile plus safe identity-field diagnostics (no tokens).
+   * Matching still uses resolved `profile.email` only (`mail` then UPN).
+   */
+  async fetchUserProfileWithIdentityDiagnostics(accessToken: string): Promise<{
+    profile: ProviderUserProfile;
+    identity: ReturnType<typeof resolveOutlookGraphProfileEmail>;
+  }> {
     const response = await fetch(`${MICROSOFT_GRAPH_BASE_URL}/me`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
@@ -197,18 +247,61 @@ export class OutlookOAuthProvider implements InboxOAuthProvider {
 
     const raw = await response.json();
     const profile = microsoftUserProfileSchema.parse(raw);
-    const email = profile.mail ?? profile.userPrincipalName;
+    const identity = resolveOutlookGraphProfileEmail(profile);
 
     return {
-      subject: profile.id,
-      email: email.toLowerCase(),
-      emailVerified: true,
-      name: profile.displayName ?? null,
-      picture: null
+      profile: {
+        subject: profile.id,
+        email: identity.email,
+        emailVerified: true,
+        name: profile.displayName ?? null,
+        picture: null
+      },
+      identity
     };
   }
 
+
   async disconnect(): Promise<void> {}
+}
+
+/**
+ * Diagnostic-only: read email-related claims from a Microsoft id_token payload.
+ * Does not verify the JWT. Never used for mailbox matching.
+ */
+export function peekMicrosoftIdTokenIdentityClaims(
+  idToken: string | null | undefined
+): {
+  preferredUsername: string | null;
+  emailClaim: string | null;
+} {
+  if (!idToken || typeof idToken !== "string") {
+    return { preferredUsername: null, emailClaim: null };
+  }
+  const parts = idToken.split(".");
+  if (parts.length < 2 || !parts[1]) {
+    return { preferredUsername: null, emailClaim: null };
+  }
+  try {
+    const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
+    const payload = JSON.parse(payloadJson) as {
+      preferred_username?: unknown;
+      email?: unknown;
+    };
+    return {
+      preferredUsername:
+        typeof payload.preferred_username === "string" &&
+        payload.preferred_username.trim()
+          ? payload.preferred_username.trim()
+          : null,
+      emailClaim:
+        typeof payload.email === "string" && payload.email.trim()
+          ? payload.email.trim()
+          : null,
+    };
+  } catch {
+    return { preferredUsername: null, emailClaim: null };
+  }
 }
 
 /**
@@ -232,3 +325,4 @@ export function findMissingOutlookRequiredScopes(input: {
     (scope) => !normalized.includes(scope)
   );
 }
+

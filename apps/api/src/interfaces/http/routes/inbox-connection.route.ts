@@ -13,6 +13,8 @@ import {
 import {
   coalesceMicrosoftGrantedScopes,
   findMissingOutlookRequiredScopes,
+  OutlookOAuthProvider,
+  peekMicrosoftIdTokenIdentityClaims,
 } from "../../../infrastructure/providers/outlook/outlook-provider.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -651,7 +653,28 @@ export const registerInboxConnectionRoutes = async (
         );
       }
 
-      const profile = await provider.fetchUserProfile(tokens.accessToken);
+      // Outlook: keep Graph field provenance for temporary mismatch diagnostics.
+      let outlookIdentity: {
+        email: string;
+        emailSource: "mail" | "userPrincipalName";
+        graphMail: string | null;
+        graphUserPrincipalName: string;
+      } | null = null;
+
+      let profile;
+      if (
+        providerKind === "outlook" &&
+        provider instanceof OutlookOAuthProvider
+      ) {
+        const result =
+          await provider.fetchUserProfileWithIdentityDiagnostics(
+            tokens.accessToken!
+          );
+        outlookIdentity = result.identity;
+        profile = result.profile;
+      } else {
+        profile = await provider.fetchUserProfile(tokens.accessToken);
+      }
 
       if (!profile.emailVerified) {
         throw new Error("Inbox account email must be verified");
@@ -703,6 +726,36 @@ export const registerInboxConnectionRoutes = async (
       }
 
       if (isTargetedFlow && existingConnection) {
+        const normalizedExpectedEmail = normalizeEmail(existingConnection.email);
+        const normalizedMicrosoftEmail = microsoftEmail;
+        const matched =
+          normalizedExpectedEmail === normalizedMicrosoftEmail;
+        const idTokenClaims =
+          providerKind === "outlook"
+            ? peekMicrosoftIdTokenIdentityClaims(tokens.idToken)
+            : { preferredUsername: null, emailClaim: null };
+
+        // TEMPORARY SAFE diagnostics — emails + flow flags only; never tokens/codes/secrets.
+        request.log.info({
+          event: "outlook_targeted_mailbox_identity_check",
+          expectedMailboxEmail: existingConnection.email,
+          microsoftProfileEmail: profile.email,
+          normalizedExpectedEmail,
+          normalizedMicrosoftEmail,
+          authorizeExisting,
+          reconnect: Boolean(storedState.reconnect),
+          connectionId: existingConnection.id,
+          workspaceId: storedState.workspaceId,
+          matched,
+          // Field provenance (diagnostic only; matching uses microsoftProfileEmail)
+          emailSource: outlookIdentity?.emailSource ?? null,
+          graphMail: outlookIdentity?.graphMail ?? null,
+          graphUserPrincipalName:
+            outlookIdentity?.graphUserPrincipalName ?? null,
+          idTokenPreferredUsername: idTokenClaims.preferredUsername,
+          idTokenEmailClaim: idTokenClaims.emailClaim,
+        });
+
         const mismatch = assertTargetedMailboxEmailMatch({
           expectedEmail: existingConnection.email,
           microsoftEmail,
