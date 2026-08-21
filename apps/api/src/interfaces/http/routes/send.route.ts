@@ -185,64 +185,46 @@ async function sendViaOutlook(input: {
     contentBytes: att.data.toString("base64")
   }));
 
+  // Use /reply (Mail.Send) — not createReply/PATCH/send (Mail.ReadWrite).
+  // Compose already works with sendMail under Mail.Send only.
   if (input.isReply && input.replyToMessageId) {
-    const createRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/messages/${input.replyToMessageId}/createReply`,
+    const replyRes = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(input.replyToMessageId)}/reply`,
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({})
-      }
-    );
-
-    if (!createRes.ok) {
-      const err = await createRes.text();
-      throw new Error(`Outlook createReply failed: ${createRes.status} ${err}`);
-    }
-
-    const draft = await createRes.json() as { id: string };
-    const draftId = draft.id;
-
-    const patchRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/messages/${draftId}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${tokens.access_token}`,
-          "Content-Type": "application/json"
-        },
+        // Graph forbids both comment and message.body — use body only.
         body: JSON.stringify({
-          body: { contentType, content: input.body },
-          toRecipients: input.to.map(e => ({ emailAddress: { address: e } })),
-          ccRecipients: input.cc.map(e => ({ emailAddress: { address: e } })),
-          ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
+          message: {
+            body: { contentType, content: input.body },
+            toRecipients: input.to.map((e) => ({
+              emailAddress: { address: e }
+            })),
+            ccRecipients: input.cc.map((e) => ({
+              emailAddress: { address: e }
+            })),
+            bccRecipients: input.bcc.map((e) => ({
+              emailAddress: { address: e }
+            })),
+            ...(graphAttachments.length > 0
+              ? { attachments: graphAttachments }
+              : {})
+          }
         })
       }
     );
 
-    if (!patchRes.ok) {
-      const err = await patchRes.text();
-      throw new Error(`Outlook patch draft failed: ${patchRes.status} ${err}`);
+    if (!replyRes.ok) {
+      const err = await replyRes.text();
+      throw new Error(`Outlook reply failed: ${replyRes.status} ${err}`);
     }
 
-    const sendRes = await fetch(
-      `https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${tokens.access_token}` }
-      }
-    );
-
-    if (!sendRes.ok) {
-      const err = await sendRes.text();
-      throw new Error(`Outlook send reply failed: ${sendRes.status} ${err}`);
-    }
-
-    return { providerMessageId: draftId };
+    return { providerMessageId: "replied" };
   }
+
 
   const sendRes = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
     method: "POST",
