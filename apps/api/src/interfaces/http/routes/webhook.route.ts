@@ -44,12 +44,22 @@ export const registerWebhookRoutes = async (
             email: notification.emailAddress,
             status: "ACTIVE"
           },
-          select: { id: true, workspaceId: true, email: true }
+          select: { id: true, workspaceId: true, email: true, ingestionSource: true }
         });
 
         if (!connection) {
           app.log.info({ event: "gmail_push_no_connection", email: notification.emailAddress });
           return reply.code(200).send({ status: "ignored" });
+        }
+
+        if (connection.ingestionSource === "N8N") {
+          app.log.info({
+            event: "native-sync-skipped",
+            inboxConnectionId: connection.id,
+            reason: "n8n_ingestion_owner",
+            source: "gmail_push",
+          });
+          return reply.code(200).send({ status: "ignored", reason: "n8n_ingestion_owner" });
         }
 
         await app.services.inboxSyncQueue.add(
@@ -110,11 +120,21 @@ export const registerWebhookRoutes = async (
               pushSubscriptionId: notification.subscriptionId,
               status: "ACTIVE"
             },
-            select: { id: true, workspaceId: true, email: true }
+            select: { id: true, workspaceId: true, email: true, ingestionSource: true }
           });
 
           if (!connection) {
             app.log.info({ event: "outlook_push_no_connection", subscriptionId: notification.subscriptionId });
+            continue;
+          }
+
+          if (connection.ingestionSource === "N8N") {
+            app.log.info({
+              event: "native-sync-skipped",
+              inboxConnectionId: connection.id,
+              reason: "n8n_ingestion_owner",
+              source: "outlook_push",
+            });
             continue;
           }
 

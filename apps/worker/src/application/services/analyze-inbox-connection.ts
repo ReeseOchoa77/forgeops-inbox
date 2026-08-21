@@ -2,6 +2,8 @@ import { Prisma, type PrismaClient, type ReviewQueue, type ReviewStatus } from "
 import {
   extractDomain,
   mailboxCategoryFromLegacyBusinessFilter,
+  buildClassificationWriteLog,
+  shouldSkipNativeClassificationOverwrite,
   type InboxAnalysisResult,
 } from "@forgeops/shared";
 
@@ -57,7 +59,8 @@ export const analyzeInboxConnection = async (input: {
         },
         select: {
           id: true,
-          email: true
+          email: true,
+          ingestionSource: true,
         }
       }),
       input.prisma.workspaceSetting.findUnique({
@@ -128,6 +131,23 @@ export const analyzeInboxConnection = async (input: {
     throw new Error("Inbox connection not found for analysis");
   }
 
+  // N8N owns classification for n8n-ingested mailboxes — do not run native analysis.
+  if (connection.ingestionSource === "N8N") {
+    console.info("inbox-analysis-skipped", {
+      workspaceId: input.workspaceId,
+      inboxConnectionId: input.inboxConnectionId,
+      reason: "n8n_classification_owner",
+    });
+    return {
+      workspaceId: input.workspaceId,
+      inboxConnectionId: input.inboxConnectionId,
+      messagesAnalyzed: 0,
+      messagesClassified: 0,
+      taskCandidatesCreated: 0,
+      lowConfidenceItemsFlaggedForReview: 0,
+    };
+  }
+
   const reviewQueue = workspaceSetting?.defaultReviewQueue ?? "EXTRACTION";
   const classificationThreshold = toThresholdNumber(
     workspaceSetting?.classificationConfidenceThreshold
@@ -148,6 +168,23 @@ export const analyzeInboxConnection = async (input: {
         }
       })
     : [];
+  const existingClassifications = importedMessageIds.length
+    ? await input.prisma.classification.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          messageId: { in: importedMessageIds },
+        },
+        select: {
+          messageId: true,
+          modelName: true,
+          reviewStatus: true,
+          mailboxCategory: true,
+        },
+      })
+    : [];
+  const existingClassificationByMessageId = new Map(
+    existingClassifications.map((c) => [c.messageId, c])
+  );
   const existingTaskMessageIds = new Set(
     existingTasks
       .map((task) => task.sourceMessageId)
@@ -218,6 +255,24 @@ export const analyzeInboxConnection = async (input: {
 
   await input.prisma.$transaction(async (tx) => {
     for (const message of batch) {
+      const existingClassification = existingClassificationByMessageId.get(message.id);
+      if (shouldSkipNativeClassificationOverwrite(existingClassification)) {
+        console.info({
+          ...buildClassificationWriteLog({
+            workspaceId: input.workspaceId,
+            inboxConnectionId: input.inboxConnectionId,
+            emailMessageId: message.id,
+            source: "NATIVE_ANALYSIS",
+            previousCategory: existingClassification?.mailboxCategory ?? null,
+            newCategory: existingClassification?.mailboxCategory ?? null,
+            modelName: existingClassification?.modelName ?? null,
+          }),
+          skipped: true,
+          reason: "n8n_or_manual_owned",
+        });
+        continue;
+      }
+
       const normalizedEmail = normalizeEmailMessage({
         subject: message.subject,
         threadSubject: message.thread.subject,
@@ -460,6 +515,26 @@ export const analyzeInboxConnection = async (input: {
           // Tabs filter EmailMessage.mailboxCategory — keep in sync with Classification.
           mailboxCategory,
         }
+      });
+
+      console.info(
+        buildClassificationWriteLog({
+          workspaceId: input.workspaceId,
+          inboxConnectionId: input.inboxConnectionId,
+          emailMessageId: message.id,
+          source: "NATIVE_ANALYSIS",
+          previousCategory: existingClassification?.mailboxCategory ?? null,
+          newCategory: mailboxCategory,
+          modelName: "rules-normalizer",
+        })
+      );
+
+      // Keep in-memory map current for subsequent batches
+      existingClassificationByMessageId.set(message.id, {
+        messageId: message.id,
+        modelName: "rules-normalizer",
+        reviewStatus: reviewStateForPersist.reviewStatus,
+        mailboxCategory,
       });
 
       threadReviewState.set(message.threadId, {

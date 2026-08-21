@@ -93,7 +93,8 @@ const loadAccessibleConnection = async (input: {
       email: true,
       status: true,
       syncCursor: true,
-      lastSyncedAt: true
+      lastSyncedAt: true,
+      ingestionSource: true,
     }
   });
 
@@ -206,6 +207,13 @@ export const registerGmailRoutes = async (
       });
     }
 
+    if (connection.ingestionSource === "N8N") {
+      return reply.code(409).send({
+        message: "Native mailbox sync is disabled for n8n-ingested mailboxes. n8n owns message ingestion.",
+        reason: "n8n_ingestion_owner",
+      });
+    }
+
     const job = await enqueueInboxSyncJob({
       app,
       workspaceId: body.workspaceId,
@@ -280,6 +288,13 @@ export const registerGmailRoutes = async (
             status: connection.status,
             email: connection.email
           }
+        });
+      }
+
+      if (connection.ingestionSource === "N8N") {
+        return reply.code(409).send({
+          message: "Native mailbox sync is disabled for n8n-ingested mailboxes. n8n owns message ingestion.",
+          reason: "n8n_ingestion_owner",
         });
       }
 
@@ -370,6 +385,13 @@ export const registerGmailRoutes = async (
       if (!connection) {
         return reply.code(404).send({
           message: "Inbox connection not found"
+        });
+      }
+
+      if (connection.ingestionSource === "N8N") {
+        return reply.code(409).send({
+          message: "Native analysis is disabled for n8n-ingested mailboxes. n8n owns classification.",
+          reason: "n8n_classification_owner",
         });
       }
 

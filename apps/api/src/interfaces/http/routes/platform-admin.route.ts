@@ -319,6 +319,16 @@ export const registerPlatformAdminRoutes = async (
       data: { ingestionSource: body.ingestionSource }
     });
 
+    if (body.ingestionSource === "NATIVE") {
+      await app.services.registerScheduledSync(connection.workspaceId, mailboxId).catch(() => {});
+    } else {
+      await app.services.removeScheduledSync(mailboxId).catch(() => {});
+      console.info("native-sync-schedule-removed", {
+        inboxConnectionId: mailboxId,
+        reason: "n8n_ingestion_owner",
+      });
+    }
+
     await app.services.auditEventLogger.log({
       workspaceId: connection.workspaceId,
       actorUserId: admin.userId,

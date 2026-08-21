@@ -11,6 +11,9 @@ export interface InboxSyncResult {
   messagesImported: number;
   duplicatesSkipped: number;
   newestSyncCursor: string | null;
+  /** Set when native sync is skipped (e.g. N8N-owned mailbox). */
+  skipped?: boolean;
+  skipReason?: string;
 }
 
 export interface InboxAnalysisJobPayload {

@@ -48,11 +48,18 @@ export const registerInboxActionsRoutes = async (
 
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
-        select: { id: true, status: true, email: true }
+        select: { id: true, status: true, email: true, ingestionSource: true }
       });
 
       if (!connection) {
         return reply.code(404).send({ message: "Inbox connection not found" });
+      }
+
+      if (connection.ingestionSource === "N8N") {
+        return reply.code(409).send({
+          message: "Native mailbox sync is disabled for n8n-ingested mailboxes. n8n owns message ingestion.",
+          reason: "n8n_ingestion_owner",
+        });
       }
 
       if (
@@ -138,11 +145,18 @@ export const registerInboxActionsRoutes = async (
 
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
-        select: { id: true }
+        select: { id: true, ingestionSource: true }
       });
 
       if (!connection) {
         return reply.code(404).send({ message: "Inbox connection not found" });
+      }
+
+      if (connection.ingestionSource === "N8N") {
+        return reply.code(409).send({
+          message: "Native analysis is disabled for n8n-ingested mailboxes. n8n owns classification.",
+          reason: "n8n_classification_owner",
+        });
       }
 
       const payload: InboxAnalysisJobPayload = {

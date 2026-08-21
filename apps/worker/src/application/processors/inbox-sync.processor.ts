@@ -14,7 +14,8 @@ import {
   ProviderRegistry,
   QueueNames,
   TokenCipher,
-  providerKindFromEnum
+  providerKindFromEnum,
+  shouldRunNativeInboxSync,
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
@@ -188,6 +189,28 @@ export class InboxSyncProcessor {
       throw new Error("Inbox connection not found for sync");
     }
 
+    // Hard guard: N8N-owned mailboxes must never import via native Graph sync
+    // (stale BullMQ jobs / webhook bugs / manual queue injection).
+    if (!shouldRunNativeInboxSync(connection)) {
+      console.info("native-sync-skipped", {
+        workspaceId: context.workspaceId,
+        inboxConnectionId: connection.id,
+        reason: "n8n_ingestion_owner",
+        ingestionSource: connection.ingestionSource,
+        jobId: context.jobId,
+      });
+      return {
+        workspaceId: context.workspaceId,
+        inboxConnectionId: connection.id,
+        threadsImported: 0,
+        messagesImported: 0,
+        duplicatesSkipped: 0,
+        newestSyncCursor: connection.syncCursor,
+        skipped: true,
+        skipReason: "n8n_ingestion_owner",
+      };
+    }
+
     if (
       connection.status === "DISCONNECTED" ||
       connection.status === "PAUSED" ||
@@ -298,7 +321,7 @@ export class InboxSyncProcessor {
         ...syncResult
       });
 
-      if (this.analysisQueue && (syncResult.messagesImported > 0 || syncResult.threadsImported > 0)) {
+      if (this.analysisQueue && !syncResult.skipped && (syncResult.messagesImported > 0 || syncResult.threadsImported > 0)) {
         try {
           const analysisPayload: InboxAnalysisJobPayload = {
             workspaceId: context.workspaceId,

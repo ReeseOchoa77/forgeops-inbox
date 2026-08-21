@@ -11,5 +11,6 @@ export * from "./reference/classification-evidence-display.js";
 export * from "./reference/priority-decision.js";
 export * from "./attachments/cid.js";
 export * from "./mailbox-category.js";
+export * from "./ingestion-ownership.js";
 export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";

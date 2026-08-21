@@ -7,7 +7,8 @@ import {
   extractDomain,
   computeSimilarity,
   rankJobMatchCandidates,
-  JOB_MATCHER_VERSION
+  JOB_MATCHER_VERSION,
+  buildClassificationWriteLog,
 } from "@forgeops/shared";
 
 import { getSessionFromRequest } from "../authentication.js";
@@ -417,6 +418,18 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         ...(body.priority ? { priority: body.priority } : {})
       }
     });
+
+    console.info(
+      buildClassificationWriteLog({
+        workspaceId: params.workspaceId,
+        inboxConnectionId: null,
+        emailMessageId: message.id,
+        source: "MANUAL",
+        previousCategory: currentCategory,
+        newCategory: body.mailboxCategory,
+        modelName: null,
+      })
+    );
 
     if (classification) {
       await app.services.prisma.classificationCorrection.create({

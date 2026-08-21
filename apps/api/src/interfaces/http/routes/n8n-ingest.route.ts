@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail, mergeClassificationEvidenceForPersist } from "@forgeops/shared";
+import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -344,6 +344,7 @@ async function upsertEmailData(
     select: {
       id: true,
       threadId: true,
+      mailboxCategory: true,
       classifications: { select: { id: true, confidence: true }, take: 1, orderBy: { createdAt: "desc" } },
       tasks: { select: { id: true }, take: MAX_TASKS }
     }
@@ -390,6 +391,18 @@ async function upsertEmailData(
         itemStatus: classificationRequiresReview ? "NEEDS_REVIEW" : "NEW",
       }
     });
+
+    console.info(
+      buildClassificationWriteLog({
+        workspaceId,
+        inboxConnectionId: connectionId,
+        emailMessageId: existingMessage.id,
+        source: "N8N",
+        previousCategory: existingMessage.mailboxCategory,
+        newCategory: body.analysis.mailboxCategory ?? "BUSINESS",
+        modelName: "n8n-openai",
+      })
+    );
 
     const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
 
@@ -505,6 +518,18 @@ async function upsertEmailData(
       ...buildClassificationData(body, priority, emailType, classificationRequiresReview)
     }
   });
+
+  console.info(
+    buildClassificationWriteLog({
+      workspaceId,
+      inboxConnectionId: connectionId,
+      emailMessageId: message.id,
+      source: "N8N",
+      previousCategory: null,
+      newCategory: body.analysis.mailboxCategory ?? "BUSINESS",
+      modelName: "n8n-openai",
+    })
+  );
 
   const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
 
