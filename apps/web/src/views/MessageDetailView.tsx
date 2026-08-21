@@ -636,6 +636,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
   const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
+  const [monitoredEmailsReady, setMonitoredEmailsReady] = useState(false)
   /** Prevents duplicate ForgeOps Email Debug logs across React rerenders for the same open. */
   const emailDebugLoggedForId = useRef<string | null>(null)
 
@@ -644,9 +645,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
   useEffect(() => {
+    setMonitoredEmailsReady(false)
     api.getConnections(workspaceId)
       .then(r => setMonitoredEmails(new Set(r.connections.map(c => c.email.toLowerCase()))))
       .catch(() => setMonitoredEmails(new Set()))
+      .finally(() => setMonitoredEmailsReady(true))
   }, [workspaceId])
 
   useEffect(() => {
@@ -677,7 +680,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   // Logs the complete thread/message payload already loaded for MessageDetailView (no extra API call).
   // Does not log OAuth tokens, session cookies, or credentials.
   useEffect(() => {
-    if (loading || !threadData || threadData.messages.length === 0) return
+    if (loading || !monitoredEmailsReady || !threadData || threadData.messages.length === 0) return
     if (emailDebugLoggedForId.current === messageId) return
 
     const message =
@@ -687,21 +690,46 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
     emailDebugLoggedForId.current = messageId
 
-    console.groupCollapsed(`[ForgeOps Email Debug] ${message.id}`)
+    const mailboxCategory = message.mailboxCategory ?? null
+    const isSent = monitoredEmails.has(message.senderEmail.toLowerCase())
+    // Inbox chrome treats Sent as its own view; persisted category may still be BUSINESS/PERSONAL.
+    const emailKind = isSent ? 'SENT' : (mailboxCategory ?? 'UNKNOWN')
+    const classification = message.classification
+    const businessTypeKey = classification?.businessTypeKey ?? null
+    const businessSubtype =
+      mailboxCategory === 'BUSINESS'
+        ? {
+            businessTypeKey,
+            businessTypeLabel: businessTypeKey
+              ? businessTypeKey.replace(/_/g, ' ')
+              : null,
+            emailType: classification?.emailType ?? null,
+          }
+        : null
+
+    const groupTitle = businessSubtype?.businessTypeKey
+      ? `[ForgeOps Email Debug] ${message.id} · ${emailKind} · ${businessSubtype.businessTypeKey}`
+      : `[ForgeOps Email Debug] ${message.id} · ${emailKind}`
+
+    console.groupCollapsed(groupTitle)
     console.log({
       emailId: message.id,
       threadId: threadData.thread.id,
       openedMessageId: messageId,
+      emailKind,
+      mailboxCategory,
+      isSent,
+      businessSubtype,
       message,
       thread: threadData.thread,
       threadMessages: threadData.messages,
-      classification: message.classification,
+      classification,
       job: message.job,
       attachments: message.attachmentMetadata,
       taskCandidate: message.taskCandidate,
     })
     console.groupEnd()
-  }, [loading, threadData, messageId])
+  }, [loading, monitoredEmailsReady, monitoredEmails, threadData, messageId])
 
   useEffect(() => {
     api.getJobsLookup(workspaceId, { showArchived: false })

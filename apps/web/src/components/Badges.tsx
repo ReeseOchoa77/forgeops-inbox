@@ -56,7 +56,6 @@ const businessTypeColors: Record<string, { bg: string; fg: string }> = {
 const actionLabels: Record<string, string> = {
   ACTIONABLE_REQUEST: 'Action Needed',
   FYI_UPDATE: 'FYI / Update',
-  NEEDS_REVIEW: 'Needs Review'
 }
 
 export function TypeBadge({ type, businessTypeKey }: { type: string; businessTypeKey?: string | null }) {
@@ -64,13 +63,15 @@ export function TypeBadge({ type, businessTypeKey }: { type: string; businessTyp
     const c = businessTypeColors[businessTypeKey] ?? { bg: '#eee', fg: '#333' }
     return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{businessTypeLabels[businessTypeKey]}</span>
   }
+  // Do not surface NEEDS_REVIEW as a type label — show real classification subtypes only.
+  if (!type || type === 'NEEDS_REVIEW') return null
   const label = businessTypeLabels[type] ?? actionLabels[type] ?? type.replace(/_/g, ' ')
   const c = businessTypeColors[type] ?? { bg: '#eee', fg: '#333' }
   return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{label}</span>
 }
 
-export function ActionBadge({ emailType, requiresReview }: { emailType: string; requiresReview: boolean }) {
-  if (requiresReview) return <span style={{ ...badgeBase, background: '#fff9c4', color: '#f57f17', fontSize: 10 }}>Review</span>
+export function ActionBadge({ emailType, requiresReview: _requiresReview }: { emailType: string; requiresReview: boolean }) {
+  // TEMP: ignore requiresReview / Needs Review entirely for UI — classification display is independent.
   if (emailType === 'ACTIONABLE_REQUEST') return <span style={{ ...badgeBase, background: '#e3f2fd', color: '#1565c0', fontSize: 10 }}>Action</span>
   return null
 }
@@ -79,6 +80,7 @@ const priorityLabels: Record<string, string> = {
   URGENT: 'Urgent',
   HIGH: 'High',
   MEDIUM: 'Medium',
+  NORMAL: 'Medium',
   LOW: 'Low'
 }
 
@@ -88,6 +90,7 @@ export function PriorityBadge({ priority }: { priority: string | null }) {
     URGENT: { bg: '#c62828', fg: '#fff' },
     HIGH: { bg: '#ef6c00', fg: '#fff' },
     MEDIUM: { bg: '#fdd835', fg: '#333' },
+    NORMAL: { bg: '#fdd835', fg: '#333' },
     LOW: { bg: '#e8f5e9', fg: '#2e7d32' }
   }
   const c = colors[priority] ?? { bg: '#eee', fg: '#333' }

@@ -3,6 +3,7 @@ import { api, type ReviewItem, type MessageSummary } from '../api'
 import { PriorityBadge, ConfidenceBadge } from '../components/Badges'
 import { TypeBadge, ActionBadge } from '../components/Badges'
 import { ClassificationEvidencePanel } from '../components/ClassificationEvidencePanel'
+import { PriorityDecisionPanel } from '../components/PriorityDecisionPanel'
 import {
   buildClassificationEvidenceViewModel,
 } from '../../../../packages/shared/src/reference/classification-evidence-display'
@@ -158,7 +159,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
 
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e5e5', marginBottom: 14 }}>
         <button style={tabStyle('REVIEW')} onClick={() => setTab('REVIEW')}>
-          Needs Review {totalCount > 0 && <span style={{ marginLeft: 4, fontSize: 11, background: '#f0f0f0', padding: '1px 6px', borderRadius: 8 }}>{totalCount}</span>}
+          Queue {totalCount > 0 && <span style={{ marginLeft: 4, fontSize: 11, background: '#f0f0f0', padding: '1px 6px', borderRadius: 8 }}>{totalCount}</span>}
         </button>
         <button style={tabStyle('RECLASSIFIED')} onClick={() => setTab('RECLASSIFIED')}>
           Reclassified {reclassifiedTotal > 0 && <span style={{ marginLeft: 4, fontSize: 11, background: '#f3e8ff', color: '#7c3aed', padding: '1px 6px', borderRadius: 8 }}>{reclassifiedTotal}</span>}
@@ -338,6 +339,14 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               />
             )}
 
+            {/* Priority reason — only when n8n sent priorityDecision (new classifications) */}
+            {c?.classificationEvidence && (
+              <PriorityDecisionPanel
+                priority={c.priority}
+                evidence={c.classificationEvidence}
+              />
+            )}
+
             {/* Classification details */}
             {c && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px 16px', fontSize: 12, marginBottom: 8 }}>
@@ -370,7 +379,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                 <div>
                   <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Action State</div>
                   <ActionBadge emailType={c.emailType} requiresReview={c.requiresReview} />
-                  {!c.requiresReview && c.emailType !== 'ACTIONABLE_REQUEST' && <span style={{ color: '#ccc', fontSize: 11 }}>None</span>}
+                  {c.emailType !== 'ACTIONABLE_REQUEST' && <span style={{ color: '#ccc', fontSize: 11 }}>None</span>}
                 </div>
                 <div>
                   <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Action Request?</div>

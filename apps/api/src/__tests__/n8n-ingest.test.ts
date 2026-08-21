@@ -43,6 +43,21 @@ const n8nEmailResultSchema = z.object({
     summary: z.string().max(MAX_SUMMARY_LENGTH),
     priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
     containsActionRequest: z.boolean(),
+    classificationEvidence: z.record(z.unknown()).nullable().optional(),
+    classificationDecision: z.record(z.unknown()).nullable().optional(),
+    priorityDecision: z
+      .object({
+        rule: z.string().min(1).optional(),
+        jobRelated: z.boolean().optional(),
+        jobReferenceConfidence: z.number().min(0).max(1).optional(),
+        jobThreshold: z.number().min(0).max(1).optional(),
+        containsActionRequest: z.boolean().optional(),
+        hasExplicitDeadline: z.boolean().optional(),
+        deadlineUrgency: z.string().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -249,6 +264,25 @@ describe("n8n email-results schema validation", () => {
     (payload.analysis as Record<string, unknown>).priority = "CRITICAL";
     const result = n8nEmailResultSchema.safeParse(payload);
     expect(result.success).toBe(false);
+  });
+
+  it("accepts optional priorityDecision without requiring it", () => {
+    const withDecision = makeValidPayload();
+    (withDecision.analysis as Record<string, unknown>).priority = "HIGH";
+    (withDecision.analysis as Record<string, unknown>).priorityDecision = {
+      rule: "JOB_WITH_ACTION_DEADLINE",
+      jobRelated: true,
+      jobReferenceConfidence: 0.94,
+      jobThreshold: 0.8,
+      containsActionRequest: true,
+      hasExplicitDeadline: true,
+      deadlineUrgency: "STANDARD",
+    };
+    expect(n8nEmailResultSchema.safeParse(withDecision).success).toBe(true);
+
+    const historical = makeValidPayload();
+    delete (historical.analysis as Record<string, unknown>).priorityDecision;
+    expect(n8nEmailResultSchema.safeParse(historical).success).toBe(true);
   });
 
   it("rejects subject exceeding max length", () => {

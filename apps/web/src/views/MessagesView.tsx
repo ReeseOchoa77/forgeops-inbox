@@ -198,6 +198,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [attachmentPickerOpen, setAttachmentPickerOpen] = useState<string | null>(null)
   const [jobAssigning, setJobAssigning] = useState(false)
   const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
+  /** When on, clicking a list row trashes it instead of opening the email. */
+  const [massDeleteMode, setMassDeleteMode] = useState(false)
+  const massDeletingIds = useRef<Set<string>>(new Set())
 
   const handleAssignJob = async (messageId: string, jobId: string) => {
     setJobAssigning(true)
@@ -267,7 +270,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         const p = m.classification?.priority
         if (!p) return false
         if (priorityFilter.has('HIGH') && (p === 'HIGH' || p === 'URGENT')) return true
-        if (priorityFilter.has('MEDIUM') && p === 'MEDIUM') return true
+        if (priorityFilter.has('MEDIUM') && (p === 'MEDIUM' || p === 'NORMAL')) return true
         if (priorityFilter.has('LOW') && p === 'LOW') return true
         return false
       })
@@ -312,6 +315,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
     if (tab === 'PERSONAL' || tab === 'TRASH') setJobFilter('')
+    if (tab === 'TRASH') setMassDeleteMode(false)
   }
 
   const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
@@ -352,6 +356,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
     setJobFilter('')
+    setMassDeleteMode(false)
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
   }, [workspaceId, connectionId])
 
@@ -392,6 +397,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch { /* */ }
+  }
+
+  const handleMassDeleteClick = async (messageId: string) => {
+    if (massDeletingIds.current.has(messageId)) return
+    massDeletingIds.current.add(messageId)
+    try {
+      await handleTrash(messageId, false)
+    } finally {
+      massDeletingIds.current.delete(messageId)
+    }
+  }
+
+  const handleMessageActivate = (messageId: string) => {
+    if (massDeleteMode && inboxTab !== 'TRASH') {
+      void handleMassDeleteClick(messageId)
+      return
+    }
+    onSelectMessage(messageId)
   }
 
   const handleDeleteAllPersonal = async () => {
@@ -451,15 +474,19 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const renderPhoneCard = (m: MessageSummary) => {
     const status = autoResponseStatus[m.id] ?? 'idle'
+    const cardBg = massDeleteMode
+      ? (m.isRead ? '#fff5f5' : '#ffe8e8')
+      : (m.isPinned ? '#fffde7' : m.isRead ? '#fff' : '#f0f4ff')
     return (
       <div
         key={m.id}
-        onClick={() => onSelectMessage(m.id)}
+        onClick={() => handleMessageActivate(m.id)}
+        title={massDeleteMode ? 'Click to move to Trash' : undefined}
         style={{
           padding: '12px 16px',
           borderBottom: '1px solid #f0f0f0',
-          background: m.isPinned ? '#fffde7' : m.isRead ? '#fff' : '#f0f4ff',
-          borderLeft: m.isPinned ? '3px solid #f5a623' : 'none',
+          background: cardBg,
+          borderLeft: massDeleteMode ? '3px solid #ef5350' : m.isPinned ? '3px solid #f5a623' : 'none',
           cursor: 'pointer',
           minHeight: 44,
         }}
@@ -575,11 +602,20 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   const renderTableRow = (m: MessageSummary) => {
-    const rowBg = m.isPinned ? '#fffde7' : m.isRead ? '' : '#f0f4ff'
+    const rowBg = massDeleteMode
+      ? (m.isRead ? '#fff5f5' : '#ffe8e8')
+      : (m.isPinned ? '#fffde7' : m.isRead ? '' : '#f0f4ff')
+    const hoverBg = massDeleteMode ? '#ffebee' : '#f8f9fb'
     return (
-    <tr key={m.id} onClick={() => onSelectMessage(m.id)}
-      style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', background: rowBg, borderLeft: m.isPinned ? '3px solid #f5a623' : 'none' }}
-      onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
+    <tr key={m.id} onClick={() => handleMessageActivate(m.id)}
+      title={massDeleteMode ? 'Click to move to Trash' : undefined}
+      style={{
+        borderBottom: '1px solid #f0f0f0',
+        cursor: 'pointer',
+        background: rowBg,
+        borderLeft: massDeleteMode ? '3px solid #ef5350' : m.isPinned ? '3px solid #f5a623' : 'none',
+      }}
+      onMouseOver={e => (e.currentTarget.style.background = hoverBg)}
       onMouseOut={e => (e.currentTarget.style.background = rowBg)}>
       <td style={{ padding: '7px 4px', textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
         {!isViewer && (
@@ -754,6 +790,23 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {deletingAllPersonal ? 'Deleting...' : 'Delete All'}
             </button>
           )}
+          {!isViewer && inboxTab !== 'TRASH' && (
+            <button
+              type="button"
+              title={massDeleteMode ? 'Exit delete mode' : 'Delete mode — click emails to trash them'}
+              aria-pressed={massDeleteMode}
+              onClick={() => setMassDeleteMode(prev => !prev)}
+              style={{
+                padding: '5px 10px', fontSize: 14, fontWeight: 600, borderRadius: 5, lineHeight: 1,
+                border: massDeleteMode ? '1px solid #ef5350' : '1px solid #ddd',
+                background: massDeleteMode ? '#ffebee' : '#fff',
+                color: massDeleteMode ? '#c62828' : '#888',
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {'\uD83D\uDDD1'}
+            </button>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 5, overflow: 'hidden', background: '#fff' }}>
             <select
               value={searchIn}
@@ -780,6 +833,29 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         </div>
       </div>
+
+      {massDeleteMode && inboxTab !== 'TRASH' && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 8, padding: '8px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+            background: '#ffebee', color: '#b71c1c', border: '1px solid #ef9a9a',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+          }}
+        >
+          <span>Delete mode — click any email to move it to Trash.</span>
+          <button
+            type="button"
+            onClick={() => setMassDeleteMode(false)}
+            style={{
+              padding: '3px 10px', fontSize: 11, fontWeight: 600, borderRadius: 4,
+              border: '1px solid #ef9a9a', background: '#fff', color: '#c62828', cursor: 'pointer',
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div style={{

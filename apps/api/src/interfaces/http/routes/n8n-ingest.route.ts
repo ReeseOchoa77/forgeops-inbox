@@ -69,6 +69,24 @@ const n8nEmailResultSchema = z.object({
     classificationEvidence: z.record(z.unknown()).nullable().optional(),
     /** New flags+cumulative decision payload from n8n (optional; merged into evidence JSON). */
     classificationDecision: z.record(z.unknown()).nullable().optional(),
+    /**
+     * Deterministic priority explanation from n8n (optional).
+     * Merged into Classification.classificationEvidence.priorityDecision — no Prisma migration.
+     * analysis.priority remains canonical; ForgeOps does not recalculate it.
+     */
+    priorityDecision: z
+      .object({
+        rule: z.string().min(1).optional(),
+        jobRelated: z.boolean().optional(),
+        jobReferenceConfidence: z.number().min(0).max(1).optional(),
+        jobThreshold: z.number().min(0).max(1).optional(),
+        containsActionRequest: z.boolean().optional(),
+        hasExplicitDeadline: z.boolean().optional(),
+        deadlineUrgency: z.string().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -184,6 +202,7 @@ function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM
       const merged = mergeClassificationEvidenceForPersist({
         classificationEvidence: body.analysis.classificationEvidence ?? null,
         classificationDecision: body.analysis.classificationDecision ?? null,
+        priorityDecision: body.analysis.priorityDecision ?? null,
       });
       return merged ? toPrismaJson(merged) : Prisma.JsonNull;
     })(),

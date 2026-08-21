@@ -3,6 +3,8 @@
  * ForgeOps does not recompute the decision — only detect format and present it.
  */
 
+import type { PriorityDecisionPayload } from "./priority-decision.js";
+
 export type ClassificationDecisionRule =
   | "CONFIRMED_BUSINESS_SENDER"
   | "CONFIRMED_PERSONAL_SENDER"
@@ -58,6 +60,8 @@ export type ClassificationEvidenceRecord = Record<string, unknown> & {
   cumulativeBusinessScore?: number;
   cumulativeBusinessThreshold?: number;
   classificationDecision?: ClassificationDecisionPayload;
+  /** Deterministic n8n priority explanation (optional; historical records omit). */
+  priorityDecision?: PriorityDecisionPayload;
 };
 
 export type EvidenceFormat = "legacy_weighted" | "new_flags" | "unknown";
@@ -450,16 +454,17 @@ export function extractN8nReviewReasons(routingHints: unknown): string[] {
 }
 
 /**
- * Merge classificationDecision into evidence JSON for single-field persistence.
- * Does not mutate inputs.
+ * Merge classificationDecision / priorityDecision into evidence JSON for single-field persistence.
+ * Does not mutate inputs. Does not recompute BUSINESS/PERSONAL or priority.
  */
 export function mergeClassificationEvidenceForPersist(input: {
   classificationEvidence: Record<string, unknown> | null | undefined;
-  classificationDecision:
+  classificationDecision?:
     | ClassificationDecisionPayload
     | Record<string, unknown>
     | null
     | undefined;
+  priorityDecision?: PriorityDecisionPayload | Record<string, unknown> | null | undefined;
 }): Record<string, unknown> | null {
   const evidence = input.classificationEvidence
     ? { ...input.classificationEvidence }
@@ -485,6 +490,9 @@ export function mergeClassificationEvidenceForPersist(input: {
         evidence.cumulativeBusinessThreshold = cum.threshold;
       }
     }
+  }
+  if (input.priorityDecision) {
+    evidence.priorityDecision = input.priorityDecision;
   }
   return Object.keys(evidence).length > 0 ? evidence : null;
 }

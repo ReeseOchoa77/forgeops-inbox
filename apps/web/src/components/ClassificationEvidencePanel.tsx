@@ -193,7 +193,7 @@ function NewFlagEvidence({
             fontWeight: 600,
           }}
         >
-          Confirmed personal sender overridden — Requires Review
+          Confirmed personal sender overridden
         </div>
       )}
 
@@ -290,10 +290,6 @@ function NewFlagEvidence({
           Signature excluded from classification
           {signature.probabilityPct != null ? ` (${signature.probabilityPct}%)` : ''}.
         </div>
-      )}
-
-      {vm.requiresReviewHint && (
-        <div style={{ fontSize: 11, fontWeight: 600, color: '#e65100', marginTop: 6 }}>Requires Review</div>
       )}
     </>
   )
