@@ -788,11 +788,12 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     setSendResult(null)
 
     try {
-      await api.sendMessage(workspaceId, connectionId, {
+      await api.sendMessage(workspaceId, payload.inboxConnectionId || connectionId, {
         action: composeMode,
         originalMessageId: lastMessage.id,
         to: payload.to,
         cc: payload.cc,
+        bcc: payload.bcc,
         subject: payload.subject,
         body: payload.html,
         bodyFormat: 'html'
@@ -1052,12 +1053,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             {composeMode === 'reply' ? 'Reply' : 'Forward'}
           </h3>
           <ComposeEditor
+            workspaceId={workspaceId}
+            sendableMailboxes={[]}
+            hideFrom
+            fixedConnectionId={connectionId}
             onSend={handleComposeSend}
             sending={sending}
+            sendError={sendResult?.type === 'error' ? sendResult.message : null}
             sendLabel={composeMode === 'reply' ? 'Send Reply' : 'Send Forward'}
             onCancel={() => setComposeMode(null)}
-            initialTo={composeDefaults.to}
-            initialCc={composeDefaults.cc}
+            initialTo={composeDefaults.to ? composeDefaults.to.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean) : []}
+            initialCc={composeDefaults.cc ? composeDefaults.cc.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean) : []}
             initialSubject={composeDefaults.subject}
           />
         </div>

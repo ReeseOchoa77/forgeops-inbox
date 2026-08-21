@@ -78,6 +78,14 @@ export default function App() {
   const [connectionNotice, setConnectionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [showCompose, setShowCompose] = useState(false)
   const [composeSending, setComposeSending] = useState(false)
+  const [composeError, setComposeError] = useState<string | null>(null)
+  const [sendableMailboxes, setSendableMailboxes] = useState<Array<{
+    id: string
+    email: string
+    displayName: string | null
+    provider: string
+  }>>([])
+  const [sendableLoading, setSendableLoading] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
   const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
 
@@ -314,20 +322,42 @@ export default function App() {
     setPage('job-detail')
   }
 
-  const handleNewComposeSend = async (payload: { to: string[]; cc: string[]; subject: string; html: string; files: File[] }) => {
-    if (!connectionId) return
+  const openCompose = () => {
+    setComposeError(null)
+    setShowCompose(true)
+    if (!workspaceId) return
+    setSendableLoading(true)
+    api.getSendableMailboxes(workspaceId)
+      .then((r) => setSendableMailboxes(r.mailboxes))
+      .catch(() => setSendableMailboxes([]))
+      .finally(() => setSendableLoading(false))
+  }
+
+  const handleNewComposeSend = async (payload: {
+    inboxConnectionId: string
+    to: string[]
+    cc: string[]
+    bcc: string[]
+    subject: string
+    html: string
+    files: File[]
+  }) => {
     setComposeSending(true)
+    setComposeError(null)
     try {
-      await api.sendMessage(workspaceId, connectionId, {
+      await api.sendMessage(workspaceId, payload.inboxConnectionId, {
         action: 'new',
         to: payload.to,
         cc: payload.cc,
+        bcc: payload.bcc,
         subject: payload.subject,
         body: payload.html,
         bodyFormat: 'html'
       })
       setShowCompose(false)
-    } catch { /* */ } finally {
+    } catch (e) {
+      setComposeError(e instanceof Error ? e.message : 'Failed to send')
+    } finally {
       setComposeSending(false)
     }
   }
@@ -530,7 +560,7 @@ export default function App() {
             )}
 
             {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
-              <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
+              <button className="btn btn-sm btn-primary" onClick={openCompose}>
                 Compose
               </button>
             )}
@@ -550,7 +580,7 @@ export default function App() {
               ))}
             </select>
             {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
-              <button className="btn btn-sm btn-primary" onClick={() => setShowCompose(true)}>
+              <button className="btn btn-sm btn-primary" onClick={openCompose}>
                 Compose
               </button>
             )}
@@ -669,29 +699,34 @@ export default function App() {
         </div>
       </div>
 
-      {/* Compose modal */}
+      {/* Compose modal — centered */}
       {showCompose && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1000,
-          display: 'flex', alignItems: isPhone ? 'stretch' : 'flex-end', justifyContent: isPhone ? 'stretch' : 'flex-end',
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: isPhone ? 0 : 24
         }}>
           <div style={{
-            width: isPhone ? '100%' : 560, maxHeight: isPhone ? '100vh' : '80vh', height: isPhone ? '100%' : undefined,
-            background: '#fff', borderRadius: isPhone ? 0 : 10,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden'
+            width: isPhone ? '100%' : 'min(860px, 94vw)', maxHeight: isPhone ? '100vh' : '90vh',
+            height: isPhone ? '100%' : undefined,
+            background: '#fff', borderRadius: isPhone ? 0 : 12,
+            boxShadow: '0 16px 48px rgba(0,0,0,0.22)', display: 'flex', flexDirection: 'column', overflow: 'hidden'
           }}>
             <div style={{
-              padding: '12px 16px', borderBottom: '1px solid #e5e5e5',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+              padding: '14px 18px', borderBottom: '1px solid #e5e5e5',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0
             }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>New Message</h3>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Compose Email</h3>
               <button onClick={() => setShowCompose(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#999', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>&times;</button>
             </div>
-            <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
+            <div style={{ padding: 18, overflow: 'auto', flex: 1, minHeight: 0 }}>
               <ComposeEditor
+                workspaceId={workspaceId}
+                sendableMailboxes={sendableMailboxes}
+                mailboxesLoading={sendableLoading}
                 onSend={handleNewComposeSend}
                 sending={composeSending}
+                sendError={composeError}
                 sendLabel="Send"
                 onCancel={() => setShowCompose(false)}
               />

@@ -3,11 +3,16 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import { assertUserMaySendAsConnection } from "../../../application/services/sendable-mailbox.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const paramsSchema = z.object({
   workspaceId: z.string().min(1),
   connectionId: z.string().min(1)
+});
+
+const workspaceParamsSchema = z.object({
+  workspaceId: z.string().min(1),
 });
 
 const sendBodySchema = z.object({
@@ -268,6 +273,66 @@ async function sendViaOutlook(input: {
 export const registerSendRoutes = async (
   app: FastifyInstance
 ): Promise<void> => {
+  app.get(
+    "/api/v1/workspaces/:workspaceId/sendable-mailboxes",
+    async (request, reply) => {
+      const params = workspaceParamsSchema.parse(request.params);
+      const session = await getSessionFromRequest(request);
+      if (!session) return reply.code(401).send({ message: "Authentication required" });
+
+      const membership = await requireWorkspaceMembership(
+        app.services.prisma,
+        session.userId,
+        params.workspaceId
+      );
+      if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
+
+      const user = await app.services.prisma.user.findUnique({
+        where: { id: session.userId },
+        select: { email: true },
+      });
+      if (!user?.email) {
+        return reply.code(401).send({ message: "Authentication required" });
+      }
+
+      const connections = await app.services.prisma.inboxConnection.findMany({
+        where: { workspaceId: params.workspaceId },
+        select: {
+          id: true,
+          email: true,
+          displayName: true,
+          provider: true,
+          status: true,
+          grantedScopes: true,
+          encryptedRefreshToken: true,
+        },
+        orderBy: { email: "asc" },
+      });
+
+      const mailboxes = connections
+        .filter((c) =>
+          assertUserMaySendAsConnection({
+            userEmail: user.email,
+            connection: {
+              email: c.email,
+              provider: c.provider,
+              status: c.status,
+              hasRefreshToken: Boolean(c.encryptedRefreshToken),
+              grantedScopes: c.grantedScopes,
+            },
+          }).ok
+        )
+        .map((c) => ({
+          id: c.id,
+          email: c.email,
+          displayName: c.displayName,
+          provider: c.provider.toLowerCase(),
+        }));
+
+      return reply.send({ mailboxes });
+    }
+  );
+
   app.post(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/send",
     async (request, reply) => {
@@ -284,6 +349,14 @@ export const registerSendRoutes = async (
 
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
+      const user = await app.services.prisma.user.findUnique({
+        where: { id: session.userId },
+        select: { email: true },
+      });
+      if (!user?.email) {
+        return reply.code(401).send({ message: "Authentication required" });
+      }
+
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
         select: {
@@ -291,13 +364,36 @@ export const registerSendRoutes = async (
           provider: true,
           email: true,
           status: true,
+          grantedScopes: true,
           encryptedRefreshToken: true
         }
       });
 
       if (!connection) return reply.code(404).send({ message: "Connection not found" });
-      if (connection.status !== "ACTIVE") return reply.code(409).send({ message: "Connection is not active" });
-      if (!connection.encryptedRefreshToken) return reply.code(409).send({ message: "No refresh token available" });
+
+      const sendAuth = assertUserMaySendAsConnection({
+        userEmail: user.email,
+        connection: {
+          email: connection.email,
+          provider: connection.provider,
+          status: connection.status,
+          hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+          grantedScopes: connection.grantedScopes,
+        },
+      });
+      if (!sendAuth.ok) {
+        return reply.code(sendAuth.statusCode).send({
+          message: sendAuth.message,
+          code: sendAuth.code,
+        });
+      }
+
+      if (!connection.encryptedRefreshToken) {
+        return reply.code(409).send({
+          message: "Mailbox authorization required before sending.",
+          code: "MAILBOX_AUTH_REQUIRED",
+        });
+      }
 
       let body: z.infer<typeof sendBodySchema>;
       const attachments: ParsedAttachment[] = [];
@@ -405,6 +501,7 @@ export const registerSendRoutes = async (
             cc: body.cc,
             subject: body.subject,
             provider: connection.provider,
+            from: connection.email,
             providerMessageId: result.providerMessageId,
             attachmentCount: attachments.length,
             bodyFormat: body.bodyFormat

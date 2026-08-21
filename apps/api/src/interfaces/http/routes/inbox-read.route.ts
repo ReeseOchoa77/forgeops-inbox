@@ -176,6 +176,7 @@ const connectionSummarySchema = z.object({
     emailIngestion: z.boolean(),
     directProviderAccess: z.boolean(),
     attachmentIngestion: z.boolean(),
+    emailSending: z.boolean(),
   }),
   counts: z.object({
     messages: z.number().int().nonnegative(),
@@ -434,6 +435,7 @@ const serializeConnection = (connection: {
     provider: connection.provider,
     status: connection.status,
     hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+    grantedScopes: connection.grantedScopes,
   });
 
   return connectionSummarySchema.parse({

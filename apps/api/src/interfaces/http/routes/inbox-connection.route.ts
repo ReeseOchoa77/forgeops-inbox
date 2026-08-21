@@ -63,6 +63,7 @@ const serializeConnection = (connection: {
     provider: connection.provider,
     status: connection.status,
     hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+    grantedScopes: connection.grantedScopes,
   });
 
   return {

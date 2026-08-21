@@ -23,6 +23,7 @@ describe("Outlook OAuth scopes", () => {
     expect(scope).toContain("offline_access");
     expect(scope).toContain("openid");
     expect(scope).toContain("https://graph.microsoft.com/Mail.Read");
+    expect(scope).toContain("https://graph.microsoft.com/Mail.Send");
     expect(scope).toContain("https://graph.microsoft.com/User.Read");
     expect(scope).toContain("email");
     expect(scope).toContain("profile");
@@ -84,12 +85,21 @@ describe("Outlook OAuth scopes", () => {
   it("callback validation passes when scope omits offline_access/openid but tokens are present", () => {
     // Realistic Microsoft tokenResponse.scope shape (short Graph names, no offline_access).
     const missing = findMissingOutlookRequiredScopes({
-      grantedScopes: ["Mail.Read", "User.Read", "email", "profile"],
+      grantedScopes: ["Mail.Read", "Mail.Send", "User.Read", "email", "profile"],
       hasRefreshToken: true,
       hasIdToken: true,
     });
 
     expect(missing).toEqual([]);
+  });
+
+  it("callback validation fails when Mail.Send is missing", () => {
+    const missing = findMissingOutlookRequiredScopes({
+      grantedScopes: ["Mail.Read", "User.Read", "email", "profile"],
+      hasRefreshToken: true,
+      hasIdToken: true,
+    });
+    expect(missing).toContain("https://graph.microsoft.com/Mail.Send");
   });
 
   it("callback validation fails when offline_access missing and no refresh_token", () => {

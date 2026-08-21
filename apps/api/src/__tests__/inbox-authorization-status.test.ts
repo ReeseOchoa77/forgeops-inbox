@@ -26,6 +26,7 @@ const connectionSummarySchema = z.object({
     emailIngestion: z.boolean(),
     directProviderAccess: z.boolean(),
     attachmentIngestion: z.boolean(),
+    emailSending: z.boolean(),
   }),
   counts: z.object({
     messages: z.number(),
@@ -82,12 +83,13 @@ describe("deriveAuthorizationStatus", () => {
 });
 
 describe("buildAuthorizationFields capabilities", () => {
-  it("REQUIRED exposes ingestion but not attachment/provider access", () => {
+  it("REQUIRED exposes ingestion but not attachment/provider access or sending", () => {
     expect(
       buildAuthorizationFields({
         provider: "OUTLOOK",
         status: "ACTIVE",
         hasRefreshToken: false,
+        grantedScopes: [],
       })
     ).toEqual({
       authorizationStatus: "REQUIRED",
@@ -95,16 +97,18 @@ describe("buildAuthorizationFields capabilities", () => {
         emailIngestion: true,
         directProviderAccess: false,
         attachmentIngestion: false,
+        emailSending: false,
       },
     });
   });
 
-  it("CONNECTED enables attachment ingestion", () => {
+  it("CONNECTED with Mail.Read only enables attachment but not sending", () => {
     expect(
       buildAuthorizationFields({
         provider: "OUTLOOK",
         status: "ACTIVE",
         hasRefreshToken: true,
+        grantedScopes: ["https://graph.microsoft.com/Mail.Read"],
       })
     ).toEqual({
       authorizationStatus: "CONNECTED",
@@ -112,8 +116,23 @@ describe("buildAuthorizationFields capabilities", () => {
         emailIngestion: true,
         directProviderAccess: true,
         attachmentIngestion: true,
+        emailSending: false,
       },
     });
+  });
+
+  it("CONNECTED with Mail.Send enables emailSending", () => {
+    expect(
+      buildAuthorizationFields({
+        provider: "OUTLOOK",
+        status: "ACTIVE",
+        hasRefreshToken: true,
+        grantedScopes: [
+          "https://graph.microsoft.com/Mail.Read",
+          "https://graph.microsoft.com/Mail.Send",
+        ],
+      }).capabilities.emailSending
+    ).toBe(true);
   });
 });
 

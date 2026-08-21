@@ -1,5 +1,6 @@
 import type { InboxConnectionStatus, InboxProvider } from "@prisma/client";
 import { normalizeEmail } from "@forgeops/shared";
+import { connectionHasSendingScope } from "./sendable-mailbox.js";
 
 export type AuthorizationStatus =
   | "REQUIRED"
@@ -10,6 +11,8 @@ export type InboxConnectionCapabilities = {
   emailIngestion: boolean;
   directProviderAccess: boolean;
   attachmentIngestion: boolean;
+  /** True only when OAuth includes provider send scope and connection is send-ready. */
+  emailSending: boolean;
 };
 
 /**
@@ -34,7 +37,6 @@ export function deriveAuthorizationStatus(input: {
     return "CONNECTED";
   }
 
-  // Gmail without token (unusual) or disconnected Outlook with no token
   if (!input.hasRefreshToken) {
     return "REQUIRED";
   }
@@ -45,15 +47,25 @@ export function deriveAuthorizationStatus(input: {
 export function deriveInboxCapabilities(input: {
   authorizationStatus: AuthorizationStatus;
   status: InboxConnectionStatus | string;
+  provider: InboxProvider | string;
+  grantedScopes?: readonly string[];
 }): InboxConnectionCapabilities {
   const activeEnough =
     input.status !== "DISCONNECTED" && input.status !== "PAUSED";
   const oauthReady = input.authorizationStatus === "CONNECTED";
+  const sendScopeOk = connectionHasSendingScope({
+    provider: input.provider,
+    grantedScopes: input.grantedScopes ?? [],
+  });
 
   return {
     emailIngestion: activeEnough,
     directProviderAccess: oauthReady,
     attachmentIngestion: oauthReady,
+    emailSending:
+      oauthReady &&
+      input.status === "ACTIVE" &&
+      sendScopeOk,
   };
 }
 
@@ -61,6 +73,7 @@ export function buildAuthorizationFields(input: {
   provider: InboxProvider | string;
   status: InboxConnectionStatus | string;
   hasRefreshToken: boolean;
+  grantedScopes?: readonly string[];
 }): {
   authorizationStatus: AuthorizationStatus;
   capabilities: InboxConnectionCapabilities;
@@ -71,6 +84,8 @@ export function buildAuthorizationFields(input: {
     capabilities: deriveInboxCapabilities({
       authorizationStatus,
       status: input.status,
+      provider: input.provider,
+      ...(input.grantedScopes ? { grantedScopes: input.grantedScopes } : {}),
     }),
   };
 }

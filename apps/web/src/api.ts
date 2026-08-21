@@ -38,6 +38,7 @@ export interface InboxConnectionCapabilities {
   emailIngestion: boolean;
   directProviderAccess: boolean;
   attachmentIngestion: boolean;
+  emailSending: boolean;
 }
 
 export interface ConnectionSummary {
@@ -52,6 +53,13 @@ export interface ConnectionSummary {
   authorizationStatus: AuthorizationStatus;
   capabilities: InboxConnectionCapabilities;
   counts: { messages: number; threads: number };
+}
+
+export interface EmailContactSuggestion {
+  name: string | null;
+  email: string;
+  organization: string | null;
+  source: 'CONTACT' | 'CUSTOMER' | 'VENDOR' | 'MEMBER' | 'EMAIL_HISTORY';
 }
 
 export interface Classification {
@@ -523,6 +531,23 @@ export const api = {
     request<{ status: string; action: string; providerMessageId: string }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`,
       { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
+  getSendableMailboxes: (workspaceId: string) =>
+    request<{
+      mailboxes: Array<{
+        id: string;
+        email: string;
+        displayName: string | null;
+        provider: string;
+      }>;
+    }>(`/workspaces/${workspaceId}/sendable-mailboxes`),
+
+  searchEmailContacts: (workspaceId: string, q: string, limit = 10) =>
+    request<{
+      contacts: EmailContactSuggestion[];
+    }>(
+      `/workspaces/${workspaceId}/email-contacts?q=${encodeURIComponent(q)}&limit=${limit}`
     ),
 
   aiExtract: async (workspaceId: string, file: File): Promise<ExtractionResult> => {
