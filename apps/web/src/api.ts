@@ -74,14 +74,9 @@ export interface Classification {
   containsActionRequest: boolean;
   businessTypeKey: string | null;
   businessTypeConfidence: number | null;
-  classificationEvidence: {
-    content?: { probability: number; weight: number; contribution: number; explanation: string };
-    sender?: { probability: number; weight: number; contribution: number; explanation?: string; status?: string };
-    signature?: { probability: number; weight: number; contribution: number; explanation: string };
-    job?: { probability: number; weight: number; contribution: number; explanation: string };
-    subject?: { probability: number; weight: number; contribution: number; explanation: string };
-    finalBusinessProbability?: number;
-  } | null;
+  /** Legacy weighted or new flags+cumulative evidence JSON from n8n. */
+  classificationEvidence: Record<string, unknown> | null;
+  routingHints?: Record<string, unknown> | null;
 }
 
 export interface TaskSummary {

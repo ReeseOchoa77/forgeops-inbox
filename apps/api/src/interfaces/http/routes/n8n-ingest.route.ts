@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail } from "@forgeops/shared";
+import { normalizeEmail, mergeClassificationEvidenceForPersist } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -67,6 +67,8 @@ const n8nEmailResultSchema = z.object({
     signatureCompanyMatchConfidence: z.number().min(0).max(1).nullable().optional(),
     jobReferenceConfidence: z.number().min(0).max(1).nullable().optional(),
     classificationEvidence: z.record(z.unknown()).nullable().optional(),
+    /** New flags+cumulative decision payload from n8n (optional; merged into evidence JSON). */
+    classificationDecision: z.record(z.unknown()).nullable().optional(),
     tasks: z.array(z.object({
       title: z.string().min(1).max(300),
       description: z.string().max(2000).default(""),
@@ -178,7 +180,13 @@ function buildClassificationData(body: N8nEmailResult, priority: "LOW" | "MEDIUM
     entityMatchConfidence: body.analysis.entityMatchConfidence ? toConfidence(body.analysis.entityMatchConfidence) : null,
     matchEvidence: body.analysis.matchEvidence ? toPrismaJson(body.analysis.matchEvidence) : Prisma.JsonNull,
     rawAiPayload: toPrismaJson(body.analysis),
-    classificationEvidence: body.analysis.classificationEvidence ? toPrismaJson(body.analysis.classificationEvidence) : Prisma.JsonNull,
+    classificationEvidence: (() => {
+      const merged = mergeClassificationEvidenceForPersist({
+        classificationEvidence: body.analysis.classificationEvidence ?? null,
+        classificationDecision: body.analysis.classificationDecision ?? null,
+      });
+      return merged ? toPrismaJson(merged) : Prisma.JsonNull;
+    })(),
     customerId: body.analysis.selectedCustomerId ?? null,
     vendorId: body.analysis.selectedVendorId ?? null,
     jobId: null,

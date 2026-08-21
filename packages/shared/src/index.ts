@@ -7,6 +7,7 @@ export * from "./types/provider.js";
 export * from "./types/tenant.js";
 export * from "./reference/normalize.js";
 export * from "./reference/evidence-scoring.js";
+export * from "./reference/classification-evidence-display.js";
 export * from "./attachments/cid.js";
 export * from "./mailbox-category.js";
 export * from "./jobs/job-matcher.js";

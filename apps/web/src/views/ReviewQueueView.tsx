@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { api, type ReviewItem, type MessageSummary } from '../api'
 import { PriorityBadge, ConfidenceBadge } from '../components/Badges'
 import { TypeBadge, ActionBadge } from '../components/Badges'
+import { ClassificationEvidencePanel } from '../components/ClassificationEvidencePanel'
+import {
+  buildClassificationEvidenceViewModel,
+} from '../../../../packages/shared/src/reference/classification-evidence-display'
 
 interface Props {
   workspaceId: string
@@ -276,6 +280,11 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
         const confirmKey = m.id + 'confirm'
         const oppositeCategory = m.mailboxCategory === 'BUSINESS' ? 'Personal' : 'Business'
         const isBusiness = senderCategoryFromMessage(m.mailboxCategory) === 'BUSINESS'
+        const evidenceVm = buildClassificationEvidenceViewModel(c?.classificationEvidence, m.mailboxCategory)
+        const confidenceLabel =
+          evidenceVm?.confidenceLabel === 'Classification confidence'
+            ? 'Classification confidence'
+            : 'Confidence'
 
         return (
           <div key={m.id} className="card" style={{ borderLeft: '3px solid #f57f17', marginBottom: 10 }}>
@@ -319,50 +328,14 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
               </div>
             </div>
 
-            {/* Evidence breakdown — scoring metrics from n8n */}
-            {c?.classificationEvidence && (
-              <div style={{ background: '#f8f9fa', border: '1px solid #eee', borderRadius: 6, padding: '10px 12px', marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Classification Evidence</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
-                  {(['content', 'sender', 'signature', 'job', 'subject'] as const).map(key => {
-                    const signal = c.classificationEvidence?.[key]
-                    if (!signal) return null
-                    const pct = Math.round(signal.probability * 100)
-                    const contrib = Math.round(signal.contribution * 100)
-                    const barColor = pct >= 70 ? '#4caf50' : pct >= 40 ? '#ff9800' : '#e0e0e0'
-                    return (
-                      <div key={key} style={{ fontSize: 11 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                          <span style={{ fontWeight: 600, textTransform: 'capitalize', color: '#555' }}>{key}</span>
-                          <span style={{ color: '#888' }}>{pct}% <span style={{ color: '#bbb', fontSize: 10 }}>({signal.weight * 100}% wt)</span></span>
-                        </div>
-                        <div style={{ height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
-                          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 3, transition: 'width 0.3s' }} />
-                        </div>
-                        <div style={{ fontSize: 10, color: '#999', lineHeight: 1.3 }}>
-                          {signal.explanation ?? `Contributes ${contrib}%`}
-                          {key === 'sender' && !!(signal as Record<string, unknown>).status && (
-                            <span style={{ marginLeft: 4, fontWeight: 500, color: '#555' }}>({String((signal as Record<string, unknown>).status)})</span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-                {c.classificationEvidence.finalBusinessProbability != null && (
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#333' }}>Final Business Probability</span>
-                    <span style={{
-                      fontSize: 14, fontWeight: 700,
-                      color: c.classificationEvidence.finalBusinessProbability >= 0.85 ? '#2e7d32'
-                        : c.classificationEvidence.finalBusinessProbability <= 0.20 ? '#6a1b9a'
-                        : '#f57f17'
-                    }}>
-                      {Math.round(c.classificationEvidence.finalBusinessProbability * 100)}%
-                    </span>
-                  </div>
-                )}
-              </div>
+            {/* Evidence breakdown — n8n decision evidence (legacy weighted or new flags) */}
+            {(c?.classificationEvidence || c?.routingHints) && (
+              <ClassificationEvidencePanel
+                evidence={c?.classificationEvidence}
+                mailboxCategory={m.mailboxCategory}
+                routingHints={c?.routingHints}
+                confidence={c?.confidence}
+              />
             )}
 
             {/* Classification details */}
@@ -389,7 +362,9 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                   <PriorityBadge priority={c.priority} />
                 </div>
                 <div>
-                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>Confidence</div>
+                  <div style={{ color: '#aaa', fontSize: 10, marginBottom: 2 }}>
+                    {confidenceLabel}
+                  </div>
                   <ConfidenceBadge confidence={c.confidence} />
                 </div>
                 <div>
