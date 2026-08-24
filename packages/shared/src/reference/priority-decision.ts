@@ -47,8 +47,9 @@ export interface PriorityDecisionViewModel {
 }
 
 /**
- * Documents the n8n deterministic priority table.
- * Use for tests / contract checks only — do not override analysis.priority on ingest.
+ * Documents the n8n deterministic priority table and returns full diagnostics.
+ * Use for native read-only classification and contract tests.
+ * Do not override analysis.priority on n8n ingest.
  */
 export function computeN8nPriorityFromDecisionInputs(input: {
   jobReferenceConfidence: number;
@@ -57,12 +58,60 @@ export function computeN8nPriorityFromDecisionInputs(input: {
   deadlineUrgency: DeadlineUrgency;
   jobThreshold?: number;
 }): N8nPriority {
+  return decideMailboxPriority(input).priority;
+}
+
+/**
+ * Deterministic priority decision used by the native classification pipeline.
+ * AI subtype/entity/task stages must not overwrite this result.
+ */
+export function decideMailboxPriority(input: {
+  jobReferenceConfidence: number;
+  containsActionRequest: boolean;
+  hasExplicitDeadline: boolean;
+  deadlineUrgency: DeadlineUrgency;
+  jobThreshold?: number;
+}): PriorityDecisionPayload & { priority: N8nPriority } {
   const threshold = input.jobThreshold ?? N8N_JOB_PRIORITY_THRESHOLD;
-  if (input.jobReferenceConfidence < threshold) return "LOW";
-  if (!input.containsActionRequest) return "LOW";
-  if (!input.hasExplicitDeadline) return "NORMAL";
-  if (input.deadlineUrgency === "URGENT") return "URGENT";
-  return "HIGH";
+  const jobReferenceConfidence = Number.isFinite(input.jobReferenceConfidence)
+    ? Math.max(0, Math.min(1, input.jobReferenceConfidence))
+    : 0;
+  const jobRelated = jobReferenceConfidence >= threshold;
+  const containsActionRequest = input.containsActionRequest === true;
+  const hasExplicitDeadline = input.hasExplicitDeadline === true;
+  const deadlineUrgency = input.deadlineUrgency ?? "NONE";
+
+  let priority: N8nPriority;
+  let rule: PriorityDecisionRule;
+
+  if (!jobRelated) {
+    priority = "LOW";
+    rule = "NO_CONFIDENT_JOB_MATCH";
+  } else if (!containsActionRequest) {
+    priority = "LOW";
+    rule = "JOB_WITHOUT_ACTION_REQUEST";
+  } else if (!hasExplicitDeadline) {
+    priority = "NORMAL";
+    rule = "JOB_WITH_ACTION_NO_DEADLINE";
+  } else if (deadlineUrgency === "URGENT") {
+    priority = "URGENT";
+    rule = "JOB_WITH_ACTION_URGENT_DEADLINE";
+  } else {
+    // STANDARD (or any non-URGENT explicit deadline)
+    priority = "HIGH";
+    rule = "JOB_WITH_ACTION_DEADLINE";
+  }
+
+  return {
+    priority,
+    rule,
+    jobRelated,
+    jobReferenceConfidence,
+    jobThreshold: threshold,
+    containsActionRequest,
+    hasExplicitDeadline,
+    deadlineUrgency,
+  };
 }
 
 /** Map n8n priority → stored enum (existing ingest behavior). */
@@ -80,6 +129,26 @@ export function mapN8nPriorityToStored(priority: string): StoredPriority {
       return "MEDIUM";
     default:
       return "MEDIUM";
+  }
+}
+
+/** Map stored Prisma priority → n8n vocabulary for parity comparisons. */
+export function mapStoredPriorityToN8n(
+  priority: string | null | undefined
+): N8nPriority | null {
+  if (!priority) return null;
+  switch (priority) {
+    case "URGENT":
+      return "URGENT";
+    case "HIGH":
+      return "HIGH";
+    case "MEDIUM":
+    case "NORMAL":
+      return "NORMAL";
+    case "LOW":
+      return "LOW";
+    default:
+      return null;
   }
 }
 

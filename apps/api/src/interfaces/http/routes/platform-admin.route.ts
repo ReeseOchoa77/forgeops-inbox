@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 
+import { runClassificationParityForMessage } from "../../../application/services/classification-parity.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 async function requirePlatformAdminAccess(
@@ -545,5 +546,38 @@ export const registerPlatformAdminRoutes = async (
     const { mailboxId } = z.object({ mailboxId: z.string().min(1) }).parse(request.params);
     await app.services.prisma.workspaceMailbox.update({ where: { id: mailboxId }, data: { status: "ACTIVE" } });
     return reply.send({ status: "active" });
+  });
+
+  /**
+   * Read-only native vs n8n classification parity for one EmailMessage.
+   * Performs zero EmailMessage / Classification / task / job writes.
+   */
+  app.post("/api/v1/admin/messages/:messageId/classification-parity", async (request, reply) => {
+    const admin = await requirePlatformAdminAccess(app, request, reply);
+    if (!admin) return;
+
+    const params = z.object({ messageId: z.string().min(1) }).parse(request.params);
+
+    try {
+      const result = await runClassificationParityForMessage(params.messageId, {
+        prisma: app.services.prisma,
+        openaiApiKey: app.services.env.OPENAI_API_KEY,
+        openaiSemanticModel: app.services.env.OPENAI_SEMANTIC_MODEL,
+        openaiSubtypeModel: app.services.env.OPENAI_SUBTYPE_MODEL,
+        openaiEntityModel: app.services.env.OPENAI_ENTITY_MODEL,
+        openaiTaskModel: app.services.env.OPENAI_TASK_MODEL,
+      });
+      return reply.send(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Parity run failed";
+      if (message.includes("not found")) {
+        return reply.code(404).send({ message });
+      }
+      if (message.includes("lacks enough persisted")) {
+        return reply.code(422).send({ message });
+      }
+      app.log.error({ event: "classification_parity_failed", error: message });
+      return reply.code(500).send({ message });
+    }
   });
 };

@@ -2,17 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
-  normalizeName,
-  normalizeEmail,
-  extractDomain,
-  computeSimilarity,
-  rankJobMatchCandidates,
-  JOB_MATCHER_VERSION,
   buildClassificationWriteLog,
 } from "@forgeops/shared";
 
 import { getSessionFromRequest } from "../authentication.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
+import { ClassificationCandidatesService } from "../../../application/services/classification-candidates-service.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { legacyBusinessCategoryFromMailbox } from "../../../application/services/mailbox-category.js";
 
@@ -123,13 +118,11 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     const hasApiKey = authHeader?.startsWith("Bearer ") && env.N8N_INTEGRATION_ENABLED && env.N8N_INTEGRATION_API_KEY;
 
     let workspaceId: string;
-    let isN8n = false;
 
     if (hasApiKey) {
       if (!verifyN8nApiKey(request, reply, env.N8N_INTEGRATION_API_KEY, env.N8N_INTEGRATION_ENABLED)) {
         return;
       }
-      isN8n = true;
 
       const body = candidatesInputSchema.parse(request.body);
       const normalizedMailbox = body.mailboxEmail.toLowerCase();
@@ -165,219 +158,18 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     }
 
     const body = candidatesInputSchema.parse(request.body);
-    const normalizedSenderEmail = body.senderEmail ? normalizeEmail(body.senderEmail) : "";
-    const senderDomain = (body.senderDomain || extractDomain(body.senderEmail) || "").toLowerCase();
-
-    const [contacts, aliases, customers, vendors, jobs, businessTypes, instructions] = await Promise.all([
-      app.services.prisma.entityContact.findMany({
-        where: { workspaceId, OR: [{ normalizedEmail: normalizedSenderEmail }, { domain: senderDomain }] },
-        select: { id: true, customerId: true, vendorId: true, normalizedEmail: true, domain: true }
-      }),
-      app.services.prisma.entityAlias.findMany({
-        where: { workspaceId },
-        select: { id: true, entityType: true, customerId: true, vendorId: true, jobId: true, normalizedAlias: true }
-      }),
-      app.services.prisma.customer.findMany({
-        where: { workspaceId },
-        select: { id: true, name: true, normalizedName: true, domain: true, primaryEmail: true }
-      }),
-      app.services.prisma.vendor.findMany({
-        where: { workspaceId },
-        select: { id: true, name: true, normalizedName: true, domain: true, primaryEmail: true }
-      }),
-      app.services.prisma.job.findMany({
-        where: {
-          workspaceId,
-          archivedAt: null,
-          status: { notIn: ["ARCHIVED", "CANCELLED"] },
-        },
-        select: { id: true, name: true, normalizedName: true, jobNumber: true, customerId: true, externalRef: true }
-      }),
-      app.services.prisma.businessType.findMany({
-        where: { OR: [{ workspaceId: null }, { workspaceId }], active: true },
-      select: { systemKey: true, displayLabel: true, displayGroup: true, displayOrder: true },
-      orderBy: [{ displayGroup: "asc" }, { displayOrder: "asc" }]
-      }),
-      app.services.prisma.classificationInstruction.findMany({
-        where: { workspaceId, active: true },
-        select: { title: true, content: true },
-        orderBy: { sortOrder: "asc" }
-      })
-    ]);
-
-    const [senderEvidence, domainEvidence] = await Promise.all([
-      normalizedSenderEmail ? app.services.prisma.senderEvidence.findFirst({
-        where: { workspaceId, normalizedEmail: normalizedSenderEmail },
-        select: { status: true, confidence: true, businessEvidenceCount: true, personalEvidenceCount: true }
-      }) : null,
-      senderDomain ? app.services.prisma.domainEvidence.findFirst({
-        where: { workspaceId, domain: senderDomain },
-        select: { status: true, confidence: true, isPublicDomain: true }
-      }) : null
-    ]);
-
-    let knownSender = false;
-    if (senderEvidence && senderEvidence.status !== "OBSERVED") knownSender = true;
-    const scored = new Map<string, { id: string; name: string; matchedOn: Set<string>; evidence: string[]; score: number; type: "customer" | "vendor" }>();
-
-    function addCandidate(type: "customer" | "vendor", id: string, name: string, matchOn: string, evidence: string, score: number) {
-      const key = `${type}:${id}`;
-      const existing = scored.get(key);
-      if (existing) {
-        existing.matchedOn.add(matchOn);
-        existing.evidence.push(evidence);
-        existing.score = Math.max(existing.score, score);
-      } else {
-        scored.set(key, { id, name, matchedOn: new Set([matchOn]), evidence: [evidence], score, type });
-      }
-    }
-
-    for (const contact of contacts) {
-      knownSender = true;
-      const isEmailMatch = contact.normalizedEmail === normalizedSenderEmail;
-      if (contact.customerId) {
-        const c = customers.find(x => x.id === contact.customerId);
-        if (c) addCandidate("customer", c.id, c.name, isEmailMatch ? "email" : "domain", `contact ${isEmailMatch ? "email" : "domain"} match`, isEmailMatch ? 1.0 : 0.85);
-      }
-      if (contact.vendorId) {
-        const v = vendors.find(x => x.id === contact.vendorId);
-        if (v) addCandidate("vendor", v.id, v.name, isEmailMatch ? "email" : "domain", `contact ${isEmailMatch ? "email" : "domain"} match`, isEmailMatch ? 1.0 : 0.85);
-      }
-    }
-
-    for (const c of customers) {
-      if (c.domain === senderDomain) addCandidate("customer", c.id, c.name, "domain", `org domain ${senderDomain}`, 0.85);
-      if (c.primaryEmail && normalizeEmail(c.primaryEmail) === normalizedSenderEmail) addCandidate("customer", c.id, c.name, "email", `primary email match`, 1.0);
-    }
-    for (const v of vendors) {
-      if (v.domain === senderDomain) addCandidate("vendor", v.id, v.name, "domain", `org domain ${senderDomain}`, 0.85);
-      if (v.primaryEmail && normalizeEmail(v.primaryEmail) === normalizedSenderEmail) addCandidate("vendor", v.id, v.name, "email", `primary email match`, 1.0);
-    }
-
-    if (body.senderName) {
-      const normalizedSender = normalizeName(body.senderName);
-      for (const alias of aliases) {
-        if (alias.normalizedAlias === normalizedSender) {
-          if (alias.entityType === "CUSTOMER" && alias.customerId) {
-            const c = customers.find(x => x.id === alias.customerId);
-            if (c) addCandidate("customer", c.id, c.name, "alias", `alias "${alias.normalizedAlias}"`, 0.90);
-          }
-          if (alias.entityType === "VENDOR" && alias.vendorId) {
-            const v = vendors.find(x => x.id === alias.vendorId);
-            if (v) addCandidate("vendor", v.id, v.name, "alias", `alias "${alias.normalizedAlias}"`, 0.90);
-          }
-        }
-      }
-      for (const c of customers) {
-        const sim = computeSimilarity(normalizedSender, c.normalizedName);
-        if (sim >= 0.6) addCandidate("customer", c.id, c.name, "name", `name similarity ${Math.round(sim * 100)}%`, sim * 0.8);
-      }
-      for (const v of vendors) {
-        const sim = computeSimilarity(normalizedSender, v.normalizedName);
-        if (sim >= 0.6) addCandidate("vendor", v.id, v.name, "name", `name similarity ${Math.round(sim * 100)}%`, sim * 0.8);
-      }
-    }
-
-    const approvedFolders = await app.services.prisma.discoveredFolder.findMany({
-      where: { workspaceId, status: "APPROVED", matchedJobId: { not: null } },
-      select: { normalizedFolderName: true, matchedJobId: true, rawFolderName: true, detectedJobNumber: true }
-    });
-
-    const jobCandidates: Array<{ id: string; name: string; score: number; matchedOn: string[]; evidence: string[] }> = [];
-    const searchText = `${body.subject ?? ""} ${body.cleanBody ?? ""} ${body.attachmentNames.join(" ")}`.toLowerCase();
-
-    for (const folder of approvedFolders) {
-      if (!folder.matchedJobId) continue;
-      const job = jobs.find(j => j.id === folder.matchedJobId);
-      if (!job) continue;
-
-      if (folder.detectedJobNumber && searchText.includes(folder.detectedJobNumber.toLowerCase())) {
-        jobCandidates.push({ id: job.id, name: job.name, score: 0.95, matchedOn: ["folderJobNumber"], evidence: [`folder job# ${folder.detectedJobNumber}`] });
-      } else if (searchText.includes(folder.normalizedFolderName)) {
-        jobCandidates.push({ id: job.id, name: job.name, score: 0.85, matchedOn: ["folderName"], evidence: [`folder "${folder.rawFolderName}"`] });
-      }
-    }
-
-    // Canonical job candidate scoring (JobMatcherService / rankJobMatchCandidates).
-    const jobAliasRecords = aliases
-      .filter((a) => a.entityType === "JOB" && a.jobId)
-      .map((a) => ({
-        jobId: a.jobId!,
-        alias: a.normalizedAlias,
-        normalizedAlias: a.normalizedAlias,
-      }));
-
-    const rankedJobs = rankJobMatchCandidates({
+    const candidatesService = new ClassificationCandidatesService(app.services.prisma);
+    const result = await candidatesService.getCandidates({
+      workspaceId,
+      mailboxEmail: body.mailboxEmail,
+      senderName: body.senderName,
+      senderEmail: body.senderEmail,
+      senderDomain: body.senderDomain,
       subject: body.subject,
       cleanBody: body.cleanBody,
-      bodyText: body.cleanBody,
-      senderDomain: senderDomain || null,
-      jobs: jobs.map((j) => ({
-        id: j.id,
-        jobNumber: j.jobNumber,
-        name: j.name,
-        normalizedName: j.normalizedName,
-        customerId: j.customerId,
-        externalRef: j.externalRef,
-      })),
-      aliases: jobAliasRecords,
-      limit: 10,
+      attachmentNames: body.attachmentNames,
     });
-
-    const jobById = new Map(jobs.map((j) => [j.id, j]));
-    for (const ranked of rankedJobs) {
-      if (jobCandidates.some((c) => c.id === ranked.jobId)) {
-        const existing = jobCandidates.find((c) => c.id === ranked.jobId)!;
-        existing.score = Math.max(existing.score, ranked.score);
-        existing.matchedOn.push(...ranked.evidence.map((e) => e.type));
-        existing.evidence.push(...ranked.evidence.map((e) => `${e.type}: ${e.value}`));
-        continue;
-      }
-      const job = jobById.get(ranked.jobId);
-      if (!job) continue;
-      jobCandidates.push({
-        id: job.id,
-        name: job.name,
-        score: ranked.score,
-        matchedOn: ranked.evidence.map((e) => e.type),
-        evidence: ranked.evidence.map((e) => `${e.type}: ${e.value}`),
-      });
-    }
-
-    const customerCandidates: typeof jobCandidates = [];
-    const vendorCandidates: typeof jobCandidates = [];
-
-    for (const [, entry] of scored) {
-      const candidate = { id: entry.id, name: entry.name, score: entry.score, matchedOn: [...entry.matchedOn], evidence: entry.evidence };
-      if (entry.type === "customer") customerCandidates.push(candidate);
-      else vendorCandidates.push(candidate);
-    }
-
-    customerCandidates.sort((a, b) => b.score - a.score);
-    vendorCandidates.sort((a, b) => b.score - a.score);
-    jobCandidates.sort((a, b) => b.score - a.score);
-
-    return reply.send({
-      workspaceId,
-      knownSender,
-      matcherVersion: JOB_MATCHER_VERSION,
-      customerCandidates: customerCandidates.slice(0, 5),
-      vendorCandidates: vendorCandidates.slice(0, 5),
-      jobCandidates: jobCandidates.slice(0, 5),
-      senderEvidence: senderEvidence ? {
-        status: senderEvidence.status,
-        confidence: Number(senderEvidence.confidence.toString()),
-        businessCount: senderEvidence.businessEvidenceCount,
-        personalCount: senderEvidence.personalEvidenceCount
-      } : null,
-      domainEvidence: domainEvidence ? {
-        status: domainEvidence.status,
-        confidence: Number(domainEvidence.confidence.toString()),
-        isPublicDomain: domainEvidence.isPublicDomain
-      } : null,
-      activeBusinessTypes: businessTypes.map(bt => ({ key: bt.systemKey, label: bt.displayLabel, group: bt.displayGroup, order: bt.displayOrder })),
-      classificationInstructions: instructions.map(i => ({ title: i.title, content: i.content }))
-    });
+    return reply.send(result);
   }
 
   app.post("/api/v1/classification-candidates", handleCandidates);

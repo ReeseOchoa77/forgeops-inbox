@@ -36,6 +36,14 @@ const apiEnvSchema = z.object({
   REDIS_URL: z.string().min(1),
   OPENAI_API_KEY: optionalStringFromEnv,
   OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
+  /** Semantic-signal extractor model (n8n Classify Email With Candidates parity). */
+  OPENAI_SEMANTIC_MODEL: z.string().default("chat-latest"),
+  /** Business subtype classifier model. */
+  OPENAI_SUBTYPE_MODEL: z.string().default("chat-latest"),
+  /** Entity selection model. */
+  OPENAI_ENTITY_MODEL: z.string().default("chat-latest"),
+  /** Task extraction model. */
+  OPENAI_TASK_MODEL: z.string().default("chat-latest"),
   GOOGLE_CLIENT_ID: optionalStringFromEnv,
   GOOGLE_CLIENT_SECRET: optionalStringFromEnv,
   GOOGLE_REDIRECT_URI: optionalUrlFromEnv,
