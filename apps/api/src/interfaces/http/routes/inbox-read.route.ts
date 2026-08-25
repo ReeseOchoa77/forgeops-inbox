@@ -172,6 +172,15 @@ const connectionSummarySchema = z.object({
   status: z.enum(["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH", "DISCONNECTED"]),
   connectedAt: z.string().datetime().nullable(),
   lastSyncedAt: z.string().datetime().nullable(),
+  lastProcessedAt: z.string().datetime().nullable().optional(),
+  lastReceivedAt: z.string().datetime().nullable().optional(),
+  lastSyncError: z.string().nullable().optional(),
+  ingestionSource: z.enum(["NATIVE", "N8N", "SHADOW"]).optional(),
+  nativeListeningEnabled: z.boolean().optional(),
+  listenIncoming: z.boolean().optional(),
+  listenSent: z.boolean().optional(),
+  excludeJunk: z.boolean().optional(),
+  excludeTrash: z.boolean().optional(),
   grantedScopes: z.array(z.string().min(1)),
   authorizationStatus: z.enum(["REQUIRED", "CONNECTED", "REAUTHORIZATION_REQUIRED"]),
   capabilities: z.object({
@@ -428,6 +437,15 @@ const serializeConnection = (connection: {
   status: "ACTIVE" | "PAUSED" | "ERROR" | "REQUIRES_REAUTH" | "DISCONNECTED";
   connectedAt: Date | null;
   lastSyncedAt: Date | null;
+  lastProcessedAt?: Date | null;
+  lastReceivedAt?: Date | null;
+  lastSyncError?: string | null;
+  ingestionSource?: string;
+  nativeListeningEnabled?: boolean;
+  listenIncoming?: boolean;
+  listenSent?: boolean;
+  excludeJunk?: boolean;
+  excludeTrash?: boolean;
   grantedScopes: string[];
   encryptedRefreshToken?: string | null;
   _count: {
@@ -451,6 +469,15 @@ const serializeConnection = (connection: {
     status: connection.status,
     connectedAt: serializeDate(connection.connectedAt),
     lastSyncedAt: serializeDate(connection.lastSyncedAt),
+    lastProcessedAt: serializeDate(connection.lastProcessedAt ?? null),
+    lastReceivedAt: serializeDate(connection.lastReceivedAt ?? null),
+    lastSyncError: connection.lastSyncError ?? null,
+    ingestionSource: connection.ingestionSource ?? "N8N",
+    nativeListeningEnabled: connection.nativeListeningEnabled ?? false,
+    listenIncoming: connection.listenIncoming ?? true,
+    listenSent: connection.listenSent ?? false,
+    excludeJunk: connection.excludeJunk ?? true,
+    excludeTrash: connection.excludeTrash ?? true,
     grantedScopes: connection.grantedScopes,
     authorizationStatus: auth.authorizationStatus,
     capabilities: auth.capabilities,
@@ -1129,6 +1156,15 @@ const loadWorkspaceConnection = async (input: {
       status: true,
       connectedAt: true,
       lastSyncedAt: true,
+      lastProcessedAt: true,
+      lastReceivedAt: true,
+      lastSyncError: true,
+      ingestionSource: true,
+      nativeListeningEnabled: true,
+      listenIncoming: true,
+      listenSent: true,
+      excludeJunk: true,
+      excludeTrash: true,
       grantedScopes: true,
       encryptedRefreshToken: true,
       _count: {
@@ -1180,6 +1216,15 @@ export const registerInboxReadRoutes = async (
         status: true,
         connectedAt: true,
         lastSyncedAt: true,
+        lastProcessedAt: true,
+        lastReceivedAt: true,
+        lastSyncError: true,
+        ingestionSource: true,
+        nativeListeningEnabled: true,
+        listenIncoming: true,
+        listenSent: true,
+        excludeJunk: true,
+        excludeTrash: true,
         grantedScopes: true,
         encryptedRefreshToken: true,
         _count: {

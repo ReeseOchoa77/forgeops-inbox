@@ -9,6 +9,8 @@ import {
   type InboxAnalysisResult,
   type AttachmentIngestJobPayload,
   type AttachmentIngestResult,
+  type MailboxClassifyJobPayload,
+  type MailboxClassifyJobResult,
 } from "@forgeops/shared";
 import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
@@ -61,6 +63,11 @@ export const startInboxSyncWorker = (
     { connection: createBullMqConnection(env.REDIS_URL) }
   );
 
+  const classifyQueue = new Queue<MailboxClassifyJobPayload, MailboxClassifyJobResult>(
+    QueueNames.MAILBOX_CLASSIFY,
+    { connection: createBullMqConnection(env.REDIS_URL) }
+  );
+
   const syncQueue = new Queue<InboxSyncJobPayload, InboxSyncResult>(
     QueueNames.INBOX_SYNC,
     { connection: createBullMqConnection(env.REDIS_URL) }
@@ -71,7 +78,8 @@ export const startInboxSyncWorker = (
     providerRegistry,
     tokenCipher,
     analysisQueue,
-    attachmentIngestQueue
+    attachmentIngestQueue,
+    classifyQueue
   );
 
   const worker = new Worker<InboxSyncJobPayload, InboxSyncResult>(

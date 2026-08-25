@@ -9,11 +9,15 @@ import { loadWorkerEnv } from "./config/env.js";
 import { startAttachmentIngestWorker } from "./jobs/attachment-ingest.worker.js";
 import { startInboxAnalysisWorker } from "./jobs/inbox-analysis.worker.js";
 import { startInboxSyncWorker } from "./jobs/inbox-sync.worker.js";
+import { startMailboxClassifyWorker } from "./jobs/mailbox-classify.worker.js";
+import { startMailboxHistoricalImportWorker } from "./jobs/mailbox-historical-import.worker.js";
 
 const env = loadWorkerEnv();
 const inboxSync = startInboxSyncWorker(env);
 const inboxAnalysis = startInboxAnalysisWorker(env);
 const attachmentIngest = startAttachmentIngestWorker(env);
+const historicalImport = startMailboxHistoricalImportWorker(env);
+const mailboxClassify = startMailboxClassifyWorker(env);
 
 async function reconcileScheduledSyncs(): Promise<void> {
   const connections = await prisma.inboxConnection.findMany({
@@ -23,6 +27,7 @@ async function reconcileScheduledSyncs(): Promise<void> {
       email: true,
       status: true,
       ingestionSource: true,
+      nativeListeningEnabled: true,
     },
   });
 
@@ -38,14 +43,15 @@ async function reconcileScheduledSyncs(): Promise<void> {
       : null;
     if (!connectionId) continue;
     const conn = byId.get(connectionId);
-    // Unknown connection or N8N-owned → remove native sync schedule
+    // Unknown connection or listener/mode gate → remove native sync schedule
     if (!conn || !shouldScheduleNativeInboxSync(conn)) {
       await inboxSync.syncQueue.removeRepeatableByKey(job.key);
       removed += 1;
       console.info("native-sync-schedule-removed", {
         inboxConnectionId: connectionId,
-        reason: conn ? "n8n_ingestion_owner" : "connection_missing",
+        reason: conn ? "listener_or_mode_gate" : "connection_missing",
         ingestionSource: conn?.ingestionSource ?? null,
+        nativeListeningEnabled: conn?.nativeListeningEnabled ?? null,
       });
     }
   }
@@ -94,7 +100,10 @@ const shutdown = async (signal: string): Promise<void> => {
     inboxSync.worker.close(),
     inboxAnalysis.worker.close(),
     attachmentIngest.worker.close(),
+    historicalImport.worker.close(),
+    mailboxClassify.worker.close(),
     inboxSync.syncQueue.close(),
+    historicalImport.queue.close(),
     inboxSync.redis.quit(),
     inboxAnalysis.redis.quit(),
     attachmentIngest.redis.quit(),
@@ -112,5 +121,11 @@ process.on("SIGTERM", () => {
 });
 
 console.info("worker-started", {
-  queues: ["inbox-sync", "inbox-analysis", "attachment-ingest"],
+  queues: [
+    "inbox-sync",
+    "inbox-analysis",
+    "attachment-ingest",
+    "mailbox-historical-import",
+    "mailbox-classify",
+  ],
 });

@@ -17,6 +17,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1110.0",
     "@forgeops/ai": "*",
     "@forgeops/db": "*",
+    "@forgeops/native-classification": "*",
     "@forgeops/shared": "*",
     "bullmq": "^5.34.0",
     "dotenv": "^16.4.7",

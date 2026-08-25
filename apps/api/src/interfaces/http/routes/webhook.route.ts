@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { QueueNames } from "@forgeops/shared";
+import { QueueNames, shouldRegisterNativePush, shouldRunNativeInboxSync } from "@forgeops/shared";
 
 const gmailPubSubSchema = z.object({
   message: z.object({
@@ -44,7 +44,14 @@ export const registerWebhookRoutes = async (
             email: notification.emailAddress,
             status: "ACTIVE"
           },
-          select: { id: true, workspaceId: true, email: true, ingestionSource: true }
+          select: {
+            id: true,
+            workspaceId: true,
+            email: true,
+            ingestionSource: true,
+            nativeListeningEnabled: true,
+            status: true,
+          }
         });
 
         if (!connection) {
@@ -52,14 +59,16 @@ export const registerWebhookRoutes = async (
           return reply.code(200).send({ status: "ignored" });
         }
 
-        if (connection.ingestionSource === "N8N") {
+        if (!shouldRunNativeInboxSync(connection)) {
           app.log.info({
             event: "native-sync-skipped",
             inboxConnectionId: connection.id,
-            reason: "n8n_ingestion_owner",
+            reason: "listener_or_mode_gate",
+            ingestionSource: connection.ingestionSource,
+            nativeListeningEnabled: connection.nativeListeningEnabled,
             source: "gmail_push",
           });
-          return reply.code(200).send({ status: "ignored", reason: "n8n_ingestion_owner" });
+          return reply.code(200).send({ status: "ignored", reason: "listener_or_mode_gate" });
         }
 
         await app.services.inboxSyncQueue.add(
@@ -120,7 +129,13 @@ export const registerWebhookRoutes = async (
               pushSubscriptionId: notification.subscriptionId,
               status: "ACTIVE"
             },
-            select: { id: true, workspaceId: true, email: true, ingestionSource: true }
+            select: {
+              id: true,
+              workspaceId: true,
+              email: true,
+              ingestionSource: true,
+              nativeListeningEnabled: true,
+            }
           });
 
           if (!connection) {
@@ -128,11 +143,13 @@ export const registerWebhookRoutes = async (
             continue;
           }
 
-          if (connection.ingestionSource === "N8N") {
+          if (!shouldRunNativeInboxSync(connection)) {
             app.log.info({
               event: "native-sync-skipped",
               inboxConnectionId: connection.id,
-              reason: "n8n_ingestion_owner",
+              reason: "listener_or_mode_gate",
+              ingestionSource: connection.ingestionSource,
+              nativeListeningEnabled: connection.nativeListeningEnabled,
               source: "outlook_push",
             });
             continue;
@@ -182,12 +199,24 @@ export const registerWebhookRoutes = async (
           provider: true,
           email: true,
           encryptedRefreshToken: true,
-          pushSubscriptionId: true
+          pushSubscriptionId: true,
+          ingestionSource: true,
+          nativeListeningEnabled: true,
+          status: true,
         }
       });
 
       if (!connection || !connection.encryptedRefreshToken) {
         return reply.code(404).send({ message: "Connection not found or not active" });
+      }
+
+      if (!shouldRegisterNativePush(connection)) {
+        return reply.code(200).send({
+          status: "skipped",
+          reason: "listener_or_mode_gate",
+          ingestionSource: connection.ingestionSource,
+          nativeListeningEnabled: connection.nativeListeningEnabled,
+        });
       }
 
       const refreshToken = app.services.tokenCipher.decrypt(connection.encryptedRefreshToken);

@@ -1,29 +1,93 @@
 import { describe, expect, it } from "vitest";
 import {
   buildClassificationWriteLog,
+  historicalImportJobId,
   isN8nOwnedClassification,
   scheduledInboxSyncJobId,
+  shouldEnqueueNativeClassification,
+  shouldRegisterNativePush,
   shouldScheduleNativeInboxSync,
   shouldRunNativeInboxSync,
+  shouldRunProductionNativeClassification,
   shouldSkipNativeClassificationOverwrite,
 } from "../ingestion-ownership.js";
+import { buildMailboxClassifyJobId } from "../constants/queues.js";
 
 describe("ingestion ownership", () => {
-  it("schedules native sync only for ACTIVE NATIVE connections", () => {
+  it("schedules native sync only for ACTIVE NATIVE with listener ON", () => {
     expect(
-      shouldScheduleNativeInboxSync({ status: "ACTIVE", ingestionSource: "NATIVE" })
+      shouldScheduleNativeInboxSync({
+        status: "ACTIVE",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: true,
+      })
     ).toBe(true);
     expect(
-      shouldScheduleNativeInboxSync({ status: "ACTIVE", ingestionSource: "N8N" })
+      shouldScheduleNativeInboxSync({
+        status: "ACTIVE",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: false,
+      })
     ).toBe(false);
     expect(
-      shouldScheduleNativeInboxSync({ status: "PAUSED", ingestionSource: "NATIVE" })
+      shouldScheduleNativeInboxSync({
+        status: "ACTIVE",
+        ingestionSource: "N8N",
+        nativeListeningEnabled: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldScheduleNativeInboxSync({
+        status: "PAUSED",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: true,
+      })
     ).toBe(false);
   });
 
-  it("blocks native sync run for N8N connections", () => {
-    expect(shouldRunNativeInboxSync({ ingestionSource: "NATIVE" })).toBe(true);
-    expect(shouldRunNativeInboxSync({ ingestionSource: "N8N" })).toBe(false);
+  it("OAuth alone (listening off) never schedules or runs native sync", () => {
+    const afterOauth = {
+      status: "ACTIVE",
+      ingestionSource: "N8N",
+      nativeListeningEnabled: false,
+    };
+    expect(shouldScheduleNativeInboxSync(afterOauth)).toBe(false);
+    expect(shouldRunNativeInboxSync(afterOauth)).toBe(false);
+    expect(shouldRegisterNativePush(afterOauth)).toBe(false);
+    expect(shouldEnqueueNativeClassification(afterOauth)).toBe(false);
+  });
+
+  it("blocks native sync run when listener is OFF even for NATIVE mode", () => {
+    expect(
+      shouldRunNativeInboxSync({
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldRunNativeInboxSync({
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldRunNativeInboxSync({
+        ingestionSource: "N8N",
+        nativeListeningEnabled: true,
+      })
+    ).toBe(false);
+  });
+
+  it("enqueues native classification only for NATIVE processing mode", () => {
+    expect(shouldEnqueueNativeClassification({ ingestionSource: "NATIVE" })).toBe(
+      true
+    );
+    expect(shouldEnqueueNativeClassification({ ingestionSource: "N8N" })).toBe(
+      false
+    );
+    expect(shouldEnqueueNativeClassification({ ingestionSource: "SHADOW" })).toBe(
+      false
+    );
   });
 
   it("detects n8n model names case-insensitively by prefix", () => {
@@ -79,7 +143,12 @@ describe("ingestion ownership", () => {
     });
   });
 
-  it("uses stable scheduled sync job ids", () => {
+  it("uses stable scheduled sync, historical import, and classify job ids", () => {
     expect(scheduledInboxSyncJobId("abc")).toBe("scheduled-sync:abc");
+    expect(historicalImportJobId("imp1")).toBe("historical-import:imp1");
+    expect(buildMailboxClassifyJobId("m1")).toBe("mailbox-classify-m1");
+    expect(
+      shouldRunProductionNativeClassification({ ingestionSource: "NATIVE" })
+    ).toBe(true);
   });
 });

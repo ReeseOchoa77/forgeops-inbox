@@ -60,6 +60,16 @@ enum InboxConnectionStatus {
 enum IngestionSource {
   NATIVE
   N8N
+  /// Reserved — not implemented for production writes yet.
+  SHADOW
+}
+
+enum MailboxHistoricalImportStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
 }
 
 enum BusinessCategory {
@@ -205,6 +215,7 @@ model Workspace {
   knowledgeDocs    KnowledgeDocument[]
   importRuns       ImportRun[]
   workspaceMailboxes WorkspaceMailbox[]
+  historicalImports  MailboxHistoricalImport[]
   businessTypes      BusinessType[]
   classificationCorrections ClassificationCorrection[]
   classificationInstructions ClassificationInstruction[]
@@ -287,7 +298,14 @@ model InboxConnection {
   displayName       String?
   providerAccountId String?
   status            InboxConnectionStatus @default(ACTIVE)
-  ingestionSource   IngestionSource       @default(NATIVE)
+  /// Processing ownership: N8N remains authoritative until explicitly set to NATIVE.
+  ingestionSource   IngestionSource       @default(N8N)
+  /// Explicit native listener — OAuth must never flip this on automatically.
+  nativeListeningEnabled Boolean          @default(false)
+  listenIncoming    Boolean               @default(true)
+  listenSent        Boolean               @default(false)
+  excludeJunk       Boolean               @default(true)
+  excludeTrash      Boolean               @default(true)
   grantedScopes     String[]              @default([])
   encryptedAccessToken String?
   encryptedRefreshToken String?
@@ -311,6 +329,7 @@ model InboxConnection {
   messages          EmailMessage[]
   normalizedEmails  NormalizedEmail[]
   workspaceMailboxes WorkspaceMailbox[]
+  historicalImports MailboxHistoricalImport[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, provider, email])
@@ -320,6 +339,34 @@ model InboxConnection {
   @@index([workspaceId, provider])
   @@index([workspaceId, status])
   @@index([provider, email, ingestionSource])
+  @@index([workspaceId, nativeListeningEnabled])
+}
+
+model MailboxHistoricalImport {
+  id                 String                        @id @default(cuid())
+  workspaceId        String
+  inboxConnectionId  String
+  requestedByUserId  String?
+  status             MailboxHistoricalImportStatus @default(PENDING)
+  requestedLimit     Int
+  processedCount     Int                           @default(0)
+  importedCount      Int                           @default(0)
+  duplicateCount     Int                           @default(0)
+  businessCount      Int                           @default(0)
+  personalCount      Int                           @default(0)
+  failedCount        Int                           @default(0)
+  /// Provider message ids attempted in this run (for progress recount / idempotency).
+  processedProviderMessageIds Json                 @default("[]")
+  errorMessage       String?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                      @default(now())
+  updatedAt          DateTime                      @updatedAt
+  workspace          Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inboxConnection    InboxConnection               @relation(fields: [inboxConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, inboxConnectionId, createdAt])
+  @@index([inboxConnectionId, status])
 }
 
 model EmailThread {

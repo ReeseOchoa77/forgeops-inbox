@@ -42,17 +42,68 @@ export interface InboxConnectionCapabilities {
 }
 
 export interface ConnectionSummary {
-  id: string;
-  provider: string;
-  email: string;
-  displayName: string | null;
-  status: string;
-  connectedAt: string | null;
-  lastSyncedAt: string | null;
+  id: string
+  provider: string
+  email: string
+  displayName: string | null
+  status: string
+  connectedAt: string | null
+  lastSyncedAt: string | null
+  lastProcessedAt?: string | null
+  lastReceivedAt?: string | null
+  lastSyncError?: string | null
+  ingestionSource?: 'NATIVE' | 'N8N' | 'SHADOW'
+  nativeListeningEnabled?: boolean
+  listenIncoming?: boolean
+  listenSent?: boolean
+  excludeJunk?: boolean
+  excludeTrash?: boolean
   /** Derived OAuth capability — never token material. */
-  authorizationStatus: AuthorizationStatus;
-  capabilities: InboxConnectionCapabilities;
-  counts: { messages: number; threads: number };
+  authorizationStatus: AuthorizationStatus
+  capabilities: InboxConnectionCapabilities
+  counts: { messages: number; threads: number }
+}
+
+export interface MailboxListenerSettings {
+  connectionId: string
+  email: string
+  provider: string
+  status: string
+  ingestionSource: 'NATIVE' | 'N8N' | 'SHADOW'
+  processingMode: 'NATIVE' | 'N8N' | 'SHADOW'
+  shadowSupported: boolean
+  nativeListeningEnabled: boolean
+  listener: {
+    listenIncoming: boolean
+    listenSent: boolean
+    excludeJunk: boolean
+    excludeTrash: boolean
+  }
+  activity: {
+    lastSyncedAt: string | null
+    lastReceivedAt: string | null
+    lastProcessedAt: string | null
+    lastError: string | null
+  }
+}
+
+export interface MailboxHistoricalImportStatus {
+  id: string
+  workspaceId: string
+  inboxConnectionId: string
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | string
+  requestedLimit: number
+  processedCount: number
+  importedCount: number
+  duplicateCount: number
+  businessCount: number
+  personalCount: number
+  failedCount: number
+  errorMessage: string | null
+  startedAt: string | null
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface EmailContactSuggestion {
@@ -303,6 +354,43 @@ export const api = {
 
   getConnections: (workspaceId: string) =>
     request<{ connections: ConnectionSummary[] }>(`/workspaces/${workspaceId}/inbox-connections`),
+
+  getMailboxListenerSettings: (workspaceId: string, connectionId: string) =>
+    request<{ settings: MailboxListenerSettings }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/listener-settings`
+    ),
+
+  patchMailboxListenerSettings: (
+    workspaceId: string,
+    connectionId: string,
+    body: Partial<{
+      nativeListeningEnabled: boolean
+      listenIncoming: boolean
+      listenSent: boolean
+      excludeJunk: boolean
+      excludeTrash: boolean
+      ingestionSource: 'NATIVE' | 'N8N' | 'SHADOW'
+    }>
+  ) =>
+    request<{ settings: MailboxListenerSettings }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/listener-settings`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  startHistoricalImport: (
+    workspaceId: string,
+    connectionId: string,
+    body: { preset?: '25' | '50' | '100' | '250'; limit?: number }
+  ) =>
+    request<{ import: MailboxHistoricalImportStatus; message: string }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  getHistoricalImport: (workspaceId: string, connectionId: string, importId: string) =>
+    request<{ import: MailboxHistoricalImportStatus }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports/${importId}`
+    ),
 
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;

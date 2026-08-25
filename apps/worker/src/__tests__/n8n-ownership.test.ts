@@ -16,14 +16,33 @@ describe("N8N ownership regression contracts", () => {
     ).toBe(false);
   });
 
-  it("B/2: NATIVE ACTIVE still schedules native sync", () => {
+  it("B/2: NATIVE ACTIVE with listener ON schedules native sync", () => {
     expect(
-      shouldScheduleNativeInboxSync({ status: "ACTIVE", ingestionSource: "NATIVE" })
+      shouldScheduleNativeInboxSync({
+        status: "ACTIVE",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: true,
+      })
     ).toBe(true);
   });
 
+  it("B/2b: NATIVE ACTIVE with listener OFF does not schedule", () => {
+    expect(
+      shouldScheduleNativeInboxSync({
+        status: "ACTIVE",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: false,
+      })
+    ).toBe(false);
+  });
+
   it("5: stale sync job for N8N is blocked by run guard", () => {
-    expect(shouldRunNativeInboxSync({ ingestionSource: "N8N" })).toBe(false);
+    expect(
+      shouldRunNativeInboxSync({
+        ingestionSource: "N8N",
+        nativeListeningEnabled: true,
+      })
+    ).toBe(false);
   });
 
   it("C/9: n8n classification cannot be overwritten by native analyzer", () => {
@@ -70,7 +89,7 @@ describe("N8N ownership regression contracts", () => {
       duplicatesSkipped: 0,
       newestSyncCursor: connection.syncCursor,
       skipped: true,
-      skipReason: "n8n_ingestion_owner",
+      skipReason: "listener_or_mode_gate",
     };
     expect(result.messagesImported).toBe(0);
     expect(result.skipped).toBe(true);

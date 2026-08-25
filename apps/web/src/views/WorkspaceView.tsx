@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ApprovedAccessEntry, type ConnectionSummary } from '../api'
-import {
-  mailboxAuthorizationLabel,
-  mailboxAuthorizationTone,
-  needsSendingAuthorization,
-} from '../mailbox-authorization-display'
+import { MonitoredMailboxesPanel } from '../components/MonitoredMailboxesPanel'
 import { FoldersView } from './FoldersView'
 
 /** Full-page navigation to an external OAuth authorize URL. */
@@ -38,7 +34,12 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
   const [clearing, setClearing] = useState('')
   const [authAction, setAuthAction] = useState<AuthActionState>({ type: 'idle' })
   const isOwner = userRole === 'OWNER'
+  const canManageMailboxes = userRole === 'OWNER' || userRole === 'ADMIN'
   const loading = loadedFor !== workspaceId
+
+  const refreshConnections = () => {
+    void api.getConnections(workspaceId).then((c) => setConnections(c.connections)).catch(() => {})
+  }
 
   useEffect(() => {
     if (!workspaceId) return
@@ -198,113 +199,19 @@ export function WorkspaceView({ workspaceId, workspaceName, userRole, connection
             <button type="button" onClick={() => setAuthAction({ type: 'idle' })} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
           </div>
         )}
-        {connections.length === 0 ? (
-          <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>No inboxes connected. Contact your platform admin to add monitored mailboxes.</p>
-        ) : (
-          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 640 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #eee', textAlign: 'left' }}>
-                <th style={{ padding: '6px 8px' }}>Email</th>
-                <th style={{ padding: '6px 8px' }}>Provider</th>
-                <th style={{ padding: '6px 8px' }}>Status</th>
-                <th style={{ padding: '6px 8px' }}>Authorization</th>
-                <th style={{ padding: '6px 8px' }}>Messages</th>
-                <th style={{ padding: '6px 8px' }}>Last Synced</th>
-                <th style={{ padding: '6px 8px' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {connections.map(c => {
-                const authTone = mailboxAuthorizationTone({
-                  authorizationStatus: c.authorizationStatus,
-                  emailSending: c.capabilities.emailSending,
-                })
-                const actionLoading = authAction.type === 'loading' && authAction.connectionId === c.id
-                return (
-                  <tr key={c.id} style={{ borderBottom: '1px solid #f5f5f5' }}>
-                    <td style={{ padding: '5px 8px' }}>{c.email}</td>
-                    <td style={{ padding: '5px 8px' }}>{c.provider}</td>
-                    <td style={{ padding: '5px 8px' }}>
-                      <span style={{
-                        display: 'inline-block', width: 7, height: 7, borderRadius: '50%', marginRight: 5,
-                        background: c.status === 'ACTIVE' ? '#4caf50' : c.status === 'ERROR' || c.status === 'REQUIRES_REAUTH' ? '#f44336' : '#9e9e9e'
-                      }} />
-                      {c.status}
-                    </td>
-                    <td style={{ padding: '5px 8px' }}>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 4,
-                        fontSize: 10, fontWeight: 600, background: authTone.bg, color: authTone.color,
-                      }}>
-                        {mailboxAuthorizationLabel({
-                          authorizationStatus: c.authorizationStatus,
-                          emailSending: c.capabilities.emailSending,
-                        })}
-                      </span>
-                    </td>
-                    <td style={{ padding: '5px 8px' }}>{c.counts.messages.toLocaleString()}</td>
-                    <td style={{ padding: '5px 8px', color: '#888' }}>{formatDate(c.lastSyncedAt)}</td>
-                    <td style={{ padding: '5px 8px' }}>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        {c.authorizationStatus === 'REQUIRED' && c.provider.toLowerCase() === 'outlook' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            style={{ fontSize: 10, padding: '2px 8px' }}
-                            disabled={actionLoading}
-                            onClick={() => handleAuthorize(c)}
-                          >
-                            {actionLoading ? 'Starting…' : 'Authorize Outlook'}
-                          </button>
-                        )}
-                        {needsSendingAuthorization({
-                          provider: c.provider,
-                          authorizationStatus: c.authorizationStatus,
-                          emailSending: c.capabilities.emailSending,
-                        }) && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            style={{ fontSize: 10, padding: '2px 8px' }}
-                            disabled={actionLoading}
-                            onClick={() => handleAuthorize(c)}
-                            title="Grant Mail.Send on this Outlook mailbox"
-                          >
-                            {actionLoading ? 'Starting…' : 'Authorize sending'}
-                          </button>
-                        )}
-                        {c.authorizationStatus === 'REAUTHORIZATION_REQUIRED' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            style={{ fontSize: 10, padding: '2px 8px' }}
-                            disabled={actionLoading}
-                            onClick={() => handleReconnect(c)}
-                          >
-                            {actionLoading ? 'Starting…' : 'Reconnect'}
-                          </button>
-                        )}
-                        {isOwner && c.counts.messages > 0 && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-danger"
-                            style={{ fontSize: 10, padding: '2px 8px' }}
-                            disabled={clearing === c.id}
-                            onClick={() => handleClearInbox(c.id, c.email)}
-                          >
-                            {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          </div>
-        )}
+        <MonitoredMailboxesPanel
+          workspaceId={workspaceId}
+          connections={connections}
+          userRole={userRole}
+          canManage={canManageMailboxes}
+          isOwner={isOwner}
+          authAction={authAction}
+          clearing={clearing}
+          onRefresh={refreshConnections}
+          onAuthorize={(c) => void handleAuthorize(c)}
+          onReconnect={(c) => void handleReconnect(c)}
+          onClearInbox={(id, email) => void handleClearInbox(id, email)}
+        />
       </div>
       </>}
     </div>

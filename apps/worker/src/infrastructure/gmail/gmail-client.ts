@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const INBOX_LABEL_ID = "INBOX";
 const MAX_THREADS_PER_SYNC = 100;
+const ABSOLUTE_MAX_THREADS = 250;
 const MAX_STORED_BODY_TEXT_LENGTH = 20_000;
 const GMAIL_ME = "me";
 
@@ -634,7 +635,10 @@ export class GmailClient {
     const threadListResponse = await gmail.users.threads.list({
       userId: GMAIL_ME,
       labelIds: [INBOX_LABEL_ID],
-      maxResults: Math.min(input.maxThreads ?? MAX_THREADS_PER_SYNC, MAX_THREADS_PER_SYNC),
+      maxResults: Math.min(
+        input.maxThreads ?? MAX_THREADS_PER_SYNC,
+        ABSOLUTE_MAX_THREADS
+      ),
       q: "-in:chats"
     });
     const threadList = gmailThreadListResponseSchema.parse(threadListResponse.data);

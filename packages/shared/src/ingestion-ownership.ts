@@ -1,36 +1,96 @@
 /**
- * Ingestion ownership: N8N vs NATIVE.
+ * Ingestion ownership: N8N vs NATIVE (+ reserved SHADOW).
+ *
+ * Authentication (OAuth tokens) is separate from:
+ * - nativeListeningEnabled (automatic new-mail listener / reconciliation)
+ * - ingestionSource (who owns production classification writes)
  *
  * N8N mailboxes: n8n owns message ingest + BUSINESS/PERSONAL classification.
- * ForgeOps OAuth is for attachments/send/token refresh only — not mailbox sync.
+ * ForgeOps OAuth is for attachments/send/token refresh — not automatic sync.
  *
- * NATIVE mailboxes: ForgeOps owns Graph sync + native analysis.
+ * NATIVE mailboxes with listening ON: ForgeOps owns Graph sync + native analysis.
+ * SHADOW: reserved; native classification must not overwrite production yet.
  */
 
-export type IngestionSource = "NATIVE" | "N8N";
+export type IngestionSource = "NATIVE" | "N8N" | "SHADOW";
 
 export const NATIVE_INBOX_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Hard cap for a single historical import request. */
+export const HISTORICAL_IMPORT_MAX_LIMIT = 250;
+
+export const HISTORICAL_IMPORT_LIMIT_PRESETS = [25, 50, 100, 250] as const;
 
 export function scheduledInboxSyncJobId(connectionId: string): string {
   return `scheduled-sync:${connectionId}`;
 }
 
-/** Repeatable BullMQ inbox-sync only for ACTIVE NATIVE connections. */
-export function shouldScheduleNativeInboxSync(connection: {
+export function historicalImportJobId(importId: string): string {
+  return `historical-import:${importId}`;
+}
+
+type ListenerGate = {
   status: string;
   ingestionSource: string;
+  nativeListeningEnabled?: boolean | null;
+};
+
+function listeningEnabled(connection: {
+  nativeListeningEnabled?: boolean | null;
 }): boolean {
+  return connection.nativeListeningEnabled === true;
+}
+
+/**
+ * Repeatable BullMQ inbox-sync only when:
+ * ACTIVE + NATIVE processing + explicit listener ON.
+ */
+export function shouldScheduleNativeInboxSync(connection: ListenerGate): boolean {
   return (
-    connection.status === "ACTIVE" && connection.ingestionSource === "NATIVE"
+    connection.status === "ACTIVE" &&
+    connection.ingestionSource === "NATIVE" &&
+    listeningEnabled(connection)
   );
 }
 
-/** Hard guard: never import/analyze via native sync for N8N-owned connections. */
+/**
+ * Hard guard for automatic native sync/import (webhook + scheduled + push).
+ * Manual historical import uses a separate path and does not call this.
+ */
 export function shouldRunNativeInboxSync(connection: {
+  ingestionSource: string;
+  nativeListeningEnabled?: boolean | null;
+}): boolean {
+  return (
+    connection.ingestionSource === "NATIVE" && listeningEnabled(connection)
+  );
+}
+
+/** Push/webhook subscription registration — same gate as scheduled sync. */
+export function shouldRegisterNativePush(connection: ListenerGate): boolean {
+  return shouldScheduleNativeInboxSync(connection);
+}
+
+/**
+ * Whether newly imported messages may be analyzed by the native classifier
+ * for production Classification rows. SHADOW is reserved / not enabled.
+ * Listening is NOT required — historical import may classify while listener is OFF.
+ */
+export function shouldEnqueueNativeClassification(connection: {
   ingestionSource: string;
 }): boolean {
   return connection.ingestionSource === "NATIVE";
 }
+
+/** Alias for production message-scoped classifier gate (same as enqueue rule). */
+export function shouldRunProductionNativeClassification(connection: {
+  ingestionSource: string;
+}): boolean {
+  return shouldEnqueueNativeClassification(connection);
+}
+
+export const NATIVE_PIPELINE_MODEL_NAME = "native-openai-pipeline";
+export const NATIVE_PIPELINE_MODEL_VERSION = "v1";
 
 /** Detect n8n-owned Classification rows (modelName e.g. "n8n-openai"). */
 export function isN8nOwnedClassification(

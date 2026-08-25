@@ -48,7 +48,7 @@ export const registerInboxActionsRoutes = async (
 
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
-        select: { id: true, status: true, email: true, ingestionSource: true }
+        select: { id: true, status: true, email: true, ingestionSource: true, nativeListeningEnabled: true }
       });
 
       if (!connection) {
@@ -59,6 +59,13 @@ export const registerInboxActionsRoutes = async (
         return reply.code(409).send({
           message: "Native mailbox sync is disabled for n8n-ingested mailboxes. n8n owns message ingestion.",
           reason: "n8n_ingestion_owner",
+        });
+      }
+
+      if (!connection.nativeListeningEnabled) {
+        return reply.code(409).send({
+          message: "Native listener is OFF for this mailbox. Start Listening before syncing, or use Import Previous Emails.",
+          reason: "listener_off",
         });
       }
 

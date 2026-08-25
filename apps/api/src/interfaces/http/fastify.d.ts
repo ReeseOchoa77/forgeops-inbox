@@ -30,6 +30,10 @@ declare module "fastify" {
       inboxAnalysisQueue: Queue;
       inboxAnalysisQueueEvents: QueueEvents;
       attachmentIngestQueue: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>;
+      mailboxHistoricalImportQueue: Queue<
+        import("@forgeops/shared").MailboxHistoricalImportJobPayload,
+        import("@forgeops/shared").MailboxHistoricalImportJobResult
+      >;
       googleOAuthService: GoogleOAuthService;
       providerRegistry: ProviderRegistry;
       sessionStore: RedisSessionStore;

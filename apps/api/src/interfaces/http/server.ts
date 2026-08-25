@@ -16,7 +16,9 @@ import {
   type InboxAnalysisJobPayload,
   type InboxAnalysisResult,
   type InboxSyncJobPayload,
-  type InboxSyncResult
+  type InboxSyncResult,
+  type MailboxHistoricalImportJobPayload,
+  type MailboxHistoricalImportJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -41,6 +43,7 @@ import { registerDevRoutes } from "./routes/dev.route.js";
 import { registerGmailRoutes } from "./routes/gmail.route.js";
 import { registerHealthRoute } from "./routes/health.route.js";
 import { registerInboxConnectionRoutes } from "./routes/inbox-connection.route.js";
+import { registerMailboxControlRoutes } from "./routes/mailbox-control.route.js";
 import { registerInboxReadRoutes } from "./routes/inbox-read.route.js";
 import { registerReviewActionRoutes } from "./routes/review-action.route.js";
 import { registerAllowlistRoutes } from "./routes/allowlist.route.js";
@@ -118,6 +121,12 @@ export const buildServer = async () => {
     AttachmentIngestJobPayload,
     AttachmentIngestResult
   >(QueueNames.ATTACHMENT_INGEST, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const mailboxHistoricalImportQueue = new Queue<
+    MailboxHistoricalImportJobPayload,
+    MailboxHistoricalImportJobResult
+  >(QueueNames.MAILBOX_HISTORICAL_IMPORT, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -221,17 +230,23 @@ export const buildServer = async () => {
   const registerScheduledSync = async (workspaceId: string, connectionId: string): Promise<void> => {
     const connection = await prisma.inboxConnection.findUnique({
       where: { id: connectionId },
-      select: { id: true, status: true, ingestionSource: true },
+      select: {
+        id: true,
+        status: true,
+        ingestionSource: true,
+        nativeListeningEnabled: true,
+      },
     });
 
     if (!connection || !shouldScheduleNativeInboxSync(connection)) {
-      // Ensure stale N8N schedules are cleared if OAuth reconnects an N8N mailbox
+      // Ensure stale schedules are cleared if OAuth reconnects without listener ON
       await removeScheduledSync(connectionId);
       console.info("native-sync-schedule-skipped", {
         workspaceId,
         inboxConnectionId: connectionId,
-        reason: "n8n_ingestion_owner",
+        reason: "listener_or_mode_gate",
         ingestionSource: connection?.ingestionSource ?? null,
+        nativeListeningEnabled: connection?.nativeListeningEnabled ?? null,
         status: connection?.status ?? null,
       });
       return;
@@ -262,8 +277,9 @@ export const buildServer = async () => {
     inboxSyncQueueEvents,
     inboxAnalysisQueue,
     inboxAnalysisQueueEvents,
-    attachmentIngestQueue,
-    googleOAuthService,
+      attachmentIngestQueue,
+      mailboxHistoricalImportQueue,
+      googleOAuthService,
     providerRegistry,
     sessionStore,
     oauthStateStore,
@@ -292,6 +308,7 @@ export const buildServer = async () => {
   await registerAuthRoutes(app);
   await registerDevRoutes(app);
   await registerInboxConnectionRoutes(app);
+  await registerMailboxControlRoutes(app);
   await registerInboxReadRoutes(app);
   await registerHealthRoute(app);
   await registerGmailRoutes(app);
@@ -381,6 +398,8 @@ export const buildServer = async () => {
     await inboxAnalysisQueue.close();
     await inboxSyncQueueEvents.close();
     await inboxSyncQueue.close();
+    await mailboxHistoricalImportQueue.close();
+    await attachmentIngestQueue.close();
     await redis.quit();
     await prisma.$disconnect();
   });

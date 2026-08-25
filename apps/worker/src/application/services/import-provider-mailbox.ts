@@ -77,6 +77,9 @@ export const importProviderMailbox = async (input: {
 
   let threadsImported = 0;
   let messagesImported = 0;
+  const createdMessageIds: string[] = [];
+  const updatedMessageIds: string[] = [];
+  const duplicateMessageIds: string[] = [];
   const attachmentIngestCandidates: AttachmentIngestCandidate[] = [];
 
   const threads = input.mailbox.threads;
@@ -161,6 +164,8 @@ export const importProviderMailbox = async (input: {
               where: { id: existingMessageId },
               data: messageData
             });
+            updatedMessageIds.push(existingMessageId);
+            duplicateMessageIds.push(existingMessageId);
             if (
               shouldInspectAttachments({
                 hasAttachments: message.hasAttachments,
@@ -189,6 +194,7 @@ export const importProviderMailbox = async (input: {
 
           existingMessageIdMap.set(message.providerMessageId, createdMessage.id);
           messagesImported += 1;
+          createdMessageIds.push(createdMessage.id);
           if (
             shouldInspectAttachments({
               hasAttachments: message.hasAttachments,
@@ -215,7 +221,10 @@ export const importProviderMailbox = async (input: {
     inboxConnectionId: input.inboxConnectionId,
     threadsImported,
     messagesImported,
-    duplicatesSkipped: existingThreads.length + existingMessages.length,
+    duplicatesSkipped: duplicateMessageIds.length,
+    createdMessageIds,
+    updatedMessageIds,
+    duplicateMessageIds,
     newestSyncCursor: input.mailbox.newestSyncCursor,
     attachmentIngestCandidates,
   };

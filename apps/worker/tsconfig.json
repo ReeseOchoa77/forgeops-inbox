@@ -21,6 +21,9 @@
     },
     {
       "path": "../../packages/ai"
+    },
+    {
+      "path": "../../packages/native-classification"
     }
   ]
 }

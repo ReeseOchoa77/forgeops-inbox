@@ -9,6 +9,8 @@ import type {
   InboxAnalysisResult,
   AttachmentIngestJobPayload,
   AttachmentIngestResult,
+  MailboxClassifyJobPayload,
+  MailboxClassifyJobResult,
 } from "@forgeops/shared";
 import {
   ProviderRegistry,
@@ -16,6 +18,8 @@ import {
   TokenCipher,
   providerKindFromEnum,
   shouldRunNativeInboxSync,
+  shouldEnqueueNativeClassification,
+  buildMailboxClassifyJobId,
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
@@ -172,7 +176,8 @@ export class InboxSyncProcessor {
     private readonly providerRegistry: ProviderRegistry,
     private readonly tokenCipher: TokenCipher,
     private readonly analysisQueue?: Queue<InboxAnalysisJobPayload, InboxAnalysisResult>,
-    private readonly attachmentIngestQueue?: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>
+    private readonly attachmentIngestQueue?: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>,
+    private readonly classifyQueue?: Queue<MailboxClassifyJobPayload, MailboxClassifyJobResult>
   ) {}
 
   async process(context: InboxSyncContext): Promise<InboxSyncResult> {
@@ -195,8 +200,9 @@ export class InboxSyncProcessor {
       console.info("native-sync-skipped", {
         workspaceId: context.workspaceId,
         inboxConnectionId: connection.id,
-        reason: "n8n_ingestion_owner",
+        reason: "listener_or_mode_gate",
         ingestionSource: connection.ingestionSource,
+        nativeListeningEnabled: connection.nativeListeningEnabled,
         jobId: context.jobId,
       });
       return {
@@ -207,7 +213,7 @@ export class InboxSyncProcessor {
         duplicatesSkipped: 0,
         newestSyncCursor: connection.syncCursor,
         skipped: true,
-        skipReason: "n8n_ingestion_owner",
+        skipReason: "listener_or_mode_gate",
       };
     }
 
@@ -321,28 +327,46 @@ export class InboxSyncProcessor {
         ...syncResult
       });
 
-      if (this.analysisQueue && !syncResult.skipped && (syncResult.messagesImported > 0 || syncResult.threadsImported > 0)) {
-        try {
-          const analysisPayload: InboxAnalysisJobPayload = {
-            workspaceId: context.workspaceId,
-            inboxConnectionId: context.inboxConnectionId,
-            ...(context.initiatedBy ? { initiatedBy: context.initiatedBy } : {})
-          };
-          await this.analysisQueue.add(
-            QueueNames.INBOX_ANALYSIS,
-            analysisPayload,
-            { attempts: 2, backoff: { type: "exponential", delay: 5000 } }
-          );
-          console.info("auto-analysis-queued", {
-            jobId: context.jobId,
-            workspaceId: context.workspaceId,
-            inboxConnectionId: context.inboxConnectionId
-          });
-        } catch (e) {
-          console.warn("auto-analysis-queue-failed", {
-            error: e instanceof Error ? e.message : "unknown"
-          });
+      if (
+        this.classifyQueue &&
+        !syncResult.skipped &&
+        shouldEnqueueNativeClassification(connection) &&
+        (syncResult.createdMessageIds?.length ?? 0) > 0
+      ) {
+        for (const emailMessageId of syncResult.createdMessageIds ?? []) {
+          try {
+            const classifyPayload: MailboxClassifyJobPayload = {
+              workspaceId: context.workspaceId,
+              inboxConnectionId: context.inboxConnectionId,
+              emailMessageId,
+              ...(context.initiatedBy
+                ? { initiatedBy: context.initiatedBy }
+                : {}),
+            };
+            await this.classifyQueue.add(
+              QueueNames.MAILBOX_CLASSIFY,
+              classifyPayload,
+              {
+                jobId: buildMailboxClassifyJobId(emailMessageId),
+                attempts: 3,
+                backoff: { type: "exponential", delay: 5000 },
+                removeOnComplete: { count: 50 },
+                removeOnFail: { count: 50 },
+              }
+            );
+          } catch (e) {
+            console.warn("auto-classify-queue-failed", {
+              emailMessageId,
+              error: e instanceof Error ? e.message : "unknown",
+            });
+          }
         }
+        console.info("auto-classify-queued", {
+          jobId: context.jobId,
+          workspaceId: context.workspaceId,
+          inboxConnectionId: context.inboxConnectionId,
+          createdCount: syncResult.createdMessageIds?.length ?? 0,
+        });
       }
 
       // Native Outlook sync already has OAuth tokens — enqueue attachment ingest

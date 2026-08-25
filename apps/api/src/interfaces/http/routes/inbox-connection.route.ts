@@ -1,6 +1,6 @@
 import type { InboxConnectionStatus } from "@prisma/client";
 import type { InboxProviderKind } from "@forgeops/shared";
-import { normalizeEmail, providerKindFromEnum, providerKindToEnum } from "@forgeops/shared";
+import { normalizeEmail, providerKindFromEnum, providerKindToEnum, shouldRegisterNativePush } from "@forgeops/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
@@ -816,6 +816,10 @@ export const registerInboxConnectionRoutes = async (
               encryptedAccessToken,
               encryptedRefreshToken,
               accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+              // OAuth grants credentials only — never auto-enable native listening
+              // or claim NATIVE classification ownership.
+              ingestionSource: "N8N",
+              nativeListeningEnabled: false,
               status: "ACTIVE",
               connectedAt: now
             }
@@ -853,13 +857,32 @@ export const registerInboxConnectionRoutes = async (
         request
       });
 
+      // OAuth must not enable listening. Schedule/push only stick when already NATIVE+listening.
       app.services.registerScheduledSync(storedState.workspaceId, connection.id).catch(e => {
         request.log.warn({ event: "scheduled_sync_registration_failed", error: e instanceof Error ? e.message : "unknown" });
       });
 
-      app.inject({ method: "POST", url: `/api/v1/webhooks/register-push/${connection.id}` }).catch(e => {
-        request.log.warn({ event: "push_registration_on_connect_failed", error: e instanceof Error ? e.message : "unknown" });
+      const pushGate = await app.services.prisma.inboxConnection.findUnique({
+        where: { id: connection.id },
+        select: {
+          id: true,
+          status: true,
+          ingestionSource: true,
+          nativeListeningEnabled: true,
+        },
       });
+      if (pushGate && shouldRegisterNativePush(pushGate)) {
+        app.inject({ method: "POST", url: `/api/v1/webhooks/register-push/${connection.id}` }).catch(e => {
+          request.log.warn({ event: "push_registration_on_connect_failed", error: e instanceof Error ? e.message : "unknown" });
+        });
+      } else {
+        request.log.info({
+          event: "push_registration_skipped_on_connect",
+          inboxConnectionId: connection.id,
+          ingestionSource: pushGate?.ingestionSource ?? null,
+          nativeListeningEnabled: pushGate?.nativeListeningEnabled ?? null,
+        });
+      }
 
       return reply.redirect(
         `${app.services.env.FRONTEND_URL}/?connected=${connection.id}`

@@ -317,12 +317,17 @@ export const registerPlatformAdminRoutes = async (
 
     await app.services.prisma.inboxConnection.update({
       where: { id: mailboxId },
-      data: { ingestionSource: body.ingestionSource }
+      data: {
+        ingestionSource: body.ingestionSource,
+        ...(body.ingestionSource === "N8N"
+          ? { nativeListeningEnabled: false }
+          : {}),
+      }
     });
 
-    if (body.ingestionSource === "NATIVE") {
-      await app.services.registerScheduledSync(connection.workspaceId, mailboxId).catch(() => {});
-    } else {
+    // Mode change alone does not start listening — registerScheduledSync no-ops until listening ON.
+    await app.services.registerScheduledSync(connection.workspaceId, mailboxId).catch(() => {});
+    if (body.ingestionSource !== "NATIVE") {
       await app.services.removeScheduledSync(mailboxId).catch(() => {});
       console.info("native-sync-schedule-removed", {
         inboxConnectionId: mailboxId,
