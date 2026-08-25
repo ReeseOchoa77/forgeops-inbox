@@ -58,6 +58,7 @@ type Props = {
 export function MonitoredMailboxesPanel({
   workspaceId,
   connections,
+  onRefresh,
   onAuthorize,
   onReconnect,
   authAction,
