@@ -3,11 +3,16 @@ import { z } from "zod";
 import {
   HISTORICAL_IMPORT_LIMIT_PRESETS,
   HISTORICAL_IMPORT_MAX_LIMIT,
-  historicalImportJobId,
-  QueueNames,
+  normalizeEmail,
   shouldRegisterNativePush,
 } from "@forgeops/shared";
 
+import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
+import { enqueueHistoricalImportJob } from "../../../application/services/enqueue-historical-import.js";
+import {
+  MONITORED_MAILBOX_CREATE_DEFAULTS,
+  resolveMonitoredMailboxRegistration,
+} from "../../../application/services/register-monitored-mailbox.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -52,6 +57,18 @@ const historicalImportBodySchema = z
   .refine((v) => v.limit != null || v.preset != null, {
     message: "Provide limit or preset",
   });
+
+const registerMonitoredMailboxBodySchema = z
+  .object({
+    email: z.string().email(),
+    provider: z.enum(["GMAIL", "OUTLOOK"]),
+    displayName: z.string().max(200).optional(),
+  })
+  .strict();
+
+const workspaceParamsOnlySchema = z.object({
+  workspaceId: z.string().min(1),
+});
 
 async function requireAdminMembership(
   app: FastifyInstance,
@@ -395,23 +412,23 @@ export const registerMailboxControlRoutes = async (
         },
       });
 
-      await app.services.mailboxHistoricalImportQueue.add(
-        QueueNames.MAILBOX_HISTORICAL_IMPORT,
-        {
-          workspaceId: connection.workspaceId,
-          inboxConnectionId: connection.id,
-          importId: created.id,
-          requestedLimit,
-          initiatedBy: access.session.userId,
-        },
-        {
-          jobId: historicalImportJobId(created.id),
-          attempts: 2,
-          backoff: { type: "exponential", delay: 10000 },
-          removeOnComplete: { count: 20 },
-          removeOnFail: { count: 20 },
-        }
-      );
+      const enqueued = await enqueueHistoricalImportJob({
+        prisma: app.services.prisma,
+        queue: app.services.mailboxHistoricalImportQueue,
+        importId: created.id,
+        workspaceId: connection.workspaceId,
+        inboxConnectionId: connection.id,
+        requestedLimit,
+        initiatedBy: access.session.userId,
+        log: (event, data) => request.log.warn({ event, ...data }),
+      });
+
+      if (!enqueued.ok) {
+        return reply.code(500).send({
+          message: enqueued.errorMessage,
+          import: serializeHistoricalImport(enqueued.import),
+        });
+      }
 
       return reply.code(202).send({
         import: serializeHistoricalImport(created),
@@ -469,6 +486,157 @@ export const registerMailboxControlRoutes = async (
       });
 
       return reply.send({ imports: rows.map(serializeHistoricalImport) });
+    }
+  );
+
+  /**
+   * Register a monitored mailbox for an active Team Access member.
+   * Creates a tokenless InboxConnection (N8N + listening OFF) or reuses an
+   * existing same-workspace connection — never duplicates.
+   * OAuth is started separately via /authorize (targeted identity match).
+   */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/monitored-mailboxes",
+    async (request, reply) => {
+      const params = workspaceParamsOnlySchema.parse(request.params);
+      const access = await requireAdminMembership(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!access) return;
+
+      if (!hasMinRole(access.membership.role, "ADMIN")) {
+        return reply
+          .code(403)
+          .send({ message: "ADMIN or OWNER role required" });
+      }
+
+      const body = registerMonitoredMailboxBodySchema.parse(request.body ?? {});
+      const normalizedEmail = normalizeEmail(body.email);
+
+      const approved = await app.services.prisma.approvedAccess.findFirst({
+        where: {
+          workspaceId: params.workspaceId,
+          email: normalizedEmail,
+          status: "ACTIVE",
+        },
+        select: { id: true, email: true, role: true },
+      });
+
+      const existing = await app.services.prisma.inboxConnection.findFirst({
+        where: { provider: body.provider, email: normalizedEmail },
+        select: {
+          id: true,
+          workspaceId: true,
+          provider: true,
+          email: true,
+          status: true,
+          ingestionSource: true,
+          nativeListeningEnabled: true,
+          encryptedRefreshToken: true,
+          grantedScopes: true,
+          displayName: true,
+          connectedAt: true,
+          lastSyncedAt: true,
+        },
+      });
+
+      const decision = resolveMonitoredMailboxRegistration({
+        requestedEmail: body.email,
+        workspaceId: params.workspaceId,
+        approvedAccessActive: Boolean(approved),
+        existingByProviderEmail: existing
+          ? {
+              id: existing.id,
+              workspaceId: existing.workspaceId,
+              provider: existing.provider,
+              email: existing.email,
+              status: existing.status,
+              ingestionSource: existing.ingestionSource,
+              nativeListeningEnabled: existing.nativeListeningEnabled,
+            }
+          : null,
+      });
+
+      if (!decision.ok) {
+        return reply.code(decision.statusCode).send({ message: decision.message });
+      }
+
+      if (decision.action === "reuse" && existing) {
+        const auth = buildAuthorizationFields({
+          provider: existing.provider,
+          status: existing.status,
+          hasRefreshToken: Boolean(existing.encryptedRefreshToken),
+          grantedScopes: existing.grantedScopes,
+        });
+        return reply.send({
+          alreadyExists: true,
+          connection: {
+            id: existing.id,
+            workspaceId: existing.workspaceId,
+            provider: existing.provider.toLowerCase(),
+            email: existing.email,
+            displayName: existing.displayName,
+            status: existing.status,
+            ingestionSource: existing.ingestionSource,
+            nativeListeningEnabled: existing.nativeListeningEnabled,
+            authorizationStatus: auth.authorizationStatus,
+            capabilities: auth.capabilities,
+          },
+        });
+      }
+
+      const connection = await app.services.prisma.inboxConnection.create({
+        data: {
+          workspaceId: params.workspaceId,
+          provider: body.provider,
+          email: decision.normalizedEmail,
+          displayName: body.displayName ?? decision.normalizedEmail,
+          ...MONITORED_MAILBOX_CREATE_DEFAULTS,
+          connectedAt: new Date(),
+        },
+      });
+
+      await app.services.auditEventLogger.log({
+        workspaceId: params.workspaceId,
+        actorUserId: access.session.userId,
+        entityType: "INBOX_CONNECTION",
+        entityId: connection.id,
+        action: "workspace.monitored_mailbox_registered",
+        metadata: {
+          provider: body.provider,
+          email: decision.normalizedEmail,
+          approvedAccessId: approved?.id ?? null,
+          ingestionSource: connection.ingestionSource,
+          nativeListeningEnabled: connection.nativeListeningEnabled,
+        },
+        request,
+      });
+
+      const auth = buildAuthorizationFields({
+        provider: connection.provider,
+        status: connection.status,
+        hasRefreshToken: false,
+        grantedScopes: connection.grantedScopes,
+      });
+
+      return reply.code(201).send({
+        alreadyExists: false,
+        connection: {
+          id: connection.id,
+          workspaceId: connection.workspaceId,
+          provider: connection.provider.toLowerCase(),
+          email: connection.email,
+          displayName: connection.displayName,
+          status: connection.status,
+          ingestionSource: connection.ingestionSource,
+          nativeListeningEnabled: connection.nativeListeningEnabled,
+          authorizationStatus: auth.authorizationStatus,
+          capabilities: auth.capabilities,
+        },
+      });
     }
   );
 };

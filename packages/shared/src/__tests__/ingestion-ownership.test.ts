@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildClassificationWriteLog,
+  connectionIdFromScheduledSyncJobId,
   historicalImportJobId,
   isN8nOwnedClassification,
   scheduledInboxSyncJobId,
@@ -143,12 +144,21 @@ describe("ingestion ownership", () => {
     });
   });
 
-  it("uses stable scheduled sync, historical import, and classify job ids", () => {
-    expect(scheduledInboxSyncJobId("abc")).toBe("scheduled-sync:abc");
-    expect(historicalImportJobId("imp1")).toBe("historical-import:imp1");
+  it("uses colon-free BullMQ-safe scheduled sync, historical import, and classify job ids", () => {
+    expect(scheduledInboxSyncJobId("abc")).toBe("scheduled-sync-abc");
+    expect(scheduledInboxSyncJobId("abc")).not.toContain(":");
+    expect(historicalImportJobId("imp1")).toBe("historical-import-imp1");
+    expect(historicalImportJobId("imp1")).not.toContain(":");
     expect(buildMailboxClassifyJobId("m1")).toBe("mailbox-classify-m1");
+    expect(buildMailboxClassifyJobId("m1")).not.toContain(":");
     expect(
       shouldRunProductionNativeClassification({ ingestionSource: "NATIVE" })
     ).toBe(true);
+  });
+
+  it("parses connection id from current and legacy scheduled sync job ids", () => {
+    expect(connectionIdFromScheduledSyncJobId("scheduled-sync-abc")).toBe("abc");
+    expect(connectionIdFromScheduledSyncJobId("scheduled-sync:abc")).toBe("abc");
+    expect(connectionIdFromScheduledSyncJobId("other")).toBeNull();
   });
 });

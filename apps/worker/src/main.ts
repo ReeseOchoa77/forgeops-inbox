@@ -2,6 +2,7 @@ import { prisma } from "@forgeops/db";
 import {
   NATIVE_INBOX_SYNC_INTERVAL_MS,
   QueueNames,
+  connectionIdFromScheduledSyncJobId,
   scheduledInboxSyncJobId,
   shouldScheduleNativeInboxSync,
 } from "@forgeops/shared";
@@ -38,21 +39,28 @@ async function reconcileScheduledSyncs(): Promise<void> {
   let removed = 0;
   for (const job of existing) {
     const jobId = job.id ?? "";
-    const connectionId = jobId.startsWith("scheduled-sync:")
-      ? jobId.slice("scheduled-sync:".length)
-      : null;
+    const connectionId = connectionIdFromScheduledSyncJobId(jobId);
     if (!connectionId) continue;
     const conn = byId.get(connectionId);
     // Unknown connection or listener/mode gate → remove native sync schedule
-    if (!conn || !shouldScheduleNativeInboxSync(conn)) {
+    // Also remove legacy colon-form job ids so they are re-registered hyphenated.
+    const isLegacyColonId = jobId.startsWith("scheduled-sync:");
+    if (!conn || !shouldScheduleNativeInboxSync(conn) || isLegacyColonId) {
       await inboxSync.syncQueue.removeRepeatableByKey(job.key);
       removed += 1;
       console.info("native-sync-schedule-removed", {
         inboxConnectionId: connectionId,
-        reason: conn ? "listener_or_mode_gate" : "connection_missing",
+        reason: !conn
+          ? "connection_missing"
+          : isLegacyColonId
+            ? "legacy_colon_job_id"
+            : "listener_or_mode_gate",
         ingestionSource: conn?.ingestionSource ?? null,
         nativeListeningEnabled: conn?.nativeListeningEnabled ?? null,
       });
+      if (isLegacyColonId && conn && shouldScheduleNativeInboxSync(conn)) {
+        existingKeys.delete(jobId);
+      }
     }
   }
 

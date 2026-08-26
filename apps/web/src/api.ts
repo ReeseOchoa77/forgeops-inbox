@@ -588,6 +588,30 @@ export const api = {
       body: JSON.stringify({})
     }),
 
+  /** Register a monitored mailbox for an active team member (ADMIN/OWNER). Does not start OAuth. */
+  registerMonitoredMailbox: (
+    workspaceId: string,
+    body: { email: string; provider: 'GMAIL' | 'OUTLOOK'; displayName?: string }
+  ) =>
+    request<{
+      alreadyExists: boolean
+      connection: {
+        id: string
+        workspaceId: string
+        provider: string
+        email: string
+        displayName: string | null
+        status: string
+        ingestionSource: 'NATIVE' | 'N8N' | 'SHADOW'
+        nativeListeningEnabled: boolean
+        authorizationStatus: AuthorizationStatus
+        capabilities: InboxConnectionCapabilities
+      }
+    }>(`/workspaces/${workspaceId}/monitored-mailboxes`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   startInboxConnection: (workspaceId: string, provider: 'google' | 'outlook') =>
     request<{ status: string; authorizationUrl: string }>(`/workspaces/${workspaceId}/inbox-connections/${provider}/start`, {
       method: 'POST',

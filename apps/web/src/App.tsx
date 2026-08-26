@@ -14,9 +14,7 @@ import { PlatformAdminView } from './views/PlatformAdminView'
 import { TasksView } from './views/TasksView'
 import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
-import { ReferenceDataView } from './views/ReferenceDataView'
-import { TeamAccessView } from './views/TeamAccessView'
-import { DataImportView } from './views/DataImportView'
+import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
 import { JobDiscoveryView } from './views/JobDiscoveryView'
@@ -31,12 +29,9 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'review', label: 'Email Review', icon: '\u2696', minRole: 'ADMIN' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
-  { page: 'outlook-folders', label: 'Job Discovery', icon: '📂' },
-  { page: 'documents', label: 'Documents', icon: '\uD83D\uDCC1', section: 'Manage' },
-  { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA' },
-  { page: 'team-access', label: 'Team Access', icon: '\uD83D\uDC65' },
+  { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA', section: 'Manage' },
+  { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
-  { page: 'settings', label: 'Settings', icon: '\u2699' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
@@ -88,6 +83,28 @@ export default function App() {
   const [sendableLoading, setSendableLoading] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
   const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
+  const [workspaceTabHint, setWorkspaceTabHint] = useState<'mailboxes' | 'team' | 'folders'>('mailboxes')
+  const [referenceTabHint, setReferenceTabHint] = useState<ReferenceDataTab>(() => {
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('refTab')
+      if (isReferenceDataTab(fromUrl)) return fromUrl
+    } catch { /* ignore */ }
+    return 'customers'
+  })
+
+  // Legacy Team Access top-level page → Workspace → Team Access tab
+  useEffect(() => {
+    if (page !== 'team-access') return
+    setWorkspaceTabHint('team')
+    setPage('workspace')
+  }, [page])
+
+  // Legacy Documents top-level page → Reference Data → Documents tab
+  useEffect(() => {
+    if (page !== 'documents') return
+    setReferenceTabHint('documents')
+    setPage('reference')
+  }, [page])
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
@@ -144,8 +161,9 @@ export default function App() {
       const connectedId = params.get('connected')!
       setConnectionNotice({
         type: 'success',
-        message: 'Mailbox authorized and connected. Syncing messages now...',
+        message: 'Mailbox authorized and connected. Configure listening from Monitored Mailboxes when ready.',
       })
+      setWorkspaceTabHint('mailboxes')
       setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
 
@@ -305,7 +323,17 @@ export default function App() {
   }
 
   const navigate = (p: Page) => {
-    setPage(p)
+    if (p === 'team-access') {
+      setWorkspaceTabHint('team')
+      setPage('workspace')
+    } else if (p === 'documents') {
+      setReferenceTabHint('documents')
+      setPage('reference')
+    } else {
+      if (p === 'workspace') setWorkspaceTabHint('mailboxes')
+      if (p === 'reference') setReferenceTabHint((prev) => prev || 'customers')
+      setPage(p)
+    }
     if (p !== 'message-detail') setSelectedMessageId('')
     if (bp === 'phone') setDrawerOpen(false)
   }
@@ -666,24 +694,24 @@ export default function App() {
             </div>
           )}
 
-          {page === 'team-access' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TeamAccessView workspaceId={workspaceId} userRole={currentRole} />
-            </div>
-          )}
           {page === 'workspace' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <WorkspaceView workspaceId={workspaceId} workspaceName={currentWorkspace?.workspace.name ?? ''} userRole={currentRole} connectionId={connectionId} />
-            </div>
-          )}
-          {page === 'documents' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <DataImportView workspaceId={workspaceId} userRole={currentRole} />
+              <WorkspaceView
+                workspaceId={workspaceId}
+                workspaceName={currentWorkspace?.workspace.name ?? ''}
+                userRole={currentRole}
+                connectionId={connectionId}
+                initialTab={workspaceTabHint}
+              />
             </div>
           )}
           {page === 'reference' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <ReferenceDataView workspaceId={workspaceId} userRole={currentRole} />
+              <ReferenceDataView
+                workspaceId={workspaceId}
+                userRole={currentRole}
+                initialTab={referenceTabHint}
+              />
             </div>
           )}
           {page === 'settings' && (

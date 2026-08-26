@@ -78,7 +78,7 @@ export const registerWebhookRoutes = async (
             inboxConnectionId: connection.id
           },
           {
-            jobId: `push-sync:gmail:${connection.id}:${Date.now()}`,
+            jobId: `push-sync-gmail-${connection.id}-${Date.now()}`,
             attempts: 2,
             backoff: { type: "exponential", delay: 5000 },
             removeOnComplete: { count: 10 },
@@ -162,7 +162,7 @@ export const registerWebhookRoutes = async (
               inboxConnectionId: connection.id
             },
             {
-              jobId: `push-sync:outlook:${connection.id}:${Date.now()}`,
+              jobId: `push-sync-outlook-${connection.id}-${Date.now()}`,
               attempts: 2,
               backoff: { type: "exponential", delay: 5000 },
               removeOnComplete: { count: 10 },

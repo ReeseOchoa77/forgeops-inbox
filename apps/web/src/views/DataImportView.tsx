@@ -4,6 +4,8 @@ import { api, type ImportResult, type ExtractionResult, type ExtractedRecord } f
 interface Props {
   workspaceId: string
   userRole?: string
+  /** When true, omit standalone page chrome (rendered inside Reference Data → Documents). */
+  embedded?: boolean
 }
 
 type ImportTarget = 'customers' | 'vendors' | 'jobs'
@@ -43,7 +45,7 @@ function mapRecordsToImportRows(records: ExtractedRecord[], target: ImportTarget
   })
 }
 
-export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
+export function DataImportView({ workspaceId, userRole = 'MEMBER', embedded = false }: Props) {
   const isViewer = userRole === 'VIEWER'
   const [step, setStep] = useState<Step>('upload')
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null)
@@ -78,8 +80,8 @@ export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
       setTarget(inferTarget(extracted.inferredType))
       setSelectedRows(new Set(extracted.records.map((_, i) => i)))
       setStep('review')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Extraction failed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Extraction failed')
       setStep('upload')
     }
   }
@@ -96,8 +98,8 @@ export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
       const res = await api.importJson(workspaceId, target, rows)
       setResult(res)
       setStep('done')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Import failed')
       setStep('review')
     }
   }
@@ -124,8 +126,15 @@ export function DataImportView({ workspaceId, userRole = 'MEMBER' }: Props) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
         <div>
-          <h2 style={{ fontSize: 17, margin: '0 0 2px' }}>Data Import</h2>
-          <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Upload a file and AI will extract importable records for your review.</p>
+          {!embedded && (
+            <h2 style={{ fontSize: 17, margin: '0 0 2px' }}>Data Import</h2>
+          )}
+          {embedded ? (
+            <h3 style={{ fontSize: 14, margin: '0 0 4px', fontWeight: 600 }}>Upload & extract</h3>
+          ) : null}
+          <p style={{ fontSize: 12, color: '#999', margin: 0 }}>
+            Upload a file and AI will extract importable records for your review.
+          </p>
         </div>
         {step !== 'upload' && (
           <button className="btn btn-sm btn-outline" onClick={reset}>Start over</button>

@@ -53,6 +53,7 @@ type Props = {
   onClearInbox: (id: string, email: string) => void
   isOwner: boolean
   canManage: boolean
+  onAddMailbox?: () => void
 }
 
 export function MonitoredMailboxesPanel({
@@ -66,6 +67,7 @@ export function MonitoredMailboxesPanel({
   onClearInbox,
   isOwner,
   canManage,
+  onAddMailbox,
 }: Props) {
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
   const [settings, setSettings] = useState<MailboxListenerSettings | null>(null)
@@ -138,9 +140,19 @@ export function MonitoredMailboxesPanel({
 
   if (connections.length === 0) {
     return (
-      <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>
-        No inboxes connected. Contact your platform admin to add monitored mailboxes.
-      </p>
+      <div>
+        <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px' }}>
+          No inboxes connected yet.
+          {canManage
+            ? ' Add a monitored mailbox from a team member to begin authorization.'
+            : ' Ask a workspace admin to add monitored mailboxes.'}
+        </p>
+        {canManage && onAddMailbox && (
+          <button type="button" className="btn btn-sm btn-primary" onClick={onAddMailbox}>
+            Add Monitored Mailbox
+          </button>
+        )}
+      </div>
     )
   }
 

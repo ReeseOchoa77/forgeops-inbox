@@ -4,9 +4,11 @@ import { api, type ApprovedAccessEntry } from '../api'
 interface Props {
   workspaceId: string
   userRole?: string
+  /** When true, omit standalone page title (rendered inside Workspace). */
+  embedded?: boolean
 }
 
-export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
+export function TeamAccessView({ workspaceId, userRole = 'VIEWER', embedded = false }: Props) {
   const canManage = userRole === 'OWNER' || userRole === 'ADMIN'
   const [entries, setEntries] = useState<ApprovedAccessEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -91,10 +93,19 @@ export function TeamAccessView({ workspaceId, userRole = 'VIEWER' }: Props) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Team Access</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 20px' }}>
-        Only people with approved email addresses can sign into this workspace. Add team members here before they try to log in.
-      </p>
+      {!embedded && (
+        <>
+          <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Team Access</h2>
+          <p style={{ fontSize: 13, color: '#888', margin: '0 0 20px' }}>
+            Only people with approved email addresses can sign into this workspace. Add team members here before they try to log in.
+          </p>
+        </>
+      )}
+      {embedded && (
+        <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px' }}>
+          Only people with approved email addresses can sign into this workspace. Add team members before they try to log in.
+        </p>
+      )}
 
       {canManage && (
         <div className="card" style={{ marginBottom: 20 }}>

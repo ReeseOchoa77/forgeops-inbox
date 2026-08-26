@@ -6,7 +6,7 @@ import type { Breakpoint } from '../hooks/useBreakpoint'
 interface Props {
   workspaceId: string
   connectionId: string
-  onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'documents' | 'reference' | 'workspace' | 'settings' | 'admin') => void
+  onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'reference' | 'workspace' | 'settings' | 'admin') => void
   breakpoint?: Breakpoint
 }
 

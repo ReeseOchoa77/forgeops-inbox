@@ -22,11 +22,27 @@ export const HISTORICAL_IMPORT_MAX_LIMIT = 250;
 export const HISTORICAL_IMPORT_LIMIT_PRESETS = [25, 50, 100, 250] as const;
 
 export function scheduledInboxSyncJobId(connectionId: string): string {
-  return `scheduled-sync:${connectionId}`;
+  return `scheduled-sync-${connectionId}`;
 }
 
 export function historicalImportJobId(importId: string): string {
-  return `historical-import:${importId}`;
+  return `historical-import-${importId}`;
+}
+
+/**
+ * Parse connection id from a scheduled-sync BullMQ job id.
+ * Accepts the current hyphen form and the legacy colon form for cleanup.
+ */
+export function connectionIdFromScheduledSyncJobId(
+  jobId: string
+): string | null {
+  if (jobId.startsWith("scheduled-sync-")) {
+    return jobId.slice("scheduled-sync-".length) || null;
+  }
+  if (jobId.startsWith("scheduled-sync:")) {
+    return jobId.slice("scheduled-sync:".length) || null;
+  }
+  return null;
 }
 
 type ListenerGate = {

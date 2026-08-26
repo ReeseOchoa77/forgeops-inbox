@@ -943,6 +943,12 @@ export const registerInboxConnectionRoutes = async (
         });
       }
 
+      if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+        return reply.code(403).send({
+          message: "ADMIN or OWNER role required"
+        });
+      }
+
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: {
           id: params.id,
@@ -1034,6 +1040,12 @@ export const registerInboxConnectionRoutes = async (
       if (!membership) {
         return reply.code(403).send({
           message: "Workspace access denied"
+        });
+      }
+
+      if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+        return reply.code(403).send({
+          message: "ADMIN or OWNER role required"
         });
       }
 

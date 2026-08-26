@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react'
 import { SenderEvidenceView } from './SenderEvidenceView'
+import { DataImportView } from './DataImportView'
 
-type Tab = 'customers' | 'vendors' | 'jobs' | 'contacts' | 'aliases' | 'documents' | 'senders' | 'imports'
+export type ReferenceDataTab =
+  | 'customers'
+  | 'vendors'
+  | 'jobs'
+  | 'contacts'
+  | 'aliases'
+  | 'documents'
+  | 'senders'
+  | 'imports'
 
-const TABS: Array<{ key: Tab; label: string }> = [
+const TABS: Array<{ key: ReferenceDataTab; label: string }> = [
   { key: 'customers', label: 'Customers' },
   { key: 'vendors', label: 'Vendors' },
   { key: 'jobs', label: 'Jobs' },
@@ -13,6 +22,37 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'senders', label: 'Senders' },
   { key: 'imports', label: 'Imports' },
 ]
+
+const VALID_TABS = new Set<string>(TABS.map((t) => t.key))
+
+export function isReferenceDataTab(value: string | null | undefined): value is ReferenceDataTab {
+  return Boolean(value && VALID_TABS.has(value))
+}
+
+const REFERENCE_TAB_STORAGE_KEY = 'forgeops_reference_tab'
+
+function persistReferenceTab(tab: ReferenceDataTab): void {
+  try {
+    sessionStorage.setItem(REFERENCE_TAB_STORAGE_KEY, tab)
+  } catch { /* ignore */ }
+  try {
+    const url = new URL(window.location.href)
+    url.searchParams.set('refTab', tab)
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  } catch { /* ignore */ }
+}
+
+function readStoredReferenceTab(): ReferenceDataTab | null {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('refTab')
+    if (isReferenceDataTab(fromUrl)) return fromUrl
+  } catch { /* ignore */ }
+  try {
+    const stored = sessionStorage.getItem(REFERENCE_TAB_STORAGE_KEY)
+    if (isReferenceDataTab(stored)) return stored
+  } catch { /* ignore */ }
+  return null
+}
 
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
 
@@ -40,11 +80,23 @@ function formatDate(iso: string): string {
   catch { return iso }
 }
 
-interface Props { workspaceId: string; userRole?: string }
+interface Props {
+  workspaceId: string
+  userRole?: string
+  /** Preferred section when opening Reference Data (e.g. redirected from Documents). */
+  initialTab?: ReferenceDataTab
+}
 
-export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
+export function ReferenceDataView({
+  workspaceId,
+  userRole = 'MEMBER',
+  initialTab,
+}: Props) {
   const isViewer = userRole === 'VIEWER'
-  const [tab, setTab] = useState<Tab>('customers')
+  const [tab, setTab] = useState<ReferenceDataTab>(() => {
+    if (initialTab && isReferenceDataTab(initialTab)) return initialTab
+    return readStoredReferenceTab() ?? 'customers'
+  })
   const [data, setData] = useState<Record<string, unknown[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -54,7 +106,20 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
   const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([])
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
-  const load = async (t: Tab) => {
+  useEffect(() => {
+    if (initialTab && isReferenceDataTab(initialTab)) {
+      setTab(initialTab)
+      persistReferenceTab(initialTab)
+    }
+  }, [initialTab, workspaceId])
+
+  const selectTab = (next: ReferenceDataTab) => {
+    setTab(next)
+    setImportStep('idle')
+    persistReferenceTab(next)
+  }
+
+  const load = async (t: ReferenceDataTab) => {
     setLoading(true)
     setError('')
     try {
@@ -67,7 +132,10 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
     }
   }
 
-  useEffect(() => { if (tab !== 'senders') load(tab) }, [tab, workspaceId])
+  useEffect(() => {
+    if (tab === 'senders') return
+    void load(tab)
+  }, [tab, workspaceId])
 
   const handlePreview = async () => {
     if (!importText.trim()) return
@@ -99,7 +167,7 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
       )
       setImportResult(result)
       setImportStep('done')
-      load(importType === 'CUSTOMER' ? 'customers' : 'vendors')
+      void load(importType === 'CUSTOMER' ? 'customers' : 'vendors')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed')
       setImportStep('preview')
@@ -107,31 +175,74 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
   }
 
   const items = (data[tab] ?? []) as Array<Record<string, unknown>>
+  const showEntityTable = tab !== 'senders' && tab !== 'documents'
 
   return (
     <div>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Reference Data</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>Customers, vendors, jobs, contacts, and classification knowledge for this workspace.</p>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
+        Customers, vendors, jobs, contacts, documents, and classification knowledge for this workspace.
+      </p>
 
       {error && (
         <div style={{ padding: '8px 12px', marginBottom: 10, background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
           <span>{error}</span>
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+          <button type="button" onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
         </div>
       )}
 
       <div style={{ display: 'flex', gap: 0, marginBottom: 12, borderBottom: '2px solid #e5e5e5', overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
         {TABS.map(t => (
-          <button key={t.key} onClick={() => { setTab(t.key); setImportStep('idle') }} style={{
+          <button key={t.key} type="button" onClick={() => selectTab(t.key)} style={{
             padding: '7px 14px', fontSize: 12, fontWeight: tab === t.key ? 600 : 400,
             color: tab === t.key ? '#1a1a2e' : '#888', background: 'none', border: 'none',
             borderBottom: tab === t.key ? '2px solid #1a1a2e' : '2px solid transparent',
             marginBottom: -2, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0
-          }}>{t.label} {data[t.key] ? `(${(data[t.key] as unknown[]).length})` : ''}</button>
+          }}>{t.label} {t.key !== 'documents' && data[t.key] ? `(${(data[t.key] as unknown[]).length})` : ''}</button>
         ))}
       </div>
 
-      {/* Import controls for customers/vendors */}
+      {tab === 'documents' && (
+        <div style={{ marginBottom: 20 }}>
+          <DataImportView workspaceId={workspaceId} userRole={userRole} embedded />
+          <div style={{ marginTop: 20 }}>
+            <h3 style={{ fontSize: 14, margin: '0 0 8px', fontWeight: 600 }}>Stored documents</h3>
+            {loading ? (
+              <p style={{ color: '#888', fontSize: 13 }}>Loading...</p>
+            ) : items.length === 0 ? (
+              <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>
+                No stored document records yet. Uploads above extract importable reference data; processed files appear here when available.
+              </p>
+            ) : (
+              <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 400, WebkitOverflowScrolling: 'touch' as never }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 600 }}>
+                  <thead>
+                    <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0 }}>
+                      <th style={{ padding: '7px 10px' }}>Filename</th>
+                      <th style={{ padding: '7px 10px' }}>Type</th>
+                      <th style={{ padding: '7px 10px' }}>Status</th>
+                      <th style={{ padding: '7px 10px' }}>Size</th>
+                      <th style={{ padding: '7px 10px' }}>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '6px 10px' }}>{item.filename as string}</td>
+                        <td style={{ padding: '6px 10px', fontSize: 11 }}>{String(item.documentType ?? '').replace(/_/g, ' ')}</td>
+                        <td style={{ padding: '6px 10px' }}>{item.status as string}</td>
+                        <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{item.fileSize ? `${Math.round((item.fileSize as number) / 1024)} KB` : '—'}</td>
+                        <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(item.createdAt as string)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {!isViewer && (tab === 'customers' || tab === 'vendors') && importStep === 'idle' && (
         <div style={{ marginBottom: 16, padding: 12, background: '#f8f9fa', borderRadius: 6, border: '1px solid #eee' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
@@ -143,7 +254,7 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
                 <option value="VENDOR">Vendor</option>
               </select>
             </div>
-            <button className="btn btn-sm btn-primary" onClick={handlePreview} disabled={!importText.trim()}>Preview Import</button>
+            <button className="btn btn-sm btn-primary" onClick={() => void handlePreview()} disabled={!importText.trim()}>Preview Import</button>
           </div>
           <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={4}
             placeholder="Paste names (one per line):&#10;JE Dunn Construction&#10;Kraus-Anderson&#10;River City Erectors Inc."
@@ -186,7 +297,7 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
             </tbody>
           </table>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-sm btn-primary" onClick={handleCommit}>Commit Import</button>
+            <button className="btn btn-sm btn-primary" onClick={() => void handleCommit()}>Commit Import</button>
             <button className="btn btn-sm btn-outline" onClick={() => setImportStep('idle')}>Cancel</button>
           </div>
         </div>
@@ -197,18 +308,16 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
       {importStep === 'done' && importResult && (
         <div style={{ marginBottom: 16, padding: 12, background: '#e6f4ea', border: '1px solid #a8d5a2', borderRadius: 6, fontSize: 13 }}>
           Import complete: {importResult.created as number} created, {importResult.updated as number} updated, {importResult.skipped as number} skipped
-          <button onClick={() => { setImportStep('idle'); setImportText(''); setPreviewRows([]); setImportResult(null) }}
+          <button type="button" onClick={() => { setImportStep('idle'); setImportText(''); setPreviewRows([]); setImportResult(null) }}
             className="btn btn-sm btn-outline" style={{ marginLeft: 12 }}>Done</button>
         </div>
       )}
 
-      {/* Senders tab */}
       {tab === 'senders' && (
         <SenderEvidenceView workspaceId={workspaceId} />
       )}
 
-      {/* Data table */}
-      {tab !== 'senders' && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
+      {showEntityTable && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
         <div className="empty-state" style={{ padding: 24 }}>
           <h3>No {tab} yet</h3>
           <p>{tab === 'customers' || tab === 'vendors' ? 'Import from CSV or paste names above.' : `${tab} will appear here as data is imported.`}</p>
@@ -223,7 +332,6 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
                 {tab === 'jobs' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Job #</th><th style={{ padding: '7px 10px' }}>Customer</th><th style={{ padding: '7px 10px' }}>Status</th><th style={{ padding: '7px 10px' }}>Aliases</th></>}
                 {tab === 'contacts' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Entity</th><th style={{ padding: '7px 10px' }}>Source</th></>}
                 {tab === 'aliases' && <><th style={{ padding: '7px 10px' }}>Alias</th><th style={{ padding: '7px 10px' }}>Normalized</th><th style={{ padding: '7px 10px' }}>Type</th><th style={{ padding: '7px 10px' }}>Entity</th><th style={{ padding: '7px 10px' }}>Source</th></>}
-                {tab === 'documents' && <><th style={{ padding: '7px 10px' }}>Filename</th><th style={{ padding: '7px 10px' }}>Type</th><th style={{ padding: '7px 10px' }}>Status</th><th style={{ padding: '7px 10px' }}>Size</th><th style={{ padding: '7px 10px' }}>Created</th></>}
                 {tab === 'imports' && <><th style={{ padding: '7px 10px' }}>Type</th><th style={{ padding: '7px 10px' }}>Status</th><th style={{ padding: '7px 10px' }}>Rows</th><th style={{ padding: '7px 10px' }}>Created</th><th style={{ padding: '7px 10px' }}>Skipped</th><th style={{ padding: '7px 10px' }}>Errors</th><th style={{ padding: '7px 10px' }}>Date</th></>}
               </tr>
             </thead>
@@ -234,8 +342,7 @@ export function ReferenceDataView({ workspaceId, userRole = 'MEMBER' }: Props) {
                   {tab === 'vendors' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td></>}
                   {tab === 'jobs' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{(item.jobNumber as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.customer as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td></>}
                   {tab === 'contacts' && <><td style={{ padding: '6px 10px' }}>{(item.name as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.email as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}
-                  {tab === 'aliases' && <><td style={{ padding: '6px 10px' }}>{item.alias as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11, color: '#888' }}>{item.normalizedAlias as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{item.entityType as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? (item.job as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}
-                  {tab === 'documents' && <><td style={{ padding: '6px 10px' }}>{item.filename as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.documentType as string).replace(/_/g, ' ')}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{item.fileSize ? `${Math.round((item.fileSize as number) / 1024)} KB` : '—'}</td><td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(item.createdAt as string)}</td></>}
+                  {tab === 'aliases' && <><td style={{ padding: '6px 10px' }}>{item.alias as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{item.normalizedAlias as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{item.entityType as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? (item.job as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}
                   {tab === 'imports' && <><td style={{ padding: '6px 10px' }}>{item.importType as string}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px' }}>{item.rowsRead as number}</td><td style={{ padding: '6px 10px' }}>{item.createdCount as number}</td><td style={{ padding: '6px 10px' }}>{item.skippedCount as number}</td><td style={{ padding: '6px 10px', color: (item.errorCount as number) > 0 ? '#c62828' : '#888' }}>{item.errorCount as number}</td><td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(item.createdAt as string)}</td></>}
                 </tr>
               ))}

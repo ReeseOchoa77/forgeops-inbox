@@ -214,16 +214,30 @@ export const buildServer = async () => {
 
   const removeScheduledSync = async (connectionId: string): Promise<void> => {
     const jobId = scheduledInboxSyncJobId(connectionId);
+    const legacyJobId = `scheduled-sync:${connectionId}`;
     try {
       await inboxSyncQueue.removeRepeatableByKey(
         `${QueueNames.INBOX_SYNC}:${jobId}:::${NATIVE_INBOX_SYNC_INTERVAL_MS}`
       );
     } catch {
-      const jobs = await inboxSyncQueue.getRepeatableJobs();
-      const match = jobs.find(j => j.id === jobId || j.key?.includes(connectionId));
-      if (match) {
-        await inboxSyncQueue.removeRepeatableByKey(match.key);
-      }
+      /* fall through */
+    }
+    try {
+      await inboxSyncQueue.removeRepeatableByKey(
+        `${QueueNames.INBOX_SYNC}:${legacyJobId}:::${NATIVE_INBOX_SYNC_INTERVAL_MS}`
+      );
+    } catch {
+      /* fall through */
+    }
+    const jobs = await inboxSyncQueue.getRepeatableJobs();
+    const match = jobs.find(
+      (j) =>
+        j.id === jobId ||
+        j.id === legacyJobId ||
+        j.key?.includes(connectionId)
+    );
+    if (match) {
+      await inboxSyncQueue.removeRepeatableByKey(match.key);
     }
   };
 

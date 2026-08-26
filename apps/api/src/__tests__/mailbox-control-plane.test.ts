@@ -20,6 +20,16 @@ describe("mailbox control-plane safety gates", () => {
     expect(shouldEnqueueNativeClassification(afterOauth)).toBe(false);
   });
 
+  it("workspace-registered monitored mailbox defaults match OAuth-safe quiet state", () => {
+    const registered = {
+      status: "ACTIVE" as const,
+      ingestionSource: "N8N" as const,
+      nativeListeningEnabled: false,
+    };
+    expect(shouldScheduleNativeInboxSync(registered)).toBe(false);
+    expect(shouldEnqueueNativeClassification(registered)).toBe(false);
+  });
+
   it("listener OFF blocks automatic processing even in NATIVE mode", () => {
     const nativeQuiet = {
       status: "ACTIVE",
