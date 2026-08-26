@@ -83,7 +83,7 @@ function formatDate(iso: string): string {
 interface Props {
   workspaceId: string
   userRole?: string
-  /** Preferred section when opening Reference Data (e.g. redirected from Documents). */
+  /** Preferred section when opening Company Data (e.g. redirected from Documents). */
   initialTab?: ReferenceDataTab
 }
 
@@ -179,7 +179,7 @@ export function ReferenceDataView({
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Reference Data</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Company Data</h2>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
         Customers, vendors, jobs, contacts, documents, and classification knowledge for this workspace.
       </p>
@@ -211,7 +211,7 @@ export function ReferenceDataView({
               <p style={{ color: '#888', fontSize: 13 }}>Loading...</p>
             ) : items.length === 0 ? (
               <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>
-                No stored document records yet. Uploads above extract importable reference data; processed files appear here when available.
+                No stored document records yet. Uploads above extract importable company data; processed files appear here when available.
               </p>
             ) : (
               <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 400, WebkitOverflowScrolling: 'touch' as never }}>

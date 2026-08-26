@@ -28,10 +28,10 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
-  { page: 'review', label: 'Email Review', icon: '\u2696', section: 'Manage', minRole: 'ADMIN' },
-  { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA', section: 'Manage' },
+  { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
+  { page: 'review', label: 'Email Review', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
@@ -45,7 +45,7 @@ const PAGE_TITLES: Record<Page, string> = {
   'job-detail': 'Job Detail',
   'outlook-folders': 'Job Discovery',
   documents: 'Documents',
-  reference: 'Reference Data',
+  reference: 'Company Data',
   'team-access': 'Team Access',
   workspace: 'Workspace',
   settings: 'Settings',
@@ -99,7 +99,7 @@ export default function App() {
     setPage('workspace')
   }, [page])
 
-  // Legacy Documents top-level page → Reference Data → Documents tab
+  // Legacy Documents top-level page → Company Data → Documents tab
   useEffect(() => {
     if (page !== 'documents') return
     setReferenceTabHint('documents')

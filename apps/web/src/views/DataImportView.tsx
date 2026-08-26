@@ -4,7 +4,7 @@ import { api, type ImportResult, type ExtractionResult, type ExtractedRecord } f
 interface Props {
   workspaceId: string
   userRole?: string
-  /** When true, omit standalone page chrome (rendered inside Reference Data → Documents). */
+  /** When true, omit standalone page chrome (rendered inside Company Data → Documents). */
   embedded?: boolean
 }
 

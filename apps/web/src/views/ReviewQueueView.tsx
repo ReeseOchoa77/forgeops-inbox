@@ -90,7 +90,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
     }
   }
 
-  /** Push email classification into Reference Data → Senders as CONFIRMED_BUSINESS / CONFIRMED_PERSONAL. */
+  /** Push email classification into Company Data → Senders as CONFIRMED_BUSINESS / CONFIRMED_PERSONAL. */
   const handleVerifySender = async (
     message: {
       id: string
@@ -133,11 +133,11 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
 
       setNotice(
         classification === 'BUSINESS'
-          ? `Updated ${message.senderEmail} to Confirmed Business in Reference Data.`
-          : `Updated ${message.senderEmail} to Confirmed Personal in Reference Data.`
+          ? `Updated ${message.senderEmail} to Confirmed Business in Company Data.`
+          : `Updated ${message.senderEmail} to Confirmed Personal in Company Data.`
       )
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to update sender in Reference Data')
+      alert(e instanceof Error ? e.message : 'Failed to update sender in Company Data')
     } finally {
       setActionLoading(null)
     }
@@ -180,7 +180,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       {tab === 'RECLASSIFIED' && (
         <div>
           <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
-            Emails that were manually reclassified. Use <strong>Confirm Business/Personal Sender</strong> to update that sender in Reference Data → Senders to Confirmed Business or Confirmed Personal.
+            Emails that were manually reclassified. Use <strong>Confirm Business/Personal Sender</strong> to update that sender in Company Data → Senders to Confirmed Business or Confirmed Personal.
           </p>
           {reclassifiedMessages.length === 0 ? (
             <div className="empty-state">
@@ -251,7 +251,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
       {tab === 'REVIEW' && (<>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
         {totalCount} item{totalCount !== 1 ? 's' : ''} need{totalCount === 1 ? 's' : ''} your review.
-        Confirm Business/Personal Sender updates that sender in Reference Data and clears the item from this queue.
+        Confirm Business/Personal Sender updates that sender in Company Data and clears the item from this queue.
       </p>
 
       {items.length === 0 ? (
@@ -315,7 +315,7 @@ export function ReviewQueueView({ workspaceId, connectionId, onSelectMessage }: 
                 <button
                   disabled={actionLoading === confirmKey}
                   onClick={() => handleVerifySender(m, { dismissReview: true, list: 'review' })}
-                  title="Sets this sender to Confirmed Business or Confirmed Personal in Reference Data"
+                  title="Sets this sender to Confirmed Business or Confirmed Personal in Company Data"
                   style={{
                     minHeight: 36, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
                     border: isBusiness ? '1px solid #4caf50' : '1px solid #9c27b0',
