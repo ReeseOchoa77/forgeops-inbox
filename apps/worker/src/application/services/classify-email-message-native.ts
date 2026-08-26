@@ -4,6 +4,7 @@ import {
   OpenAIEntitySelector,
   OpenAISemanticSignalExtractor,
   OpenAITaskExtractor,
+  serializeOpenAiError,
 } from "@forgeops/ai";
 import {
   ClassificationCandidatesService,
@@ -54,12 +55,16 @@ export async function classifyEmailMessageNative(
   deps: ClassifyEmailMessageDeps
 ): Promise<MailboxClassifyJobResult> {
   const started = Date.now();
+  const openaiConfigured = Boolean(deps.openaiApiKey);
   const baseLog = {
     workspaceId: payload.workspaceId,
     inboxConnectionId: payload.inboxConnectionId,
     emailMessageId: payload.emailMessageId,
     modelName: NATIVE_PIPELINE_MODEL_NAME,
     modelVersion: NATIVE_PIPELINE_MODEL_VERSION,
+    openaiConfigured,
+    semanticModel: deps.openaiSemanticModel,
+    customBaseUrl: false,
   };
 
   console.info({ event: "native-classification-started", ...baseLog });
@@ -163,6 +168,7 @@ export async function classifyEmailMessageNative(
       throw new Error(`EmailMessage not found: ${payload.emailMessageId}`);
     }
 
+    // No custom baseURL is passed — SDK default endpoint (api.openai.com).
     const openaiClient = createOpenAIClient({
       ...(deps.openaiApiKey ? { apiKey: deps.openaiApiKey } : {}),
     });
@@ -240,11 +246,13 @@ export async function classifyEmailMessageNative(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
+    const openaiError = serializeOpenAiError(error);
     console.error({
       event: "native-classification-failed",
       ...baseLog,
       durationMs: Date.now() - started,
       error: message,
+      ...openaiError,
     });
     // Rethrow so BullMQ retries independently per message.
     throw error instanceof Error ? error : new Error(message);

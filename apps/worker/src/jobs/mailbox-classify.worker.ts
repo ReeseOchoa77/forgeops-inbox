@@ -1,4 +1,5 @@
 import { prisma } from "@forgeops/db";
+import { serializeOpenAiError } from "@forgeops/ai";
 import {
   QueueNames,
   type MailboxClassifyJobPayload,
@@ -35,7 +36,10 @@ export const startMailboxClassifyWorker = (
   worker.on("failed", (job, err) => {
     console.error("mailbox-classify-job-failed", {
       emailMessageId: job?.data.emailMessageId,
+      workspaceId: job?.data.workspaceId,
+      inboxConnectionId: job?.data.inboxConnectionId,
       error: err.message,
+      ...serializeOpenAiError(err),
     });
   });
 

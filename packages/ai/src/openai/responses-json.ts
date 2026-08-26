@@ -5,6 +5,11 @@
 import type OpenAI from "openai";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses.js";
 
+import {
+  withOpenAiResponsesDiagnostics,
+  type OpenAIResponsesStage,
+} from "./openai-error-diagnostics.js";
+
 export const DEFAULT_CLASSIFICATION_AI_MODEL = "chat-latest";
 export const DEFAULT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 1500;
 
@@ -26,18 +31,22 @@ export function buildJsonObjectResponseParams(input: {
 
 export async function createJsonObjectResponse(
   client: OpenAI,
-  params: ResponseCreateParamsNonStreaming
+  params: ResponseCreateParamsNonStreaming,
+  stage: OpenAIResponsesStage
 ): Promise<unknown> {
-  const response = await client.responses.create(params);
-  const rawContent = response.output_text?.trim();
-  if (!rawContent) {
-    throw new Error("OpenAI Responses API returned an empty response");
-  }
-  try {
-    return JSON.parse(rawContent) as unknown;
-  } catch {
-    throw new Error("OpenAI returned invalid JSON");
-  }
+  const model = typeof params.model === "string" ? params.model : String(params.model);
+  return withOpenAiResponsesDiagnostics({ stage, model }, async () => {
+    const response = await client.responses.create(params);
+    const rawContent = response.output_text?.trim();
+    if (!rawContent) {
+      throw new Error("OpenAI Responses API returned an empty response");
+    }
+    try {
+      return JSON.parse(rawContent) as unknown;
+    } catch {
+      throw new Error("OpenAI returned invalid JSON");
+    }
+  });
 }
 
 export class StructuredOutputValidationError extends Error {

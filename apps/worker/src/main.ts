@@ -137,3 +137,20 @@ console.info("worker-started", {
     "mailbox-classify",
   ],
 });
+
+// Safe OpenAI wiring check for native classification (no secrets).
+console.info({
+  event: "openai-worker-config",
+  configured: Boolean(env.OPENAI_API_KEY),
+  semanticModel: env.OPENAI_SEMANTIC_MODEL,
+  subtypeModel: env.OPENAI_SUBTYPE_MODEL,
+  entityModel: env.OPENAI_ENTITY_MODEL,
+  taskModel: env.OPENAI_TASK_MODEL,
+  // createOpenAIClient is never given baseURL on the classify path.
+  customBaseUrl: false,
+  // Env may be set but is not read by worker env schema / client today.
+  openaiBaseUrlEnvSet: Boolean(
+    typeof process.env.OPENAI_BASE_URL === "string" &&
+      process.env.OPENAI_BASE_URL.trim().length > 0
+  ),
+});

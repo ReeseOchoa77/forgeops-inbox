@@ -47,7 +47,7 @@ export class OpenAIEntitySelector {
       userInput: buildEntitySelectionUserPrompt(input),
     });
 
-    const parsed = await createJsonObjectResponse(this.client, params);
+    const parsed = await createJsonObjectResponse(this.client, params, "entity");
     return parseEntitySelectionResult(parsed, input);
   }
 }

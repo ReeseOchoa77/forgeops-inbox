@@ -10,6 +10,7 @@ import {
   type ExtractSemanticSignalsInput,
   type SemanticSignals,
 } from "../semantic-signals/types.js";
+import { withOpenAiResponsesDiagnostics } from "./openai-error-diagnostics.js";
 
 export type { ExtractSemanticSignalsInput };
 
@@ -61,20 +62,27 @@ export class OpenAISemanticSignalExtractor {
     }
 
     const params = buildSemanticSignalResponseCreateParams(this.model, input);
-    const response = await this.client.responses.create(params);
+    return withOpenAiResponsesDiagnostics(
+      { stage: "semantic", model: this.model },
+      async () => {
+        const response = await this.client!.responses.create(params);
 
-    const rawContent = response.output_text?.trim();
-    if (!rawContent) {
-      throw new Error("OpenAI Responses API returned an empty semantic-signal response");
-    }
+        const rawContent = response.output_text?.trim();
+        if (!rawContent) {
+          throw new Error(
+            "OpenAI Responses API returned an empty semantic-signal response"
+          );
+        }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawContent);
-    } catch {
-      throw new Error("OpenAI returned invalid JSON for semantic signals");
-    }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawContent);
+        } catch {
+          throw new Error("OpenAI returned invalid JSON for semantic signals");
+        }
 
-    return parseSemanticSignals(parsed);
+        return parseSemanticSignals(parsed);
+      }
+    );
   }
 }

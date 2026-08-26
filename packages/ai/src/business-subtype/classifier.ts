@@ -44,7 +44,7 @@ export class OpenAIBusinessSubtypeClassifier {
       userInput: buildBusinessSubtypeUserPrompt(input),
     });
 
-    const parsed = await createJsonObjectResponse(this.client, params);
+    const parsed = await createJsonObjectResponse(this.client, params, "subtype");
     return parseBusinessSubtypeResult(parsed);
   }
 }

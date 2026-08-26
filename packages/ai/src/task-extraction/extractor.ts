@@ -51,7 +51,7 @@ export class OpenAITaskExtractor {
       userInput: buildTaskExtractionUserPrompt(input),
     });
 
-    const parsed = await createJsonObjectResponse(this.client, params);
+    const parsed = await createJsonObjectResponse(this.client, params, "task");
     return parseTaskExtractionResult(parsed);
   }
 }

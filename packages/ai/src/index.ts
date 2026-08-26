@@ -1,5 +1,6 @@
 export * from "./openai/inbox-classifier.js";
 export * from "./openai/openai-client.js";
+export * from "./openai/openai-error-diagnostics.js";
 export * from "./openai/responses-json.js";
 export * from "./openai/semantic-signal-extractor.js";
 export * from "./prompts/inbox-classification.prompt.js";
