@@ -10,6 +10,12 @@ import {
   mailboxAuthorizationTone,
   needsSendingAuthorization,
 } from '../mailbox-authorization-display'
+import {
+  importProgressIndeterminate,
+  importProgressLabel,
+  importProgressPercent,
+  isImportInProgress,
+} from '../mailbox-import-progress'
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -81,21 +87,104 @@ export function MonitoredMailboxesPanel({
   const [importOpenFor, setImportOpenFor] = useState<string | null>(null)
   const [importPreset, setImportPreset] = useState<'25' | '50' | '100' | '250'>('50')
   const [importBusy, setImportBusy] = useState(false)
-  const [activeImport, setActiveImport] = useState<MailboxHistoricalImportStatus | null>(null)
+  /** Active/recent import progress keyed by inbox connection id (shown on the card). */
+  const [importsByConnection, setImportsByConnection] = useState<
+    Record<string, MailboxHistoricalImportStatus>
+  >({})
   const [importError, setImportError] = useState<string | null>(null)
 
+  // Resume any in-flight imports when the panel loads / mailboxes change.
   useEffect(() => {
-    if (!activeImport || !importOpenFor) return
-    if (activeImport.status === 'COMPLETED' || activeImport.status === 'FAILED') return
-    const connectionId = importOpenFor
+    let cancelled = false
+    const connectionIds = connections
+      .filter((c) => c.status !== 'DISCONNECTED')
+      .map((c) => c.id)
+    if (connectionIds.length === 0) return
+
+    void Promise.all(
+      connectionIds.map(async (connectionId) => {
+        try {
+          const res = await api.listHistoricalImports(workspaceId, connectionId)
+          const active =
+            res.imports.find((row) => isImportInProgress(row.status)) ??
+            res.imports.find(
+              (row) =>
+                (row.status === 'COMPLETED' || row.status === 'FAILED') &&
+                Date.now() - new Date(row.updatedAt).getTime() < 60_000
+            )
+          return active ? ([connectionId, active] as const) : null
+        } catch {
+          return null
+        }
+      })
+    ).then((rows) => {
+      if (cancelled) return
+      setImportsByConnection((prev) => {
+        const next = { ...prev }
+        for (const row of rows) {
+          if (!row) continue
+          const [connectionId, imp] = row
+          next[connectionId] = imp
+        }
+        return next
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, connections])
+
+  const activeImportKey = Object.entries(importsByConnection)
+    .filter(([, imp]) => isImportInProgress(imp.status))
+    .map(([connectionId, imp]) => `${connectionId}:${imp.id}`)
+    .sort()
+    .join('|')
+
+  // Poll in-progress imports so the card progress bar stays live (modal optional).
+  useEffect(() => {
+    if (!activeImportKey) return
+    const activeEntries = activeImportKey.split('|').map((pair) => {
+      const [connectionId, importId] = pair.split(':')
+      return { connectionId, importId }
+    })
+
     const timer = setInterval(() => {
-      void api
-        .getHistoricalImport(workspaceId, connectionId, activeImport.id)
-        .then((r) => setActiveImport(r.import))
-        .catch(() => {})
+      for (const { connectionId, importId } of activeEntries) {
+        if (!connectionId || !importId) continue
+        void api
+          .getHistoricalImport(workspaceId, connectionId, importId)
+          .then((r) => {
+            setImportsByConnection((prev) => ({
+              ...prev,
+              [connectionId]: r.import,
+            }))
+          })
+          .catch(() => {})
+      }
     }, 2000)
     return () => clearInterval(timer)
-  }, [activeImport, importOpenFor, workspaceId])
+  }, [activeImportKey, workspaceId])
+
+  // Auto-clear finished banners after a short success/failure window.
+  useEffect(() => {
+    const finished = Object.entries(importsByConnection).filter(
+      ([, imp]) => imp.status === 'COMPLETED' || imp.status === 'FAILED'
+    )
+    if (finished.length === 0) return
+    const timer = setTimeout(() => {
+      setImportsByConnection((prev) => {
+        const next = { ...prev }
+        for (const [connectionId, imp] of finished) {
+          if (next[connectionId]?.id === imp.id && !isImportInProgress(next[connectionId].status)) {
+            delete next[connectionId]
+          }
+        }
+        return next
+      })
+    }, 12_000)
+    return () => clearTimeout(timer)
+  }, [importsByConnection])
 
   const openSettings = async (c: ConnectionSummary) => {
     setSettingsOpenFor(c.id)
@@ -128,13 +217,19 @@ export function MonitoredMailboxesPanel({
 
   const startImport = async () => {
     if (!importOpenFor) return
+    const connectionId = importOpenFor
     setImportBusy(true)
     setImportError(null)
     try {
-      const res = await api.startHistoricalImport(workspaceId, importOpenFor, {
+      const res = await api.startHistoricalImport(workspaceId, connectionId, {
         preset: importPreset,
       })
-      setActiveImport(res.import)
+      setImportsByConnection((prev) => ({
+        ...prev,
+        [connectionId]: res.import,
+      }))
+      // Close modal so progress is visible on the mailbox card.
+      setImportOpenFor(null)
     } catch (e) {
       setImportError(e instanceof Error ? e.message : 'Failed to start import')
     } finally {
@@ -190,6 +285,7 @@ export function MonitoredMailboxesPanel({
             authAction.type === 'loading' && authAction.connectionId === c.id
           const lastActivity =
             c.lastProcessedAt || c.lastReceivedAt || c.lastSyncedAt || null
+          const mailboxImport = importsByConnection[c.id]
 
           return (
             <div
@@ -225,7 +321,6 @@ export function MonitoredMailboxesPanel({
                         style={{ fontSize: 10, padding: '2px 8px' }}
                         onClick={() => {
                           setImportOpenFor(c.id)
-                          setActiveImport(null)
                           setImportError(null)
                         }}
                       >
@@ -341,6 +436,54 @@ export function MonitoredMailboxesPanel({
                   )}
                 </div>
               </div>
+
+              {mailboxImport && (
+                <div style={{ marginTop: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 6,
+                      fontSize: 11,
+                      color: '#555',
+                    }}
+                  >
+                    <span>{importProgressLabel(mailboxImport)}</span>
+                    {!importProgressIndeterminate(mailboxImport) && (
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: '#888' }}>
+                        {importProgressPercent(mailboxImport)}%
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="mailbox-import-progress-track"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={
+                      importProgressIndeterminate(mailboxImport)
+                        ? undefined
+                        : importProgressPercent(mailboxImport)
+                    }
+                    aria-label={importProgressLabel(mailboxImport)}
+                  >
+                    <div
+                      className={[
+                        'mailbox-import-progress-fill',
+                        importProgressIndeterminate(mailboxImport) ? 'indeterminate' : '',
+                        mailboxImport.status === 'COMPLETED' ? 'complete' : '',
+                        mailboxImport.status === 'FAILED' ? 'failed' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      style={{
+                        width: `${importProgressPercent(mailboxImport)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div
                 style={{
@@ -541,83 +684,63 @@ export function MonitoredMailboxesPanel({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>Import Previous Emails</h3>
-            {!activeImport ? (
-              <>
-                <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>
-                  Runs in the background. Does not enable the native listener.
-                </p>
-                <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
-                  How many recent emails?
-                  <select
-                    value={importPreset}
-                    onChange={(e) =>
-                      setImportPreset(e.target.value as '25' | '50' | '100' | '250')
-                    }
-                    style={{ display: 'block', marginTop: 6, width: '100%' }}
-                  >
-                    <option value="25">Last 25</option>
-                    <option value="50">Last 50</option>
-                    <option value="100">Last 100</option>
-                    <option value="250">Last 250</option>
-                  </select>
-                </label>
-                {importError && (
-                  <p style={{ color: '#c62828', fontSize: 12 }}>{importError}</p>
+            <>
+              <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>
+                Runs in the background. Progress appears on the mailbox card. Does not enable
+                the native listener.
+              </p>
+              <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+                How many recent emails?
+                <select
+                  value={importPreset}
+                  onChange={(e) =>
+                    setImportPreset(e.target.value as '25' | '50' | '100' | '250')
+                  }
+                  style={{ display: 'block', marginTop: 6, width: '100%' }}
+                >
+                  <option value="25">Last 25</option>
+                  <option value="50">Last 50</option>
+                  <option value="100">Last 100</option>
+                  <option value="250">Last 250</option>
+                </select>
+              </label>
+              {importOpenFor &&
+                importsByConnection[importOpenFor] &&
+                isImportInProgress(importsByConnection[importOpenFor].status) && (
+                  <p style={{ fontSize: 12, color: '#666' }}>
+                    An import is already running for this mailbox — check the progress bar on
+                    the card.
+                  </p>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => setImportOpenFor(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-primary"
-                    disabled={!canManage || importBusy}
-                    onClick={() => void startImport()}
-                  >
-                    {importBusy ? 'Starting…' : 'Start import'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p style={{ fontSize: 13, marginTop: 0 }}>
-                  {activeImport.status === 'COMPLETED'
-                    ? 'Import complete'
-                    : activeImport.status === 'FAILED'
-                      ? 'Import failed'
-                      : 'Importing previous emails…'}
-                </p>
-                <p style={{ fontSize: 13 }}>
-                  {activeImport.processedCount} / {activeImport.requestedLimit} processed
-                </p>
-                <p style={{ fontSize: 12, color: '#555' }}>
-                  Business: {activeImport.businessCount}
-                  <br />
-                  Personal: {activeImport.personalCount}
-                  <br />
-                  Failed: {activeImport.failedCount}
-                </p>
-                {activeImport.errorMessage && (
-                  <p style={{ color: '#c62828', fontSize: 12 }}>{activeImport.errorMessage}</p>
-                )}
-                <div style={{ textAlign: 'right' }}>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => {
-                      setImportOpenFor(null)
-                      onRefresh()
-                    }}
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
-            )}
+              {importError && (
+                <p style={{ color: '#c62828', fontSize: 12 }}>{importError}</p>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => setImportOpenFor(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  disabled={
+                    !canManage ||
+                    importBusy ||
+                    Boolean(
+                      importOpenFor &&
+                        importsByConnection[importOpenFor] &&
+                        isImportInProgress(importsByConnection[importOpenFor].status)
+                    )
+                  }
+                  onClick={() => void startImport()}
+                >
+                  {importBusy ? 'Starting…' : 'Start import'}
+                </button>
+              </div>
+            </>
           </div>
         </div>
       )}

@@ -18,6 +18,39 @@ import type { Queue } from "bullmq";
 
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 
+const CLASSIFY_WAIT_MS = 5 * 60 * 1000;
+const CLASSIFY_POLL_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function recountCategoryCounts(
+  prisma: PrismaClient,
+  workspaceId: string,
+  inboxConnectionId: string,
+  providerMessageIds: string[]
+): Promise<{ businessCount: number; personalCount: number }> {
+  if (providerMessageIds.length === 0) {
+    return { businessCount: 0, personalCount: 0 };
+  }
+  const rows = await prisma.emailMessage.findMany({
+    where: {
+      workspaceId,
+      inboxConnectionId,
+      gmailMessageId: { in: providerMessageIds },
+    },
+    select: { mailboxCategory: true },
+  });
+  let businessCount = 0;
+  let personalCount = 0;
+  for (const row of rows) {
+    if (row.mailboxCategory === "BUSINESS") businessCount += 1;
+    else if (row.mailboxCategory === "PERSONAL") personalCount += 1;
+  }
+  return { businessCount, personalCount };
+}
+
 /**
  * Background historical import:
  * - Does NOT require nativeListeningEnabled (manual admin action)
@@ -25,6 +58,7 @@ import { importProviderMailbox } from "../services/import-provider-mailbox.js";
  * - Dedupes via existing (inboxConnectionId, gmailMessageId) uniqueness
  * - Enqueues native analysis only when processing mode is NATIVE
  * - Does not advance the live syncCursor (avoids coupling to listener cursor)
+ * - Updates processedCount during read/import/classify so the UI progress bar moves
  */
 export async function processMailboxHistoricalImport(
   payload: MailboxHistoricalImportJobPayload,
@@ -54,6 +88,7 @@ export async function processMailboxHistoricalImport(
       status: "RUNNING",
       startedAt: importRow.startedAt ?? new Date(),
       errorMessage: null,
+      processedCount: 0,
     },
   });
 
@@ -143,6 +178,23 @@ export async function processMailboxHistoricalImport(
       t.messages.map((m) => m.providerMessageId)
     );
 
+    // Mark that provider read finished — UI moves off indeterminate shimmer.
+    await deps.prisma.mailboxHistoricalImport.update({
+      where: { id: payload.importId },
+      data: {
+        processedProviderMessageIds: providerMessageIds,
+        // ~25% of requested work after read, before DB import.
+        processedCount: Math.max(
+          1,
+          Math.min(
+            limit - 1,
+            Math.round(providerMessageIds.length * 0.25) ||
+              Math.round(limit * 0.15)
+          )
+        ),
+      },
+    });
+
     let importedCount = 0;
     let duplicateCount = 0;
     let failedCount = 0;
@@ -185,6 +237,28 @@ export async function processMailboxHistoricalImport(
     const landed = new Set(existingAfter.map((m) => m.gmailMessageId));
     failedCount = providerMessageIds.filter((id) => !landed.has(id)).length;
 
+    const baselineDone = Math.max(
+      0,
+      providerMessageIds.length - createdMessageIds.length
+    );
+
+    await deps.prisma.mailboxHistoricalImport.update({
+      where: { id: payload.importId },
+      data: {
+        importedCount,
+        duplicateCount,
+        failedCount,
+        processedCount: Math.min(
+          limit,
+          Math.max(
+            baselineDone,
+            Math.round(providerMessageIds.length * 0.55) || baselineDone
+          )
+        ),
+        processedProviderMessageIds: providerMessageIds,
+      },
+    });
+
     if (shouldEnqueueNativeClassification(connection)) {
       for (const emailMessageId of createdMessageIds) {
         try {
@@ -214,18 +288,60 @@ export async function processMailboxHistoricalImport(
           });
         }
       }
+
+      // Wait for classify workers so the mailbox card progress bar covers classifying.
+      if (createdMessageIds.length > 0) {
+        const deadline = Date.now() + CLASSIFY_WAIT_MS;
+        while (Date.now() < deadline) {
+          const classified = await deps.prisma.classification.count({
+            where: {
+              workspaceId: payload.workspaceId,
+              messageId: { in: createdMessageIds },
+            },
+          });
+          const { businessCount, personalCount } = await recountCategoryCounts(
+            deps.prisma,
+            payload.workspaceId,
+            connection.id,
+            providerMessageIds
+          );
+          const processedCount = Math.min(limit, baselineDone + classified);
+          await deps.prisma.mailboxHistoricalImport.update({
+            where: { id: payload.importId },
+            data: {
+              processedCount,
+              businessCount,
+              personalCount,
+              failedCount,
+            },
+          });
+          if (classified >= createdMessageIds.length) break;
+          await sleep(CLASSIFY_POLL_MS);
+        }
+      }
     }
 
-    // Category counts from whatever is already classified (n8n or prior native).
-    // Classification jobs run async — counts here reflect pre-existing categories only.
-    let businessCount = 0;
-    let personalCount = 0;
-    for (const row of existingAfter) {
-      if (row.mailboxCategory === "BUSINESS") businessCount += 1;
-      else if (row.mailboxCategory === "PERSONAL") personalCount += 1;
-    }
+    const { businessCount, personalCount } = await recountCategoryCounts(
+      deps.prisma,
+      payload.workspaceId,
+      connection.id,
+      providerMessageIds
+    );
 
-    const processedCount = providerMessageIds.length;
+    const classifiedAtEnd =
+      createdMessageIds.length > 0
+        ? await deps.prisma.classification.count({
+            where: {
+              workspaceId: payload.workspaceId,
+              messageId: { in: createdMessageIds },
+            },
+          })
+        : 0;
+
+    const processedCount = Math.min(
+      limit,
+      Math.max(providerMessageIds.length, baselineDone + classifiedAtEnd)
+    );
 
     await deps.prisma.mailboxHistoricalImport.update({
       where: { id: payload.importId },

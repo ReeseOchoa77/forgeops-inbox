@@ -392,6 +392,11 @@ export const api = {
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports/${importId}`
     ),
 
+  listHistoricalImports: (workspaceId: string, connectionId: string) =>
+    request<{ imports: MailboxHistoricalImportStatus[] }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports`
+    ),
+
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;
     searchIn?: 'all' | 'sender';
