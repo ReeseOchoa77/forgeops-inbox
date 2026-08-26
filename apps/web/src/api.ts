@@ -93,6 +93,7 @@ export interface MailboxHistoricalImportStatus {
   inboxConnectionId: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | string
   requestedLimit: number
+  sinceDate: string | null
   processedCount: number
   importedCount: number
   duplicateCount: number
@@ -380,7 +381,7 @@ export const api = {
   startHistoricalImport: (
     workspaceId: string,
     connectionId: string,
-    body: { preset?: '25' | '50' | '100' | '250'; limit?: number }
+    body: { preset?: '25' | '50' | '100' | '250'; limit?: number; sinceDate?: string }
   ) =>
     request<{ import: MailboxHistoricalImportStatus; message: string }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports`,

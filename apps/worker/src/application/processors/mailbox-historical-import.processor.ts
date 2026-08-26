@@ -109,6 +109,13 @@ export async function processMailboxHistoricalImport(
     const providerKind = providerKindFromEnum(connection.provider);
     const provider = deps.providerRegistry.getSyncProvider(providerKind);
 
+    const receivedAfter = payload.sinceDate
+      ? new Date(payload.sinceDate)
+      : null;
+    if (receivedAfter && Number.isNaN(receivedAfter.getTime())) {
+      throw new Error(`Invalid sinceDate on import job: ${payload.sinceDate}`);
+    }
+
     // Fetch up to `limit` messages. Providers page internally (Outlook $top=50 pages).
     // Pass syncCursor: null so we do not consume/advance the live listener cursor.
     const mailbox = await provider.syncMailbox({
@@ -119,6 +126,7 @@ export async function processMailboxHistoricalImport(
       accessTokenExpiresAt: connection.accessTokenExpiresAt,
       syncCursor: null,
       maxThreads: limit,
+      ...(receivedAfter ? { receivedAfter } : {}),
     });
 
     // Exclude junk/trash at product level when settings require it (default true).
@@ -132,6 +140,15 @@ export async function processMailboxHistoricalImport(
       .map((thread) => ({
         ...thread,
         messages: thread.messages.filter((message) => {
+          if (receivedAfter) {
+            const ts =
+              message.receivedAt?.getTime() ??
+              message.sentAt?.getTime() ??
+              null;
+            if (ts == null || ts < receivedAfter.getTime()) {
+              return false;
+            }
+          }
           const labels = (message.providerLabels ?? []).map((l) =>
             l.toLowerCase()
           );

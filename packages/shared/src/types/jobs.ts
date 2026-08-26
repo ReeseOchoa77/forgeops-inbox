@@ -62,6 +62,8 @@ export interface MailboxHistoricalImportJobPayload {
   inboxConnectionId: string;
   importId: string;
   requestedLimit: number;
+  /** ISO timestamp — when set, import messages received on/after this instant (capped by requestedLimit). */
+  sinceDate?: string;
   initiatedBy?: string;
 }
 

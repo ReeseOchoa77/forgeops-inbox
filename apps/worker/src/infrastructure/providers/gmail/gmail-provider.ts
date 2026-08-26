@@ -69,7 +69,8 @@ export class GmailSyncProvider implements InboxSyncProvider {
       accessToken: input.accessToken ?? null,
       accessTokenExpiresAt: input.accessTokenExpiresAt ?? null,
       syncCursor: input.syncCursor ?? null,
-      ...(input.maxThreads !== undefined ? { maxThreads: input.maxThreads } : {})
+      ...(input.maxThreads !== undefined ? { maxThreads: input.maxThreads } : {}),
+      ...(input.receivedAfter ? { receivedAfter: input.receivedAfter } : {}),
     });
 
     return {

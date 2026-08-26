@@ -21,6 +21,35 @@ export const HISTORICAL_IMPORT_MAX_LIMIT = 250;
 
 export const HISTORICAL_IMPORT_LIMIT_PRESETS = [25, 50, 100, 250] as const;
 
+/**
+ * Parse a YYYY-MM-DD or ISO date string into a UTC Date (start of that calendar day
+ * when only a date is provided). Used for historical import "since date" mode.
+ */
+export function parseHistoricalImportSinceDate(value: string): Date {
+  const trimmed = value.trim();
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnly) {
+    const year = Number(dateOnly[1]);
+    const month = Number(dateOnly[2]);
+    const day = Number(dateOnly[3]);
+    const parsed = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.getUTCFullYear() !== year ||
+      parsed.getUTCMonth() !== month - 1 ||
+      parsed.getUTCDate() !== day
+    ) {
+      throw new Error(`Invalid sinceDate: ${value}`);
+    }
+    return parsed;
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid sinceDate: ${value}`);
+  }
+  return parsed;
+}
+
 export function scheduledInboxSyncJobId(connectionId: string): string {
   return `scheduled-sync-${connectionId}`;
 }

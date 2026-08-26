@@ -84,7 +84,8 @@ export class OutlookSyncProvider implements InboxSyncProvider {
       syncCursor: input.syncCursor ?? null,
       ...(input.maxThreads !== undefined
         ? { maxMessages: input.maxThreads }
-        : {})
+        : {}),
+      ...(input.receivedAfter ? { receivedAfter: input.receivedAfter } : {}),
     });
 
     return {

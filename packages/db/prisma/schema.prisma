@@ -349,6 +349,8 @@ model MailboxHistoricalImport {
   requestedByUserId  String?
   status             MailboxHistoricalImportStatus @default(PENDING)
   requestedLimit     Int
+  /// When set, import targets messages received on/after this instant (newest-first, capped by requestedLimit).
+  sinceDate          DateTime?
   processedCount     Int                           @default(0)
   importedCount      Int                           @default(0)
   duplicateCount     Int                           @default(0)

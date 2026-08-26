@@ -4,6 +4,7 @@ import {
   connectionIdFromScheduledSyncJobId,
   historicalImportJobId,
   isN8nOwnedClassification,
+  parseHistoricalImportSinceDate,
   scheduledInboxSyncJobId,
   shouldEnqueueNativeClassification,
   shouldRegisterNativePush,
@@ -160,5 +161,12 @@ describe("ingestion ownership", () => {
     expect(connectionIdFromScheduledSyncJobId("scheduled-sync-abc")).toBe("abc");
     expect(connectionIdFromScheduledSyncJobId("scheduled-sync:abc")).toBe("abc");
     expect(connectionIdFromScheduledSyncJobId("other")).toBeNull();
+  });
+
+  it("parses historical import sinceDate as UTC start-of-day for YYYY-MM-DD", () => {
+    expect(parseHistoricalImportSinceDate("2026-08-01").toISOString()).toBe(
+      "2026-08-01T00:00:00.000Z"
+    );
+    expect(() => parseHistoricalImportSinceDate("not-a-date")).toThrow(/Invalid sinceDate/);
   });
 });

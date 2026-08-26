@@ -261,6 +261,7 @@ export interface OutlookMailboxSyncInput {
   accessTokenExpiresAt?: Date | null;
   syncCursor?: string | null;
   maxMessages?: number;
+  receivedAfter?: Date;
 }
 
 const mapGraphAddress = (
@@ -694,7 +695,8 @@ export class OutlookClient {
       tokenResult.accessToken,
       input.maxMessages ?? MAX_MESSAGES_PER_SYNC,
       input.syncCursor ?? null,
-      folderMap
+      folderMap,
+      input.receivedAfter ?? null
     );
 
     if (messages.hasAttachmentIds.length > 0) {
@@ -878,7 +880,8 @@ export class OutlookClient {
     accessToken: string,
     maxMessages: number,
     syncCursor: string | null,
-    folderMap: Map<string, string>
+    folderMap: Map<string, string>,
+    receivedAfter: Date | null = null
   ): Promise<{
     items: OutlookMessageSnapshot[];
     deltaLink: string | null;
@@ -889,7 +892,16 @@ export class OutlookClient {
     let url: string | null;
     let isDelta = false;
 
-    if (syncCursor && syncCursor.startsWith("http")) {
+    if (receivedAfter) {
+      // Date-bounded historical import: list newest-first with Graph filter (not delta).
+      url =
+        `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/inbox/messages` +
+        `?$select=${MESSAGE_SELECT_FIELDS}` +
+        `&$filter=receivedDateTime ge ${receivedAfter.toISOString().replace(/\.\d{3}Z$/, "Z")}` +
+        `&$orderby=receivedDateTime desc` +
+        `&$top=${pageSize}`;
+      isDelta = false;
+    } else if (syncCursor && syncCursor.startsWith("http")) {
       url = syncCursor;
       isDelta = true;
     } else {
@@ -914,7 +926,13 @@ export class OutlookClient {
         console.warn("outlook-delta-link-expired", {
           cursor: syncCursor?.slice(0, 80)
         });
-        return this.fetchInboxMessages(accessToken, maxMessages, null, folderMap);
+        return this.fetchInboxMessages(
+          accessToken,
+          maxMessages,
+          null,
+          folderMap,
+          receivedAfter
+        );
       }
 
       if (!response.ok) {
@@ -963,6 +981,15 @@ export class OutlookClient {
         }
 
         const parsed = parseMessage(normalized, folderMap);
+
+        if (
+          receivedAfter &&
+          parsed.receivedAt &&
+          parsed.receivedAt.getTime() < receivedAfter.getTime()
+        ) {
+          continue;
+        }
+
         items.push(parsed);
 
         // Inline CID images may exist even when Graph hasAttachments is false

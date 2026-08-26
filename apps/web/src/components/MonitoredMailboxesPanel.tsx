@@ -85,7 +85,9 @@ export function MonitoredMailboxesPanel({
   const [settingsError, setSettingsError] = useState<string | null>(null)
 
   const [importOpenFor, setImportOpenFor] = useState<string | null>(null)
-  const [importPreset, setImportPreset] = useState<'25' | '50' | '100' | '250'>('50')
+  const [importMode, setImportMode] = useState<'count' | 'since'>('count')
+  const [importLimit, setImportLimit] = useState(50)
+  const [importSinceDate, setImportSinceDate] = useState('')
   const [importBusy, setImportBusy] = useState(false)
   /** Active/recent import progress keyed by inbox connection id (shown on the card). */
   const [importsByConnection, setImportsByConnection] = useState<
@@ -221,9 +223,15 @@ export function MonitoredMailboxesPanel({
     setImportBusy(true)
     setImportError(null)
     try {
-      const res = await api.startHistoricalImport(workspaceId, connectionId, {
-        preset: importPreset,
-      })
+      const body =
+        importMode === 'since'
+          ? { sinceDate: importSinceDate }
+          : { limit: Math.min(250, Math.max(1, Math.floor(importLimit))) }
+      if (importMode === 'since' && !importSinceDate.trim()) {
+        setImportError('Choose a start date')
+        return
+      }
+      const res = await api.startHistoricalImport(workspaceId, connectionId, body)
       setImportsByConnection((prev) => ({
         ...prev,
         [connectionId]: res.import,
@@ -687,23 +695,64 @@ export function MonitoredMailboxesPanel({
             <>
               <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>
                 Runs in the background. Progress appears on the mailbox card. Does not enable
-                the native listener.
+                the native listener. Max 250 emails per run.
               </p>
-              <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
-                How many recent emails?
-                <select
-                  value={importPreset}
-                  onChange={(e) =>
-                    setImportPreset(e.target.value as '25' | '50' | '100' | '250')
-                  }
-                  style={{ display: 'block', marginTop: 6, width: '100%' }}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${importMode === 'count' ? 'btn-primary' : ''}`}
+                  onClick={() => setImportMode('count')}
                 >
-                  <option value="25">Last 25</option>
-                  <option value="50">Last 50</option>
-                  <option value="100">Last 100</option>
-                  <option value="250">Last 250</option>
-                </select>
-              </label>
+                  By count
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${importMode === 'since' ? 'btn-primary' : ''}`}
+                  onClick={() => setImportMode('since')}
+                >
+                  Since date
+                </button>
+              </div>
+              {importMode === 'count' ? (
+                <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+                  How many recent emails?
+                  <input
+                    type="number"
+                    min={1}
+                    max={250}
+                    value={importLimit}
+                    onChange={(e) => setImportLimit(Number(e.target.value) || 1)}
+                    style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
+                  />
+                  <span style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                    {[25, 50, 100, 250].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: 10, padding: '2px 8px' }}
+                        onClick={() => setImportLimit(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </span>
+                </label>
+              ) : (
+                <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+                  Import emails since
+                  <input
+                    type="date"
+                    value={importSinceDate}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setImportSinceDate(e.target.value)}
+                    style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
+                  />
+                  <span style={{ fontSize: 11, color: '#888', display: 'block', marginTop: 6 }}>
+                    Newest first, up to 250 emails on or after this date.
+                  </span>
+                </label>
+              )}
               {importOpenFor &&
                 importsByConnection[importOpenFor] &&
                 isImportInProgress(importsByConnection[importOpenFor].status) && (
@@ -729,6 +778,8 @@ export function MonitoredMailboxesPanel({
                   disabled={
                     !canManage ||
                     importBusy ||
+                    (importMode === 'since' && !importSinceDate) ||
+                    (importMode === 'count' && (importLimit < 1 || importLimit > 250)) ||
                     Boolean(
                       importOpenFor &&
                         importsByConnection[importOpenFor] &&

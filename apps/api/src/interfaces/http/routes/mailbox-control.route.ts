@@ -4,6 +4,7 @@ import {
   HISTORICAL_IMPORT_LIMIT_PRESETS,
   HISTORICAL_IMPORT_MAX_LIMIT,
   normalizeEmail,
+  parseHistoricalImportSinceDate,
   shouldRegisterNativePush,
 } from "@forgeops/shared";
 
@@ -52,10 +53,39 @@ const historicalImportBodySchema = z
   .object({
     limit: z.number().int().min(1).max(HISTORICAL_IMPORT_MAX_LIMIT).optional(),
     preset: z.enum(["25", "50", "100", "250"]).optional(),
+    /** YYYY-MM-DD or ISO datetime — import emails received on/after this date. */
+    sinceDate: z.string().min(1).optional(),
   })
   .strict()
-  .refine((v) => v.limit != null || v.preset != null, {
-    message: "Provide limit or preset",
+  .superRefine((v, ctx) => {
+    const hasLimit = v.limit != null;
+    const hasPreset = v.preset != null;
+    const hasSince = v.sinceDate != null && v.sinceDate.trim().length > 0;
+    const modes = [hasLimit, hasPreset, hasSince].filter(Boolean).length;
+    if (modes !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of: limit, preset, or sinceDate",
+      });
+    }
+    if (hasSince) {
+      try {
+        const parsed = parseHistoricalImportSinceDate(v.sinceDate!);
+        if (parsed.getTime() > Date.now()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "sinceDate cannot be in the future",
+            path: ["sinceDate"],
+          });
+        }
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "sinceDate must be YYYY-MM-DD or an ISO datetime",
+          path: ["sinceDate"],
+        });
+      }
+    }
   });
 
 const registerMonitoredMailboxBodySchema = z
@@ -146,6 +176,7 @@ function serializeHistoricalImport(row: {
   inboxConnectionId: string;
   status: string;
   requestedLimit: number;
+  sinceDate: Date | null;
   processedCount: number;
   importedCount: number;
   duplicateCount: number;
@@ -164,6 +195,7 @@ function serializeHistoricalImport(row: {
     inboxConnectionId: row.inboxConnectionId,
     status: row.status,
     requestedLimit: row.requestedLimit,
+    sinceDate: row.sinceDate?.toISOString() ?? null,
     processedCount: row.processedCount,
     importedCount: row.importedCount,
     duplicateCount: row.duplicateCount,
@@ -353,9 +385,13 @@ export const registerMailboxControlRoutes = async (
       }
 
       const body = historicalImportBodySchema.parse(request.body ?? {});
-      const requestedLimit =
-        body.limit ??
-        (body.preset ? Number(body.preset) : HISTORICAL_IMPORT_LIMIT_PRESETS[0]);
+      const sinceDate = body.sinceDate
+        ? parseHistoricalImportSinceDate(body.sinceDate)
+        : null;
+      const requestedLimit = sinceDate
+        ? HISTORICAL_IMPORT_MAX_LIMIT
+        : (body.limit ??
+          (body.preset ? Number(body.preset) : HISTORICAL_IMPORT_LIMIT_PRESETS[0]));
 
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
@@ -409,6 +445,7 @@ export const registerMailboxControlRoutes = async (
           requestedByUserId: access.session.userId,
           status: "PENDING",
           requestedLimit,
+          ...(sinceDate ? { sinceDate } : {}),
         },
       });
 
@@ -419,6 +456,7 @@ export const registerMailboxControlRoutes = async (
         workspaceId: connection.workspaceId,
         inboxConnectionId: connection.id,
         requestedLimit,
+        ...(sinceDate ? { sinceDate: sinceDate.toISOString() } : {}),
         initiatedBy: access.session.userId,
         log: (event, data) => request.log.warn({ event, ...data }),
       });

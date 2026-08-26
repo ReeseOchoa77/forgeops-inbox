@@ -14,7 +14,8 @@ const gmailThreadListItemSchema = z.object({
 });
 
 const gmailThreadListResponseSchema = z.object({
-  threads: z.array(gmailThreadListItemSchema).optional()
+  threads: z.array(gmailThreadListItemSchema).optional(),
+  nextPageToken: z.string().optional(),
 });
 
 const gmailHeaderSchema = z.object({
@@ -156,6 +157,7 @@ export interface GmailMailboxSyncInput {
   accessTokenExpiresAt?: Date | null;
   syncCursor?: string | null;
   maxThreads?: number;
+  receivedAfter?: Date;
 }
 
 const toHeaderMap = (
@@ -632,24 +634,44 @@ export class GmailClient {
     accessTokenResponse: { token?: string | null },
     input: GmailMailboxSyncInput
   ): Promise<GmailMailboxSyncSnapshot> {
-    const threadListResponse = await gmail.users.threads.list({
-      userId: GMAIL_ME,
-      labelIds: [INBOX_LABEL_ID],
-      maxResults: Math.min(
-        input.maxThreads ?? MAX_THREADS_PER_SYNC,
-        ABSOLUTE_MAX_THREADS
-      ),
-      q: "-in:chats"
-    });
-    const threadList = gmailThreadListResponseSchema.parse(threadListResponse.data);
+    const maxThreads = Math.min(
+      input.maxThreads ?? MAX_THREADS_PER_SYNC,
+      ABSOLUTE_MAX_THREADS
+    );
+    // Inclusive: Gmail `after:` is exclusive of the given second, so subtract 1s.
+    const afterQuery = input.receivedAfter
+      ? ` after:${Math.max(0, Math.floor(input.receivedAfter.getTime() / 1000) - 1)}`
+      : "";
+    const query = `-in:chats${afterQuery}`.trim();
+
+    const threadIds: string[] = [];
+    let listPageToken: string | undefined;
+    do {
+      const threadListResponse = await gmail.users.threads.list({
+        userId: GMAIL_ME,
+        labelIds: [INBOX_LABEL_ID],
+        maxResults: Math.min(100, maxThreads - threadIds.length),
+        q: query,
+        ...(listPageToken ? { pageToken: listPageToken } : {}),
+      });
+      const threadList = gmailThreadListResponseSchema.parse(
+        threadListResponse.data
+      );
+      for (const stub of threadList.threads ?? []) {
+        if (threadIds.length >= maxThreads) break;
+        threadIds.push(stub.id);
+      }
+      listPageToken =
+        threadIds.length < maxThreads ? threadList.nextPageToken : undefined;
+    } while (listPageToken && threadIds.length < maxThreads);
 
     const threads: GmailThreadSnapshot[] = [];
     let newestHistoryId: string | null = null;
 
-    for (const threadStub of threadList.threads ?? []) {
+    for (const threadId of threadIds) {
       const threadResponse = await gmail.users.threads.get({
         userId: GMAIL_ME,
-        id: threadStub.id,
+        id: threadId,
         format: "full"
       });
       const thread = gmailThreadSchema.parse(threadResponse.data);
@@ -657,11 +679,21 @@ export class GmailClient {
 
       newestHistoryId = compareHistoryIds(
         newestHistoryId,
-        thread.historyId ?? threadStub.historyId ?? null
+        thread.historyId ?? null
       );
 
       if (!parsedThread) {
         continue;
+      }
+
+      // Drop messages older than receivedAfter (thread may mix old/new).
+      if (input.receivedAfter) {
+        const cutoff = input.receivedAfter.getTime();
+        parsedThread.messages = parsedThread.messages.filter((m) => {
+          const ts = m.receivedAt?.getTime() ?? m.sentAt?.getTime() ?? 0;
+          return ts >= cutoff;
+        });
+        if (parsedThread.messages.length === 0) continue;
       }
 
       for (const message of parsedThread.messages) {

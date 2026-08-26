@@ -17,6 +17,7 @@ export type HistoricalImportEnqueueResult =
         inboxConnectionId: string;
         status: string;
         requestedLimit: number;
+        sinceDate: Date | null;
         processedCount: number;
         importedCount: number;
         duplicateCount: number;
@@ -48,6 +49,7 @@ export async function enqueueHistoricalImportJob(input: {
   workspaceId: string;
   inboxConnectionId: string;
   requestedLimit: number;
+  sinceDate?: string;
   initiatedBy?: string;
   log?: (event: string, data: Record<string, unknown>) => void;
 }): Promise<HistoricalImportEnqueueResult> {
@@ -57,6 +59,7 @@ export async function enqueueHistoricalImportJob(input: {
     inboxConnectionId: input.inboxConnectionId,
     importId: input.importId,
     requestedLimit: input.requestedLimit,
+    ...(input.sinceDate ? { sinceDate: input.sinceDate } : {}),
     ...(input.initiatedBy ? { initiatedBy: input.initiatedBy } : {}),
   };
 

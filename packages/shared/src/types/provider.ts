@@ -96,6 +96,8 @@ export interface ProviderMailboxSyncInput {
   accessTokenExpiresAt?: Date | null;
   syncCursor?: string | null;
   maxThreads?: number;
+  /** When set, providers prefer messages received on/after this instant. */
+  receivedAfter?: Date;
 }
 
 export interface ProviderTokenResult {
