@@ -4,6 +4,7 @@ import {
   OpenAIEntitySelector,
   OpenAISemanticSignalExtractor,
   OpenAITaskExtractor,
+  normalizeOpenAiApiKey,
   serializeOpenAiError,
 } from "@forgeops/ai";
 import {
@@ -55,7 +56,7 @@ export async function classifyEmailMessageNative(
   deps: ClassifyEmailMessageDeps
 ): Promise<MailboxClassifyJobResult> {
   const started = Date.now();
-  const openaiConfigured = Boolean(deps.openaiApiKey);
+  const openaiConfigured = Boolean(normalizeOpenAiApiKey(deps.openaiApiKey));
   const baseLog = {
     workspaceId: payload.workspaceId,
     inboxConnectionId: payload.inboxConnectionId,
@@ -169,6 +170,7 @@ export async function classifyEmailMessageNative(
     }
 
     // No custom baseURL is passed — SDK default endpoint (api.openai.com).
+    // API key is trimmed inside createOpenAIClient (centralized).
     const openaiClient = createOpenAIClient({
       ...(deps.openaiApiKey ? { apiKey: deps.openaiApiKey } : {}),
     });

@@ -6,6 +6,7 @@ import {
   scheduledInboxSyncJobId,
   shouldScheduleNativeInboxSync,
 } from "@forgeops/shared";
+import { normalizeOpenAiApiKey } from "@forgeops/ai";
 import { loadWorkerEnv } from "./config/env.js";
 import { startAttachmentIngestWorker } from "./jobs/attachment-ingest.worker.js";
 import { startInboxAnalysisWorker } from "./jobs/inbox-analysis.worker.js";
@@ -141,7 +142,7 @@ console.info("worker-started", {
 // Safe OpenAI wiring check for native classification (no secrets).
 console.info({
   event: "openai-worker-config",
-  configured: Boolean(env.OPENAI_API_KEY),
+  configured: Boolean(normalizeOpenAiApiKey(env.OPENAI_API_KEY)),
   semanticModel: env.OPENAI_SEMANTIC_MODEL,
   subtypeModel: env.OPENAI_SUBTYPE_MODEL,
   entityModel: env.OPENAI_ENTITY_MODEL,

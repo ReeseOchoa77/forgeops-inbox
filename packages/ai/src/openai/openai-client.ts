@@ -5,16 +5,28 @@ export interface OpenAIClientOptions {
   baseURL?: string;
 }
 
+/**
+ * Normalize an OpenAI API key from env/config.
+ * Trims whitespace/newlines; empty-after-trim means unconfigured.
+ */
+export function normalizeOpenAiApiKey(
+  apiKey: string | null | undefined
+): string | undefined {
+  if (apiKey == null) return undefined;
+  const trimmed = apiKey.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export const createOpenAIClient = (
   options: OpenAIClientOptions
 ): OpenAI | null => {
-  if (!options.apiKey) {
+  const apiKey = normalizeOpenAiApiKey(options.apiKey);
+  if (!apiKey) {
     return null;
   }
 
   return new OpenAI({
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
+    apiKey,
+    ...(options.baseURL ? { baseURL: options.baseURL } : {}),
   });
 };
-
