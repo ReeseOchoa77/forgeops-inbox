@@ -54,6 +54,8 @@ type Props = {
   isOwner: boolean
   canManage: boolean
   onAddMailbox?: () => void
+  onRemove?: (c: ConnectionSummary) => void
+  removingId?: string
 }
 
 export function MonitoredMailboxesPanel({
@@ -68,6 +70,8 @@ export function MonitoredMailboxesPanel({
   isOwner,
   canManage,
   onAddMailbox,
+  onRemove,
+  removingId,
 }: Props) {
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
   const [settings, setSettings] = useState<MailboxListenerSettings | null>(null)
@@ -156,10 +160,28 @@ export function MonitoredMailboxesPanel({
     )
   }
 
+  const visibleConnections = connections.filter((c) => c.status !== 'DISCONNECTED')
+
+  if (visibleConnections.length === 0) {
+    return (
+      <div>
+        <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px' }}>
+          No active monitored mailboxes.
+          {canManage ? ' Add or re-authorize a mailbox to monitor email again.' : ''}
+        </p>
+        {canManage && onAddMailbox && (
+          <button type="button" className="btn btn-sm btn-primary" onClick={onAddMailbox}>
+            Add Monitored Mailbox
+          </button>
+        )}
+      </div>
+    )
+  }
+
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {connections.map((c) => {
+        {visibleConnections.map((c) => {
           const authTone = mailboxAuthorizationTone({
             authorizationStatus: c.authorizationStatus,
             emailSending: c.capabilities.emailSending,
@@ -304,6 +326,17 @@ export function MonitoredMailboxesPanel({
                       onClick={() => onClearInbox(c.id, c.email)}
                     >
                       {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
+                    </button>
+                  )}
+                  {canManage && onRemove && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      style={{ fontSize: 10, padding: '2px 8px' }}
+                      disabled={removingId === c.id || actionLoading}
+                      onClick={() => onRemove(c)}
+                    >
+                      {removingId === c.id ? 'Removing…' : 'Remove'}
                     </button>
                   )}
                 </div>

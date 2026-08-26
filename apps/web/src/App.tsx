@@ -26,9 +26,9 @@ type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean; minRole?: UserRole }> = [
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
-  { page: 'review', label: 'Email Review', icon: '\u2696', minRole: 'ADMIN' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
+  { page: 'review', label: 'Email Review', icon: '\u2696', section: 'Manage', minRole: 'ADMIN' },
   { page: 'reference', label: 'Reference Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },

@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { isReferenceDataTab } from './views/ReferenceDataView'
 
 /** Mirrors App.tsx NAV_ITEMS section assignment (nav IA only). */
-const NAV_SECTIONS: Array<{ page: string; section?: string }> = [
+const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> = [
   { page: 'dashboard' },
   { page: 'inbox' },
-  { page: 'review' },
   { page: 'tasks' },
   { page: 'jobs' },
+  { page: 'review', section: 'Manage', minRole: 'ADMIN' },
   { page: 'reference', section: 'Manage' },
   { page: 'outlook-folders', section: 'Manage' },
   { page: 'workspace' },
@@ -32,6 +32,14 @@ describe('job discovery navigation consolidation', () => {
     const jobDiscovery = NAV_SECTIONS.find((i) => i.page === 'outlook-folders')
     expect(jobDiscovery?.section).toBe('Manage')
     const managePages = NAV_SECTIONS.filter((i) => i.section === 'Manage').map((i) => i.page)
-    expect(managePages).toEqual(['reference', 'outlook-folders'])
+    expect(managePages).toEqual(['review', 'reference', 'outlook-folders'])
+  })
+})
+
+describe('email review navigation consolidation', () => {
+  it('Email Review lives under Manage and keeps ADMIN minRole', () => {
+    const review = NAV_SECTIONS.find((i) => i.page === 'review')
+    expect(review?.section).toBe('Manage')
+    expect(review?.minRole).toBe('ADMIN')
   })
 })

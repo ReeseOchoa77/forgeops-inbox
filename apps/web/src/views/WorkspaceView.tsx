@@ -40,6 +40,7 @@ export function WorkspaceView({
   const [clearing, setClearing] = useState('')
   const [authAction, setAuthAction] = useState<AuthActionState>({ type: 'idle' })
   const [addMailboxOpen, setAddMailboxOpen] = useState(false)
+  const [removingId, setRemovingId] = useState('')
   const isOwner = userRole === 'OWNER'
   const canManageMailboxes = userRole === 'OWNER' || userRole === 'ADMIN'
   const loading = loadedFor !== workspaceId
@@ -125,9 +126,33 @@ export function WorkspaceView({
     }
   }
 
+  const handleRemoveMailbox = async (conn: ConnectionSummary) => {
+    if (
+      !confirm(
+        `Remove monitored mailbox ${conn.email}? This disconnects provider access and stops native listening. Existing imported messages are kept.`
+      )
+    ) {
+      return
+    }
+    setRemovingId(conn.id)
+    try {
+      await api.disconnectConnection(workspaceId, conn.id)
+      refreshConnections()
+    } catch (e) {
+      setAuthAction({
+        type: 'error',
+        connectionId: conn.id,
+        message: e instanceof Error ? e.message : 'Failed to remove mailbox',
+      })
+    } finally {
+      setRemovingId('')
+    }
+  }
+
   if (loading) return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading workspace...</p>
 
-  const needsAuthCount = connections.filter(c => c.authorizationStatus === 'REQUIRED').length
+  const activeConnections = connections.filter((c) => c.status !== 'DISCONNECTED')
+  const needsAuthCount = activeConnections.filter(c => c.authorizationStatus === 'REQUIRED').length
   const tabs: Array<{ id: WsTab; label: string }> = [
     { id: 'mailboxes', label: 'Monitored Mailboxes' },
     { id: 'team', label: 'Team Access' },
@@ -168,11 +193,11 @@ export function WorkspaceView({
               <div style={{ fontSize: 12, color: '#888' }}>Active Members</div>
             </div>
             <div className="card" style={{ textAlign: 'center', padding: 14 }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: '#2e7d32' }}>{connections.filter(c => c.status === 'ACTIVE').length}</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#2e7d32' }}>{activeConnections.filter(c => c.status === 'ACTIVE').length}</div>
               <div style={{ fontSize: 12, color: '#888' }}>Connected Inboxes</div>
             </div>
             <div className="card" style={{ textAlign: 'center', padding: 14 }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: '#333' }}>{connections.reduce((sum, c) => sum + c.counts.messages, 0).toLocaleString()}</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#333' }}>{activeConnections.reduce((sum, c) => sum + c.counts.messages, 0).toLocaleString()}</div>
               <div style={{ fontSize: 12, color: '#888' }}>Total Messages</div>
             </div>
           </div>
@@ -215,18 +240,20 @@ export function WorkspaceView({
               isOwner={isOwner}
               authAction={authAction}
               clearing={clearing}
+              removingId={removingId}
               onRefresh={refreshConnections}
               onAuthorize={(c) => void handleAuthorize(c)}
               onReconnect={(c) => void handleReconnect(c)}
               onClearInbox={(id, email) => void handleClearInbox(id, email)}
               onAddMailbox={canManageMailboxes ? () => setAddMailboxOpen(true) : undefined}
+              onRemove={canManageMailboxes ? (c) => void handleRemoveMailbox(c) : undefined}
             />
           </div>
 
           <AddMonitoredMailboxModal
             workspaceId={workspaceId}
             members={members}
-            connections={connections}
+            connections={activeConnections}
             open={addMailboxOpen}
             onClose={() => setAddMailboxOpen(false)}
             onAuthorize={(c) => void handleAuthorize(c)}
