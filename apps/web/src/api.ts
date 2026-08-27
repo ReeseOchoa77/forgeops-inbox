@@ -588,17 +588,30 @@ export const api = {
       method: 'DELETE'
     }),
 
+  /**
+   * Manual native inbox sync. Backend contract is POST only
+   * (`POST /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/sync`).
+   * GET is not registered and returns Fastify "Route not found".
+   */
   syncConnection: (workspaceId: string, connectionId: string, wait = true) =>
-    request<{ status: string; jobId: string; sync?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/sync?wait=${wait}`, {
-      method: 'POST',
-      body: JSON.stringify({})
-    }),
+    request<{ status: string; jobId: string; sync?: unknown }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/sync?wait=${wait}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }
+    ),
 
   analyzeConnection: (workspaceId: string, connectionId: string, wait = true) =>
-    request<{ status: string; jobId: string; analysis?: unknown }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/analyze?wait=${wait}`, {
-      method: 'POST',
-      body: JSON.stringify({})
-    }),
+    request<{ status: string; jobId: string; analysis?: unknown }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/analyze?wait=${wait}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }
+    ),
 
   reconnectConnection: (workspaceId: string, connectionId: string) =>
     request<{ status: string; authorizationUrl: string; flow?: string }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reconnect`, {

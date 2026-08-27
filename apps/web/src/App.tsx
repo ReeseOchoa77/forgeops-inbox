@@ -158,7 +158,6 @@ export default function App() {
     }
 
     if (params.get('connected')) {
-      const connectedId = params.get('connected')!
       setConnectionNotice({
         type: 'success',
         message: 'Mailbox authorized and connected. Configure listening from Monitored Mailboxes when ready.',
@@ -166,13 +165,8 @@ export default function App() {
       setWorkspaceTabHint('mailboxes')
       setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
-
-      api.getSession().then(s => {
-        if (s.authenticated && s.memberships.length > 0) {
-          const wsId = s.memberships[0].workspace.id
-          api.syncConnection(wsId, connectedId, false).catch(() => {})
-        }
-      })
+      // Do not auto-trigger inbox sync here. Canonical sync is POST .../sync and
+      // requires native listening ON; OAuth reconnect intentionally leaves listening off.
     }
 
     if (params.get('connection_error')) {
