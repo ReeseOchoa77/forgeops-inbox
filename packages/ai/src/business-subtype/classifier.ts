@@ -4,7 +4,9 @@ import {
   buildJsonObjectResponseParams,
   createJsonObjectResponse,
   DEFAULT_CLASSIFICATION_AI_MODEL,
+  StructuredOutputValidationError,
 } from "../openai/responses-json.js";
+import { buildStageValidationFailedLog } from "../openai/structured-output-diagnostics.js";
 import { parseBusinessSubtypeResult } from "./parse.js";
 import {
   buildBusinessSubtypeUserPrompt,
@@ -45,6 +47,19 @@ export class OpenAIBusinessSubtypeClassifier {
     });
 
     const parsed = await createJsonObjectResponse(this.client, params, "subtype");
-    return parseBusinessSubtypeResult(parsed);
+    try {
+      return parseBusinessSubtypeResult(parsed);
+    } catch (error) {
+      if (error instanceof StructuredOutputValidationError) {
+        console.error(
+          buildStageValidationFailedLog({
+            stage: "subtype",
+            parsed,
+            error,
+          })
+        );
+      }
+      throw error;
+    }
   }
 }

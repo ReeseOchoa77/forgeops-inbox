@@ -3,6 +3,7 @@ export * from "./openai/openai-client.js";
 export * from "./openai/openai-error-diagnostics.js";
 export * from "./openai/responses-json.js";
 export * from "./openai/semantic-signal-extractor.js";
+export * from "./openai/structured-output-diagnostics.js";
 export * from "./prompts/inbox-classification.prompt.js";
 export * from "./semantic-signals/prompt.js";
 export * from "./semantic-signals/types.js";

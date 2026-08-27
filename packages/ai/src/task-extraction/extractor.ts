@@ -4,7 +4,9 @@ import {
   buildJsonObjectResponseParams,
   createJsonObjectResponse,
   DEFAULT_CLASSIFICATION_AI_MODEL,
+  StructuredOutputValidationError,
 } from "../openai/responses-json.js";
+import { buildStageValidationFailedLog } from "../openai/structured-output-diagnostics.js";
 import { parseTaskExtractionResult } from "./parse.js";
 import {
   buildTaskExtractionUserPrompt,
@@ -52,6 +54,19 @@ export class OpenAITaskExtractor {
     });
 
     const parsed = await createJsonObjectResponse(this.client, params, "task");
-    return parseTaskExtractionResult(parsed);
+    try {
+      return parseTaskExtractionResult(parsed);
+    } catch (error) {
+      if (error instanceof StructuredOutputValidationError) {
+        console.error(
+          buildStageValidationFailedLog({
+            stage: "task",
+            parsed,
+            error,
+          })
+        );
+      }
+      throw error;
+    }
   }
 }

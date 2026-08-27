@@ -7,11 +7,13 @@ import {
 } from "../semantic-signals/prompt.js";
 import {
   parseSemanticSignals,
+  SemanticSignalValidationError,
   type ExtractSemanticSignalsInput,
   type SemanticSignals,
 } from "../semantic-signals/types.js";
 import { withOpenAiResponsesDiagnostics } from "./openai-error-diagnostics.js";
 import { buildJsonObjectResponseParams } from "./responses-json.js";
+import { buildSemanticValidationFailedLog } from "./structured-output-diagnostics.js";
 
 export type { ExtractSemanticSignalsInput };
 
@@ -79,7 +81,15 @@ export class OpenAISemanticSignalExtractor {
           throw new Error("OpenAI returned invalid JSON for semantic signals");
         }
 
-        return parseSemanticSignals(parsed);
+        try {
+          return parseSemanticSignals(parsed);
+        } catch (error) {
+          if (error instanceof SemanticSignalValidationError) {
+            // Keys / issue paths only — never raw output_text or email content.
+            console.error(buildSemanticValidationFailedLog({ parsed, error }));
+          }
+          throw error;
+        }
       }
     );
   }

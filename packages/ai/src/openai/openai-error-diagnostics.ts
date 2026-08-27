@@ -124,6 +124,7 @@ export function serializeOpenAiError(error: unknown): {
   type: string | null;
   requestId: string | null;
   cause: Record<string, unknown> | null;
+  zodIssues: Array<Record<string, unknown>> | null;
 } {
   if (error == null) {
     return {
@@ -135,6 +136,7 @@ export function serializeOpenAiError(error: unknown): {
       type: null,
       requestId: null,
       cause: null,
+      zodIssues: null,
     };
   }
 
@@ -148,6 +150,7 @@ export function serializeOpenAiError(error: unknown): {
       type: null,
       requestId: null,
       cause: null,
+      zodIssues: null,
     };
   }
 
@@ -165,9 +168,59 @@ export function serializeOpenAiError(error: unknown): {
     requestId:
       readStringProp(err, "request_id") ?? readStringProp(err, "requestId"),
     cause: serializeCause(causeRaw),
+    zodIssues: structuredIssuesFromMaybeZod(err),
   };
 
   return sanitizeDiagnosticValue(raw) as typeof raw;
+}
+
+function structuredIssuesFromMaybeZod(
+  error: object
+): Array<Record<string, unknown>> | null {
+  // Lazy import path avoided — inline minimal Zod issue extraction.
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  const name =
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : error.constructor?.name;
+  if (name !== "ZodError" && !(error as { name?: string }).name?.includes("Zod")) {
+    // Still extract if it looks like Zod issues (path/code/message).
+    const sample = issues[0];
+    if (
+      !sample ||
+      typeof sample !== "object" ||
+      !("code" in (sample as object)) ||
+      !("path" in (sample as object))
+    ) {
+      return null;
+    }
+  }
+
+  return issues
+    .filter((issue): issue is Record<string, unknown> => !!issue && typeof issue === "object")
+    .map((issue) => {
+      const path = Array.isArray(issue.path) ? issue.path : [];
+      const expected =
+        typeof issue.expected === "string"
+          ? issue.expected
+          : Array.isArray(issue.options)
+            ? issue.options.map(String).join(" | ")
+            : undefined;
+      const received =
+        typeof issue.received === "string" || typeof issue.received === "number"
+          ? String(issue.received)
+          : issue.received === null
+            ? "null"
+            : undefined;
+      return {
+        path,
+        code: typeof issue.code === "string" ? issue.code : "unknown",
+        message: typeof issue.message === "string" ? issue.message : "invalid",
+        ...(expected ? { expected } : {}),
+        ...(received ? { received } : {}),
+      };
+    });
 }
 
 export function buildOpenAiResponseFailedLog(input: {

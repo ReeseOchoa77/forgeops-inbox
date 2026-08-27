@@ -4,7 +4,9 @@ import {
   buildJsonObjectResponseParams,
   createJsonObjectResponse,
   DEFAULT_CLASSIFICATION_AI_MODEL,
+  StructuredOutputValidationError,
 } from "../openai/responses-json.js";
+import { buildStageValidationFailedLog } from "../openai/structured-output-diagnostics.js";
 import { parseEntitySelectionResult } from "./parse.js";
 import {
   buildEntitySelectionUserPrompt,
@@ -48,6 +50,19 @@ export class OpenAIEntitySelector {
     });
 
     const parsed = await createJsonObjectResponse(this.client, params, "entity");
-    return parseEntitySelectionResult(parsed, input);
+    try {
+      return parseEntitySelectionResult(parsed, input);
+    } catch (error) {
+      if (error instanceof StructuredOutputValidationError) {
+        console.error(
+          buildStageValidationFailedLog({
+            stage: "entity",
+            parsed,
+            error,
+          })
+        );
+      }
+      throw error;
+    }
   }
 }
