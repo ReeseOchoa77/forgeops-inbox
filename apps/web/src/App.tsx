@@ -633,7 +633,7 @@ export default function App() {
 
           {page === 'dashboard' && (
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <DashboardView workspaceId={workspaceId} connectionId={connectionId} onNavigate={(p) => setPage(p)} breakpoint={bp} />
+              <DashboardView workspaceId={workspaceId} connectionId={connectionId} connections={connections} onNavigate={(p) => setPage(p)} breakpoint={bp} />
             </div>
           )}
 

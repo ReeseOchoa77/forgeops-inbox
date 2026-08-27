@@ -3,6 +3,7 @@ import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type 
 import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import { prefetchThread } from '../message-thread-cache'
 
 function formatAttachmentSize(bytes: number | null | undefined): string {
   if (!bytes) return ''
@@ -442,6 +443,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     onSelectMessage(messageId)
   }
 
+  const handleMessagePrefetch = (messageId: string) => {
+    if (massDeleteMode) return
+    prefetchThread(workspaceId, connectionId, messageId, () =>
+      api.getMessageThread(workspaceId, connectionId, messageId)
+    )
+  }
+
   const handleDeleteAllPersonal = async () => {
     if (filteredMessages.length === 0 && !hasMore) return
     let countLabel = 'matching personal emails'
@@ -506,6 +514,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <div
         key={m.id}
         onClick={() => handleMessageActivate(m.id)}
+        onPointerDown={() => handleMessagePrefetch(m.id)}
+        onMouseEnter={() => handleMessagePrefetch(m.id)}
         title={massDeleteMode ? 'Click to move to Trash' : undefined}
         style={{
           padding: '12px 16px',
@@ -648,7 +658,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       : (m.isPinned ? '#fffde7' : m.isRead ? '' : '#f0f4ff')
     const hoverBg = massDeleteMode ? '#ffebee' : '#f8f9fb'
     return (
-    <tr key={m.id} onClick={() => handleMessageActivate(m.id)}
+    <tr key={m.id}
+      onClick={() => handleMessageActivate(m.id)}
+      onPointerDown={() => handleMessagePrefetch(m.id)}
+      onMouseEnter={() => handleMessagePrefetch(m.id)}
       title={massDeleteMode ? 'Click to move to Trash' : undefined}
       style={{
         borderBottom: '1px solid #f0f0f0',

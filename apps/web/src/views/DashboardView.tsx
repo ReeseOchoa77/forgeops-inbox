@@ -1,11 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import { api, type TaskListItem, type MessageSummary } from '../api'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { api, type TaskListItem, type MessageSummary, type ConnectionSummary } from '../api'
 import { PriorityBadge, StatusBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
 interface Props {
   workspaceId: string
   connectionId: string
+  connections: ConnectionSummary[]
   onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'reference' | 'workspace' | 'settings' | 'admin') => void
   breakpoint?: Breakpoint
 }
@@ -61,30 +62,63 @@ const cardBody: CSSProperties = {
   WebkitOverflowScrolling: 'touch',
 }
 
-export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoint = 'desktop' }: Props) {
+export function DashboardView({ workspaceId, connectionId, connections, onNavigate, breakpoint = 'desktop' }: Props) {
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [recentEmails, setRecentEmails] = useState<MessageSummary[]>([])
   const [unreadBusinessCount, setUnreadBusinessCount] = useState(0)
-  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const hasPaintedRef = useRef(false)
 
   const isPhone = breakpoint === 'phone'
+  const monitoredEmails = new Set(connections.map(c => c.email.toLowerCase()))
 
   useEffect(() => {
-    if (!workspaceId || !connectionId) { setLoading(false); return }
-    setLoading(true)
+    if (!workspaceId || !connectionId) {
+      setLoading(false)
+      return
+    }
+
+    const soft = hasPaintedRef.current
+    if (soft) setRefreshing(true)
+    else setLoading(true)
+
+    const mark = `dashboard-load-${connectionId}`
+    performance.mark(`${mark}-start`)
+
+    // Parallel section loads — reuse App connections (no duplicate GET).
     Promise.all([
-      api.getTasks(workspaceId, connectionId, 1, 100).catch(() => ({ tasks: [], pagination: { totalCount: 0, totalPages: 0 } })),
-      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 6, hasMore: false } })),
-      api.getMessages(workspaceId, connectionId, 1, 1, { businessCategory: 'BUSINESS', unreadOnly: true, includeTotal: true }).catch(() => ({ messages: [], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 1, hasMore: false } })),
-      api.getConnections(workspaceId).catch(() => ({ connections: [] })),
-    ]).then(([t, m, unread, c]) => {
+      api.getTasks(workspaceId, connectionId, 1, 40).catch(() => ({ tasks: [] as TaskListItem[], pagination: { totalCount: 0, totalPages: 0 } })),
+      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [] as MessageSummary[], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 6, hasMore: false } })),
+      api.getMessages(workspaceId, connectionId, 1, 1, { businessCategory: 'BUSINESS', unreadOnly: true, includeTotal: true }).catch(() => ({ messages: [] as MessageSummary[], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 1, hasMore: false } })),
+    ]).then(([t, m, unread]) => {
       setTasks(t.tasks)
       setRecentEmails(m.messages)
       const unreadTotal = unread.pagination.totalCount
       setUnreadBusinessCount(typeof unreadTotal === 'number' ? unreadTotal : 0)
-      setMonitoredEmails(new Set(c.connections.map(conn => conn.email.toLowerCase())))
-    }).finally(() => setLoading(false))
+      hasPaintedRef.current = true
+      performance.mark(`${mark}-paint`)
+      try {
+        performance.measure('dashboardMountToUsefulPaintMs', `${mark}-start`, `${mark}-paint`)
+        const entries = performance.getEntriesByName('dashboardMountToUsefulPaintMs')
+        const last = entries[entries.length - 1]
+        if (last) {
+          console.info('dashboardMountToUsefulPaintMs', {
+            ms: Math.round(last.duration),
+            connectionId,
+            soft,
+          })
+        }
+        performance.clearMarks(`${mark}-start`)
+        performance.clearMarks(`${mark}-paint`)
+        performance.clearMeasures('dashboardMountToUsefulPaintMs')
+      } catch {
+        /* ignore */
+      }
+    }).finally(() => {
+      setLoading(false)
+      setRefreshing(false)
+    })
   }, [workspaceId, connectionId])
 
   if (!workspaceId) {
@@ -96,7 +130,9 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
     )
   }
 
-  if (loading) return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading dashboard...</p>
+  if (loading && !hasPaintedRef.current) {
+    return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading dashboard...</p>
+  }
 
   const isRequestTask = (item: TaskListItem) => {
     const sender = item.sourceMessage?.senderEmail?.toLowerCase()
@@ -231,7 +267,10 @@ export function DashboardView({ workspaceId, connectionId, onNavigate, breakpoin
       overflow: isPhone ? 'auto' : 'hidden',
     }}>
       <div style={{ flexShrink: 0, marginBottom: 12 }}>
-        <h2 style={{ fontSize: 20, margin: '0 0 2px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.3px' }}>Dashboard</h2>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <h2 style={{ fontSize: 20, margin: '0 0 2px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.3px' }}>Dashboard</h2>
+          {refreshing && <span style={{ fontSize: 11, color: '#999' }}>Updating…</span>}
+        </div>
         <p style={{ fontSize: 12, color: '#999', margin: 0 }}>Priority work, new tasks, requests, and recent business mail.</p>
       </div>
 

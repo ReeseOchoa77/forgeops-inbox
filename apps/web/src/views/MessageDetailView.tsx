@@ -4,6 +4,11 @@ import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type J
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import {
+  getCachedThread,
+  getInflightThread,
+  setCachedThread,
+} from '../message-thread-cache'
 
 interface Props {
   workspaceId: string
@@ -141,77 +146,74 @@ function EmailBody({
   attachmentMetadata?: AttachmentMeta[]
 }) {
   const [showHtml, setShowHtml] = useState(!!bodyHtml)
-  // Never paint raw cid: HTML — wait until rewrite finishes (or confirm none needed)
-  const [resolvedHtml, setResolvedHtml] = useState<string | null>(
-    bodyHtml && /cid:/i.test(bodyHtml) ? null : bodyHtml
-  )
-  const [cidResolving, setCidResolving] = useState(!!(bodyHtml && /cid:/i.test(bodyHtml)))
-  const htmlBodyRef = useRef<HTMLDivElement | null>(null)
   const hasHtml = !!bodyHtml
+  const htmlBodyRef = useRef<HTMLDivElement | null>(null)
+
+  /** Build an initial CID map from provider metadata already on the thread payload. */
+  const buildProviderCidMap = (): Map<string, string> => {
+    const cidToUrl = new Map<string, string>()
+    for (const a of attachmentMetadata ?? []) {
+      if (!a.contentId || !a.attachmentId) continue
+      const mime = (a.mimeType ?? '').toLowerCase()
+      if (mime && !mime.startsWith('image/') && !a.inline) continue
+      const url = api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
+      for (const key of cidMapKeys(a.contentId)) {
+        if (!cidToUrl.has(key)) cidToUrl.set(key, url)
+      }
+    }
+    return cidToUrl
+  }
+
+  // Paint immediately: rewrite with provider metadata (or neutralize) — never wait on attachments GET.
+  const [resolvedHtml, setResolvedHtml] = useState<string | null>(() => {
+    if (!bodyHtml) return null
+    if (!/cid:/i.test(bodyHtml)) return bodyHtml
+    return rewriteCidImages(bodyHtml, buildProviderCidMap())
+  })
+  const [cidUpgrading, setCidUpgrading] = useState(!!(bodyHtml && /cid:/i.test(bodyHtml)))
 
   useEffect(() => {
     setShowHtml(!!bodyHtml)
     if (!bodyHtml) {
       setResolvedHtml(null)
-      setCidResolving(false)
+      setCidUpgrading(false)
       return
     }
     if (!/cid:/i.test(bodyHtml)) {
       setResolvedHtml(bodyHtml)
-      setCidResolving(false)
+      setCidUpgrading(false)
       return
     }
 
     let cancelled = false
-    setResolvedHtml(null)
-    setCidResolving(true)
+    const providerMap = buildProviderCidMap()
+    // First paint from thread metadata (no network).
+    setResolvedHtml(rewriteCidImages(bodyHtml, providerMap))
+    setCidUpgrading(true)
 
-    // Await attachments for THIS emailId before any HTML with cid: is painted
+    // Upgrade to stored attachment URLs when available (non-blocking).
     api.getEmailAttachments(workspaceId, emailId)
       .then(r => {
         if (cancelled) return
-
-        const cidToUrl = new Map<string, string>()
-
+        const cidToUrl = new Map(providerMap)
         for (const a of r.attachments) {
           const mime = (a.mimeType ?? '').toLowerCase()
           const isImage = mime.startsWith('image/')
-
           if (a.uploadStatus !== 'UPLOADED') continue
           if (!a.contentId) continue
           if (!isImage) continue
-
           const url = api.getStoredAttachmentDownloadUrl(workspaceId, a.id, true)
           for (const key of cidMapKeys(a.contentId)) {
-            if (!cidToUrl.has(key)) cidToUrl.set(key, url)
+            cidToUrl.set(key, url)
           }
         }
-
-        // Fallback: provider metadata (native Outlook/Gmail sync) when stored rows lack contentId
-        for (const a of attachmentMetadata ?? []) {
-          if (!a.contentId || !a.attachmentId) continue
-          const mime = (a.mimeType ?? '').toLowerCase()
-          if (mime && !mime.startsWith('image/') && !a.inline) continue
-          const url = api.getAttachmentUrl(workspaceId, connectionId, emailId, a.attachmentId)
-          for (const key of cidMapKeys(a.contentId)) {
-            if (!cidToUrl.has(key)) cidToUrl.set(key, url)
-          }
-        }
-
         setResolvedHtml(rewriteCidImages(bodyHtml, cidToUrl))
       })
-      .catch((err) => {
-        console.error('[ForgeOps] Failed to load attachments for CID rewrite', {
-          emailId,
-          error: err instanceof Error ? err.message : 'unknown',
-        })
-        // Never paint unre-written cid: HTML on failure — neutralize cid: sources
-        if (!cancelled) {
-          setResolvedHtml(rewriteCidImages(bodyHtml, new Map()))
-        }
+      .catch(() => {
+        // Keep provider/neutralized rewrite already painted
       })
       .finally(() => {
-        if (!cancelled) setCidResolving(false)
+        if (!cancelled) setCidUpgrading(false)
       })
 
     return () => { cancelled = true }
@@ -293,8 +295,8 @@ function EmailBody({
           </button>
         </div>
       )}
-      {showHtml && cidResolving && (
-        <div style={{ fontSize: 12, color: '#999', padding: '8px 0' }}>Resolving inline images…</div>
+      {showHtml && cidUpgrading && (
+        <div style={{ fontSize: 11, color: '#bbb', padding: '0 0 4px' }}>Refreshing inline images…</div>
       )}
       {showHtml && htmlToRender ? (
         <div
@@ -306,7 +308,7 @@ function EmailBody({
           }}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlToRender, { ADD_ATTR: ['target'] }) }}
         />
-      ) : !cidResolving ? (
+      ) : (
         <div style={{
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           fontSize: 13, lineHeight: 1.6, padding: '8px 0',
@@ -314,7 +316,7 @@ function EmailBody({
         }}>
           {bodyText}
         </div>
-      ) : null}
+      )}
     </div>
   )
 }
@@ -666,7 +668,9 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   }
 
   useEffect(() => {
-    setLoading(true)
+    const markName = `email-open-${messageId}`
+    performance.mark(`${markName}-click`)
+
     setComposeMode(null)
     setSendResult(null)
     setJobError(null)
@@ -674,18 +678,51 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     setJobsLoaded(false)
     emailDebugLoggedForId.current = null
 
-    loadThread()
-      .then(td => {
-        setThreadData(td)
-        api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
-        const clickedMsg = td.messages.find(m => m.id === messageId)
-        if (clickedMsg?.job?.id) setSelectedJobId(clickedMsg.job.id)
-        else setSelectedJobId('')
-        const lastMsg = td.messages[td.messages.length - 1]
-        setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
-      })
-      .catch(() => setThreadData(null))
-      .finally(() => {
+    const applyThread = (td: ThreadDetail, fromCache: boolean) => {
+      setThreadData(td)
+      setCachedThread(workspaceId, connectionId, messageId, td)
+      api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
+      const clickedMsg = td.messages.find(m => m.id === messageId)
+      if (clickedMsg?.job?.id) setSelectedJobId(clickedMsg.job.id)
+      else setSelectedJobId('')
+      const lastMsg = td.messages[td.messages.length - 1]
+      setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
+      setLoading(false)
+      performance.mark(`${markName}-paint`)
+      try {
+        performance.measure('clickToDetailPaintMs', `${markName}-click`, `${markName}-paint`)
+        const entries = performance.getEntriesByName('clickToDetailPaintMs')
+        const last = entries[entries.length - 1]
+        if (last) {
+          console.info('clickToDetailPaintMs', {
+            ms: Math.round(last.duration),
+            messageId,
+            fromCache,
+          })
+        }
+        performance.clearMarks(`${markName}-click`)
+        performance.clearMarks(`${markName}-paint`)
+        performance.clearMeasures('clickToDetailPaintMs')
+      } catch {
+        /* ignore timing errors */
+      }
+    }
+
+    const cached = getCachedThread(workspaceId, connectionId, messageId)
+    if (cached) {
+      applyThread(cached, true)
+      return
+    }
+
+    setLoading(true)
+    setThreadData(null)
+
+    const inflight = getInflightThread(workspaceId, connectionId, messageId)
+    const request = inflight ?? loadThread()
+    request
+      .then(td => applyThread(td, Boolean(inflight)))
+      .catch(() => {
+        setThreadData(null)
         setLoading(false)
       })
   }, [workspaceId, connectionId, messageId])
@@ -748,7 +785,38 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const clickedMessage = threadData?.messages.find(m => m.id === messageId) ?? threadData?.messages[threadData.messages.length - 1] ?? null
 
-  if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading conversation...</p>
+  if (loading && !threadData) {
+    return (
+      <div style={{ padding: isPhone ? 8 : 0 }}>
+        <button
+          onClick={onBack}
+          style={{
+            background: 'none', border: 'none', fontSize: 13, color: '#5c7cfa',
+            cursor: 'pointer', padding: '4px 0', marginBottom: 12, minHeight: 44,
+          }}
+        >
+          ← Back
+        </button>
+        <div style={{
+          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8,
+          padding: '16px 18px', marginBottom: 12,
+        }}>
+          <div style={{ height: 14, width: '40%', background: '#f0f0f0', borderRadius: 4, marginBottom: 10 }} />
+          <div style={{ height: 20, width: '70%', background: '#eee', borderRadius: 4, marginBottom: 14 }} />
+          <div style={{ height: 12, width: '55%', background: '#f3f3f3', borderRadius: 4 }} />
+        </div>
+        <div style={{
+          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8,
+          padding: 16, minHeight: 180,
+        }}>
+          <div style={{ height: 12, width: '92%', background: '#f5f5f5', borderRadius: 4, marginBottom: 10 }} />
+          <div style={{ height: 12, width: '88%', background: '#f5f5f5', borderRadius: 4, marginBottom: 10 }} />
+          <div style={{ height: 12, width: '75%', background: '#f5f5f5', borderRadius: 4 }} />
+          <p style={{ color: '#aaa', fontSize: 12, marginTop: 16 }}>Loading conversation…</p>
+        </div>
+      </div>
+    )
+  }
   if (!threadData || threadData.messages.length === 0) return <p>Message not found.</p>
 
   const messages = threadData.messages
@@ -1004,7 +1072,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
             <StoredAttachmentsSection
               workspaceId={workspaceId}
-              emailIds={messages.map(m => m.id)}
+              emailIds={messages.filter(m => m.hasAttachments).map(m => m.id)}
               compact
             />
           </div>

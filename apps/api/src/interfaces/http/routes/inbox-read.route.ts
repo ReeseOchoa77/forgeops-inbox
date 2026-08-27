@@ -2091,10 +2091,13 @@ export const registerInboxReadRoutes = async (
       });
       const tHeaders = performance.now();
 
-      const BODY_TAIL_COUNT = 5;
-      const tailIds = new Set(messageHeaders.slice(-BODY_TAIL_COUNT).map(m => m.id));
-      tailIds.add(message.id);
-      const bodyIds = [...tailIds];
+      const BODY_OPEN_IDS = new Set<string>([
+        message.id,
+        ...(messageHeaders.length > 0
+          ? [messageHeaders[messageHeaders.length - 1]!.id]
+          : []),
+      ]);
+      const bodyIds = [...BODY_OPEN_IDS];
       const bodies = bodyIds.length > 0
         ? await app.services.prisma.emailMessage.findMany({
             where: { id: { in: bodyIds } },
@@ -2147,6 +2150,8 @@ export const registerInboxReadRoutes = async (
           };
         })
       };
+      const payloadJson = JSON.stringify(responsePayload);
+      const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
       const tSerialize = performance.now();
 
       const timing = {
@@ -2173,9 +2178,22 @@ export const registerInboxReadRoutes = async (
         event: 'thread_load_timing',
         messageId: params.messageId,
         threadId: thread.id,
-        messageCount: messageHeaders.length,
+        threadMessageCount: messageHeaders.length,
         bodyCount: bodyIds.length,
-        timing
+        attachmentMetaCount: messageHeaders.reduce(
+          (n, m) => n + parseAttachmentMetadata(m.attachmentMetadata).length,
+          0
+        ),
+        payloadBytes,
+        timing,
+        totalMs: timing.total,
+        dbMs: +(
+          timing.msgLookup +
+          timing.threadLookup +
+          timing.headers +
+          timing.bodies
+        ).toFixed(1),
+        serializationMs: timing.serialize,
       });
 
       return reply.send(responsePayload);
@@ -2441,7 +2459,6 @@ export const registerInboxReadRoutes = async (
             id: true,
             title: true,
             summary: true,
-            description: true,
             assigneeGuess: true,
             dueAt: true,
             priority: true,
@@ -2478,10 +2495,7 @@ export const registerInboxReadRoutes = async (
                 containsActionRequest: true,
                 businessTypeKey: true,
                 businessTypeConfidence: true,
-              classificationEvidence: true,
                 deadline: true,
-                routingHints: true,
-                extractedFields: true
               }
             }
           }
@@ -2555,14 +2569,31 @@ export const registerInboxReadRoutes = async (
       if (!session) return sendAuthenticationRequired(reply);
       if (!membership) return sendWorkspaceAccessDenied(reply);
 
-      await app.services.prisma.emailMessage.updateMany({
+      const existing = await app.services.prisma.emailMessage.findFirst({
         where: {
           workspaceId: params.workspaceId,
           inboxConnectionId: params.id,
           OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
         },
-        data: { isRead: true }
+        select: { id: true, isRead: true }
       });
+      if (!existing) {
+        return reply.code(404).send({ message: "Message not found" });
+      }
+
+      if (!existing.isRead) {
+        await app.services.prisma.emailMessage.update({
+          where: { id: existing.id },
+          data: { isRead: true }
+        });
+        app.log.info({
+          event: "message-read-change",
+          messageId: existing.id,
+          source: "USER_OPEN",
+          previous: false,
+          next: true,
+        });
+      }
 
       return reply.send({ status: "ok" });
     }
