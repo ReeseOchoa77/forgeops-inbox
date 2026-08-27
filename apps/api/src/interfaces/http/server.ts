@@ -69,6 +69,7 @@ import { registerJobsRoutes } from "./routes/jobs.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
 import { registerDocumentLibraryRoutes } from "./routes/document-library.route.js";
+import { registerCalendarRoutes } from "./routes/calendar.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -372,6 +373,7 @@ export const buildServer = async () => {
   await registerJobsRoutes(app);
   await registerJobFilesRoutes(app);
   await registerWorkspacePreferencesRoutes(app);
+  await registerCalendarRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

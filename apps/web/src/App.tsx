@@ -18,13 +18,14 @@ import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
 import { JobDiscoveryView } from './views/JobDiscoveryView'
+import { CalendarView } from './views/CalendarView'
 import {
   ALL_MAILBOXES_CONNECTION_ID,
   isAllMailboxesConnectionId,
   pickDefaultInboxConnectionId,
 } from './mailbox-selection'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -32,6 +33,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
+  { page: 'calendar', label: 'Calendar', icon: '\uD83D\uDCC5' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
@@ -819,6 +821,16 @@ export default function App() {
           {!needsConnection && page === 'tasks' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} onSelectMessage={openMessage} userRole={currentRole} />
+            </div>
+          )}
+
+          {page === 'calendar' && (
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <CalendarView
+                workspaceId={workspaceId}
+                userRole={currentRole}
+                onOpenJob={openJob}
+              />
             </div>
           )}
 

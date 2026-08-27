@@ -356,6 +356,52 @@ export interface JobFolderRootItem {
   createdAt: string;
 }
 
+export interface CalendarJobBadge {
+  id: string;
+  name: string;
+  jobNumber: string | null;
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  description: string | null;
+  startAt: string;
+  endAt: string | null;
+  allDay: boolean;
+  type: string;
+  source: string;
+  externalEventId?: string | null;
+  linkedJobId: string | null;
+  linkedTaskId: string | null;
+  linkedEmailMessageId: string | null;
+  linkedJob: CalendarJobBadge | null;
+  createdByUserId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CalendarTaskDueItem {
+  id: string;
+  title: string;
+  description: string | null;
+  startAt: string;
+  endAt: null;
+  allDay: true;
+  type: 'TASK';
+  source: 'FORGEOPS';
+  linkedJobId: string | null;
+  linkedTaskId: string;
+  linkedEmailMessageId: string | null;
+  linkedJob: CalendarJobBadge | null;
+  taskStatus?: string;
+  taskPriority?: string;
+}
+
+export type CalendarFeedItem =
+  | (CalendarEventItem & { kind: 'event' })
+  | (CalendarTaskDueItem & { kind: 'task' });
+
 export const api = {
   getSession: () => request<SessionResponse>('/auth/session'),
 
@@ -727,6 +773,62 @@ export const api = {
     }>(
       `/workspaces/${workspaceId}/email-contacts?q=${encodeURIComponent(q)}&limit=${limit}`
     ),
+
+  getCalendar: (workspaceId: string, from: string, to: string) =>
+    request<{
+      from: string;
+      to: string;
+      events: CalendarEventItem[];
+      taskDueItems: CalendarTaskDueItem[];
+    }>(
+      `/workspaces/${workspaceId}/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    ),
+
+  createCalendarEvent: (
+    workspaceId: string,
+    data: {
+      title: string;
+      description?: string | null;
+      startAt: string;
+      endAt?: string | null;
+      allDay?: boolean;
+      type?: 'MEETING' | 'EVENT' | 'NOTE' | 'DEADLINE';
+      linkedJobId?: string | null;
+    }
+  ) =>
+    request<{ event: CalendarEventItem }>(`/workspaces/${workspaceId}/calendar/events`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateCalendarEvent: (
+    workspaceId: string,
+    eventId: string,
+    data: Partial<{
+      title: string;
+      description: string | null;
+      startAt: string;
+      endAt: string | null;
+      allDay: boolean;
+      type: 'MEETING' | 'EVENT' | 'NOTE' | 'DEADLINE';
+      linkedJobId: string | null;
+    }>
+  ) =>
+    request<{ event: CalendarEventItem }>(
+      `/workspaces/${workspaceId}/calendar/events/${eventId}`,
+      { method: 'PATCH', body: JSON.stringify(data) }
+    ),
+
+  deleteCalendarEvent: (workspaceId: string, eventId: string) =>
+    fetch(`${BASE}/workspaces/${workspaceId}/calendar/events/${eventId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    }).then(async (res) => {
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error(err.message ?? 'Delete failed');
+      }
+    }),
 
   aiExtract: async (workspaceId: string, file: File): Promise<ExtractionResult> => {
     const contentType = file.type === 'application/pdf' ? 'application/pdf'

@@ -227,6 +227,7 @@ model Workspace {
   jobActivityLogs      JobActivityLog[]
   jobDocumentFolders   JobDocumentFolder[]
   jobFiles             JobFile[]
+  calendarEvents       CalendarEvent[]
 }
 
 model User {
@@ -251,6 +252,7 @@ model User {
   auditEvents             AuditEvent[]     @relation("AuditActor")
   invitedAccess           ApprovedAccess[] @relation("ApprovedAccessInviter")
   createdDocuments        KnowledgeDocument[] @relation("DocumentCreator")
+  createdCalendarEvents   CalendarEvent[] @relation("CalendarEventCreator")
   classificationCorrections ClassificationCorrection[] @relation("CorrectionReviewer")
   classificationInstructions ClassificationInstruction[] @relation("InstructionCreator")
 }
@@ -639,6 +641,7 @@ model Task {
   customer         Customer?    @relation("TaskCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   vendor           Vendor?      @relation("TaskVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
   job              Job?         @relation("TaskJob", fields: [workspaceId, jobId], references: [workspaceId, id], onDelete: SetNull)
+  calendarEvents   CalendarEvent[] @relation("CalendarEventTask")
 
   @@unique([workspaceId, id])
   @@index([workspaceId, status, dueAt])
@@ -653,6 +656,38 @@ model Task {
   @@index([customerId])
   @@index([vendorId])
   @@index([jobId])
+}
+
+/// ForgeOps-native calendar item (meetings/events/notes). Task due dates are aggregated separately, not duplicated here.
+model CalendarEvent {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  title                String
+  description          String?
+  startAt              DateTime
+  endAt                DateTime?
+  allDay               Boolean   @default(false)
+  /// MEETING | EVENT | NOTE | DEADLINE (TASK type is rendered from Task.dueAt, not stored here)
+  type                 String    @default("EVENT")
+  /// FORGEOPS | GOOGLE | MICROSOFT
+  source               String    @default("FORGEOPS")
+  externalEventId      String?
+  linkedJobId          String?
+  linkedTaskId         String?
+  linkedEmailMessageId String?
+  createdByUserId      String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  linkedJob            Job?      @relation("CalendarEventJob", fields: [linkedJobId], references: [id], onDelete: SetNull)
+  linkedTask           Task?     @relation("CalendarEventTask", fields: [linkedTaskId], references: [id], onDelete: SetNull)
+  createdByUser        User?     @relation("CalendarEventCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, startAt])
+  @@index([workspaceId, type])
+  @@index([linkedJobId])
+  @@index([linkedTaskId])
+  @@index([workspaceId, source, externalEventId])
 }
 
 /// Domain entity: a customer/client the workspace does business with.
@@ -739,6 +774,7 @@ model Job {
   documentFolders       JobDocumentFolder[]
   files                 JobFile[]
   knowledgeDocuments    KnowledgeDocument[] @relation("JobKnowledgeDocuments")
+  calendarEvents        CalendarEvent[] @relation("CalendarEventJob")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
