@@ -9,6 +9,7 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { getSessionFromRequest } from "../authentication.js";
+import { mapStoredPriorityToN8n } from "@forgeops/shared";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = new Prisma.Decimal("0.75");
 
@@ -24,7 +25,15 @@ const emailTypeValues = [
   "NEEDS_REVIEW"
 ] as const;
 
-const priorityValues = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
+/** Application-facing email priority (DB MEDIUM ↔ API NORMAL). */
+const priorityValues = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
+
+/** Map Prisma Priority (MEDIUM) → API vocabulary (NORMAL). */
+function toApiPriority(
+  priority: string | null | undefined
+): (typeof priorityValues)[number] | null {
+  return mapStoredPriorityToN8n(priority);
+}
 const itemStatusValues = [
   "NEW",
   "NEEDS_REVIEW",
@@ -492,7 +501,7 @@ const serializeClassification = (classification: {
   id: string;
   businessCategory: (typeof businessCategoryValues)[number] | null;
   emailType: EmailType;
-  priority: (typeof priorityValues)[number] | null;
+  priority: string | null;
   itemStatus: (typeof itemStatusValues)[number] | null;
   summary: string | null;
   confidence: Prisma.Decimal;
@@ -512,7 +521,7 @@ const serializeClassification = (classification: {
         id: classification.id,
         businessCategory: classification.businessCategory,
         emailType: classification.emailType,
-        priority: classification.priority,
+        priority: toApiPriority(classification.priority),
         itemStatus: classification.itemStatus,
         summary: classification.summary,
         confidence: serializeDecimal(classification.confidence),
@@ -536,7 +545,7 @@ const serializeTask = (task: {
   description?: string | null;
   assigneeGuess: string | null;
   dueAt: Date | null;
-  priority: (typeof priorityValues)[number];
+  priority: string;
   status: (typeof taskStatusValues)[number];
   confidence: Prisma.Decimal;
   requiresReview: boolean;
@@ -554,7 +563,7 @@ const serializeTask = (task: {
         ...("description" in task ? { description: task.description } : {}),
         assigneeGuess: task.assigneeGuess,
         dueAt: serializeDate(task.dueAt),
-        priority: task.priority,
+        priority: toApiPriority(task.priority) ?? "NORMAL",
         status: task.status,
         confidence: serializeDecimal(task.confidence),
         requiresReview: task.requiresReview,
@@ -593,7 +602,7 @@ const serializeMessageSummary = (message: {
   senderEmail: string;
   receivedAt: Date | null;
   sentAt: Date;
-  priority: (typeof priorityValues)[number] | null;
+  priority: string | null;
   itemStatus: (typeof itemStatusValues)[number];
   isRead: boolean;
   isImportant: boolean;
@@ -625,7 +634,7 @@ const serializeMessageSummary = (message: {
     senderEmail: message.senderEmail,
     receivedAt: serializeDate(message.receivedAt),
     sentAt: message.sentAt.toISOString(),
-    priority: message.priority,
+    priority: toApiPriority(message.priority),
     itemStatus: message.itemStatus,
     isRead: message.isRead,
     isImportant: message.isImportant,
@@ -657,7 +666,7 @@ const serializeInboxListMessage = (message: {
   senderEmail: string;
   receivedAt: Date | null;
   sentAt: Date;
-  priority: (typeof priorityValues)[number] | null;
+  priority: string | null;
   itemStatus: (typeof itemStatusValues)[number];
   isRead: boolean;
   isImportant: boolean;
@@ -669,7 +678,7 @@ const serializeInboxListMessage = (message: {
   classifications: Array<{
     id: string;
     emailType: EmailType;
-    priority: (typeof priorityValues)[number] | null;
+    priority: string | null;
     businessTypeKey: string | null;
   }>;
   job?: {
@@ -690,7 +699,7 @@ const serializeInboxListMessage = (message: {
     senderEmail: message.senderEmail,
     receivedAt: serializeDate(message.receivedAt),
     sentAt: message.sentAt.toISOString(),
-    priority: message.priority,
+    priority: toApiPriority(message.priority),
     itemStatus: message.itemStatus,
     isRead: message.isRead,
     isImportant: message.isImportant,
@@ -705,7 +714,7 @@ const serializeInboxListMessage = (message: {
           id: c.id,
           businessCategory: null,
           emailType: c.emailType,
-          priority: c.priority,
+          priority: toApiPriority(c.priority),
           itemStatus: null,
           summary: null,
           confidence: 0,
@@ -1772,7 +1781,7 @@ export const registerInboxReadRoutes = async (
               attachmentMetadata: parseAttachmentMetadata(message.attachmentMetadata),
               sentAt: message.sentAt.toISOString(),
               receivedAt: serializeDate(message.receivedAt),
-              priority: message.priority,
+              priority: toApiPriority(message.priority),
               itemStatus: message.itemStatus,
               mailboxCategory: message.mailboxCategory,
               previousCategory: message.previousCategory ?? null
@@ -1969,7 +1978,7 @@ export const registerInboxReadRoutes = async (
           attachmentMetadata: parseAttachmentMetadata(m.attachmentMetadata),
           sentAt: m.sentAt.toISOString(),
           receivedAt: serializeDate(m.receivedAt),
-          priority: m.priority,
+          priority: toApiPriority(m.priority),
           itemStatus: m.itemStatus,
           mailboxCategory: m.mailboxCategory,
           previousCategory: m.previousCategory ?? null,
@@ -2125,7 +2134,7 @@ export const registerInboxReadRoutes = async (
             attachmentMetadata: parseAttachmentMetadata(m.attachmentMetadata),
             sentAt: m.sentAt.toISOString(),
             receivedAt: serializeDate(m.receivedAt),
-            priority: m.priority,
+            priority: toApiPriority(m.priority),
             itemStatus: m.itemStatus,
             mailboxCategory: m.mailboxCategory,
             previousCategory: m.previousCategory ?? null,
@@ -2167,23 +2176,6 @@ export const registerInboxReadRoutes = async (
         messageCount: messageHeaders.length,
         bodyCount: bodyIds.length,
         timing
-      });
-
-      // TEMPORARY diagnostic logging — remove after production attach debug
-      request.log.info({
-        event: "[ATTACHMENT_DEBUG_THREAD]",
-        workspaceId: params.workspaceId,
-        requestedMessageId: params.messageId,
-        threadId: thread.id,
-        providerThreadId: thread.gmailThreadId,
-        messageCount: responsePayload.messages.length,
-        messages: responsePayload.messages.map((m) => ({
-          id: m.id,
-          subject: m.subject,
-          providerMessageId: m.providerMessageId,
-          providerThreadId: m.providerThreadId,
-          threadId: thread.id,
-        })),
       });
 
       return reply.send(responsePayload);

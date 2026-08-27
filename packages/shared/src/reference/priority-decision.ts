@@ -34,8 +34,8 @@ export interface PriorityDecisionPayload {
 }
 
 export interface PriorityDecisionViewModel {
-  /** Badge label for UI (NORMAL stored as MEDIUM → "Medium"). */
-  displayLabel: "Low" | "Medium" | "High" | "Urgent" | string;
+  /** Badge label for UI (stored MEDIUM → application Normal). */
+  displayLabel: "Low" | "Normal" | "High" | "Urgent" | string;
   reason: string;
   jobConfidencePct: number | null;
   jobThresholdPct: number | null;
@@ -152,7 +152,7 @@ export function mapStoredPriorityToN8n(
   }
 }
 
-/** UI label for stored or n8n priority values. */
+/** UI label for application-facing priority (NORMAL, not MEDIUM). */
 export function priorityDisplayLabel(priority: string | null | undefined): string {
   if (!priority) return "Not set";
   switch (priority) {
@@ -162,7 +162,7 @@ export function priorityDisplayLabel(priority: string | null | undefined): strin
       return "High";
     case "NORMAL":
     case "MEDIUM":
-      return "Medium";
+      return "Normal";
     case "LOW":
       return "Low";
     default:

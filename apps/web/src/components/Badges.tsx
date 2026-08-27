@@ -79,17 +79,14 @@ export function ActionBadge({ emailType, requiresReview: _requiresReview }: { em
 const priorityLabels: Record<string, string> = {
   URGENT: 'Urgent',
   HIGH: 'High',
-  MEDIUM: 'Medium',
-  NORMAL: 'Medium',
+  MEDIUM: 'Normal',
+  NORMAL: 'Normal',
   LOW: 'Low'
 }
 
-/** TEMP: hide priority tags visually — set true to restore. */
-const SHOW_PRIORITY_BADGE = false
-
-export function PriorityBadge({ priority }: { priority: string | null }) {
-  if (!SHOW_PRIORITY_BADGE) return null
-  if (!priority) return <span style={{ ...badgeBase, background: '#f5f5f5', color: '#aaa' }}>Not set</span>
+/** Email priority badge — application vocabulary LOW | NORMAL | HIGH | URGENT. */
+export function PriorityBadge({ priority }: { priority: string | null | undefined }) {
+  if (!priority) return null
   const colors: Record<string, { bg: string; fg: string }> = {
     URGENT: { bg: '#c62828', fg: '#fff' },
     HIGH: { bg: '#ef6c00', fg: '#fff' },

@@ -3,6 +3,8 @@ import {
   ProviderRegistry,
   QueueNames,
   TokenCipher,
+  type AttachmentIngestJobPayload,
+  type AttachmentIngestResult,
   type InboxAnalysisJobPayload,
   type InboxAnalysisResult,
   type MailboxHistoricalImportJobPayload,
@@ -65,6 +67,13 @@ export const startMailboxHistoricalImportWorker = (
     connection: createBullMqConnection(env.REDIS_URL),
   });
 
+  const attachmentIngestQueue = new Queue<
+    AttachmentIngestJobPayload,
+    AttachmentIngestResult
+  >(QueueNames.ATTACHMENT_INGEST, {
+    connection: createBullMqConnection(env.REDIS_URL),
+  });
+
   const queue = new Queue<
     MailboxHistoricalImportJobPayload,
     MailboxHistoricalImportJobResult
@@ -84,6 +93,7 @@ export const startMailboxHistoricalImportWorker = (
         tokenCipher,
         analysisQueue,
         classifyQueue,
+        attachmentIngestQueue,
       }),
     {
       connection: createBullMqConnection(env.REDIS_URL),

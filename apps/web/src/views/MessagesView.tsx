@@ -149,6 +149,8 @@ interface Props {
   userEmail: string
   connections: ConnectionSummary[]
   breakpoint?: Breakpoint
+  /** When set (detail open from Inbox), mark that row read locally without refetch. */
+  openedMessageId?: string | null
 }
 
 const PAGE_SIZE = 30
@@ -168,9 +170,9 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
 ]
 
 type ReadFilter = '' | 'unread' | 'read' | 'sent'
-type PriorityKey = 'LOW' | 'MEDIUM' | 'HIGH'
+type PriorityKey = 'LOW' | 'NORMAL' | 'HIGH'
 
-export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop' }: Props) {
+export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop', openedMessageId = null }: Props) {
   const isViewer = userRole === 'VIEWER'
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
   const currentConnectionEmail = connections.find(c => c.id === connectionId)?.email ?? ''
@@ -183,10 +185,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  /** Soft refresh: keep existing rows visible while filters refetch. */
+  const [refreshing, setRefreshing] = useState(false)
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
-  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'MEDIUM', 'HIGH']))
+  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
   const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
@@ -270,7 +274,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         const p = m.classification?.priority
         if (!p) return false
         if (priorityFilter.has('HIGH') && (p === 'HIGH' || p === 'URGENT')) return true
-        if (priorityFilter.has('MEDIUM') && (p === 'MEDIUM' || p === 'NORMAL')) return true
+        if (priorityFilter.has('NORMAL') && (p === 'NORMAL' || p === 'MEDIUM')) return true
         if (priorityFilter.has('LOW') && p === 'LOW') return true
         return false
       })
@@ -303,7 +307,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setReadFilter('sent')
       setInboxTab('ALL_BUSINESS')
       setJobFilter('')
-      setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
+      setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
       return
     }
     setReadFilter(key)
@@ -313,14 +317,23 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     // Leaving Sent (or switching category) always clears sentOnly.
     setInboxTab(tab)
     setReadFilter('')
-    setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
+    setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     if (tab === 'PERSONAL' || tab === 'TRASH') setJobFilter('')
     if (tab === 'TRASH') setMassDeleteMode(false)
   }
 
-  const loadPage = useCallback(async (pageNum: number, filters: ReturnType<typeof buildFilters>, append: boolean) => {
-    if (pageNum === 1) setLoading(true)
-    else setLoadingMore(true)
+  const loadPage = useCallback(async (
+    pageNum: number,
+    filters: ReturnType<typeof buildFilters>,
+    append: boolean,
+    opts?: { soft?: boolean }
+  ) => {
+    if (pageNum === 1 && !append) {
+      if (opts?.soft) setRefreshing(true)
+      else setLoading(true)
+    } else {
+      setLoadingMore(true)
+    }
     try {
       const r = await api.getMessages(workspaceId, connectionId, pageNum, PAGE_SIZE, filters)
       if (append) {
@@ -334,6 +347,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     } finally {
       setLoading(false)
       setLoadingMore(false)
+      setRefreshing(false)
     }
   }, [workspaceId, connectionId])
 
@@ -343,18 +357,29 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       .catch(() => setJobs([]))
   }, [workspaceId])
 
+  // Opening a message from this list: mark read locally (detail also PATCHes the server).
+  useEffect(() => {
+    if (!openedMessageId) return
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === openedMessageId && !m.isRead ? { ...m, isRead: true } : m
+      )
+    )
+  }, [openedMessageId])
+
   useEffect(() => {
     connectionResetRef.current = true
     setMessages([])
     setPage(1)
     setHasMore(true)
     setTotalCount(null)
+    setRefreshing(false)
     setSearch('')
     setActiveSearch('')
     setSearchIn('all')
     setInboxTab('ALL_BUSINESS')
     setReadFilter('')
-    setPriorityFilter(new Set(['LOW', 'MEDIUM', 'HIGH']))
+    setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     setJobFilter('')
     setMassDeleteMode(false)
     loadPage(1, { businessCategory: 'BUSINESS' }, false)
@@ -369,11 +394,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       return
     }
     const filters = buildFilters()
-    setMessages([])
     setPage(1)
     setHasMore(true)
     setTotalCount(null)
-    loadPage(1, filters, false)
+    // Soft refresh: keep prior rows visible until the new page arrives.
+    loadPage(1, filters, false, { soft: true })
   }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn])
 
   useEffect(() => {
@@ -799,11 +824,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <h2 style={{ fontSize: 17, margin: 0 }}>Inbox</h2>
           <span style={{ fontSize: 12, color: '#999' }}>
-            {totalCount != null
-              ? `${totalCount} messages`
-              : hasMore
-                ? `${filteredMessages.length}+ loaded`
-                : `${filteredMessages.length} loaded`}
+            {refreshing
+              ? 'Updating…'
+              : totalCount != null
+                ? `${totalCount} messages`
+                : hasMore
+                  ? `${filteredMessages.length}+ loaded`
+                  : `${filteredMessages.length} loaded`}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -933,13 +960,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
               {/* Priority multi-select */}
               <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                {([['LOW', 'Low'], ['MEDIUM', 'Medium'], ['HIGH', 'High']] as const).map(([key, label]) => {
-                  const active = priorityFilter.has(key as PriorityKey)
+                {([['LOW', 'Low'], ['NORMAL', 'Normal'], ['HIGH', 'High']] as const).map(([key, label]) => {
+                  const active = priorityFilter.has(key)
                   return (
                     <button key={key} onClick={() => setPriorityFilter(prev => {
                       const next = new Set(prev)
-                      if (next.has(key as PriorityKey)) next.delete(key as PriorityKey)
-                      else next.add(key as PriorityKey)
+                      if (next.has(key)) next.delete(key)
+                      else next.add(key)
                       return next
                     })} style={{
                       padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,

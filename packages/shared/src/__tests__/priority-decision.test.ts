@@ -30,7 +30,7 @@ describe("n8n priority decision contract (documentation — not used to override
     ).toBe("LOW");
   });
 
-  it("3. Job 80%, task true, no deadline → NORMAL / Medium", () => {
+  it("3. Job 80%, task true, no deadline → NORMAL", () => {
     const p = computeN8nPriorityFromDecisionInputs({
       jobReferenceConfidence: 0.8,
       containsActionRequest: true,
@@ -38,9 +38,9 @@ describe("n8n priority decision contract (documentation — not used to override
       deadlineUrgency: "NONE",
     });
     expect(p).toBe("NORMAL");
-    expect(priorityDisplayLabel(p)).toBe("Medium");
+    expect(priorityDisplayLabel(p)).toBe("Normal");
     expect(mapN8nPriorityToStored(p)).toBe("MEDIUM");
-    expect(priorityDisplayLabel(mapN8nPriorityToStored(p))).toBe("Medium");
+    expect(priorityDisplayLabel(mapN8nPriorityToStored(p))).toBe("Normal");
   });
 
   it("4. Job 80%, task true, standard deadline → HIGH", () => {
@@ -75,13 +75,13 @@ describe("priorityDecision display + persistence", () => {
       })
     ).toBeNull();
     expect(buildPriorityDecisionViewModel({ priority: "MEDIUM", evidence: null })).toBeNull();
-    expect(priorityDisplayLabel("MEDIUM")).toBe("Medium");
+    expect(priorityDisplayLabel("MEDIUM")).toBe("Normal");
     expect(priorityDisplayLabel("HIGH")).toBe("High");
   });
 
-  it("7. NORMAL continues rendering as Medium", () => {
-    expect(priorityDisplayLabel("NORMAL")).toBe("Medium");
-    expect(priorityDisplayLabel("MEDIUM")).toBe("Medium");
+  it("7. NORMAL renders as Normal (application vocabulary)", () => {
+    expect(priorityDisplayLabel("NORMAL")).toBe("Normal");
+    expect(priorityDisplayLabel("MEDIUM")).toBe("Normal");
     expect(mapN8nPriorityToStored("NORMAL")).toBe("MEDIUM");
   });
 
@@ -140,7 +140,7 @@ describe("priorityDecision display + persistence", () => {
       },
     });
     expect(medium).toMatchObject({
-      displayLabel: "Medium",
+      displayLabel: "Normal",
       reason: "Job-related action with no deadline",
       jobConfidencePct: 92,
       actionRequestedLabel: "Yes",

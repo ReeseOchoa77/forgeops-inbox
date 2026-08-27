@@ -637,8 +637,36 @@ export default function App() {
             </div>
           )}
 
-          {!needsConnection && page === 'inbox' && connectionId && (
-            <MessagesView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} userEmail={userEmail} connections={connections} breakpoint={bp} />
+          {/* Keep Inbox mounted while viewing a message opened from Inbox so back restores
+              list state (page, filters, scroll) without remount/refetch. */}
+          {!needsConnection && connectionId && (
+            page === 'inbox' || (page === 'message-detail' && messageBackPage === 'inbox')
+          ) && (
+            <div
+              style={{
+                display: page === 'inbox' ? 'flex' : 'none',
+                flex: 1,
+                overflow: 'hidden',
+                minHeight: 0,
+                flexDirection: 'column',
+              }}
+              aria-hidden={page !== 'inbox'}
+            >
+              <MessagesView
+                workspaceId={workspaceId}
+                connectionId={connectionId}
+                onSelectMessage={openMessage}
+                userRole={currentRole}
+                userEmail={userEmail}
+                connections={connections}
+                breakpoint={bp}
+                openedMessageId={
+                  page === 'message-detail' && messageBackPage === 'inbox'
+                    ? selectedMessageId
+                    : null
+                }
+              />
+            </div>
           )}
           {!needsConnection && page === 'message-detail' && connectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
@@ -646,6 +674,7 @@ export default function App() {
                 workspaceId={workspaceId}
                 connectionId={connectionId}
                 messageId={selectedMessageId}
+                connections={connections}
                 onBack={() => setPage(messageBackPage === 'job-detail' && selectedJobId ? 'job-detail' : 'inbox')}
                 breakpoint={bp}
               />

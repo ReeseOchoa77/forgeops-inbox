@@ -64,7 +64,7 @@ async function fetchOutlookAttachment(input: {
   const tokens = await tokenRes.json() as { access_token: string };
 
   const attRes = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${input.outlookMessageId}/attachments/${input.attachmentId}/$value`,
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(input.outlookMessageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`,
     { headers: { Authorization: `Bearer ${tokens.access_token}` } }
   );
 

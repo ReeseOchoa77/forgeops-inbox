@@ -631,19 +631,7 @@ export class OutlookClient {
     }
 
     const raw = (await response.json()) as Record<string, unknown>;
-    const parsed = graphAttachmentSchema.parse(raw);
-
-    console.info("outlook-attachment-detail", {
-      attachmentId: parsed.id ?? attachmentId,
-      odataType: parsed["@odata.type"] ?? null,
-      name: parsed.name ?? null,
-      isInline: parsed.isInline ?? null,
-      contentId: parsed.contentId ?? null,
-      hasContentId: Boolean(parsed.contentId),
-      contentType: parsed.contentType ?? null,
-    });
-
-    return parsed;
+    return graphAttachmentSchema.parse(raw);
   }
 
   /**

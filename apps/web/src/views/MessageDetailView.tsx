@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment, type ConnectionSummary } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 import type { Breakpoint } from '../hooks/useBreakpoint'
@@ -11,6 +11,8 @@ interface Props {
   messageId: string
   onBack: () => void
   breakpoint?: Breakpoint
+  /** App-level connections — avoids a duplicate GET /inbox-connections on every open. */
+  connections?: ConnectionSummary[]
 }
 
 function formatSize(bytes: number | null): string {
@@ -619,7 +621,7 @@ function jobSourceLabel(source: string | null | undefined, isManual: boolean | u
   return source
 }
 
-export function MessageDetailView({ workspaceId, connectionId, messageId, onBack, breakpoint = 'desktop' }: Props) {
+export function MessageDetailView({ workspaceId, connectionId, messageId, onBack, breakpoint = 'desktop', connections }: Props) {
   const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -630,33 +632,46 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const [jobs, setJobs] = useState<JobLookup[]>([])
+  const [jobsLoading, setJobsLoading] = useState(false)
+  const [jobsLoaded, setJobsLoaded] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
-  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
-  const [monitoredEmailsReady, setMonitoredEmailsReady] = useState(false)
   /** Prevents duplicate ForgeOps Email Debug logs across React rerenders for the same open. */
   const emailDebugLoggedForId = useRef<string | null>(null)
 
   const isPhone = breakpoint === 'phone'
 
+  const connectionEmailsKey = (connections ?? []).map(c => c.email.toLowerCase()).sort().join('|')
+  const monitoredEmails = useMemo(
+    () => new Set(connectionEmailsKey ? connectionEmailsKey.split('|') : []),
+    [connectionEmailsKey]
+  )
+  const monitoredEmailsReady = connections !== undefined
+
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
-  useEffect(() => {
-    setMonitoredEmailsReady(false)
-    api.getConnections(workspaceId)
-      .then(r => setMonitoredEmails(new Set(r.connections.map(c => c.email.toLowerCase()))))
-      .catch(() => setMonitoredEmails(new Set()))
-      .finally(() => setMonitoredEmailsReady(true))
-  }, [workspaceId])
+  const ensureJobsLoaded = () => {
+    if (jobsLoaded || jobsLoading) return
+    setJobsLoading(true)
+    api.getJobsLookup(workspaceId, { showArchived: false })
+      .then(r => setJobs(r.jobs))
+      .catch(() => setJobs([]))
+      .finally(() => {
+        setJobsLoaded(true)
+        setJobsLoading(false)
+      })
+  }
 
   useEffect(() => {
     setLoading(true)
     setComposeMode(null)
     setSendResult(null)
     setJobError(null)
+    setJobs([])
+    setJobsLoaded(false)
     emailDebugLoggedForId.current = null
 
     loadThread()
@@ -730,12 +745,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     })
     console.groupEnd()
   }, [loading, monitoredEmailsReady, monitoredEmails, threadData, messageId])
-
-  useEffect(() => {
-    api.getJobsLookup(workspaceId, { showArchived: false })
-      .then(r => setJobs(r.jobs))
-      .catch(() => setJobs([]))
-  }, [workspaceId])
 
   const clickedMessage = threadData?.messages.find(m => m.id === messageId) ?? threadData?.messages[threadData.messages.length - 1] ?? null
 
@@ -896,7 +905,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
                 flexShrink: 0, justifyContent: 'flex-end',
               }}>
-                {lastMessage.classification && !monitoredEmails.has(lastMessage.senderEmail.toLowerCase()) && (
+                {clickedMessage?.mailboxCategory === 'BUSINESS' && lastMessage.classification?.priority && (
                   <PriorityBadge priority={lastMessage.classification.priority} />
                 )}
                 {clickedMessage && clickedMessage.mailboxCategory === 'BUSINESS' && (
@@ -941,6 +950,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                     <select
                       value={selectedJobId}
                       onChange={e => setSelectedJobId(e.target.value)}
+                      onFocus={ensureJobsLoaded}
+                      onMouseDown={ensureJobsLoaded}
                       disabled={jobBusy}
                       title="Assign job"
                       style={{
@@ -950,6 +961,9 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                       }}
                     >
                       <option value="">{clickedMessage.job ? 'Change job…' : 'Select a job…'}</option>
+                      {jobsLoading && jobs.length === 0 && (
+                        <option value="" disabled>Loading jobs…</option>
+                      )}
                       {jobs.map(j => (
                         <option key={j.id} value={j.id}>
                           {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}

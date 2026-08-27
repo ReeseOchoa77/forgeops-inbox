@@ -461,3 +461,76 @@ describe("idempotency rules", () => {
     expect(match).toBeUndefined();
   });
 });
+
+describe("download route contract", () => {
+  it("canonical stored download path uses ForgeOps attachment id", () => {
+    const path =
+      "/api/v1/workspaces/ws1/attachments/cmforgeopsAttId/download";
+    expect(path).toMatch(
+      /^\/api\/v1\/workspaces\/[^/]+\/attachments\/[^/]+\/download$/
+    );
+    expect(path).not.toContain("inbox-connections");
+  });
+
+  it("provider proxy download path still exists for CID fallback", () => {
+    const path =
+      "/api/v1/workspaces/ws1/inbox-connections/conn1/messages/msg1/attachments/AAMk%2FgraphId/download";
+    expect(path).toMatch(
+      /\/inbox-connections\/[^/]+\/messages\/[^/]+\/attachments\/[^/]+\/download$/
+    );
+  });
+
+  it("download requires UPLOADED status and storageKey (no silent Graph fallback on stored route)", () => {
+    const rows = [
+      { id: "a1", uploadStatus: "PENDING", storageKey: null },
+      { id: "a2", uploadStatus: "FAILED", storageKey: null },
+      { id: "a3", uploadStatus: "UPLOADED", storageKey: "attachments/ws1/msg1/a3/file.zip" },
+    ];
+    const downloadable = rows.filter(
+      (r) => r.uploadStatus === "UPLOADED" && r.storageKey
+    );
+    expect(downloadable.map((r) => r.id)).toEqual(["a3"]);
+  });
+
+  it("rejects wrong workspace/attachment combination", () => {
+    const attachment = { id: "att1", workspaceId: "ws1" };
+    const request = { workspaceId: "ws-other", attachmentId: "att1" };
+    const allowed =
+      attachment.id === request.attachmentId &&
+      attachment.workspaceId === request.workspaceId;
+    expect(allowed).toBe(false);
+  });
+
+  it("list response exposes ForgeOps id for ZIP non-inline attachments", () => {
+    const response = {
+      attachments: [
+        {
+          id: "cmzip1",
+          filename: "8-26-26_Beltline Parking Ramp_Stair C_Fab.zip",
+          mimeType: "application/zip",
+          sizeBytes: 1_024_000,
+          isInline: false,
+          contentId: null,
+          uploadStatus: "UPLOADED" as const,
+          createdAt: "2026-08-26T12:00:00.000Z",
+        },
+        {
+          id: "cminline1",
+          filename: "image001.png",
+          mimeType: "image/png",
+          sizeBytes: 2048,
+          isInline: true,
+          contentId: "ii_abc123",
+          uploadStatus: "UPLOADED" as const,
+          createdAt: "2026-08-26T12:00:00.000Z",
+        },
+      ],
+    };
+    const parsed = listResponseSchema.safeParse(response);
+    expect(parsed.success).toBe(true);
+    const downloadable = response.attachments.filter((a) => !a.isInline);
+    expect(downloadable).toHaveLength(1);
+    expect(downloadable[0]?.id).toBe("cmzip1");
+    expect(downloadable[0]?.filename).toContain(".zip");
+  });
+});

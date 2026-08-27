@@ -97,12 +97,20 @@ export function MonitoredMailboxesPanel({
   const [importError, setImportError] = useState<string | null>(null)
   const [requeueBusyId, setRequeueBusyId] = useState<string | null>(null)
 
-  // Resume any in-flight imports when the panel loads / mailboxes change.
+  // Resume any in-flight imports when the panel loads / mailbox set changes.
+  // Depend on connection ids (not the connections array identity) so settings
+  // patches that refresh the list do not re-list imports for every mailbox.
+  const connectionIdsKey = connections
+    .filter((c) => c.status !== 'DISCONNECTED')
+    .map((c) => c.id)
+    .sort()
+    .join('|')
+
   useEffect(() => {
     let cancelled = false
-    const connectionIds = connections
-      .filter((c) => c.status !== 'DISCONNECTED')
-      .map((c) => c.id)
+    const connectionIds = connectionIdsKey
+      ? connectionIdsKey.split('|')
+      : []
     if (connectionIds.length === 0) return
 
     void Promise.all(
@@ -137,7 +145,7 @@ export function MonitoredMailboxesPanel({
     return () => {
       cancelled = true
     }
-  }, [workspaceId, connections])
+  }, [workspaceId, connectionIdsKey])
 
   const activeImportKey = Object.entries(importsByConnection)
     .filter(([, imp]) => isImportInProgress(imp.status))
@@ -171,16 +179,25 @@ export function MonitoredMailboxesPanel({
   }, [activeImportKey, workspaceId])
 
   // Auto-clear finished banners after a short success/failure window.
+  const finishedImportKey = Object.entries(importsByConnection)
+    .filter(([, imp]) => imp.status === 'COMPLETED' || imp.status === 'FAILED')
+    .map(([connectionId, imp]) => `${connectionId}:${imp.id}:${imp.status}`)
+    .sort()
+    .join('|')
+
   useEffect(() => {
-    const finished = Object.entries(importsByConnection).filter(
-      ([, imp]) => imp.status === 'COMPLETED' || imp.status === 'FAILED'
-    )
-    if (finished.length === 0) return
+    if (!finishedImportKey) return
+    const finished = finishedImportKey.split('|').map((pair) => {
+      const [connectionId, importId] = pair.split(':')
+      return { connectionId, importId }
+    })
     const timer = setTimeout(() => {
       setImportsByConnection((prev) => {
         const next = { ...prev }
-        for (const [connectionId, imp] of finished) {
-          if (next[connectionId]?.id === imp.id && !isImportInProgress(next[connectionId].status)) {
+        for (const { connectionId, importId } of finished) {
+          if (!connectionId || !importId) continue
+          const row = next[connectionId]
+          if (row?.id === importId && !isImportInProgress(row.status)) {
             delete next[connectionId]
           }
         }
@@ -188,7 +205,7 @@ export function MonitoredMailboxesPanel({
       })
     }, 12_000)
     return () => clearTimeout(timer)
-  }, [importsByConnection])
+  }, [finishedImportKey])
 
   const openSettings = async (c: ConnectionSummary) => {
     setSettingsOpenFor(c.id)

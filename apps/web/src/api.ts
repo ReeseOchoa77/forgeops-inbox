@@ -538,7 +538,7 @@ export const api = {
     ),
 
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
-    `${BASE}/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages/${messageId}/attachments/${attachmentId}/download`,
+    `${BASE}/workspaces/${encodeURIComponent(workspaceId)}/inbox-connections/${encodeURIComponent(connectionId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
 
   getTasks: (workspaceId: string, connectionId: string, page = 1, pageSize = 25) =>
     request<{ tasks: TaskListItem[]; pagination: { page: number; totalCount: number; totalPages: number } }>(

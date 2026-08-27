@@ -220,6 +220,71 @@ describe("AttachmentIngestionService", () => {
     expect(outlookClient.downloadAttachment).toHaveBeenCalledTimes(3);
   });
 
+  it("processes non-inline ZIP attachment to UPLOADED EmailAttachment row", async () => {
+    const prisma = makePrismaMock();
+    (prisma.inboxConnection.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "conn1",
+      provider: "OUTLOOK",
+      status: "ACTIVE",
+      encryptedRefreshToken: "enc",
+      encryptedAccessToken: null,
+      accessTokenExpiresAt: null,
+    });
+    (prisma.emailMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "msg1",
+      gmailMessageId: "AAMkProvider",
+      providerMessageId: "AAMkProvider",
+      hasAttachments: true,
+      bodyHtml: null,
+    });
+    outlookClient.listAttachments.mockResolvedValue({
+      ok: true,
+      attachments: [
+        {
+          attachmentId: "zip-graph-1",
+          contentId: null,
+          filename: "8-26-26_Beltline Parking Ramp_Stair C_Fab.zip",
+          inline: false,
+          mimeType: "application/zip",
+          size: 50_000,
+          odataType: "#microsoft.graph.fileAttachment",
+        },
+      ],
+    });
+    outlookClient.downloadAttachment.mockResolvedValue({
+      ok: true,
+      data: Buffer.from("PK\x03\x04zip"),
+      contentType: "application/zip",
+    });
+    (prisma.emailAttachment.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (prisma.emailAttachment.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (prisma.emailMessage.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (prisma.inboxConnection.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+    const service = new AttachmentIngestionService(
+      prisma,
+      tokenCipher as never,
+      outlookClient as never,
+      storage as never,
+      25 * 1024 * 1024
+    );
+
+    const result = await service.process(payload);
+    expect(result.status).toBe("completed");
+    expect(result.uploadedCount).toBe(1);
+    expect(prisma.emailAttachment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          isInline: false,
+          filename: "8-26-26_Beltline Parking Ramp_Stair C_Fab.zip",
+          mimeType: "application/zip",
+          uploadStatus: "UPLOADED",
+          providerAttachmentId: "zip-graph-1",
+        }),
+      })
+    );
+  });
+
   it("is idempotent: skips re-download when UPLOADED object still exists", async () => {
     const prisma = makePrismaMock();
     (prisma.inboxConnection.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({

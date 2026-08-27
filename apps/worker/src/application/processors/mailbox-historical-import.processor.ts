@@ -7,6 +7,8 @@ import {
   providerKindFromEnum,
   shouldEnqueueNativeClassification,
   buildMailboxClassifyJobId,
+  type AttachmentIngestJobPayload,
+  type AttachmentIngestResult,
   type InboxAnalysisJobPayload,
   type InboxAnalysisResult,
   type MailboxClassifyJobPayload,
@@ -16,6 +18,7 @@ import {
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
+import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 
 const CLASSIFY_WAIT_MS = 5 * 60 * 1000;
@@ -56,7 +59,8 @@ async function recountCategoryCounts(
  * - Does NOT require nativeListeningEnabled (manual admin action)
  * - Respects requestedLimit (paginated provider fetch up to hard max)
  * - Dedupes via existing (inboxConnectionId, gmailMessageId) uniqueness
- * - Enqueues native analysis only when processing mode is NATIVE
+ * - Enqueues native classification only when processing mode is NATIVE
+ * - Enqueues Outlook attachment ingest independently of classification
  * - Does not advance the live syncCursor (avoids coupling to listener cursor)
  * - Updates processedCount during read/import/classify so the UI progress bar moves
  */
@@ -68,6 +72,10 @@ export async function processMailboxHistoricalImport(
     tokenCipher: TokenCipher;
     analysisQueue: Queue<InboxAnalysisJobPayload, InboxAnalysisResult>;
     classifyQueue: Queue<MailboxClassifyJobPayload, MailboxClassifyJobResult>;
+    attachmentIngestQueue?: Queue<
+      AttachmentIngestJobPayload,
+      AttachmentIngestResult
+    >;
   }
 ): Promise<MailboxHistoricalImportJobResult> {
   const limit = Math.min(
@@ -216,6 +224,10 @@ export async function processMailboxHistoricalImport(
     let duplicateCount = 0;
     let failedCount = 0;
     let createdMessageIds: string[] = [];
+    let attachmentIngestCandidates: Array<{
+      emailMessageId: string;
+      providerMessageId: string;
+    }> = [];
 
     try {
       const result = await importProviderMailbox({
@@ -230,9 +242,34 @@ export async function processMailboxHistoricalImport(
       importedCount = result.messagesImported;
       duplicateCount = result.duplicatesSkipped;
       createdMessageIds = result.createdMessageIds ?? [];
+      attachmentIngestCandidates = (result.attachmentIngestCandidates ?? []).map(
+        (c) => ({
+          emailMessageId: c.emailMessageId,
+          providerMessageId: c.providerMessageId,
+        })
+      );
     } catch (error) {
       failedCount = providerMessageIds.length;
       throw error;
+    }
+
+    // Attachment ingest is independent of classification success/failure.
+    if (
+      deps.attachmentIngestQueue &&
+      connection.provider === "OUTLOOK" &&
+      connection.encryptedRefreshToken &&
+      attachmentIngestCandidates.length > 0
+    ) {
+      const { enqueuedCount } = await enqueueAttachmentIngestFromSync({
+        queue: deps.attachmentIngestQueue,
+        workspaceId: payload.workspaceId,
+        inboxConnectionId: connection.id,
+        candidates: attachmentIngestCandidates,
+      });
+      console.info("attachment-ingest-queued-from-historical-import", {
+        importId: payload.importId,
+        count: enqueuedCount,
+      });
     }
 
     // Per-message failure isolation: recount what landed vs requested ids.

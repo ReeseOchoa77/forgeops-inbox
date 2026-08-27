@@ -167,14 +167,6 @@ describe("Outlook attachment Graph retrieval", () => {
     ).toBe(true);
     expect(urls.some((u) => u.includes("/attachments/att-item"))).toBe(false);
 
-    expect(
-      info.mock.calls.some(
-        (call) =>
-          call[0] === "outlook-attachment-detail" &&
-          (call[1] as { contentId?: string }).contentId === exactCid
-      )
-    ).toBe(true);
-
     // CID reconciliation for the live bug HTML
     const html = `<img src="cid:${exactCid}">`;
     const htmlCids = extractHtmlCids(html);
