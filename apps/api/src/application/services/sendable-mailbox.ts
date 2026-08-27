@@ -1,8 +1,7 @@
-import { normalizeEmail } from "@forgeops/shared";
 import type { InboxConnectionStatus, InboxProvider } from "@prisma/client";
 
 export type SendDenialCode =
-  | "MAILBOX_IDENTITY_MISMATCH"
+  | "SEND_ROLE_DENIED"
   | "CONNECTION_NOT_ACTIVE"
   | "MAILBOX_AUTH_REQUIRED"
   | "MAILBOX_REAUTH_REQUIRED"
@@ -49,16 +48,16 @@ export function connectionHasSendingScope(input: {
   return false;
 }
 
-export function userOwnsMailbox(userEmail: string, connectionEmail: string): boolean {
-  return normalizeEmail(userEmail) === normalizeEmail(connectionEmail);
-}
-
 /**
- * MVP: user may send only as their own mailbox identity
- * (normalize(user.email) === normalize(connection.email)), plus send-capable OAuth.
+ * Authorize outbound send from a monitored mailbox.
+ *
+ * Requires workspace send role (not VIEWER) + OAuth-ready connection with Mail.Send.
+ * Does NOT require ForgeOps login email === mailbox email — admins/members may
+ * send as any authorized monitored mailbox in the workspace.
  */
 export function assertUserMaySendAsConnection(input: {
-  userEmail: string;
+  /** Workspace membership role; VIEWER cannot send. */
+  workspaceRole?: string | null;
   connection: {
     email: string;
     provider: InboxProvider | string;
@@ -67,6 +66,16 @@ export function assertUserMaySendAsConnection(input: {
     grantedScopes: readonly string[];
   };
 }): SendAuthorizationResult {
+  const role = String(input.workspaceRole ?? "").toUpperCase();
+  if (role === "VIEWER") {
+    return {
+      ok: false,
+      statusCode: 403,
+      code: "SEND_ROLE_DENIED",
+      message: "Viewers cannot send email. Ask an admin for Member access or higher.",
+    };
+  }
+
   const provider = String(input.connection.provider).toUpperCase();
   if (provider !== "OUTLOOK" && provider !== "GMAIL") {
     return {
@@ -74,16 +83,6 @@ export function assertUserMaySendAsConnection(input: {
       statusCode: 409,
       code: "PROVIDER_UNSUPPORTED",
       message: "This mailbox provider does not support sending from ForgeOps.",
-    };
-  }
-
-  if (!userOwnsMailbox(input.userEmail, input.connection.email)) {
-    return {
-      ok: false,
-      statusCode: 403,
-      code: "MAILBOX_IDENTITY_MISMATCH",
-      message:
-        "You can only send email from a mailbox that matches your signed-in ForgeOps account.",
     };
   }
 
@@ -137,7 +136,7 @@ export function assertUserMaySendAsConnection(input: {
 }
 
 export function isConnectionSendableForUser(input: {
-  userEmail: string;
+  workspaceRole?: string | null;
   connection: {
     email: string;
     provider: InboxProvider | string;

@@ -177,8 +177,8 @@ export function ComposeEditor({
               padding: '10px 12px', borderRadius: 6, background: '#fff8e1', border: '1px solid #ffe082',
               color: '#6d4c00', fontSize: 13, lineHeight: 1.45,
             }}>
-              Connect and authorize your mailbox to send email from ForgeOps.
-              Your signed-in account must match an OAuth-connected mailbox with send permission.
+              Connect and authorize a monitored mailbox to send from ForgeOps.
+              The selected From mailbox must be OAuth-connected with send permission (e.g. Mail.Send).
             </div>
           ) : sendableMailboxes.length === 1 ? (
             <div style={{

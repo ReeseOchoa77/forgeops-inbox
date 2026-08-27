@@ -417,14 +417,6 @@ export const registerSendRoutes = async (
       );
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
-      const user = await app.services.prisma.user.findUnique({
-        where: { id: session.userId },
-        select: { email: true },
-      });
-      if (!user?.email) {
-        return reply.code(401).send({ message: "Authentication required" });
-      }
-
       const connections = await app.services.prisma.inboxConnection.findMany({
         where: { workspaceId: params.workspaceId },
         select: {
@@ -442,7 +434,7 @@ export const registerSendRoutes = async (
       const mailboxes = connections
         .filter((c) =>
           assertUserMaySendAsConnection({
-            userEmail: user.email,
+            workspaceRole: membership.role,
             connection: {
               email: c.email,
               provider: c.provider,
@@ -479,14 +471,6 @@ export const registerSendRoutes = async (
 
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
-      const user = await app.services.prisma.user.findUnique({
-        where: { id: session.userId },
-        select: { email: true },
-      });
-      if (!user?.email) {
-        return reply.code(401).send({ message: "Authentication required" });
-      }
-
       const connection = await app.services.prisma.inboxConnection.findFirst({
         where: { id: params.connectionId, workspaceId: params.workspaceId },
         select: {
@@ -502,7 +486,7 @@ export const registerSendRoutes = async (
       if (!connection) return reply.code(404).send({ message: "Connection not found" });
 
       const sendAuth = assertUserMaySendAsConnection({
-        userEmail: user.email,
+        workspaceRole: membership.role,
         connection: {
           email: connection.email,
           provider: connection.provider,

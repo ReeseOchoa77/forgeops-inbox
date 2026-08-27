@@ -18,35 +18,43 @@ const baseConn = {
 };
 
 describe("sendable-mailbox authorization", () => {
-  it("allows send when user email matches connection and Mail.Send is granted", () => {
+  it("allows send for workspace MEMBER from any OAuth send-capable mailbox", () => {
     const result = assertUserMaySendAsConnection({
-      userEmail: "Ed@Tekstl.net",
+      workspaceRole: "MEMBER",
       connection: baseConn,
     });
     expect(result.ok).toBe(true);
     expect(
       isConnectionSendableForUser({
-        userEmail: "ed@tekstl.net",
+        workspaceRole: "ADMIN",
         connection: baseConn,
       })
     ).toBe(true);
   });
 
-  it("403 when ADMIN tries another user's mailbox", () => {
+  it("allows ADMIN/OWNER to send as a monitored mailbox that is not their login email", () => {
     const result = assertUserMaySendAsConnection({
-      userEmail: "24rochoa@gmail.com",
+      workspaceRole: "ADMIN",
+      connection: baseConn,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("403 when VIEWER tries to send", () => {
+    const result = assertUserMaySendAsConnection({
+      workspaceRole: "VIEWER",
       connection: baseConn,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.statusCode).toBe(403);
-      expect(result.code).toBe("MAILBOX_IDENTITY_MISMATCH");
+      expect(result.code).toBe("SEND_ROLE_DENIED");
     }
   });
 
   it("409 when Outlook lacks Mail.Send despite refresh token", () => {
     const result = assertUserMaySendAsConnection({
-      userEmail: "ed@tekstl.net",
+      workspaceRole: "OWNER",
       connection: {
         ...baseConn,
         grantedScopes: ["https://graph.microsoft.com/Mail.Read", "offline_access"],
@@ -61,7 +69,7 @@ describe("sendable-mailbox authorization", () => {
 
   it("409 for REQUIRES_REAUTH", () => {
     const result = assertUserMaySendAsConnection({
-      userEmail: "ed@tekstl.net",
+      workspaceRole: "MEMBER",
       connection: { ...baseConn, status: "REQUIRES_REAUTH" },
     });
     expect(result.ok).toBe(false);
@@ -72,7 +80,7 @@ describe("sendable-mailbox authorization", () => {
 
   it("409 for tokenless / n8n-only mailbox", () => {
     const result = assertUserMaySendAsConnection({
-      userEmail: "ed@tekstl.net",
+      workspaceRole: "MEMBER",
       connection: { ...baseConn, hasRefreshToken: false },
     });
     expect(result.ok).toBe(false);
