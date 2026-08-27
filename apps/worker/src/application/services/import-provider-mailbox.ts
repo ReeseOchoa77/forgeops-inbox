@@ -129,6 +129,9 @@ export const importProviderMailbox = async (input: {
           }
 
           const existingMessageId = existingMessageIdMap.get(message.providerMessageId);
+          const providerSaysUnread = message.providerLabels.some(
+            (l) => l === "UNREAD" || l === "unread"
+          );
           const messageData = {
             gmailThreadId: message.providerThreadId,
             providerMessageId: message.providerMessageId,
@@ -147,7 +150,6 @@ export const importProviderMailbox = async (input: {
             bodyHtml: message.bodyHtml,
             labelIds: [...message.providerLabels].sort(),
             hasAttachments: message.hasAttachments,
-            isRead: !message.providerLabels.some(l => l === "UNREAD" || l === "unread"),
             isImportant: message.providerLabels.some(l => l === "IMPORTANT" || l === "important"),
             isSpam: message.providerLabels.some(l =>
               l === "SPAM" || l === "CATEGORY_PROMOTIONS" ||
@@ -160,9 +162,14 @@ export const importProviderMailbox = async (input: {
           };
 
           if (existingMessageId) {
+            // Do not overwrite ForgeOps isRead→true from provider sync.
+            // Only push unread from provider; user open owns marking read.
             await tx.emailMessage.update({
               where: { id: existingMessageId },
-              data: messageData
+              data: {
+                ...messageData,
+                ...(providerSaysUnread ? { isRead: false } : {}),
+              }
             });
             updatedMessageIds.push(existingMessageId);
             duplicateMessageIds.push(existingMessageId);
@@ -188,7 +195,8 @@ export const importProviderMailbox = async (input: {
               inboxConnectionId: input.inboxConnectionId,
               threadId: persistedThread.id,
               gmailMessageId: message.providerMessageId,
-              ...messageData
+              ...messageData,
+              isRead: !providerSaysUnread,
             }
           });
 

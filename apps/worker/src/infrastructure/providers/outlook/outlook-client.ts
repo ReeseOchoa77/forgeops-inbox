@@ -441,7 +441,7 @@ const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): Outloo
     folderLabels: buildFolderLabels(msg, folderMap),
     sentAt,
     receivedAt,
-    isRead: msg.isRead ?? true,
+    isRead: msg.isRead === false ? false : msg.isRead === true ? true : false,
     importance: msg.importance ?? null
   };
 };
