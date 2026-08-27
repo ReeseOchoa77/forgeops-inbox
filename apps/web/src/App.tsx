@@ -48,6 +48,7 @@ const PAGE_TITLES: Record<Page, string> = {
   'message-detail': 'Message',
   review: 'Email Review',
   tasks: 'Tasks',
+  calendar: 'Calendar',
   jobs: 'Jobs',
   'job-detail': 'Job Detail',
   'outlook-folders': 'Job Discovery',
