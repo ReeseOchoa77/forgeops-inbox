@@ -398,6 +398,25 @@ export const api = {
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/historical-imports`
     ),
 
+  getUnclassifiedCount: (workspaceId: string, connectionId: string) =>
+    request<{ eligibleCount: number }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/unclassified-count`
+    ),
+
+  requeueUnclassified: (
+    workspaceId: string,
+    connectionId: string,
+    body?: { limit?: number }
+  ) =>
+    request<{
+      eligibleCount: number
+      enqueuedCount: number
+      skippedCount: number
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/requeue-unclassified`,
+      { method: 'POST', body: JSON.stringify(body ?? {}) }
+    ),
+
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;
     searchIn?: 'all' | 'sender';

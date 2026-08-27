@@ -17,6 +17,8 @@ import {
   type InboxAnalysisResult,
   type InboxSyncJobPayload,
   type InboxSyncResult,
+  type MailboxClassifyJobPayload,
+  type MailboxClassifyJobResult,
   type MailboxHistoricalImportJobPayload,
   type MailboxHistoricalImportJobResult,
 } from "@forgeops/shared";
@@ -127,6 +129,12 @@ export const buildServer = async () => {
     MailboxHistoricalImportJobPayload,
     MailboxHistoricalImportJobResult
   >(QueueNames.MAILBOX_HISTORICAL_IMPORT, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const mailboxClassifyQueue = new Queue<
+    MailboxClassifyJobPayload,
+    MailboxClassifyJobResult
+  >(QueueNames.MAILBOX_CLASSIFY, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -293,6 +301,7 @@ export const buildServer = async () => {
     inboxAnalysisQueueEvents,
       attachmentIngestQueue,
       mailboxHistoricalImportQueue,
+      mailboxClassifyQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -413,6 +422,7 @@ export const buildServer = async () => {
     await inboxSyncQueueEvents.close();
     await inboxSyncQueue.close();
     await mailboxHistoricalImportQueue.close();
+    await mailboxClassifyQueue.close();
     await attachmentIngestQueue.close();
     await redis.quit();
     await prisma.$disconnect();

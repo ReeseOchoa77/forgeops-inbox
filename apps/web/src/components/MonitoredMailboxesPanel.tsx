@@ -94,6 +94,7 @@ export function MonitoredMailboxesPanel({
     Record<string, MailboxHistoricalImportStatus>
   >({})
   const [importError, setImportError] = useState<string | null>(null)
+  const [requeueBusyId, setRequeueBusyId] = useState<string | null>(null)
 
   // Resume any in-flight imports when the panel loads / mailboxes change.
   useEffect(() => {
@@ -245,6 +246,37 @@ export function MonitoredMailboxesPanel({
     }
   }
 
+  const requeueUnclassified = async (c: ConnectionSummary) => {
+    if (c.ingestionSource !== 'NATIVE') return
+    setRequeueBusyId(c.id)
+    try {
+      const { eligibleCount } = await api.getUnclassifiedCount(workspaceId, c.id)
+      if (eligibleCount === 0) {
+        alert('No unclassified emails for this mailbox.')
+        return
+      }
+      const ok = window.confirm(
+        `Queue native classification for ${eligibleCount} unclassified email${
+          eligibleCount === 1 ? '' : 's'
+        }? (max 250 per run)`
+      )
+      if (!ok) return
+      const result = await api.requeueUnclassified(workspaceId, c.id, {
+        limit: Math.min(250, eligibleCount),
+      })
+      alert(
+        `${result.enqueuedCount} email${result.enqueuedCount === 1 ? '' : 's'} queued for classification` +
+          (result.skippedCount > 0
+            ? ` (${result.skippedCount} already in flight)`
+            : '')
+      )
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to queue classification')
+    } finally {
+      setRequeueBusyId(null)
+    }
+  }
+
   if (connections.length === 0) {
     return (
       <div>
@@ -334,6 +366,20 @@ export function MonitoredMailboxesPanel({
                       >
                         Import Previous Emails
                       </button>
+                      {c.ingestionSource === 'NATIVE' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: 10, padding: '2px 8px' }}
+                          disabled={requeueBusyId === c.id}
+                          title="Queue native classification for emails that have no Classification row"
+                          onClick={() => void requeueUnclassified(c)}
+                        >
+                          {requeueBusyId === c.id
+                            ? 'Queuing…'
+                            : 'Classify Unclassified Emails'}
+                        </button>
+                      )}
                       {c.nativeListeningEnabled ? (
                         <button
                           type="button"

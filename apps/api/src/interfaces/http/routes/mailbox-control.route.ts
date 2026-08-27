@@ -11,6 +11,12 @@ import {
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { enqueueHistoricalImportJob } from "../../../application/services/enqueue-historical-import.js";
 import {
+  REQUEUE_UNCLASSIFIED_MAX_LIMIT,
+  RequeueUnclassifiedError,
+  countUnclassifiedNativeMessages,
+  requeueUnclassifiedNativeMessages,
+} from "../../../application/services/requeue-unclassified-native.js";
+import {
   MONITORED_MAILBOX_CREATE_DEFAULTS,
   resolveMonitoredMailboxRegistration,
 } from "../../../application/services/register-monitored-mailbox.js";
@@ -87,6 +93,17 @@ const historicalImportBodySchema = z
       }
     }
   });
+
+const requeueUnclassifiedBodySchema = z
+  .object({
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(REQUEUE_UNCLASSIFIED_MAX_LIMIT)
+      .optional(),
+  })
+  .strict();
 
 const registerMonitoredMailboxBodySchema = z
   .object({
@@ -524,6 +541,87 @@ export const registerMailboxControlRoutes = async (
       });
 
       return reply.send({ imports: rows.map(serializeHistoricalImport) });
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/unclassified-count",
+    async (request, reply) => {
+      const params = connectionParamsSchema.parse(request.params);
+      const access = await requireAdminMembership(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!access) return;
+
+      if (!hasMinRole(access.membership.role, "ADMIN")) {
+        return reply
+          .code(403)
+          .send({ message: "ADMIN or OWNER role required" });
+      }
+
+      try {
+        const eligibleCount = await countUnclassifiedNativeMessages({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.connectionId,
+        });
+        return reply.send({ eligibleCount });
+      } catch (error) {
+        if (error instanceof RequeueUnclassifiedError) {
+          const status = error.code === "CONNECTION_NOT_FOUND" ? 404 : 409;
+          return reply.code(status).send({ message: error.message });
+        }
+        throw error;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/requeue-unclassified",
+    async (request, reply) => {
+      const params = connectionParamsSchema.parse(request.params);
+      const access = await requireAdminMembership(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!access) return;
+
+      if (!hasMinRole(access.membership.role, "ADMIN")) {
+        return reply
+          .code(403)
+          .send({ message: "ADMIN or OWNER role required" });
+      }
+
+      const body = requeueUnclassifiedBodySchema.parse(request.body ?? {});
+
+      try {
+        const result = await requeueUnclassifiedNativeMessages({
+          prisma: app.services.prisma,
+          queue: app.services.mailboxClassifyQueue,
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.connectionId,
+          ...(body.limit != null ? { limit: body.limit } : {}),
+          initiatedBy: access.session.userId,
+        });
+        request.log.info({
+          event: "requeue-unclassified-native",
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.connectionId,
+          ...result,
+        });
+        return reply.code(202).send(result);
+      } catch (error) {
+        if (error instanceof RequeueUnclassifiedError) {
+          const status = error.code === "CONNECTION_NOT_FOUND" ? 404 : 409;
+          return reply.code(status).send({ message: error.message });
+        }
+        throw error;
+      }
     }
   );
 

@@ -34,6 +34,10 @@ declare module "fastify" {
         import("@forgeops/shared").MailboxHistoricalImportJobPayload,
         import("@forgeops/shared").MailboxHistoricalImportJobResult
       >;
+      mailboxClassifyQueue: Queue<
+        import("@forgeops/shared").MailboxClassifyJobPayload,
+        import("@forgeops/shared").MailboxClassifyJobResult
+      >;
       googleOAuthService: GoogleOAuthService;
       providerRegistry: ProviderRegistry;
       sessionStore: RedisSessionStore;

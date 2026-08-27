@@ -539,6 +539,22 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           {showBusinessChrome && m.classification && (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
           )}
+          {showBusinessChrome && !m.classification && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 10,
+                background: '#fff8e1',
+                color: '#f57f17',
+                whiteSpace: 'nowrap',
+              }}
+              title="No Classification row yet — EmailMessage.mailboxCategory alone is not trustworthy"
+            >
+              Unclassified
+            </span>
+          )}
           {showBusinessChrome && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
           )}
@@ -678,7 +694,22 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         <td style={{ padding: '7px 12px' }}>
           {m.classification ? (
             <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
-          ) : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
+          ) : (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 10,
+                background: '#fff8e1',
+                color: '#f57f17',
+                whiteSpace: 'nowrap',
+              }}
+              title="No Classification row yet"
+            >
+              Unclassified
+            </span>
+          )}
         </td>
       )}
       {showBusinessChrome && !isTablet && (
