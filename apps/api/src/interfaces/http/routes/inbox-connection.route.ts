@@ -8,6 +8,7 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import {
   assertTargetedMailboxEmailMatch,
   buildAuthorizationFields,
+  canStartInboxAuthorization,
   validateAuthorizeExistingTarget,
 } from "../../../application/services/inbox-authorization-status.js";
 import {
@@ -917,9 +918,9 @@ export const registerInboxConnectionRoutes = async (
 
   /**
    * Authorize / upgrade an existing Outlook InboxConnection via Microsoft OAuth.
-   * Used for tokenless (n8n) mailboxes and CONNECTED mailboxes that need
-   * incremental scopes such as Mail.Send — updates the SAME connection id.
-   * Does not replace reconnect — REQUIRES_REAUTH must use /reconnect.
+   * Used for tokenless (n8n) mailboxes, DISCONNECTED reconnects, and CONNECTED
+   * mailboxes that need incremental scopes such as Mail.Send — updates the SAME
+   * connection id. Does not replace reconnect — REQUIRES_REAUTH must use /reconnect.
    */
   app.post(
     "/api/v1/workspaces/:workspaceId/inbox-connections/:id/authorize",
@@ -943,7 +944,7 @@ export const registerInboxConnectionRoutes = async (
         });
       }
 
-      if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      if (!canStartInboxAuthorization(membership.role)) {
         return reply.code(403).send({
           message: "ADMIN or OWNER role required"
         });
@@ -1043,7 +1044,7 @@ export const registerInboxConnectionRoutes = async (
         });
       }
 
-      if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      if (!canStartInboxAuthorization(membership.role)) {
         return reply.code(403).send({
           message: "ADMIN or OWNER role required"
         });

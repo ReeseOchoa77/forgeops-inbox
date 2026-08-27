@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   assertTargetedMailboxEmailMatch,
   buildAuthorizationFields,
+  canStartInboxAuthorization,
   deriveAuthorizationStatus,
   validateAuthorizeExistingTarget,
   wrongMailboxAuthorizationError,
@@ -63,6 +64,16 @@ describe("deriveAuthorizationStatus", () => {
         hasRefreshToken: true,
       })
     ).toBe("REAUTHORIZATION_REQUIRED");
+  });
+
+  it("DISCONNECTED Outlook without refresh token → REQUIRED (authorize path)", () => {
+    expect(
+      deriveAuthorizationStatus({
+        provider: "OUTLOOK",
+        status: "DISCONNECTED",
+        hasRefreshToken: false,
+      })
+    ).toBe("REQUIRED");
   });
 
   it("does not collapse REQUIRED and REAUTHORIZATION_REQUIRED", () => {
@@ -183,6 +194,33 @@ describe("validateAuthorizeExistingTarget", () => {
       expect(result.statusCode).toBe(409);
       expect(result.message).toMatch(/reconnect/i);
     }
+  });
+
+  it("allows Outlook DISCONNECTED so OAuth can revive the same connection", () => {
+    expect(
+      validateAuthorizeExistingTarget({
+        provider: "OUTLOOK",
+        status: "DISCONNECTED",
+      })
+    ).toEqual({ ok: true });
+  });
+
+  it("allows Outlook ERROR for authorize/reconnect-via-authorize", () => {
+    expect(
+      validateAuthorizeExistingTarget({ provider: "OUTLOOK", status: "ERROR" })
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("canStartInboxAuthorization", () => {
+  it("allows OWNER and ADMIN", () => {
+    expect(canStartInboxAuthorization("OWNER")).toBe(true);
+    expect(canStartInboxAuthorization("ADMIN")).toBe(true);
+  });
+
+  it("rejects MEMBER and other roles", () => {
+    expect(canStartInboxAuthorization("MEMBER")).toBe(false);
+    expect(canStartInboxAuthorization("VIEWER")).toBe(false);
   });
 });
 

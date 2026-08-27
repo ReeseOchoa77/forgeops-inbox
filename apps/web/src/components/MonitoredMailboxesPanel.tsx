@@ -8,6 +8,7 @@ import {
 import {
   mailboxAuthorizationLabel,
   mailboxAuthorizationTone,
+  mailboxUsesReconnectFlow,
   needsSendingAuthorization,
 } from '../mailbox-authorization-display'
 import {
@@ -295,14 +296,14 @@ export function MonitoredMailboxesPanel({
     )
   }
 
-  const visibleConnections = connections.filter((c) => c.status !== 'DISCONNECTED')
+  const visibleConnections = connections
 
   if (visibleConnections.length === 0) {
     return (
       <div>
         <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px' }}>
-          No active monitored mailboxes.
-          {canManage ? ' Add or re-authorize a mailbox to monitor email again.' : ''}
+          No monitored mailboxes yet.
+          {canManage ? ' Add a mailbox to start monitoring email.' : ''}
         </p>
         {canManage && onAddMailbox && (
           <button type="button" className="btn btn-sm btn-primary" onClick={onAddMailbox}>
@@ -326,6 +327,11 @@ export function MonitoredMailboxesPanel({
           const lastActivity =
             c.lastProcessedAt || c.lastReceivedAt || c.lastSyncedAt || null
           const mailboxImport = importsByConnection[c.id]
+          const isDisconnected = c.status === 'DISCONNECTED'
+          const useReconnect = mailboxUsesReconnectFlow({
+            status: c.status,
+            authorizationStatus: c.authorizationStatus,
+          })
 
           return (
             <div
@@ -342,10 +348,11 @@ export function MonitoredMailboxesPanel({
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{c.email}</div>
                   <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
                     {providerLabel(c.provider)}
+                    {isDisconnected ? ' · Disconnected' : ''}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                  {canManage && (
+                  {canManage && !isDisconnected && (
                     <>
                       <button
                         type="button"
@@ -439,11 +446,12 @@ export function MonitoredMailboxesPanel({
                         {actionLoading ? 'Starting…' : 'Authorize'}
                       </button>
                     )}
-                  {needsSendingAuthorization({
-                    provider: c.provider,
-                    authorizationStatus: c.authorizationStatus,
-                    emailSending: c.capabilities.emailSending,
-                  }) && (
+                  {!isDisconnected &&
+                    needsSendingAuthorization({
+                      provider: c.provider,
+                      authorizationStatus: c.authorizationStatus,
+                      emailSending: c.capabilities.emailSending,
+                    }) && (
                     <button
                       type="button"
                       className="btn btn-sm btn-primary"
@@ -454,8 +462,8 @@ export function MonitoredMailboxesPanel({
                       {actionLoading ? 'Starting…' : 'Authorize sending'}
                     </button>
                   )}
-                  {(c.authorizationStatus === 'REAUTHORIZATION_REQUIRED' ||
-                    c.authorizationStatus === 'CONNECTED') && (
+                  {(useReconnect ||
+                    (!isDisconnected && c.authorizationStatus === 'CONNECTED')) && (
                     <button
                       type="button"
                       className="btn btn-sm"
@@ -466,7 +474,7 @@ export function MonitoredMailboxesPanel({
                       {actionLoading ? 'Starting…' : 'Reauthorize'}
                     </button>
                   )}
-                  {isOwner && c.counts.messages > 0 && (
+                  {isOwner && !isDisconnected && c.counts.messages > 0 && (
                     <button
                       type="button"
                       className="btn btn-sm btn-danger"
@@ -477,7 +485,7 @@ export function MonitoredMailboxesPanel({
                       {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
                     </button>
                   )}
-                  {canManage && onRemove && (
+                  {canManage && onRemove && !isDisconnected && (
                     <button
                       type="button"
                       className="btn btn-sm btn-danger"

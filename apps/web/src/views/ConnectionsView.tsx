@@ -88,7 +88,7 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
     }
   }
 
-  const activeConnections = connections.filter(c => c.status !== 'DISCONNECTED')
+  const visibleConnections = connections
 
   return (
     <div>
@@ -106,8 +106,9 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
         </div>
       )}
 
-      {activeConnections.map(c => {
+      {visibleConnections.map(c => {
         const actionLoading = actionState.type === 'loading' && actionState.connectionId === c.id
+        const isDisconnected = c.status === 'DISCONNECTED'
         return (
           <div key={c.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -139,11 +140,12 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
                   {actionLoading ? 'Starting…' : 'Authorize Outlook'}
                 </button>
               )}
-              {needsSendingAuthorization({
-                provider: c.provider,
-                authorizationStatus: c.authorizationStatus,
-                emailSending: c.capabilities.emailSending,
-              }) && (
+              {!isDisconnected &&
+                needsSendingAuthorization({
+                  provider: c.provider,
+                  authorizationStatus: c.authorizationStatus,
+                  emailSending: c.capabilities.emailSending,
+                }) && (
                 <button
                   className="btn btn-sm btn-primary"
                   disabled={actionLoading}
@@ -162,17 +164,19 @@ export function ConnectionsView({ workspaceId, connections, onRefresh }: Props) 
                   {actionLoading ? 'Starting…' : 'Reconnect'}
                 </button>
               )}
-              <button className="btn btn-sm btn-outline"
-                disabled={actionLoading}
-                onClick={() => handleDisconnect(c.id)}>
-                Disconnect
-              </button>
+              {!isDisconnected && (
+                <button className="btn btn-sm btn-outline"
+                  disabled={actionLoading}
+                  onClick={() => handleDisconnect(c.id)}>
+                  Disconnect
+                </button>
+              )}
             </div>
           </div>
         )
       })}
 
-      {activeConnections.length === 0 && (
+      {visibleConnections.length === 0 && (
         <div className="empty-state" style={{ padding: 28 }}>
           <div className="empty-icon">&#128233;</div>
           <h3>No inboxes connected</h3>

@@ -100,8 +100,9 @@ export function wrongMailboxAuthorizationError(expectedEmail: string): string {
 
 /**
  * Validate that an InboxConnection can be targeted by the authorize-existing flow.
- * Allowed for tokenless (REQUIRED) and CONNECTED Outlook mailboxes that need
- * incremental scopes (e.g. Mail.Send). Reconnect remains the path for REQUIRES_REAUTH.
+ * Allowed for tokenless (REQUIRED), DISCONNECTED (reconnect via OAuth), and CONNECTED
+ * Outlook mailboxes that need incremental scopes (e.g. Mail.Send).
+ * Reconnect remains the path for REQUIRES_REAUTH.
  */
 export function validateAuthorizeExistingTarget(connection: {
   provider: InboxProvider | string;
@@ -127,15 +128,14 @@ export function validateAuthorizeExistingTarget(connection: {
     };
   }
 
-  if (connection.status === "DISCONNECTED") {
-    return {
-      ok: false,
-      statusCode: 400,
-      message: "Disconnected mailbox connections cannot be authorized",
-    };
-  }
-
+  // DISCONNECTED is allowed: OAuth callback updates the same row → ACTIVE.
+  // ACTIVE / PAUSED / ERROR remain allowed for tokenless or scope-upgrade authorize.
   return { ok: true };
+}
+
+/** Authorize / reconnect start requires ADMIN or OWNER (mirrors route gate). */
+export function canStartInboxAuthorization(role: string): boolean {
+  return role === "OWNER" || role === "ADMIN";
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   memberMailboxStateLabel,
   normalizeMailboxEmail,
 } from '../monitored-mailbox-eligibility'
+import { mailboxUsesReconnectFlow } from '../mailbox-authorization-display'
 
 type ProviderChoice = 'outlook' | 'gmail'
 
@@ -60,7 +61,12 @@ export function AddMonitoredMailboxModal({
   if (!open) return null
 
   const startAuthorizeExisting = (conn: ConnectionSummary) => {
-    if (conn.authorizationStatus === 'REAUTHORIZATION_REQUIRED') {
+    if (
+      mailboxUsesReconnectFlow({
+        status: conn.status,
+        authorizationStatus: conn.authorizationStatus,
+      })
+    ) {
       onReconnect(conn)
     } else {
       onAuthorize(conn)
@@ -84,7 +90,14 @@ export function AddMonitoredMailboxModal({
 
       onRegistered()
 
-      if (result.alreadyExists && result.connection.authorizationStatus === 'CONNECTED') {
+      if (
+        result.alreadyExists &&
+        result.connection.authorizationStatus === 'CONNECTED' &&
+        !mailboxUsesReconnectFlow({
+          status: result.connection.status,
+          authorizationStatus: result.connection.authorizationStatus,
+        })
+      ) {
         onClose()
         return
       }
@@ -104,13 +117,18 @@ export function AddMonitoredMailboxModal({
         counts: { messages: 0, threads: 0 },
       }
 
-      if (summary.authorizationStatus === 'REAUTHORIZATION_REQUIRED') {
-        onReconnect(summary)
-      } else if (summary.authorizationStatus !== 'CONNECTED') {
-        onAuthorize(summary)
-      } else {
+      if (
+        summary.authorizationStatus === 'CONNECTED' &&
+        !mailboxUsesReconnectFlow({
+          status: summary.status,
+          authorizationStatus: summary.authorizationStatus,
+        })
+      ) {
         onClose()
+        return
       }
+
+      startAuthorizeExisting(summary)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to register mailbox')
       setBusy(false)
@@ -250,9 +268,15 @@ export function AddMonitoredMailboxModal({
 
             {existingSameProvider && (
               <p style={{ fontSize: 12, color: '#f57f17', margin: '0 0 12px', lineHeight: 1.4 }}>
-                {existingSameProvider.authorizationStatus === 'CONNECTED'
+                {existingSameProvider.authorizationStatus === 'CONNECTED' &&
+                !mailboxUsesReconnectFlow({
+                  status: existingSameProvider.status,
+                  authorizationStatus: existingSameProvider.authorizationStatus,
+                })
                   ? 'This mailbox is already connected. Use Reauthorize if scopes need refreshing.'
-                  : 'This mailbox is already registered. Continue to authorize (no duplicate will be created).'}
+                  : existingSameProvider.status === 'DISCONNECTED'
+                    ? 'This mailbox is disconnected. Continue to authorize again (no duplicate will be created).'
+                    : 'This mailbox is already registered. Continue to authorize (no duplicate will be created).'}
               </p>
             )}
           </>
@@ -262,7 +286,11 @@ export function AddMonitoredMailboxModal({
           <button type="button" className="btn btn-sm" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          {existingSameProvider?.authorizationStatus === 'CONNECTED' ? (
+          {existingSameProvider?.authorizationStatus === 'CONNECTED' &&
+          !mailboxUsesReconnectFlow({
+            status: existingSameProvider.status,
+            authorizationStatus: existingSameProvider.authorizationStatus,
+          }) ? (
             <button
               type="button"
               className="btn btn-sm btn-primary"
@@ -284,7 +312,15 @@ export function AddMonitoredMailboxModal({
               {busy
                 ? 'Starting…'
                 : existingSameProvider
-                  ? 'Authorize existing'
+                  ? existingSameProvider.status === 'DISCONNECTED'
+                    ? 'Authorize disconnected'
+                    : mailboxUsesReconnectFlow({
+                          status: existingSameProvider.status,
+                          authorizationStatus:
+                            existingSameProvider.authorizationStatus,
+                        })
+                      ? 'Reauthorize existing'
+                      : 'Authorize existing'
                   : 'Authorize with OAuth'}
             </button>
           )}

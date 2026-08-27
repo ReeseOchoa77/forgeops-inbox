@@ -31,6 +31,17 @@ export function mailboxAuthorizationTone(input: {
   }
 }
 
+/** Prefer reconnect OAuth for broken auth; authorize for tokenless / DISCONNECTED / scope upgrade. */
+export function mailboxUsesReconnectFlow(input: {
+  status: string
+  authorizationStatus: AuthorizationStatus
+}): boolean {
+  return (
+    input.status === 'REQUIRES_REAUTH' ||
+    input.authorizationStatus === 'REAUTHORIZATION_REQUIRED'
+  )
+}
+
 /** CONNECTED Outlook mailbox that can read but not send — needs incremental Mail.Send consent. */
 export function needsSendingAuthorization(input: {
   provider: string

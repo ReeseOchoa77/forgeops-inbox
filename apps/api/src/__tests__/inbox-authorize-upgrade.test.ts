@@ -20,6 +20,7 @@ function createUpgradeStore(seed: {
     provider: "OUTLOOK" | "GMAIL";
     status: string;
     ingestionSource: string;
+    nativeListeningEnabled?: boolean;
     encryptedRefreshToken: string | null;
     encryptedAccessToken: string | null;
   };
@@ -30,7 +31,15 @@ function createUpgradeStore(seed: {
     inboxConnectionId: string | null;
   };
 }) {
-  const connections = new Map([[seed.connection.id, { ...seed.connection }]]);
+  const connections = new Map([
+    [
+      seed.connection.id,
+      {
+        nativeListeningEnabled: false,
+        ...seed.connection,
+      },
+    ],
+  ]);
   const mailboxes = new Map([[seed.mailbox.id, { ...seed.mailbox, workspaceId: seed.workspaceId }]]);
   let createCount = 0;
 
@@ -69,14 +78,14 @@ function createUpgradeStore(seed: {
         throw new Error(mismatch);
       }
 
-      // Never create on targeted upgrade
+      // Never create on targeted upgrade; preserve processing config fields.
       const updated = {
         ...target,
         email: normalizeEmail(input.microsoftEmail),
         encryptedRefreshToken: input.encryptedRefreshToken,
         encryptedAccessToken: input.encryptedAccessToken,
         status: "ACTIVE",
-        // ingestionSource preserved
+        // ingestionSource + nativeListeningEnabled preserved (not in update data)
       };
       connections.set(target.id, updated);
 
@@ -386,5 +395,102 @@ describe("authorize-existing upgrade flow", () => {
       }),
       expect.objectContaining({ jobId: "attachment-ingest-msg_after" })
     );
+  });
+
+  it("DISCONNECTED mailbox can start authorize and OAuth reuses same connection", async () => {
+    expect(
+      validateAuthorizeExistingTarget({
+        provider: "OUTLOOK",
+        status: "DISCONNECTED",
+      })
+    ).toEqual({ ok: true });
+
+    const store = createUpgradeStore({
+      workspaceId,
+      connection: {
+        id: connectionId,
+        email: mailboxEmail,
+        provider: "OUTLOOK",
+        status: "DISCONNECTED",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: false,
+        encryptedRefreshToken: null,
+        encryptedAccessToken: null,
+      },
+      mailbox: {
+        id: "mb_1",
+        normalizedEmail: mailboxEmail,
+        provider: "OUTLOOK",
+        inboxConnectionId: connectionId,
+      },
+    });
+
+    const upgraded = await store.applySuccessfulUpgrade({
+      workspaceId,
+      connectionId,
+      microsoftEmail: mailboxEmail,
+      encryptedRefreshToken: "enc-refresh",
+      encryptedAccessToken: "enc-access",
+    });
+
+    expect(upgraded.id).toBe(connectionId);
+    expect(upgraded.status).toBe("ACTIVE");
+    expect(upgraded.ingestionSource).toBe("NATIVE");
+    expect(upgraded.nativeListeningEnabled).toBe(false);
+    expect(store.connections.size).toBe(1);
+    expect(store.createCount).toBe(0);
+  });
+
+  it("REQUIRES_REAUTH must use reconnect (authorize start rejected)", () => {
+    const result = validateAuthorizeExistingTarget({
+      provider: "OUTLOOK",
+      status: "REQUIRES_REAUTH",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.statusCode).toBe(409);
+    }
+  });
+
+  it("successful reconnect of REQUIRES_REAUTH preserves NATIVE listening settings", async () => {
+    const store = createUpgradeStore({
+      workspaceId,
+      connection: {
+        id: connectionId,
+        email: mailboxEmail,
+        provider: "OUTLOOK",
+        status: "REQUIRES_REAUTH",
+        ingestionSource: "NATIVE",
+        nativeListeningEnabled: true,
+        encryptedRefreshToken: "stale-token",
+        encryptedAccessToken: "stale-access",
+      },
+      mailbox: {
+        id: "mb_1",
+        normalizedEmail: mailboxEmail,
+        provider: "OUTLOOK",
+        inboxConnectionId: connectionId,
+      },
+    });
+
+    const upgraded = await store.applySuccessfulUpgrade({
+      workspaceId,
+      connectionId,
+      microsoftEmail: mailboxEmail,
+      encryptedRefreshToken: "fresh-refresh",
+      encryptedAccessToken: "fresh-access",
+    });
+
+    expect(upgraded.id).toBe(connectionId);
+    expect(upgraded.status).toBe("ACTIVE");
+    expect(upgraded.ingestionSource).toBe("NATIVE");
+    expect(upgraded.nativeListeningEnabled).toBe(true);
+    expect(store.connections.size).toBe(1);
+  });
+
+  it("ACTIVE remains supported for authorize-existing", () => {
+    expect(
+      validateAuthorizeExistingTarget({ provider: "OUTLOOK", status: "ACTIVE" })
+    ).toEqual({ ok: true });
   });
 });

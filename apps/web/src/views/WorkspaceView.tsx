@@ -152,7 +152,11 @@ export function WorkspaceView({
   if (loading) return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading workspace...</p>
 
   const activeConnections = connections.filter((c) => c.status !== 'DISCONNECTED')
-  const needsAuthCount = activeConnections.filter(c => c.authorizationStatus === 'REQUIRED').length
+  const needsAuthCount = connections.filter(
+    (c) =>
+      c.authorizationStatus === 'REQUIRED' ||
+      c.authorizationStatus === 'REAUTHORIZATION_REQUIRED'
+  ).length
   const tabs: Array<{ id: WsTab; label: string }> = [
     { id: 'mailboxes', label: 'Monitored Mailboxes' },
     { id: 'team', label: 'Team Access' },
@@ -253,7 +257,7 @@ export function WorkspaceView({
           <AddMonitoredMailboxModal
             workspaceId={workspaceId}
             members={members}
-            connections={activeConnections}
+            connections={connections}
             open={addMailboxOpen}
             onClose={() => setAddMailboxOpen(false)}
             onAuthorize={(c) => void handleAuthorize(c)}

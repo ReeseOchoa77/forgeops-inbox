@@ -72,6 +72,24 @@ describe('monitored mailbox eligibility', () => {
     expect(findExistingMemberConnection('ed@tekstl.net', 'gmail', connections)?.id).toBe('c1')
     expect(connectionsForMemberEmail('ED@TEKSTL.NET', connections)).toHaveLength(1)
   })
+
+  it('finds DISCONNECTED connections so Add Mailbox can re-authorize without duplicates', () => {
+    const connections = [
+      conn({
+        id: 'c_disc',
+        email: 'ed@tekstl.net',
+        provider: 'outlook',
+        status: 'DISCONNECTED',
+        authorizationStatus: 'REQUIRED',
+      }),
+    ]
+    expect(findExistingMemberConnection('ed@tekstl.net', 'outlook', connections)?.id).toBe(
+      'c_disc'
+    )
+    expect(deriveMemberMailboxState('ed@tekstl.net', connections)).toBe(
+      'authorization_required'
+    )
+  })
 })
 
 describe('workspace team access placement', () => {
