@@ -68,6 +68,7 @@ import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
+import { registerDocumentLibraryRoutes } from "./routes/document-library.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -362,6 +363,7 @@ export const buildServer = async () => {
   await registerPlatformAdminRoutes(app);
   await registerReferenceDataRoutes(app);
   await registerDocumentImportRoutes(app);
+  await registerDocumentLibraryRoutes(app);
   await registerClassificationEngineRoutes(app);
   await registerFolderDiscoveryRoutes(app);
   await registerSenderEvidenceRoutes(app);

@@ -738,6 +738,7 @@ model Job {
   assignedEmails        EmailMessage[] @relation("MessageJob")
   documentFolders       JobDocumentFolder[]
   files                 JobFile[]
+  knowledgeDocuments    KnowledgeDocument[] @relation("JobKnowledgeDocuments")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -1007,19 +1008,29 @@ model KnowledgeDocument {
   mimeType         String
   status           DocumentStatus @default(UPLOADED)
   documentType     DocumentType   @default(OTHER)
+  /// COMPANY_UPLOAD | JOB_UPLOAD | IMPORT
+  sourceType       String         @default("COMPANY_UPLOAD")
+  linkedJobId      String?
   storageReference String?
   extractedText    String?
+  /// Structured extract (spreadsheet sheets/tables, parse metadata).
   extractedJson    Json?
+  /// NOT_REQUESTED | PENDING | READY | FAILED | SKIPPED
+  aiAnalysisStatus String         @default("NOT_REQUESTED")
+  aiAnalysisJson   Json?
   fileSize         Int?
   createdBy        String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  linkedJob        Job?           @relation("JobKnowledgeDocuments", fields: [linkedJobId], references: [id], onDelete: SetNull)
   createdByUser    User?          @relation("DocumentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   importRuns       ImportRun[]
 
   @@index([workspaceId, documentType])
   @@index([workspaceId, status])
+  @@index([workspaceId, linkedJobId])
+  @@index([linkedJobId])
 }
 
 model ImportRun {

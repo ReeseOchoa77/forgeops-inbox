@@ -607,13 +607,33 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
       select: {
-        id: true, filename: true, mimeType: true, status: true, documentType: true,
-        fileSize: true, createdAt: true, createdBy: true,
-        createdByUser: { select: { email: true, name: true } }
-      }
+        id: true,
+        filename: true,
+        mimeType: true,
+        status: true,
+        documentType: true,
+        sourceType: true,
+        linkedJobId: true,
+        aiAnalysisStatus: true,
+        fileSize: true,
+        createdAt: true,
+        createdBy: true,
+        extractedText: true,
+        createdByUser: { select: { email: true, name: true } },
+        linkedJob: { select: { id: true, name: true, jobNumber: true } },
+      },
     });
 
-    return reply.send({ documents: docs });
+    return reply.send({
+      documents: docs.map(({ extractedText, createdByUser, ...d }) => ({
+        ...d,
+        extractedTextAvailable: Boolean(extractedText),
+        uploadedBy: createdByUser?.email ?? d.createdBy,
+        uploadedAt: d.createdAt,
+        processingStatus: d.status,
+        createdByUser,
+      })),
+    });
   });
 
   app.post("/api/v1/workspaces/:workspaceId/reference/documents", async (request, reply) => {

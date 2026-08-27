@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { SenderEvidenceView } from './SenderEvidenceView'
 import { DataImportView } from './DataImportView'
+import { api } from '../api'
 
 export type ReferenceDataTab =
   | 'customers'
@@ -105,6 +106,10 @@ export function ReferenceDataView({
   const [importText, setImportText] = useState('')
   const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([])
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+  const [docUploading, setDocUploading] = useState(false)
+  const [docUploadMsg, setDocUploadMsg] = useState('')
+  const [runDocAi, setRunDocAi] = useState(true)
+  const docFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (initialTab && isReferenceDataTab(initialTab)) {
@@ -204,6 +209,63 @@ export function ReferenceDataView({
 
       {tab === 'documents' && (
         <div style={{ marginBottom: 20 }}>
+          {!isViewer && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, margin: '0 0 4px', fontWeight: 600 }}>Upload Document</h3>
+              <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px', lineHeight: 1.45 }}>
+                Store the original file, extract text/tables, and optionally run AI analysis.
+                Supports PDF, DOCX, XLSX/XLS, CSV, TXT, JSON, and common images. Google Sheets is not a local file type — connect Drive later.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                <label className="btn btn-primary" style={{ cursor: docUploading ? 'wait' : 'pointer' }}>
+                  {docUploading ? 'Uploading…' : 'Choose File'}
+                  <input
+                    ref={docFileRef}
+                    type="file"
+                    disabled={docUploading}
+                    accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.json,.png,.jpg,.jpeg,.gif,.webp,.pptx,.rtf,.xml,.zip"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      setDocUploading(true)
+                      setDocUploadMsg('')
+                      setError('')
+                      try {
+                        const r = await api.uploadWorkspaceDocument(workspaceId, file, {
+                          runAiAnalysis: runDocAi,
+                        })
+                        setDocUploadMsg(
+                          `${r.document.filename}: ${r.document.processingStatus}` +
+                            (r.document.aiAnalysisStatus !== 'NOT_REQUESTED'
+                              ? ` · AI ${r.document.aiAnalysisStatus}`
+                              : '')
+                        )
+                        void load('documents')
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'Upload failed')
+                      } finally {
+                        setDocUploading(false)
+                        if (docFileRef.current) docFileRef.current.value = ''
+                      }
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={runDocAi}
+                    onChange={(e) => setRunDocAi(e.target.checked)}
+                  />
+                  Run AI analysis after extract
+                </label>
+              </div>
+              {docUploadMsg && (
+                <p style={{ fontSize: 12, color: '#2e7d32', margin: '10px 0 0' }}>{docUploadMsg}</p>
+              )}
+            </div>
+          )}
+
           <DataImportView workspaceId={workspaceId} userRole={userRole} embedded />
           <div style={{ marginTop: 20 }}>
             <h3 style={{ fontSize: 14, margin: '0 0 8px', fontWeight: 600 }}>Stored documents</h3>
@@ -211,28 +273,38 @@ export function ReferenceDataView({
               <p style={{ color: '#888', fontSize: 13 }}>Loading...</p>
             ) : items.length === 0 ? (
               <p style={{ color: '#aaa', fontSize: 12, margin: 0 }}>
-                No stored document records yet. Uploads above extract importable company data; processed files appear here when available.
+                No stored documents yet. Upload above to store originals and extraction status.
               </p>
             ) : (
               <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 400, WebkitOverflowScrolling: 'touch' as never }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 600 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720 }}>
                   <thead>
                     <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0 }}>
                       <th style={{ padding: '7px 10px' }}>Filename</th>
-                      <th style={{ padding: '7px 10px' }}>Type</th>
                       <th style={{ padding: '7px 10px' }}>Status</th>
+                      <th style={{ padding: '7px 10px' }}>AI</th>
+                      <th style={{ padding: '7px 10px' }}>Text</th>
+                      <th style={{ padding: '7px 10px' }}>Job</th>
                       <th style={{ padding: '7px 10px' }}>Size</th>
-                      <th style={{ padding: '7px 10px' }}>Created</th>
+                      <th style={{ padding: '7px 10px' }}>Uploaded</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map((item, i) => (
-                      <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <tr key={(item.id as string) ?? i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                         <td style={{ padding: '6px 10px' }}>{item.filename as string}</td>
-                        <td style={{ padding: '6px 10px', fontSize: 11 }}>{String(item.documentType ?? '').replace(/_/g, ' ')}</td>
-                        <td style={{ padding: '6px 10px' }}>{item.status as string}</td>
+                        <td style={{ padding: '6px 10px' }}>{String(item.processingStatus ?? item.status ?? '')}</td>
+                        <td style={{ padding: '6px 10px', fontSize: 11 }}>{String(item.aiAnalysisStatus ?? '—')}</td>
+                        <td style={{ padding: '6px 10px', fontSize: 11 }}>{item.extractedTextAvailable ? 'Yes' : 'No'}</td>
+                        <td style={{ padding: '6px 10px', fontSize: 11, color: '#666' }}>
+                          {item.linkedJob
+                            ? String((item.linkedJob as { jobNumber?: string; name?: string }).jobNumber
+                              ?? (item.linkedJob as { name?: string }).name
+                              ?? '')
+                            : '—'}
+                        </td>
                         <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{item.fileSize ? `${Math.round((item.fileSize as number) / 1024)} KB` : '—'}</td>
-                        <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(item.createdAt as string)}</td>
+                        <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(String(item.uploadedAt ?? item.createdAt ?? ''))}</td>
                       </tr>
                     ))}
                   </tbody>

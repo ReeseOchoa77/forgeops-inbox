@@ -435,7 +435,44 @@ export const registerJobFilesRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    return reply.code(201).send({ file: serializeFile(created) });
+    // Best-effort: also run Company/Job document extract pipeline for supported types.
+    let knowledgeDocumentId: string | null = null;
+    try {
+      const { ingestKnowledgeDocument } = await import(
+        "../../../application/services/document-library.service.js"
+      );
+      const { validateDocumentUpload } = await import(
+        "../../../application/services/document-content-extractor.js"
+      );
+      const canAnalyze = validateDocumentUpload({
+        filename,
+        mimeType,
+        sizeBytes,
+      });
+      if (canAnalyze.ok) {
+        const ingested = await ingestKnowledgeDocument({
+          prisma: app.services.prisma,
+          storage: app.services.attachmentStorage,
+          workspaceId,
+          userId: auth.userId,
+          filename,
+          mimeType,
+          buffer: fileBuffer,
+          linkedJobId: jobId,
+          sourceType: "JOB_UPLOAD",
+          runAiAnalysis: false,
+          existingStorageKey: storageKey,
+        });
+        knowledgeDocumentId = ingested.documentId;
+      }
+    } catch {
+      // Job file remains available even if analysis pipeline fails.
+    }
+
+    return reply.code(201).send({
+      file: serializeFile(created),
+      knowledgeDocumentId,
+    });
   });
 
   // Move / rename file

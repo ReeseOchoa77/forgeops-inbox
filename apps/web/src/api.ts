@@ -753,6 +753,39 @@ export const api = {
     return data.extraction as ExtractionResult;
   },
 
+  uploadWorkspaceDocument: async (
+    workspaceId: string,
+    file: File,
+    opts?: { linkedJobId?: string; runAiAnalysis?: boolean }
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (opts?.linkedJobId) form.append('linkedJobId', opts.linkedJobId);
+    if (opts?.runAiAnalysis) form.append('runAiAnalysis', 'true');
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/documents/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message ?? 'Upload failed');
+    }
+    return res.json() as Promise<{
+      document: {
+        id: string;
+        filename: string;
+        mimeType: string;
+        status: string;
+        processingStatus: string;
+        aiAnalysisStatus: string;
+        linkedJobId: string | null;
+        extractedTextAvailable: boolean;
+        sourceType: string;
+      };
+    }>;
+  },
+
   adminGetWorkspaces: () =>
     request<{ workspaces: AdminWorkspace[] }>('/admin/workspaces'),
 
