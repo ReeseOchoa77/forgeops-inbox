@@ -10,17 +10,28 @@ import {
 } from "../entity-selection/prompt.js";
 import {
   buildJsonObjectResponseParams,
-  responsesJsonObjectModeMentionsJson,
+  RESPONSES_JSON_OBJECT_INSTRUCTION,
+  responsesJsonObjectInputMentionsJson,
 } from "../openai/responses-json.js";
 import { buildSemanticSignalResponseCreateParams } from "../openai/semantic-signal-extractor.js";
-import { semanticSignalSystemPrompt } from "../semantic-signals/prompt.js";
 import {
   buildTaskExtractionUserPrompt,
   taskExtractionSystemPrompt,
 } from "../task-extraction/prompt.js";
 
-describe("Responses API json_object mode requires the word JSON", () => {
-  it("semantic stage instructions/input contain JSON", () => {
+function assertFinalJsonObjectRequest(params: {
+  text?: { format?: { type?: string } } | unknown;
+  input?: unknown;
+}): void {
+  expect(params.text).toEqual({ format: { type: "json_object" } });
+  expect(typeof params.input).toBe("string");
+  expect(String(params.input)).toMatch(/^Return ONLY valid JSON matching/);
+  expect(String(params.input)).toContain(RESPONSES_JSON_OBJECT_INSTRUCTION);
+  expect(responsesJsonObjectInputMentionsJson(params.input)).toBe(true);
+}
+
+describe("Responses API json_object mode: final request input must contain JSON", () => {
+  it("semantic final responses.create params put JSON in input", () => {
     const params = buildSemanticSignalResponseCreateParams("chat-latest", {
       normalizedSubject: "PO #1",
       senderName: "Jane",
@@ -38,79 +49,63 @@ describe("Responses API json_object mode requires the word JSON", () => {
       classificationInstructions: [],
       candidateLookupFailed: false,
     });
-    expect(params.text).toEqual({ format: { type: "json_object" } });
-    expect(
-      responsesJsonObjectModeMentionsJson({
-        instructions: String(params.instructions ?? ""),
-        input: params.input,
-      })
-    ).toBe(true);
-    expect(semanticSignalSystemPrompt).toMatch(/\bJSON\b/);
+    assertFinalJsonObjectRequest(params);
+    expect(String(params.input)).toContain("Subject: PO #1");
   });
 
-  it("subtype stage instructions/input contain JSON", () => {
+  it("subtype final responses.create params put JSON in input", () => {
+    const rawUser = buildBusinessSubtypeUserPrompt({
+      normalizedSubject: "Bid addendum",
+      senderEmail: "gc@example.com",
+      cleanBody: "See attached addendum.",
+      activeBusinessTypes: [],
+    });
+    expect(responsesJsonObjectInputMentionsJson(rawUser)).toBe(false);
+
     const params = buildJsonObjectResponseParams({
       model: "chat-latest",
       instructions: businessSubtypeSystemPrompt,
-      userInput: buildBusinessSubtypeUserPrompt({
-        normalizedSubject: "Bid addendum",
-        senderEmail: "gc@example.com",
-        cleanBody: "See attached addendum.",
-        activeBusinessTypes: [],
-      }),
+      userInput: rawUser,
     });
-    expect(params.text).toEqual({ format: { type: "json_object" } });
-    expect(
-      responsesJsonObjectModeMentionsJson({
-        instructions: params.instructions,
-        input: params.input,
-      })
-    ).toBe(true);
-    expect(businessSubtypeSystemPrompt).toMatch(/\bJSON\b/);
+    assertFinalJsonObjectRequest(params);
+    expect(String(params.input)).toContain("Subject: Bid addendum");
   });
 
-  it("entity stage instructions/input contain JSON", () => {
+  it("entity final responses.create params put JSON in input", () => {
+    const rawUser = buildEntitySelectionUserPrompt({
+      normalizedSubject: "Job update",
+      senderEmail: "a@b.com",
+      cleanBody: "Update on job 12.",
+      customerCandidates: [],
+      vendorCandidates: [],
+      jobCandidates: [],
+      candidateLookupFailed: false,
+    });
+    // JSON.stringify([]) in the user payload does not put the word "json" in input.
+    expect(responsesJsonObjectInputMentionsJson(rawUser)).toBe(false);
+
     const params = buildJsonObjectResponseParams({
       model: "chat-latest",
       instructions: entitySelectionSystemPrompt,
-      userInput: buildEntitySelectionUserPrompt({
-        normalizedSubject: "Job update",
-        senderEmail: "a@b.com",
-        cleanBody: "Update on job 12.",
-        customerCandidates: [],
-        vendorCandidates: [],
-        jobCandidates: [],
-        candidateLookupFailed: false,
-      }),
+      userInput: rawUser,
     });
-    expect(params.text).toEqual({ format: { type: "json_object" } });
-    expect(
-      responsesJsonObjectModeMentionsJson({
-        instructions: params.instructions,
-        input: params.input,
-      })
-    ).toBe(true);
-    expect(entitySelectionSystemPrompt).toMatch(/\bJSON\b/);
+    assertFinalJsonObjectRequest(params);
   });
 
-  it("task stage instructions/input contain JSON", () => {
+  it("task final responses.create params put JSON in input", () => {
+    const rawUser = buildTaskExtractionUserPrompt({
+      normalizedSubject: "Please review",
+      senderEmail: "a@b.com",
+      cleanBody: "Please review the drawings.",
+      containsActionRequest: true,
+    });
+    expect(responsesJsonObjectInputMentionsJson(rawUser)).toBe(false);
+
     const params = buildJsonObjectResponseParams({
       model: "chat-latest",
       instructions: taskExtractionSystemPrompt,
-      userInput: buildTaskExtractionUserPrompt({
-        normalizedSubject: "Please review",
-        senderEmail: "a@b.com",
-        cleanBody: "Please review the drawings.",
-        containsActionRequest: true,
-      }),
+      userInput: rawUser,
     });
-    expect(params.text).toEqual({ format: { type: "json_object" } });
-    expect(
-      responsesJsonObjectModeMentionsJson({
-        instructions: params.instructions,
-        input: params.input,
-      })
-    ).toBe(true);
-    expect(taskExtractionSystemPrompt).toMatch(/\bJSON\b/);
+    assertFinalJsonObjectRequest(params);
   });
 });

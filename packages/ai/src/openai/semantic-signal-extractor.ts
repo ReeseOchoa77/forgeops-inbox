@@ -11,6 +11,7 @@ import {
   type SemanticSignals,
 } from "../semantic-signals/types.js";
 import { withOpenAiResponsesDiagnostics } from "./openai-error-diagnostics.js";
+import { buildJsonObjectResponseParams } from "./responses-json.js";
 
 export type { ExtractSemanticSignalsInput };
 
@@ -23,21 +24,18 @@ export const SEMANTIC_SIGNAL_MAX_OUTPUT_TOKENS = 1500;
 /**
  * Build the OpenAI Responses API request for semantic extraction.
  * Intentionally omits `temperature` and `tools` so provider defaults match n8n.
+ * Uses shared json_object helper so final `input` contains the word JSON.
  */
 export function buildSemanticSignalResponseCreateParams(
   model: string,
   input: ExtractSemanticSignalsInput
 ): ResponseCreateParamsNonStreaming {
-  return {
+  return buildJsonObjectResponseParams({
     model,
     instructions: semanticSignalSystemPrompt,
-    input: buildSemanticSignalUserPrompt(input),
-    max_output_tokens: SEMANTIC_SIGNAL_MAX_OUTPUT_TOKENS,
-    // Encourage JSON object output; strict parseSemanticSignals still validates.
-    text: {
-      format: { type: "json_object" },
-    },
-  };
+    userInput: buildSemanticSignalUserPrompt(input),
+    maxOutputTokens: SEMANTIC_SIGNAL_MAX_OUTPUT_TOKENS,
+  });
 }
 
 export class OpenAISemanticSignalExtractor {

@@ -14,27 +14,29 @@ export const DEFAULT_CLASSIFICATION_AI_MODEL = "chat-latest";
 export const DEFAULT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 1500;
 
 /**
- * OpenAI Responses API requires the literal word "json" somewhere in the
- * request messages when using text.format.type = "json_object".
- * Append this (or equivalent) to every json_object stage prompt.
+ * OpenAI Responses API requires the literal word "json" in the *input*
+ * messages when using text.format.type = "json_object".
+ * Putting it only in `instructions` is NOT sufficient for our request shape
+ * (`instructions` + string `input`). Prefix every json_object stage input.
  * Does not change classification semantics — format compliance only.
  */
 export const RESPONSES_JSON_OBJECT_INSTRUCTION =
   "Return ONLY valid JSON matching the required output schema.";
 
-/** True if instructions/input contain the word JSON (Responses API json_object requirement). */
-export function responsesJsonObjectModeMentionsJson(parts: {
-  instructions?: string | null | undefined;
-  input?: unknown;
-}): boolean {
+/** Prefix stage user text so final Responses `input` contains the word JSON. */
+export function withResponsesJsonObjectInputPrefix(userInput: string): string {
+  return `${RESPONSES_JSON_OBJECT_INSTRUCTION}\n\n${userInput}`;
+}
+
+/** True if the final Responses `input` field contains the word JSON. */
+export function responsesJsonObjectInputMentionsJson(input: unknown): boolean {
   const inputText =
-    typeof parts.input === "string"
-      ? parts.input
-      : parts.input == null
+    typeof input === "string"
+      ? input
+      : input == null
         ? ""
-        : JSON.stringify(parts.input);
-  const haystack = `${parts.instructions ?? ""}\n${inputText}`;
-  return /\bjson\b/i.test(haystack);
+        : JSON.stringify(input);
+  return /\bjson\b/i.test(inputText);
 }
 
 export function buildJsonObjectResponseParams(input: {
@@ -46,7 +48,7 @@ export function buildJsonObjectResponseParams(input: {
   return {
     model: input.model,
     instructions: input.instructions,
-    input: input.userInput,
+    input: withResponsesJsonObjectInputPrefix(input.userInput),
     max_output_tokens:
       input.maxOutputTokens ?? DEFAULT_CLASSIFICATION_MAX_OUTPUT_TOKENS,
     text: { format: { type: "json_object" } },

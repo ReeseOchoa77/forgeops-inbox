@@ -75,11 +75,12 @@ describe("OpenAI Responses API semantic extractor config", () => {
     expect(String(params.instructions)).toContain(
       "PRIMARY semantic signal extractor"
     );
-    expect(String(params.instructions)).toMatch(/\bJSON\b/);
-    expect(String(params.instructions)).toContain(
+    expect(typeof params.input).toBe("string");
+    // Responses API validates the word "json" on input messages, not instructions.
+    expect(String(params.input)).toMatch(/\bJSON\b/i);
+    expect(String(params.input)).toContain(
       "Return ONLY valid JSON matching the required output schema."
     );
-    expect(typeof params.input).toBe("string");
     expect(String(params.input)).toContain("Subject: PO #1");
     expect(String(params.input)).toContain("--- SUPPORTING WORKSPACE EVIDENCE ---");
   });
@@ -108,6 +109,7 @@ describe("OpenAI Responses API semantic extractor config", () => {
     expect(request).not.toHaveProperty("temperature");
     expect(request).not.toHaveProperty("tools");
     expect(request.text).toEqual({ format: { type: "json_object" } });
+    expect(String(request.input)).toMatch(/\bJSON\b/i);
 
     expect(result.containsActionRequest).toBe(true);
     expect(result.deadlineUrgency).toBe("STANDARD");
