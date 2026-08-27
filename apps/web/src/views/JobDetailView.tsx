@@ -833,12 +833,18 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
                   ref={fileInputRef}
                   type="file"
                   multiple
+                  accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.json,.png,.jpg,.jpeg,.gif,.webp,.pptx,.rtf,.xml,.zip"
                   style={{ display: 'none' }}
                   onChange={e => handleUploadFiles(e.target.files)}
                 />
               </>
             )}
           </div>
+          {canEdit && (
+            <p style={{ fontSize: 11, color: '#999', margin: '0 0 12px' }}>
+              Supported office files are stored and parsed for text/tables; ZIP is kept as a container only.
+            </p>
+          )}
 
           {showNewFolder && canEdit && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
