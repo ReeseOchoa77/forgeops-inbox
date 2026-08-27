@@ -73,6 +73,7 @@ SELECTION RULES:
 - Use OTHER_BUSINESS only when the email is clearly business-related but genuinely fits no other subtype.
 - businessTypeConfidence is a number between 0 and 1 reflecting how confident you are in the chosen subtype.
 
+Return ONLY valid JSON matching the required output schema.
 Return only the structured result with businessType and businessTypeConfidence. Do not output anything else.
 `.trim();
 

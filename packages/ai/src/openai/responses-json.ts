@@ -13,6 +13,30 @@ import {
 export const DEFAULT_CLASSIFICATION_AI_MODEL = "chat-latest";
 export const DEFAULT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 1500;
 
+/**
+ * OpenAI Responses API requires the literal word "json" somewhere in the
+ * request messages when using text.format.type = "json_object".
+ * Append this (or equivalent) to every json_object stage prompt.
+ * Does not change classification semantics — format compliance only.
+ */
+export const RESPONSES_JSON_OBJECT_INSTRUCTION =
+  "Return ONLY valid JSON matching the required output schema.";
+
+/** True if instructions/input contain the word JSON (Responses API json_object requirement). */
+export function responsesJsonObjectModeMentionsJson(parts: {
+  instructions?: string | null | undefined;
+  input?: unknown;
+}): boolean {
+  const inputText =
+    typeof parts.input === "string"
+      ? parts.input
+      : parts.input == null
+        ? ""
+        : JSON.stringify(parts.input);
+  const haystack = `${parts.instructions ?? ""}\n${inputText}`;
+  return /\bjson\b/i.test(haystack);
+}
+
 export function buildJsonObjectResponseParams(input: {
   model: string;
   instructions: string;

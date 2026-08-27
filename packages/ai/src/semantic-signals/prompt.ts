@@ -35,6 +35,7 @@ If candidate lookup failed:
 - signatureCompanyMatchConfidence must be 0 unless verified evidence was explicitly supplied
 - jobReferenceConfidence must be 0 unless the email itself contains convincing project/job evidence
 
+Return ONLY valid JSON matching the required output schema.
 Return ONLY the structured fields defined below.
 
 All probabilities must be numbers between 0 and 1.

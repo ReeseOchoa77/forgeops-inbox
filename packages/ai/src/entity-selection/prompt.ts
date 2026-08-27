@@ -47,7 +47,9 @@ FIELDS:
 - entityMatchConfidence: number 0..1 for how confident you are in the selected entities overall. Use 0 when nothing is selected.
 - matchEvidence: array of short strings citing the exact signals (matching domain, sender name, referenced job number) that justify each selection. Empty array when nothing is selected.
 
-Do not classify the email, assign a subtype, or extract tasks. Return only the structured result.
+Do not classify the email, assign a subtype, or extract tasks.
+Return ONLY valid JSON matching the required output schema.
+Return only the structured result.
 `.trim();
 
 export const entitySelectionJsonSchema = {

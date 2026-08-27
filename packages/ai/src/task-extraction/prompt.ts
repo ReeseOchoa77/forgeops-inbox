@@ -42,6 +42,7 @@ TASK FIELDS:
 - recommendedOwner: a person explicitly named as responsible in the email, otherwise null.
 - confidence: number 0..1 for how clearly the email supports this task.
 
+Return ONLY valid JSON matching the required output schema.
 Return only the structured result with the tasks array.
 `.trim();
 

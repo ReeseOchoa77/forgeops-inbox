@@ -75,6 +75,10 @@ describe("OpenAI Responses API semantic extractor config", () => {
     expect(String(params.instructions)).toContain(
       "PRIMARY semantic signal extractor"
     );
+    expect(String(params.instructions)).toMatch(/\bJSON\b/);
+    expect(String(params.instructions)).toContain(
+      "Return ONLY valid JSON matching the required output schema."
+    );
     expect(typeof params.input).toBe("string");
     expect(String(params.input)).toContain("Subject: PO #1");
     expect(String(params.input)).toContain("--- SUPPORTING WORKSPACE EVIDENCE ---");
