@@ -630,6 +630,12 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const [composeMode, setComposeMode] = useState<'reply' | 'forward' | null>(null)
   const [composeDefaults, setComposeDefaults] = useState({ to: '', cc: '', subject: '' })
+  const [forwardAttachments, setForwardAttachments] = useState<Array<{
+    id: string
+    filename: string
+    sizeBytes: number
+    mimeType?: string
+  }>>([])
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -835,6 +841,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const openReply = () => {
     setComposeMode('reply')
+    setForwardAttachments([])
     setComposeDefaults({
       to: lastMessage.senderEmail,
       cc: '',
@@ -851,6 +858,28 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       subject: subject.startsWith('Fwd:') ? subject : `Fwd: ${subject}`
     })
     setSendResult(null)
+    setForwardAttachments([])
+    // Load non-inline attachments from the thread for forward inclusion (default: all included).
+    const ids = messages.filter(m => m.hasAttachments).map(m => m.id)
+    if (ids.length === 0) return
+    Promise.all(ids.map(id => api.getEmailAttachments(workspaceId, id).catch(() => ({ attachments: [] as StoredAttachment[] }))))
+      .then(results => {
+        const byId = new Map<string, StoredAttachment>()
+        for (const r of results) {
+          for (const a of r.attachments) {
+            if (!isInlineImage(a) && a.uploadStatus === 'UPLOADED') byId.set(a.id, a)
+          }
+        }
+        setForwardAttachments(
+          [...byId.values()].map(a => ({
+            id: a.id,
+            filename: a.filename,
+            sizeBytes: a.sizeBytes,
+            mimeType: a.mimeType,
+          }))
+        )
+      })
+      .catch(() => setForwardAttachments([]))
   }
 
   const handleComposeSend = async (payload: ComposeSendPayload) => {
@@ -867,10 +896,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         bcc: payload.bcc,
         subject: payload.subject,
         body: payload.html,
-        bodyFormat: 'html'
+        bodyFormat: 'html',
+        files: payload.files,
+        // Reply: never send existingAttachmentIds even if present
+        existingAttachmentIds:
+          composeMode === 'forward' ? payload.existingAttachmentIds : [],
       })
       setSendResult({ type: 'success', message: composeMode === 'reply' ? 'Reply sent' : 'Message forwarded' })
       setComposeMode(null)
+      setForwardAttachments([])
     } catch (e) {
       setSendResult({ type: 'error', message: e instanceof Error ? e.message : 'Send failed' })
     } finally {
@@ -1137,10 +1171,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             sending={sending}
             sendError={sendResult?.type === 'error' ? sendResult.message : null}
             sendLabel={composeMode === 'reply' ? 'Send Reply' : 'Send Forward'}
-            onCancel={() => setComposeMode(null)}
+            onCancel={() => { setComposeMode(null); setForwardAttachments([]) }}
             initialTo={composeDefaults.to ? composeDefaults.to.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean) : []}
             initialCc={composeDefaults.cc ? composeDefaults.cc.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean) : []}
             initialSubject={composeDefaults.subject}
+            existingAttachments={composeMode === 'forward' ? forwardAttachments : []}
           />
         </div>
       )}

@@ -464,7 +464,9 @@ export default function App() {
         bcc: payload.bcc,
         subject: payload.subject,
         body: payload.html,
-        bodyFormat: 'html'
+        bodyFormat: 'html',
+        files: payload.files,
+        existingAttachmentIds: payload.existingAttachmentIds,
       })
       setShowCompose(false)
     } catch (e) {

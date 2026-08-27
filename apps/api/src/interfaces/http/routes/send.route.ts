@@ -4,6 +4,13 @@ import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { assertUserMaySendAsConnection } from "../../../application/services/sendable-mailbox.js";
+import {
+  OUTLOOK_SIMPLE_ATTACHMENT_MAX_BYTES,
+  persistOutboundSentAttachments,
+  resolveExistingOutboundAttachments,
+  validateOutboundUpload,
+  type OutboundAttachment,
+} from "../../../application/services/outbound-attachments.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const paramsSchema = z.object({
@@ -23,7 +30,9 @@ const sendBodySchema = z.object({
   bcc: z.array(z.string().email()).optional().default([]),
   subject: z.string().min(1),
   body: z.string().min(1),
-  bodyFormat: z.enum(["text", "html"]).optional().default("text")
+  bodyFormat: z.enum(["text", "html"]).optional().default("text"),
+  /** ForgeOps EmailAttachment IDs to include (forward). Reply must leave empty. */
+  existingAttachmentIds: z.array(z.string().min(1)).optional().default([])
 });
 
 interface ParsedAttachment {
@@ -162,7 +171,7 @@ function buildMimeBoundary(): string {
   return `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-function buildMultipartMime(input: {
+export function buildMultipartMime(input: {
   from: string;
   to: string[];
   cc: string[];
@@ -510,20 +519,43 @@ export const registerSendRoutes = async (
       }
 
       let body: z.infer<typeof sendBodySchema>;
-      const attachments: ParsedAttachment[] = [];
+      const uploadedAttachments: OutboundAttachment[] = [];
 
       const contentType = request.headers["content-type"] ?? "";
       if (contentType.includes("multipart/form-data")) {
         const parts = request.parts();
         const fields: Record<string, string> = {};
+        const existingIdFields: string[] = [];
         for await (const part of parts) {
           if (part.type === "file") {
             const buf = await part.toBuffer();
-            attachments.push({
-              filename: part.filename ?? "attachment",
+            const filename = part.filename ?? "attachment";
+            uploadedAttachments.push({
+              filename,
               mimeType: part.mimetype ?? "application/octet-stream",
-              data: buf
+              data: buf,
+              source: "UPLOAD",
             });
+          } else if (part.fieldname === "existingAttachmentIds") {
+            const raw = String(part.value ?? "").trim();
+            if (!raw) continue;
+            // Accept repeated fields or a JSON array in one field.
+            if (raw.startsWith("[")) {
+              try {
+                const parsed = JSON.parse(raw) as unknown;
+                if (Array.isArray(parsed)) {
+                  for (const id of parsed) {
+                    if (typeof id === "string" && id.trim()) {
+                      existingIdFields.push(id.trim());
+                    }
+                  }
+                }
+              } catch {
+                existingIdFields.push(raw);
+              }
+            } else {
+              existingIdFields.push(raw);
+            }
           } else {
             fields[part.fieldname] = part.value as string;
           }
@@ -532,14 +564,47 @@ export const registerSendRoutes = async (
           ...fields,
           to: fields.to ? JSON.parse(fields.to) : [],
           cc: fields.cc ? JSON.parse(fields.cc) : [],
-          bcc: fields.bcc ? JSON.parse(fields.bcc) : []
+          bcc: fields.bcc ? JSON.parse(fields.bcc) : [],
+          existingAttachmentIds: existingIdFields,
         });
       } else {
         body = sendBodySchema.parse(request.body);
       }
 
+      // Reply never inherits prior attachments; only explicit uploads.
+      if (body.action === "reply" && body.existingAttachmentIds.length > 0) {
+        return reply.code(400).send({
+          message: "Reply cannot include original message attachments by ID",
+        });
+      }
+
+      const maxUploadBytes =
+        connection.provider === "OUTLOOK"
+          ? Math.min(
+              OUTLOOK_SIMPLE_ATTACHMENT_MAX_BYTES,
+              app.services.env.ATTACHMENT_MAX_SIZE_BYTES
+            )
+          : app.services.env.ATTACHMENT_MAX_SIZE_BYTES;
+
+      const attachments: OutboundAttachment[] = [];
+      for (const uploaded of uploadedAttachments) {
+        const validated = validateOutboundUpload({
+          filename: uploaded.filename,
+          sizeBytes: uploaded.data.length,
+          maxBytes: maxUploadBytes,
+        });
+        if (!validated.ok) {
+          return reply.code(400).send({ message: validated.message });
+        }
+        attachments.push({
+          ...uploaded,
+          filename: validated.filename,
+        });
+      }
+
       let originalMessage: {
         id: string;
+        threadId: string;
         gmailMessageId: string;
         gmailThreadId: string;
         providerMessageId: string | null;
@@ -556,6 +621,7 @@ export const registerSendRoutes = async (
           },
           select: {
             id: true,
+            threadId: true,
             gmailMessageId: true,
             gmailThreadId: true,
             providerMessageId: true,
@@ -567,6 +633,58 @@ export const registerSendRoutes = async (
 
         if (!originalMessage) return reply.code(404).send({ message: "Original message not found" });
       }
+
+      if (body.existingAttachmentIds.length > 0) {
+        if (!originalMessage) {
+          return reply.code(400).send({
+            message: "originalMessageId is required when forwarding existing attachments",
+          });
+        }
+        try {
+          const existing = await resolveExistingOutboundAttachments({
+            prisma: app.services.prisma,
+            storage: app.services.attachmentStorage,
+            workspaceId: params.workspaceId,
+            inboxConnectionId: params.connectionId,
+            originalMessageId: originalMessage.id,
+            attachmentIds: body.existingAttachmentIds,
+          });
+          for (const att of existing) {
+            const validated = validateOutboundUpload({
+              filename: att.filename,
+              sizeBytes: att.data.length,
+              maxBytes: maxUploadBytes,
+            });
+            if (!validated.ok) {
+              return reply.code(400).send({ message: validated.message });
+            }
+            attachments.push({ ...att, filename: validated.filename });
+          }
+        } catch (e) {
+          const statusCode =
+            e && typeof e === "object" && "statusCode" in e
+              ? Number((e as { statusCode: number }).statusCode)
+              : 500;
+          return reply
+            .code(statusCode >= 400 && statusCode < 600 ? statusCode : 500)
+            .send({
+              message:
+                e instanceof Error
+                  ? e.message
+                  : "Failed to load existing attachments",
+            });
+        }
+      }
+
+      if (attachments.length > 10) {
+        return reply.code(400).send({ message: "Maximum 10 attachments per message" });
+      }
+
+      const providerAttachments: ParsedAttachment[] = attachments.map((a) => ({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        data: a.data,
+      }));
 
       const refreshToken = app.services.tokenCipher.decrypt(connection.encryptedRefreshToken);
 
@@ -593,7 +711,7 @@ export const registerSendRoutes = async (
             bodyFormat: body.bodyFormat,
             threadId: body.action === "reply" && originalMessage ? originalMessage.gmailThreadId : null,
             inReplyTo: body.action === "reply" && originalMessage ? `<${originalMessage.gmailMessageId}>` : null,
-            attachments
+            attachments: providerAttachments
           });
         } else if (connection.provider === "OUTLOOK") {
           const env = app.services.env;
@@ -621,7 +739,7 @@ export const registerSendRoutes = async (
             conversationId: originalMessage?.gmailThreadId ?? null,
             sentAt: originalMessage?.sentAt ?? null,
             isReply: body.action === "reply",
-            attachments,
+            attachments: providerAttachments,
             onReplyResolved: (info) => {
               request.log.info({
                 event: "outlook_reply_message_resolved",
@@ -641,11 +759,42 @@ export const registerSendRoutes = async (
           return reply.code(400).send({ message: "Unsupported provider for sending" });
         }
 
+        let persistedMessageId: string | null = null;
+        try {
+          const persisted = await persistOutboundSentAttachments({
+            prisma: app.services.prisma,
+            storage: app.services.attachmentStorage,
+            workspaceId: params.workspaceId,
+            inboxConnectionId: params.connectionId,
+            connectionEmail: connection.email,
+            action: body.action,
+            to: body.to,
+            cc: body.cc,
+            bcc: body.bcc,
+            subject: body.subject,
+            body: body.body,
+            bodyFormat: body.bodyFormat,
+            providerMessageId: result.providerMessageId,
+            originalThreadId: originalMessage?.threadId ?? null,
+            originalGmailThreadId: originalMessage?.gmailThreadId ?? null,
+            attachments,
+          });
+          persistedMessageId = persisted?.emailMessageId ?? null;
+        } catch (persistErr) {
+          request.log.warn({
+            event: "outbound_sent_persist_failed",
+            error:
+              persistErr instanceof Error
+                ? persistErr.message
+                : "persist failed",
+          });
+        }
+
         await app.services.auditEventLogger.log({
           workspaceId: params.workspaceId,
           actorUserId: session.userId,
           entityType: "EMAIL_MESSAGE",
-          entityId: originalMessage?.id ?? "new",
+          entityId: persistedMessageId ?? originalMessage?.id ?? "new",
           action: `email_message.${body.action}_sent`,
           metadata: {
             to: body.to,
@@ -655,7 +804,9 @@ export const registerSendRoutes = async (
             from: connection.email,
             providerMessageId: result.providerMessageId,
             attachmentCount: attachments.length,
-            bodyFormat: body.bodyFormat
+            bodyFormat: body.bodyFormat,
+            existingAttachmentCount: body.existingAttachmentIds.length,
+            persistedMessageId,
           },
           request
         });
@@ -663,7 +814,9 @@ export const registerSendRoutes = async (
         return reply.send({
           status: "sent",
           action: body.action,
-          providerMessageId: result.providerMessageId
+          providerMessageId: result.providerMessageId,
+          emailMessageId: persistedMessageId,
+          attachmentCount: attachments.length,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Send failed";

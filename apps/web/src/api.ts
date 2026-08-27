@@ -742,20 +742,83 @@ export const api = {
       body: JSON.stringify({ rows })
     }),
 
-  sendMessage: (workspaceId: string, connectionId: string, payload: {
-    action: 'reply' | 'forward' | 'new';
-    originalMessageId?: string;
-    to: string[];
-    cc?: string[];
-    bcc?: string[];
-    subject: string;
-    body: string;
-    bodyFormat?: 'text' | 'html';
-  }) =>
-    request<{ status: string; action: string; providerMessageId: string }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`,
-      { method: 'POST', body: JSON.stringify(payload) }
-    ),
+  sendMessage: async (
+    workspaceId: string,
+    connectionId: string,
+    payload: {
+      action: 'reply' | 'forward' | 'new';
+      originalMessageId?: string;
+      to: string[];
+      cc?: string[];
+      bcc?: string[];
+      subject: string;
+      body: string;
+      bodyFormat?: 'text' | 'html';
+      files?: File[];
+      /** Non-inline EmailAttachment IDs to include (forward). */
+      existingAttachmentIds?: string[];
+    }
+  ) => {
+    const files = payload.files ?? [];
+    const existingIds = payload.existingAttachmentIds ?? [];
+    const useMultipart = files.length > 0 || existingIds.length > 0;
+
+    if (!useMultipart) {
+      return request<{
+        status: string;
+        action: string;
+        providerMessageId: string;
+        emailMessageId?: string | null;
+        attachmentCount?: number;
+      }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: payload.action,
+          originalMessageId: payload.originalMessageId,
+          to: payload.to,
+          cc: payload.cc ?? [],
+          bcc: payload.bcc ?? [],
+          subject: payload.subject,
+          body: payload.body,
+          bodyFormat: payload.bodyFormat ?? 'html',
+        }),
+      });
+    }
+
+    const form = new FormData();
+    form.append('action', payload.action);
+    if (payload.originalMessageId) {
+      form.append('originalMessageId', payload.originalMessageId);
+    }
+    form.append('to', JSON.stringify(payload.to));
+    form.append('cc', JSON.stringify(payload.cc ?? []));
+    form.append('bcc', JSON.stringify(payload.bcc ?? []));
+    form.append('subject', payload.subject);
+    form.append('body', payload.body);
+    form.append('bodyFormat', payload.bodyFormat ?? 'html');
+    if (existingIds.length > 0) {
+      form.append('existingAttachmentIds', JSON.stringify(existingIds));
+    }
+    for (const file of files) {
+      form.append('file', file, file.name);
+    }
+
+    const res = await fetch(
+      `${BASE}/workspaces/${workspaceId}/inbox-connections/${connectionId}/send`,
+      { method: 'POST', credentials: 'include', body: form }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message ?? `Send failed: ${res.status}`);
+    }
+    return res.json() as Promise<{
+      status: string;
+      action: string;
+      providerMessageId: string;
+      emailMessageId?: string | null;
+      attachmentCount?: number;
+    }>;
+  },
 
   getSendableMailboxes: (workspaceId: string) =>
     request<{
