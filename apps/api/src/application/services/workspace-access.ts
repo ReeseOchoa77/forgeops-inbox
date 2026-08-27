@@ -45,6 +45,7 @@ export const listUserMemberships = async (
         }
       }
     },
+    // pinnedInboxConnectionId is a scalar on Membership — returned automatically
     orderBy: {
       createdAt: "asc"
     }

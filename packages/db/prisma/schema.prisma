@@ -279,15 +279,19 @@ model Membership {
   userId      String
   role            Role          @default(MEMBER)
   workspaceRole   WorkspaceRole @default(VIEWER)
+  /// User-specific default mailbox for Inbox (not workspace-global).
+  pinnedInboxConnectionId String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pinnedInboxConnection InboxConnection? @relation("MembershipPinnedMailbox", fields: [pinnedInboxConnectionId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, userId])
   @@index([userId])
   @@index([workspaceId, role])
   @@index([workspaceId, workspaceRole])
+  @@index([pinnedInboxConnectionId])
 }
 
 model InboxConnection {
@@ -330,6 +334,7 @@ model InboxConnection {
   normalizedEmails  NormalizedEmail[]
   workspaceMailboxes WorkspaceMailbox[]
   historicalImports MailboxHistoricalImport[]
+  pinnedByMemberships Membership[] @relation("MembershipPinnedMailbox")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, provider, email])

@@ -26,7 +26,13 @@ export interface SessionResponse {
   accessRevoked?: boolean;
   microsoftAuthAvailable?: boolean;
   user: { id: string; email: string; name: string | null; avatarUrl: string | null; isPlatformAdmin?: boolean; platformRole?: string } | null;
-  memberships: Array<{ id: string; role: string; workspaceRole: string; workspace: { id: string; name: string; slug: string } }>;
+  memberships: Array<{
+    id: string;
+    role: string;
+    workspaceRole: string;
+    pinnedInboxConnectionId?: string | null;
+    workspace: { id: string; name: string; slug: string };
+  }>;
 }
 
 export type AuthorizationStatus =
@@ -173,6 +179,8 @@ export interface MessageSummary {
   hasAttachments?: boolean;
   mailboxCategory: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH';
   previousCategory?: 'BUSINESS' | 'PERSONAL' | 'SPAM' | 'TRASH' | null;
+  /** Owning mailbox — present on All Mailboxes list rows. */
+  inboxConnectionId?: string;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
   job?: MessageJobSummary | null;
@@ -355,6 +363,20 @@ export const api = {
 
   getConnections: (workspaceId: string) =>
     request<{ connections: ConnectionSummary[] }>(`/workspaces/${workspaceId}/inbox-connections`),
+
+  getWorkspacePreferences: (workspaceId: string) =>
+    request<{ pinnedInboxConnectionId: string | null }>(
+      `/workspaces/${workspaceId}/me/preferences`
+    ),
+
+  patchWorkspacePreferences: (
+    workspaceId: string,
+    body: { pinnedInboxConnectionId: string | null }
+  ) =>
+    request<{ pinnedInboxConnectionId: string | null }>(
+      `/workspaces/${workspaceId}/me/preferences`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
 
   getMailboxListenerSettings: (workspaceId: string, connectionId: string) =>
     request<{ settings: MailboxListenerSettings }>(

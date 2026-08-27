@@ -44,8 +44,18 @@ function matchesListWhere(
     if (!cond || typeof cond !== "object") continue;
 
     if ("workspaceId" in cond && cond.workspaceId !== msg.workspaceId) return false;
-    if ("inboxConnectionId" in cond && cond.inboxConnectionId !== msg.inboxConnectionId) {
-      return false;
+    if ("inboxConnectionId" in cond) {
+      const filter = cond.inboxConnectionId;
+      if (typeof filter === "string") {
+        if (filter !== msg.inboxConnectionId) return false;
+      } else if (
+        filter &&
+        typeof filter === "object" &&
+        "in" in filter &&
+        Array.isArray(filter.in)
+      ) {
+        if (!filter.in.includes(msg.inboxConnectionId)) return false;
+      }
     }
     if ("isTrashed" in cond && cond.isTrashed === false && msg.isTrashed) return false;
     if ("isArchived" in cond && cond.isArchived === false && msg.isArchived) return false;
@@ -188,5 +198,38 @@ describe("thread list where (no sent exclusion)", () => {
     };
     expect("senderEmail" in threadWhere).toBe(false);
     expect("mailboxCategory" in threadWhere).toBe(false);
+  });
+});
+
+describe("buildMessagesWhere — All Mailboxes aggregate", () => {
+  it("accepts inboxConnectionId.in for multi-mailbox scope", () => {
+    const where = baseWhere({
+      inboxConnectionId: { in: ["conn-1", "conn-2"] },
+      businessCategory: "BUSINESS",
+    });
+    const and = where.AND as object[];
+    const scope = and.find(
+      (c) => c && typeof c === "object" && "inboxConnectionId" in c
+    ) as { inboxConnectionId: { in: string[] } } | undefined;
+    expect(scope?.inboxConnectionId).toEqual({ in: ["conn-1", "conn-2"] });
+
+    expect(
+      matchesListWhere(where, {
+        id: "m1",
+        workspaceId: WS,
+        inboxConnectionId: "conn-2",
+        senderEmail: "vendor@example.com",
+        mailboxCategory: "BUSINESS",
+      })
+    ).toBe(true);
+    expect(
+      matchesListWhere(where, {
+        id: "m2",
+        workspaceId: WS,
+        inboxConnectionId: "conn-other",
+        senderEmail: "vendor@example.com",
+        mailboxCategory: "BUSINESS",
+      })
+    ).toBe(false);
   });
 });

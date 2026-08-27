@@ -663,6 +663,7 @@ export const registerAuthRoutes = async (
         id: membership.id,
         role: membership.role,
         workspaceRole: membership.workspaceRole,
+        pinnedInboxConnectionId: membership.pinnedInboxConnectionId ?? null,
         workspace: membership.workspace
       })),
       microsoftAuthAvailable

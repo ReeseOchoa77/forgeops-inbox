@@ -67,6 +67,7 @@ import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.j
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
+import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -368,6 +369,7 @@ export const buildServer = async () => {
   await registerTestDataAdminRoutes(app);
   await registerJobsRoutes(app);
   await registerJobFilesRoutes(app);
+  await registerWorkspacePreferencesRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

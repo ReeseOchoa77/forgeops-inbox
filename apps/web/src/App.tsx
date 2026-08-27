@@ -18,6 +18,11 @@ import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
 import { JobDiscoveryView } from './views/JobDiscoveryView'
+import {
+  ALL_MAILBOXES_CONNECTION_ID,
+  isAllMailboxesConnectionId,
+  pickDefaultInboxConnectionId,
+} from './mailbox-selection'
 
 type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
@@ -66,6 +71,8 @@ export default function App() {
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [workspaceId, setWorkspaceId] = useState('')
   const [connectionId, setConnectionId] = useState('')
+  const [messageConnectionId, setMessageConnectionId] = useState('')
+  const [pinningMailbox, setPinningMailbox] = useState(false)
   const [page, setPage] = useState<Page>('dashboard')
   const [selectedMessageId, setSelectedMessageId] = useState('')
   const [error, setError] = useState('')
@@ -196,18 +203,25 @@ export default function App() {
   }, [workspaceId])
 
   const loadConnections = useCallback(() => {
-    if (!workspaceId) return
+    if (!workspaceId || !session) return
     api.getConnections(workspaceId)
       .then(r => {
         setConnections(r.connections)
-        if (r.connections.length > 0 && !connectionId) {
-          setConnectionId(r.connections[0].id)
-        }
+        const membership = session.memberships.find(m => m.workspace.id === workspaceId)
+        setConnectionId(prev => {
+          if (isAllMailboxesConnectionId(prev) && r.connections.length > 0) return prev
+          if (prev && r.connections.some(c => c.id === prev)) return prev
+          return pickDefaultInboxConnectionId({
+            connections: r.connections,
+            pinnedInboxConnectionId: membership?.pinnedInboxConnectionId,
+            signedInEmail: session.user?.email,
+          })
+        })
       })
       .catch(e => setError(e.message))
-  }, [workspaceId, connectionId])
+  }, [workspaceId, session])
 
-  useEffect(() => { loadConnections() }, [workspaceId])
+  useEffect(() => { loadConnections() }, [loadConnections])
 
   // --- Pre-auth screens ---
 
@@ -328,15 +342,88 @@ export default function App() {
       if (p === 'reference') setReferenceTabHint((prev) => prev || 'customers')
       setPage(p)
     }
+    // All Mailboxes is Inbox-only; resolve to a concrete mailbox for other pages.
+    if (
+      p !== 'inbox' &&
+      p !== 'message-detail' &&
+      isAllMailboxesConnectionId(connectionId)
+    ) {
+      const membership = session.memberships.find(m => m.workspace.id === workspaceId)
+      setConnectionId(
+        pickDefaultInboxConnectionId({
+          connections,
+          pinnedInboxConnectionId: membership?.pinnedInboxConnectionId,
+          signedInEmail: session.user?.email,
+        })
+      )
+    }
     if (p !== 'message-detail') setSelectedMessageId('')
     if (bp === 'phone') setDrawerOpen(false)
   }
 
   const openMessage = (id: string, opts?: { connectionId?: string; backPage?: Page }) => {
-    if (opts?.connectionId) setConnectionId(opts.connectionId)
+    const owning =
+      opts?.connectionId && !isAllMailboxesConnectionId(opts.connectionId)
+        ? opts.connectionId
+        : !isAllMailboxesConnectionId(connectionId)
+          ? connectionId
+          : ''
+    if (owning) setMessageConnectionId(owning)
+    // Job/detail deep-links may switch the list mailbox; Inbox All view keeps selection.
+    if (opts?.connectionId && opts.backPage && opts.backPage !== 'inbox') {
+      setConnectionId(opts.connectionId)
+    }
     setMessageBackPage(opts?.backPage ?? 'inbox')
     setSelectedMessageId(id)
     setPage('message-detail')
+  }
+
+  const pinCurrentMailbox = async () => {
+    if (!workspaceId || !connectionId || isAllMailboxesConnectionId(connectionId)) return
+    setPinningMailbox(true)
+    try {
+      const r = await api.patchWorkspacePreferences(workspaceId, {
+        pinnedInboxConnectionId: connectionId,
+      })
+      setSession(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          memberships: prev.memberships.map(m =>
+            m.workspace.id === workspaceId
+              ? { ...m, pinnedInboxConnectionId: r.pinnedInboxConnectionId }
+              : m
+          ),
+        }
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to pin mailbox')
+    } finally {
+      setPinningMailbox(false)
+    }
+  }
+
+  const unpinMailbox = async () => {
+    if (!workspaceId) return
+    setPinningMailbox(true)
+    try {
+      await api.patchWorkspacePreferences(workspaceId, { pinnedInboxConnectionId: null })
+      setSession(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          memberships: prev.memberships.map(m =>
+            m.workspace.id === workspaceId
+              ? { ...m, pinnedInboxConnectionId: null }
+              : m
+          ),
+        }
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to unpin mailbox')
+    } finally {
+      setPinningMailbox(false)
+    }
   }
 
   const openJob = (id: string) => {
@@ -387,8 +474,22 @@ export default function App() {
   const currentWorkspace = session.memberships.find(m => m.workspace.id === workspaceId)
   const currentRole = (currentWorkspace?.role ?? 'VIEWER') as UserRole
   const userEmail = session.user?.email ?? ''
+  const pinnedInboxConnectionId = currentWorkspace?.pinnedInboxConnectionId ?? null
+  const concreteConnectionId = isAllMailboxesConnectionId(connectionId)
+    ? pickDefaultInboxConnectionId({
+        connections,
+        pinnedInboxConnectionId,
+        signedInEmail: userEmail,
+      })
+    : connectionId
+  const detailConnectionId = messageConnectionId || concreteConnectionId
   const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
   const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
+  const showAllMailboxesOption = page === 'inbox' || (page === 'message-detail' && messageBackPage === 'inbox')
+  const isPinnedSelected =
+    Boolean(pinnedInboxConnectionId) &&
+    pinnedInboxConnectionId === connectionId &&
+    !isAllMailboxesConnectionId(connectionId)
 
   const isPhone = bp === 'phone'
   const isTablet = bp === 'tablet'
@@ -574,14 +675,38 @@ export default function App() {
             <div style={{ flex: 1 }} />
 
             {connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
-              <select value={connectionId} onChange={e => setConnectionId(e.target.value)} style={{ padding: '4px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}>
-                {connections.map(c => (
-                  <option key={c.id} value={c.id}>{c.email} ({c.counts.messages} msgs)</option>
-                ))}
-              </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <select
+                  value={connectionId}
+                  onChange={e => setConnectionId(e.target.value)}
+                  style={{ padding: '4px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}
+                >
+                  {showAllMailboxesOption && (
+                    <option value={ALL_MAILBOXES_CONNECTION_ID}>All Mailboxes</option>
+                  )}
+                  {connections.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {pinnedInboxConnectionId === c.id ? '📌 ' : ''}
+                      {c.email} ({c.counts.messages} msgs)
+                    </option>
+                  ))}
+                </select>
+                {page === 'inbox' && !isAllMailboxesConnectionId(connectionId) && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={pinningMailbox}
+                    title={isPinnedSelected ? 'Unpin default mailbox' : 'Always open this mailbox'}
+                    onClick={() => (isPinnedSelected ? void unpinMailbox() : void pinCurrentMailbox())}
+                    style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                  >
+                    {isPinnedSelected ? 'Unpin' : 'Pin default'}
+                  </button>
+                )}
+              </div>
             )}
 
-            {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
+            {page === 'inbox' && connections.length > 0 && currentRole !== 'VIEWER' && (
               <button className="btn btn-sm btn-primary" onClick={openCompose}>
                 Compose
               </button>
@@ -597,11 +722,17 @@ export default function App() {
               onChange={e => setConnectionId(e.target.value)}
               style={{ flex: 1, padding: '6px 8px', border: '1px solid #d0d0d0', borderRadius: 4, fontSize: 12, background: '#fff' }}
             >
+              {showAllMailboxesOption && (
+                <option value={ALL_MAILBOXES_CONNECTION_ID}>All Mailboxes</option>
+              )}
               {connections.map(c => (
-                <option key={c.id} value={c.id}>{c.email}</option>
+                <option key={c.id} value={c.id}>
+                  {pinnedInboxConnectionId === c.id ? '📌 ' : ''}
+                  {c.email}
+                </option>
               ))}
             </select>
-            {page === 'inbox' && connectionId && currentRole !== 'VIEWER' && (
+            {page === 'inbox' && connections.length > 0 && currentRole !== 'VIEWER' && (
               <button className="btn btn-sm btn-primary" onClick={openCompose}>
                 Compose
               </button>
@@ -633,7 +764,7 @@ export default function App() {
 
           {page === 'dashboard' && (
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <DashboardView workspaceId={workspaceId} connectionId={connectionId} connections={connections} onNavigate={(p) => setPage(p)} breakpoint={bp} />
+              <DashboardView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onNavigate={(p) => setPage(p)} breakpoint={bp} />
             </div>
           )}
 
@@ -668,11 +799,11 @@ export default function App() {
               />
             </div>
           )}
-          {!needsConnection && page === 'message-detail' && connectionId && (
+          {!needsConnection && page === 'message-detail' && detailConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <MessageDetailView
                 workspaceId={workspaceId}
-                connectionId={connectionId}
+                connectionId={detailConnectionId}
                 messageId={selectedMessageId}
                 connections={connections}
                 onBack={() => setPage(messageBackPage === 'job-detail' && selectedJobId ? 'job-detail' : 'inbox')}
@@ -680,14 +811,14 @@ export default function App() {
               />
             </div>
           )}
-          {!needsConnection && page === 'review' && connectionId && (
+          {!needsConnection && page === 'review' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <ReviewQueueView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} />
+              <ReviewQueueView workspaceId={workspaceId} connectionId={concreteConnectionId} onSelectMessage={openMessage} />
             </div>
           )}
-          {!needsConnection && page === 'tasks' && connectionId && (
+          {!needsConnection && page === 'tasks' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={connectionId} onSelectMessage={openMessage} userRole={currentRole} />
+              <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} onSelectMessage={openMessage} userRole={currentRole} />
             </div>
           )}
 

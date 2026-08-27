@@ -242,6 +242,9 @@ const taskSummarySchema = z.object({
   updatedAt: z.string().datetime()
 });
 
+/** Sentinel for All Mailboxes aggregate list (not a real InboxConnection id). */
+export const ALL_MAILBOXES_CONNECTION_ID = "__all__";
+
 const messageSummarySchema = z.object({
   id: z.string().min(1),
   providerMessageId: z.string().min(1),
@@ -262,6 +265,8 @@ const messageSummarySchema = z.object({
   hasAttachments: z.boolean().optional(),
   mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]),
   previousCategory: z.enum(["BUSINESS", "PERSONAL", "SPAM", "TRASH"]).nullable().optional(),
+  /** Owning monitored mailbox — required for reply/detail when listing All Mailboxes. */
+  inboxConnectionId: z.string().min(1).optional(),
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable(),
   job: jobSummarySchema.nullable().optional(),
@@ -658,6 +663,7 @@ const serializeMessageSummary = (message: {
  */
 const serializeInboxListMessage = (message: {
   id: string;
+  inboxConnectionId?: string;
   gmailMessageId: string;
   gmailThreadId: string;
   subject: string | null;
@@ -709,6 +715,9 @@ const serializeInboxListMessage = (message: {
     hasAttachments: message.hasAttachments ?? false,
     mailboxCategory: message.mailboxCategory,
     previousCategory: null,
+    ...(message.inboxConnectionId
+      ? { inboxConnectionId: message.inboxConnectionId }
+      : {}),
     classification: c
       ? {
           id: c.id,
@@ -809,7 +818,8 @@ const buildReviewMessageConditions = (input: {
 /** Exported for unit tests — Sent + mailboxCategory filters compose independently. */
 export const buildMessagesWhere = (input: {
   workspaceId: string;
-  inboxConnectionId: string;
+  /** Single mailbox, or `{ in: [...] }` for All Mailboxes aggregate. */
+  inboxConnectionId: string | { in: string[] };
   businessCategory?: (typeof businessCategoryValues)[number];
   classificationType?: EmailType;
   category?: (typeof messageCategoryValues)[number];
@@ -1339,36 +1349,61 @@ export const registerInboxReadRoutes = async (
       }
 
       // List path: no _count.messages/threads (those belong on connection detail/list).
+      const isAllMailboxes = params.id === ALL_MAILBOXES_CONNECTION_ID;
       const tConn0 = performance.now();
-      const connection = await app.services.prisma.inboxConnection.findFirst({
-        where: {
-          id: params.id,
-          workspaceId: params.workspaceId
-        },
-        select: {
-          id: true,
-          email: true,
-          status: true
-        }
-      });
+      const connections = isAllMailboxes
+        ? await app.services.prisma.inboxConnection.findMany({
+            where: {
+              workspaceId: params.workspaceId,
+              status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
+            },
+            select: {
+              id: true,
+              email: true,
+              status: true
+            }
+          })
+        : await app.services.prisma.inboxConnection
+            .findFirst({
+              where: {
+                id: params.id,
+                workspaceId: params.workspaceId
+              },
+              select: {
+                id: true,
+                email: true,
+                status: true
+              }
+            })
+            .then((c) => (c ? [c] : []));
       timings.connectionMs = Math.round(performance.now() - tConn0);
 
-      if (!connection) {
+      if (connections.length === 0) {
         return reply.code(404).send({
-          message: "Inbox connection not found"
+          message: isAllMailboxes
+            ? "No inbox connections found"
+            : "Inbox connection not found"
         });
       }
 
-      // Enforce personal email visibility: VIEWER/MEMBER can only see personal emails from their own inbox
+      const connectionIds = connections.map((c) => c.id);
+
+      // Personal visibility: VIEWER/MEMBER only see personal from their own mailbox.
+      // All Mailboxes aggregates BUSINESS by default; PERSONAL across others is denied for non-admin
+      // (return empty) unless every requested connection is the user's own mailbox.
       const isPersonalRequest = query.businessCategory === "NON_BUSINESS";
       const userRole = membership.role;
+      let scopedConnectionIds = connectionIds;
       if (isPersonalRequest && !hasMinRole(userRole, "ADMIN")) {
         const user = await app.services.prisma.user.findUnique({
           where: { id: session.userId },
           select: { email: true }
         });
         const userEmail = user?.email?.toLowerCase() ?? "";
-        if (connection.email.toLowerCase() !== userEmail) {
+        const allowed = connections.filter(
+          (c) => c.email.toLowerCase() === userEmail
+        );
+        if (allowed.length === 0) {
           return reply.send(
             messagesListResponseSchema.parse({
               workspaceId: params.workspaceId,
@@ -1390,7 +1425,13 @@ export const registerInboxReadRoutes = async (
             })
           );
         }
+        scopedConnectionIds = allowed.map((c) => c.id);
       }
+
+      // All Mailboxes without an explicit category: force BUSINESS so personal is not leaked.
+      const effectiveBusinessCategory =
+        query.businessCategory ??
+        (isAllMailboxes ? ("BUSINESS" as const) : undefined);
 
       const needsThresholds = query.reviewOnly || query.lowConfidenceOnly;
       let thresholds = {
@@ -1418,9 +1459,11 @@ export const registerInboxReadRoutes = async (
 
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
-        inboxConnectionId: params.id,
-        ...(query.businessCategory
-          ? { businessCategory: query.businessCategory }
+        inboxConnectionId: isAllMailboxes
+          ? { in: scopedConnectionIds }
+          : scopedConnectionIds[0]!,
+        ...(effectiveBusinessCategory
+          ? { businessCategory: effectiveBusinessCategory }
           : {}),
         ...(query.classificationType
           ? { classificationType: query.classificationType }
@@ -1459,6 +1502,7 @@ export const registerInboxReadRoutes = async (
         take: query.pageSize + 1,
         select: {
           id: true,
+          inboxConnectionId: true,
           gmailMessageId: true,
           gmailThreadId: true,
           subject: true,

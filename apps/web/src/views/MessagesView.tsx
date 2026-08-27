@@ -3,6 +3,7 @@ import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type 
 import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import { isAllMailboxesConnectionId } from '../mailbox-selection'
 import { prefetchThread } from '../message-thread-cache'
 
 function formatAttachmentSize(bytes: number | null | undefined): string {
@@ -145,7 +146,7 @@ const AUTO_RESPONSE_NO = "Thank you for reaching out. We've reviewed your messag
 interface Props {
   workspaceId: string
   connectionId: string
-  onSelectMessage: (id: string) => void
+  onSelectMessage: (id: string, opts?: { connectionId?: string }) => void
   userRole: string
   userEmail: string
   connections: ConnectionSummary[]
@@ -175,10 +176,15 @@ type PriorityKey = 'LOW' | 'NORMAL' | 'HIGH'
 
 export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop', openedMessageId = null }: Props) {
   const isViewer = userRole === 'VIEWER'
+  const isAllMailboxes = isAllMailboxesConnectionId(connectionId)
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
   const currentConnectionEmail = connections.find(c => c.id === connectionId)?.email ?? ''
-  const isOwnInbox = userEmail.toLowerCase() === currentConnectionEmail.toLowerCase()
+  const isOwnInbox = !isAllMailboxes && userEmail.toLowerCase() === currentConnectionEmail.toLowerCase()
   const monitoredEmails = new Set(connections.map(c => c.email.toLowerCase()))
+  const resolveMessageConnectionId = (m: MessageSummary) =>
+    m.inboxConnectionId || (isAllMailboxes ? '' : connectionId)
+  const mailboxEmailFor = (m: MessageSummary) =>
+    connections.find(c => c.id === (m.inboxConnectionId ?? connectionId))?.email ?? null
   const isSentEmail = (m: MessageSummary) => monitoredEmails.has(m.senderEmail.toLowerCase())
   const [messages, setMessages] = useState<MessageSummary[]>([])
   const [page, setPage] = useState(1)
@@ -249,9 +255,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const isTablet = breakpoint === 'tablet'
 
   const handleAutoResponse = async (msg: MessageSummary, affirm: boolean) => {
+    const cid = resolveMessageConnectionId(msg)
+    if (!cid) return
     setAutoResponseStatus(prev => ({ ...prev, [msg.id]: 'sending' }))
     try {
-      await api.sendMessage(workspaceId, connectionId, {
+      await api.sendMessage(workspaceId, cid, {
         action: 'reply',
         originalMessageId: msg.id,
         to: [msg.senderEmail],
@@ -417,9 +425,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [page, buildFilters, hasMore, loadingMore, loadPage])
 
   const handleTrash = async (messageId: string, isTrashed: boolean) => {
+    const msg = messages.find(m => m.id === messageId)
+    const cid = msg ? resolveMessageConnectionId(msg) : connectionId
+    if (!cid || isAllMailboxesConnectionId(cid)) return
     try {
-      if (isTrashed) await api.untrashMessage(workspaceId, connectionId, messageId)
-      else await api.trashMessage(workspaceId, connectionId, messageId)
+      if (isTrashed) await api.untrashMessage(workspaceId, cid, messageId)
+      else await api.trashMessage(workspaceId, cid, messageId)
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch { /* */ }
@@ -440,13 +451,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       void handleMassDeleteClick(messageId)
       return
     }
-    onSelectMessage(messageId)
+    const msg = messages.find(m => m.id === messageId)
+    const cid = msg ? resolveMessageConnectionId(msg) : undefined
+    onSelectMessage(messageId, cid ? { connectionId: cid } : undefined)
   }
 
   const handleMessagePrefetch = (messageId: string) => {
     if (massDeleteMode) return
-    prefetchThread(workspaceId, connectionId, messageId, () =>
-      api.getMessageThread(workspaceId, connectionId, messageId)
+    const msg = messages.find(m => m.id === messageId)
+    const cid = msg ? resolveMessageConnectionId(msg) : connectionId
+    if (!cid || isAllMailboxesConnectionId(cid)) return
+    prefetchThread(workspaceId, cid, messageId, () =>
+      api.getMessageThread(workspaceId, cid, messageId)
     )
   }
 
@@ -499,7 +515,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     })
     setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)))
     try {
-      await api.pinMessage(workspaceId, connectionId, messageId, newPinned)
+      const msg = messages.find(m => m.id === messageId)
+      const cid = msg ? resolveMessageConnectionId(msg) : connectionId
+      if (!cid || isAllMailboxesConnectionId(cid)) throw new Error('missing mailbox')
+      await api.pinMessage(workspaceId, cid, messageId, newPinned)
     } catch {
       setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: currentlyPinned } : m)))
     }
@@ -542,6 +561,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 14 }}>{m.senderName ?? m.senderEmail}</div>
               {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+              {isAllMailboxes && mailboxEmailFor(m) && (
+                <div style={{ fontSize: 10, color: '#7c6a00', marginTop: 2 }}>{mailboxEmailFor(m)}</div>
+              )}
             </div>
           </div>
           <div style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap', marginLeft: 8 }}>
@@ -692,6 +714,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 12px' }}>
         <div style={{ fontWeight: m.isRead ? 500 : 700, fontSize: 13 }}>{m.senderName ?? m.senderEmail}</div>
         {m.senderName && <div style={{ fontSize: 11, color: '#aaa' }}>{m.senderEmail}</div>}
+        {isAllMailboxes && mailboxEmailFor(m) && (
+          <div style={{ fontSize: 10, color: '#7c6a00', marginTop: 2 }}>{mailboxEmailFor(m)}</div>
+        )}
       </td>
       <td style={{ padding: '7px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -935,7 +960,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         ...(isPhone ? { WebkitOverflowScrolling: 'touch' } as React.CSSProperties : {})
       }}>
         {INBOX_TABS.filter(tab => {
-          if (tab.key === 'PERSONAL' && !canSeeAllPersonal && !isOwnInbox) return false
+          // All Mailboxes is BUSINESS-oriented; Personal only for ADMIN/OWNER (ACL still applies server-side).
+          if (tab.key === 'PERSONAL' && isAllMailboxes && !canSeeAllPersonal) return false
+          if (tab.key === 'PERSONAL' && !isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) return false
           return true
         }).map(tab => {
           const tabActive = !isSentView && inboxTab === tab.key
