@@ -53,13 +53,26 @@ export const registerPlatformAdminRoutes = async (
     const workspaces = await app.services.prisma.workspace.findMany({
       orderBy: { createdAt: "desc" },
       select: {
-        id: true, name: true, slug: true, timezone: true, createdAt: true,
-        _count: { select: { memberships: true, inboxConnections: true, emailMessages: true } }
-      }
+        id: true,
+        name: true,
+        slug: true,
+        timezone: true,
+        createdAt: true,
+        _count: {
+          select: {
+            memberships: true,
+            emailMessages: true,
+            // Match Workspace → Monitored Mailboxes: exclude removed/disconnected.
+            inboxConnections: {
+              where: { status: { not: "DISCONNECTED" } },
+            },
+          },
+        },
+      },
     });
 
     return reply.send({
-      workspaces: workspaces.map(w => ({
+      workspaces: workspaces.map((w) => ({
         id: w.id,
         name: w.name,
         slug: w.slug,
@@ -68,9 +81,9 @@ export const registerPlatformAdminRoutes = async (
         counts: {
           members: w._count.memberships,
           connections: w._count.inboxConnections,
-          messages: w._count.emailMessages
-        }
-      }))
+          messages: w._count.emailMessages,
+        },
+      })),
     });
   });
 
@@ -140,20 +153,40 @@ export const registerPlatformAdminRoutes = async (
     const admin = await requirePlatformAdminAccess(app, request, reply);
     if (!admin) return;
 
+    const query = z
+      .object({
+        workspaceId: z.string().min(1).optional(),
+      })
+      .parse(request.query ?? {});
+
     const connections = await app.services.prisma.inboxConnection.findMany({
+      where: {
+        ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+        status: { not: "DISCONNECTED" },
+      },
       orderBy: [{ updatedAt: "desc" }],
       select: {
-        id: true, workspaceId: true, provider: true, email: true, displayName: true,
-        status: true, ingestionSource: true, connectedAt: true,
-        lastSyncedAt: true, lastReceivedAt: true, lastProcessedAt: true,
-        lastSyncError: true, lastErrorMessage: true,
+        id: true,
+        workspaceId: true,
+        provider: true,
+        email: true,
+        displayName: true,
+        status: true,
+        ingestionSource: true,
+        nativeListeningEnabled: true,
+        connectedAt: true,
+        lastSyncedAt: true,
+        lastReceivedAt: true,
+        lastProcessedAt: true,
+        lastSyncError: true,
+        lastErrorMessage: true,
         workspace: { select: { name: true, slug: true } },
-        _count: { select: { messages: true, threads: true } }
-      }
+        _count: { select: { messages: true, threads: true } },
+      },
     });
 
     return reply.send({
-      mailboxes: connections.map(c => ({
+      mailboxes: connections.map((c) => ({
         id: c.id,
         workspaceId: c.workspaceId,
         workspaceName: c.workspace.name,
@@ -163,13 +196,14 @@ export const registerPlatformAdminRoutes = async (
         displayName: c.displayName,
         status: c.status,
         ingestionMode: c.ingestionSource,
+        nativeListeningEnabled: c.nativeListeningEnabled,
         connectedAt: c.connectedAt?.toISOString() ?? null,
         lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
         lastReceivedAt: c.lastReceivedAt?.toISOString() ?? null,
         lastProcessedAt: c.lastProcessedAt?.toISOString() ?? null,
         lastError: c.lastSyncError ?? c.lastErrorMessage ?? null,
-        counts: { messages: c._count.messages, threads: c._count.threads }
-      }))
+        counts: { messages: c._count.messages, threads: c._count.threads },
+      })),
     });
   });
 

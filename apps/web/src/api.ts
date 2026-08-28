@@ -1035,8 +1035,14 @@ export const api = {
   adminDeleteWorkspace: (workspaceId: string) =>
     request<{ status: string }>(`/admin/workspaces/${workspaceId}`, { method: 'DELETE' }),
 
-  adminGetMailboxes: () =>
-    request<{ mailboxes: AdminMailbox[] }>('/admin/mailboxes'),
+  adminGetMailboxes: (opts?: { workspaceId?: string }) => {
+    const p = new URLSearchParams();
+    if (opts?.workspaceId) p.set('workspaceId', opts.workspaceId);
+    const q = p.toString();
+    return request<{ mailboxes: AdminMailbox[] }>(
+      `/admin/mailboxes${q ? `?${q}` : ''}`
+    );
+  },
 
   adminRegisterMailbox: (data: { workspaceId: string; provider: string; email: string; ingestionSource?: string }) =>
     request<{ mailbox: { id: string; workspaceId: string; provider: string; email: string; status: string; ingestionMode: string } }>('/admin/mailboxes', {
@@ -1420,6 +1426,7 @@ export interface AdminMailbox {
   displayName: string | null;
   status: string;
   ingestionMode: string;
+  nativeListeningEnabled?: boolean;
   connectedAt: string | null;
   lastSyncedAt: string | null;
   lastReceivedAt: string | null;
