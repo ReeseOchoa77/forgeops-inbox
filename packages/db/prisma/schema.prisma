@@ -328,6 +328,9 @@ model InboxConnection {
   lastReceivedAt    DateTime?
   lastProcessedAt   DateTime?
   lastErrorMessage  String?
+  /// After Clear Inbox: live sync must not re-import provider messages at/before this instant.
+  /// Historical Import may bypass intentionally.
+  inboxClearedAt    DateTime?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

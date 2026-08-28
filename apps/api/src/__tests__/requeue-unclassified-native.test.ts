@@ -181,7 +181,7 @@ describe("requeueUnclassifiedNativeMessages", () => {
     );
   });
 
-  it("does not reference rules-normalizer", async () => {
+  it("does not reference rules-normalizer; uses shared mailbox-classify enqueue", async () => {
     const src = await import("node:fs").then((fs) =>
       fs.readFileSync(
         new URL(
@@ -192,6 +192,6 @@ describe("requeueUnclassifiedNativeMessages", () => {
       )
     );
     expect(src).not.toMatch(/rules-normalizer|classifyNormalizedEmail/);
-    expect(src).toContain("MAILBOX_CLASSIFY");
+    expect(src).toContain("ensureMailboxClassifyJob");
   });
 });

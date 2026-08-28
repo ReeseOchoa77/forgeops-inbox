@@ -14,12 +14,11 @@ import type {
 } from "@forgeops/shared";
 import {
   ProviderRegistry,
-  QueueNames,
   TokenCipher,
   providerKindFromEnum,
   shouldRunNativeInboxSync,
   shouldEnqueueNativeClassification,
-  buildMailboxClassifyJobId,
+  ensureMailboxClassifyJob,
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
@@ -333,27 +332,21 @@ export class InboxSyncProcessor {
         shouldEnqueueNativeClassification(connection) &&
         (syncResult.createdMessageIds?.length ?? 0) > 0
       ) {
+        let enqueued = 0;
+        let skippedInflight = 0;
         for (const emailMessageId of syncResult.createdMessageIds ?? []) {
           try {
-            const classifyPayload: MailboxClassifyJobPayload = {
+            const outcome = await ensureMailboxClassifyJob({
+              queue: this.classifyQueue,
               workspaceId: context.workspaceId,
               inboxConnectionId: context.inboxConnectionId,
               emailMessageId,
               ...(context.initiatedBy
                 ? { initiatedBy: context.initiatedBy }
                 : {}),
-            };
-            await this.classifyQueue.add(
-              QueueNames.MAILBOX_CLASSIFY,
-              classifyPayload,
-              {
-                jobId: buildMailboxClassifyJobId(emailMessageId),
-                attempts: 3,
-                backoff: { type: "exponential", delay: 5000 },
-                removeOnComplete: { count: 50 },
-                removeOnFail: { count: 50 },
-              }
-            );
+            });
+            if (outcome === "enqueued") enqueued += 1;
+            else skippedInflight += 1;
           } catch (e) {
             console.warn("auto-classify-queue-failed", {
               emailMessageId,
@@ -366,6 +359,12 @@ export class InboxSyncProcessor {
           workspaceId: context.workspaceId,
           inboxConnectionId: context.inboxConnectionId,
           createdCount: syncResult.createdMessageIds?.length ?? 0,
+          enqueued,
+          skippedInflight,
+          skippedClearedCount:
+            "skippedClearedCount" in syncResult
+              ? (syncResult as { skippedClearedCount?: number }).skippedClearedCount ?? 0
+              : 0,
         });
       }
 

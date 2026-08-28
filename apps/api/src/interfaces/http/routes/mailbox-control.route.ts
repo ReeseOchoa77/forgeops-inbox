@@ -626,6 +626,118 @@ export const registerMailboxControlRoutes = async (
   );
 
   /**
+   * Clear Inbox for one mailbox:
+   * - deletes ForgeOps EmailMessage (+ cascaded) for this connection only
+   * - sets inboxClearedAt watermark so live sync does not re-import older provider mail
+   * - does NOT disable listener / push / scheduled sync
+   * - does NOT wipe Historical Import capability (bypass watermark)
+   */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/clear-inbox",
+    async (request, reply) => {
+      const params = connectionParamsSchema.parse(request.params);
+      const access = await requireAdminMembership(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!access) return;
+
+      if (!hasMinRole(access.membership.role, "OWNER")) {
+        return reply.code(403).send({ message: "OWNER role required" });
+      }
+
+      const connection = await app.services.prisma.inboxConnection.findFirst({
+        where: {
+          id: params.connectionId,
+          workspaceId: params.workspaceId,
+        },
+        select: {
+          id: true,
+          email: true,
+          nativeListeningEnabled: true,
+          ingestionSource: true,
+        },
+      });
+      if (!connection) {
+        return reply.code(404).send({ message: "Mailbox not found" });
+      }
+
+      const clearedAt = new Date();
+      const messageIds = (
+        await app.services.prisma.emailMessage.findMany({
+          where: {
+            workspaceId: params.workspaceId,
+            inboxConnectionId: params.connectionId,
+          },
+          select: { id: true },
+        })
+      ).map((m) => m.id);
+
+      let deletedCount = 0;
+      if (messageIds.length > 0) {
+        await app.services.prisma.$transaction(async (tx) => {
+          await tx.emailAttachment.deleteMany({
+            where: { emailMessageId: { in: messageIds } },
+          });
+          await tx.task.deleteMany({
+            where: { sourceMessageId: { in: messageIds } },
+          });
+          await tx.classification.deleteMany({
+            where: { messageId: { in: messageIds } },
+          });
+          await tx.normalizedEmail.deleteMany({
+            where: { messageId: { in: messageIds } },
+          });
+          const deleted = await tx.emailMessage.deleteMany({
+            where: { id: { in: messageIds } },
+          });
+          deletedCount = deleted.count;
+          await tx.emailThread.deleteMany({
+            where: {
+              workspaceId: params.workspaceId,
+              inboxConnectionId: params.connectionId,
+              messages: { none: {} },
+            },
+          });
+        });
+      }
+
+      // Watermark + reset delta so next sync is "from now" and old Graph mail is filtered.
+      await app.services.prisma.inboxConnection.update({
+        where: { id: connection.id },
+        data: {
+          inboxClearedAt: clearedAt,
+          syncCursor: null,
+        },
+      });
+
+      await app.services.auditEventLogger.log({
+        workspaceId: params.workspaceId,
+        actorUserId: access.session.userId,
+        entityType: "INBOX_CONNECTION",
+        entityId: connection.id,
+        action: "inbox_connection.cleared",
+        metadata: {
+          deletedCount,
+          inboxClearedAt: clearedAt.toISOString(),
+          listenerRemainsEnabled: connection.nativeListeningEnabled,
+          ingestionSource: connection.ingestionSource,
+        },
+        request,
+      });
+
+      return reply.send({
+        status: "cleared",
+        deletedCount,
+        inboxClearedAt: clearedAt.toISOString(),
+        listenerEnabled: connection.nativeListeningEnabled,
+      });
+    }
+  );
+
+  /**
    * Register a monitored mailbox for an active Team Access member.
    * Creates a tokenless InboxConnection (N8N + listening OFF) or reuses an
    * existing same-workspace connection — never duplicates.

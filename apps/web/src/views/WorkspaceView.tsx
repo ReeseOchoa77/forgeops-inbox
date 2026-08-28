@@ -79,23 +79,24 @@ export function WorkspaceView({
   }, [workspaceId])
 
   const handleClearInbox = async (connId: string, email: string) => {
-    if (!confirm(`Clear all emails from ${email}? This removes messages, threads, classifications, and tasks. Reference data is preserved.`)) return
+    if (
+      !confirm(
+        `Clear ForgeOps inbox for ${email}?\n\n` +
+          `This removes current ForgeOps inbox data for this mailbox. ` +
+          `New emails will continue syncing. Older emails will only return if you explicitly import previous emails.`
+      )
+    ) {
+      return
+    }
     setClearing(connId)
     try {
-      const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
-      await fetch(`${BASE}/admin/test-data/archive`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, mode: 'all', dryRun: false }),
-      })
-      await fetch(`${BASE}/admin/test-data/delete`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, onlyArchived: true, confirmPhrase: 'PERMANENTLY DELETE' }),
-      })
+      await api.clearInbox(workspaceId, connId)
       window.location.reload()
-    } catch { /* */ }
-    finally { setClearing('') }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to clear inbox')
+    } finally {
+      setClearing('')
+    }
   }
 
   const handleAuthorize = async (conn: ConnectionSummary) => {

@@ -38,7 +38,23 @@ export const importProviderMailbox = async (input: {
   workspaceId: string;
   inboxConnectionId: string;
   mailbox: ProviderMailboxSyncResult;
-}): Promise<InboxSyncResult & { attachmentIngestCandidates: AttachmentIngestCandidate[] }> => {
+  /**
+   * When true (historical import), ignore InboxConnection.inboxClearedAt.
+   * Live sync must leave this false/undefined so Clear Inbox sticks.
+   */
+  bypassInboxClearedAt?: boolean;
+}): Promise<InboxSyncResult & { attachmentIngestCandidates: AttachmentIngestCandidate[]; skippedClearedCount: number }> => {
+  const connectionMeta = await input.prisma.inboxConnection.findFirst({
+    where: { id: input.inboxConnectionId, workspaceId: input.workspaceId },
+    select: { inboxClearedAt: true },
+  });
+  const clearedAt =
+    input.bypassInboxClearedAt || !connectionMeta?.inboxClearedAt
+      ? null
+      : connectionMeta.inboxClearedAt;
+
+  let skippedClearedCount = 0;
+
   const providerThreadIds = input.mailbox.threads.map(
     (thread) => thread.providerThreadId
   );
@@ -189,6 +205,16 @@ export const importProviderMailbox = async (input: {
             continue;
           }
 
+          // Clear Inbox watermark: do not re-create older provider messages on live sync.
+          if (
+            clearedAt &&
+            message.receivedAt &&
+            message.receivedAt.getTime() <= clearedAt.getTime()
+          ) {
+            skippedClearedCount += 1;
+            continue;
+          }
+
           const createdMessage = await tx.emailMessage.create({
             data: {
               workspaceId: input.workspaceId,
@@ -235,5 +261,6 @@ export const importProviderMailbox = async (input: {
     duplicateMessageIds,
     newestSyncCursor: input.mailbox.newestSyncCursor,
     attachmentIngestCandidates,
+    skippedClearedCount,
   };
 };

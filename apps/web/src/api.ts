@@ -522,6 +522,17 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body ?? {}) }
     ),
 
+  clearInbox: (workspaceId: string, connectionId: string) =>
+    request<{
+      status: string
+      deletedCount: number
+      inboxClearedAt: string
+      listenerEnabled: boolean
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;
     searchIn?: 'all' | 'sender';

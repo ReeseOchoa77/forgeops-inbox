@@ -5,14 +5,19 @@ import {
   connectionIdFromScheduledSyncJobId,
   scheduledInboxSyncJobId,
   shouldScheduleNativeInboxSync,
+  ensureMailboxClassifyJob,
+  type MailboxClassifyJobPayload,
+  type MailboxClassifyJobResult,
 } from "@forgeops/shared";
 import { normalizeOpenAiApiKey } from "@forgeops/ai";
+import { Queue } from "bullmq";
 import { loadWorkerEnv } from "./config/env.js";
 import { startAttachmentIngestWorker } from "./jobs/attachment-ingest.worker.js";
 import { startInboxAnalysisWorker } from "./jobs/inbox-analysis.worker.js";
 import { startInboxSyncWorker } from "./jobs/inbox-sync.worker.js";
 import { startMailboxClassifyWorker } from "./jobs/mailbox-classify.worker.js";
 import { startMailboxHistoricalImportWorker } from "./jobs/mailbox-historical-import.worker.js";
+import { createBullMqConnection } from "./infrastructure/redis/connection.js";
 
 const env = loadWorkerEnv();
 const inboxSync = startInboxSyncWorker(env);
@@ -20,6 +25,14 @@ const inboxAnalysis = startInboxAnalysisWorker(env);
 const attachmentIngest = startAttachmentIngestWorker(env);
 const historicalImport = startMailboxHistoricalImportWorker(env);
 const mailboxClassify = startMailboxClassifyWorker(env);
+
+/** Producer queue for safety-net re-enqueue (worker only consumes). */
+const mailboxClassifyQueue = new Queue<
+  MailboxClassifyJobPayload,
+  MailboxClassifyJobResult
+>(QueueNames.MAILBOX_CLASSIFY, {
+  connection: createBullMqConnection(env.REDIS_URL),
+});
 
 async function reconcileScheduledSyncs(): Promise<void> {
   const connections = await prisma.inboxConnection.findMany({
@@ -103,6 +116,88 @@ reconcileScheduledSyncs().catch((e) => {
   });
 });
 
+const UNCLASSIFIED_GRACE_MS = 3 * 60 * 1000;
+const UNCLASSIFIED_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+const UNCLASSIFIED_RECONCILE_LIMIT_PER_CONN = 25;
+
+/**
+ * Safety net: NATIVE messages with no Classification after a grace period
+ * are re-enqueued via ensureMailboxClassifyJob (idempotent).
+ */
+async function reconcileUnclassifiedNative(): Promise<void> {
+  const createdBefore = new Date(Date.now() - UNCLASSIFIED_GRACE_MS);
+  const connections = await prisma.inboxConnection.findMany({
+    where: {
+      ingestionSource: "NATIVE",
+      status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] },
+    },
+    select: { id: true, workspaceId: true },
+  });
+
+  let totalEligible = 0;
+  let totalEnqueued = 0;
+  let totalSkipped = 0;
+
+  for (const conn of connections) {
+    const rows = await prisma.emailMessage.findMany({
+      where: {
+        workspaceId: conn.workspaceId,
+        inboxConnectionId: conn.id,
+        classifications: { none: {} },
+        createdAt: { lt: createdBefore },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+      take: UNCLASSIFIED_RECONCILE_LIMIT_PER_CONN,
+    });
+    if (rows.length === 0) continue;
+    totalEligible += rows.length;
+
+    for (const row of rows) {
+      try {
+        const outcome = await ensureMailboxClassifyJob({
+          queue: mailboxClassifyQueue,
+          workspaceId: conn.workspaceId,
+          inboxConnectionId: conn.id,
+          emailMessageId: row.id,
+          initiatedBy: "worker-unclassified-reconcile",
+        });
+        if (outcome === "enqueued") totalEnqueued += 1;
+        else totalSkipped += 1;
+      } catch (e) {
+        console.warn("unclassified-reconcile-enqueue-failed", {
+          emailMessageId: row.id,
+          error: e instanceof Error ? e.message : "unknown",
+        });
+      }
+    }
+  }
+
+  if (totalEligible > 0) {
+    console.info("unclassified-native-reconciled", {
+      connections: connections.length,
+      eligible: totalEligible,
+      enqueued: totalEnqueued,
+      skippedInflight: totalSkipped,
+      graceMs: UNCLASSIFIED_GRACE_MS,
+    });
+  }
+}
+
+const unclassifiedReconcileTimer = setInterval(() => {
+  void reconcileUnclassifiedNative().catch((e) => {
+    console.error("unclassified-reconcile-failed", {
+      error: e instanceof Error ? e.message : "unknown",
+    });
+  });
+}, UNCLASSIFIED_RECONCILE_INTERVAL_MS);
+unclassifiedReconcileTimer.unref?.();
+
+// Kick once shortly after boot (after workers are listening).
+setTimeout(() => {
+  void reconcileUnclassifiedNative().catch(() => {});
+}, 30_000).unref?.();
+
 const shutdown = async (signal: string): Promise<void> => {
   console.info("worker-shutdown", { signal });
   await Promise.all([
@@ -113,6 +208,7 @@ const shutdown = async (signal: string): Promise<void> => {
     mailboxClassify.worker.close(),
     inboxSync.syncQueue.close(),
     historicalImport.queue.close(),
+    mailboxClassifyQueue.close(),
     inboxSync.redis.quit(),
     inboxAnalysis.redis.quit(),
     attachmentIngest.redis.quit(),

@@ -2,11 +2,10 @@ import type { PrismaClient } from "@prisma/client";
 import {
   HISTORICAL_IMPORT_MAX_LIMIT,
   ProviderRegistry,
-  QueueNames,
   TokenCipher,
   providerKindFromEnum,
   shouldEnqueueNativeClassification,
-  buildMailboxClassifyJobId,
+  ensureMailboxClassifyJob,
   type AttachmentIngestJobPayload,
   type AttachmentIngestResult,
   type InboxAnalysisJobPayload,
@@ -238,6 +237,8 @@ export async function processMailboxHistoricalImport(
           ...mailbox,
           threads: cappedThreads,
         },
+        // Explicit historical import may re-pull mail from before Clear Inbox.
+        bypassInboxClearedAt: true,
       });
       importedCount = result.messagesImported;
       duplicateCount = result.duplicatesSkipped;
@@ -316,24 +317,15 @@ export async function processMailboxHistoricalImport(
     if (shouldEnqueueNativeClassification(connection)) {
       for (const emailMessageId of createdMessageIds) {
         try {
-          await deps.classifyQueue.add(
-            QueueNames.MAILBOX_CLASSIFY,
-            {
-              workspaceId: payload.workspaceId,
-              inboxConnectionId: connection.id,
-              emailMessageId,
-              ...(payload.initiatedBy
-                ? { initiatedBy: payload.initiatedBy }
-                : {}),
-            },
-            {
-              jobId: buildMailboxClassifyJobId(emailMessageId),
-              attempts: 3,
-              backoff: { type: "exponential", delay: 5000 },
-              removeOnComplete: { count: 50 },
-              removeOnFail: { count: 50 },
-            }
-          );
+          await ensureMailboxClassifyJob({
+            queue: deps.classifyQueue,
+            workspaceId: payload.workspaceId,
+            inboxConnectionId: connection.id,
+            emailMessageId,
+            ...(payload.initiatedBy
+              ? { initiatedBy: payload.initiatedBy }
+              : {}),
+          });
         } catch (e) {
           failedCount += 1;
           console.warn("historical-classify-queue-failed", {

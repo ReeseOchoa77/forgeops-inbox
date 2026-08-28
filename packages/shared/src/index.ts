@@ -16,5 +16,6 @@ export * from "./reference/priority-decision.js";
 export * from "./attachments/cid.js";
 export * from "./mailbox-category.js";
 export * from "./ingestion-ownership.js";
+export * from "./mailbox-classify-enqueue.js";
 export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";
