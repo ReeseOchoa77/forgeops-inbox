@@ -19,6 +19,8 @@ import {
   shouldRunNativeInboxSync,
   shouldEnqueueNativeClassification,
   ensureMailboxClassifyJob,
+  buildInboxSyncSucceededAuditMetadata,
+  sanitizeAuditMetadata,
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
@@ -39,6 +41,22 @@ const logAuditEvent = async (input: {
   action: string;
   metadata?: Record<string, unknown>;
 }): Promise<void> => {
+  let metadataJson: Prisma.InputJsonValue | undefined;
+  if (input.metadata) {
+    const sanitized = sanitizeAuditMetadata(input.metadata, {
+      onWarn: ({ byteLength, truncated, strippedKeys }) => {
+        console.warn("audit-metadata-oversized", {
+          action: input.action,
+          entityId: input.connectionId,
+          workspaceId: input.workspaceId,
+          byteLength,
+          truncated,
+          strippedKeys: strippedKeys.slice(0, 20),
+        });
+      },
+    });
+    metadataJson = toPrismaJson(sanitized.metadata);
+  }
   await input.prisma.auditEvent.create({
     data: {
       workspaceId: input.workspaceId,
@@ -46,8 +64,8 @@ const logAuditEvent = async (input: {
       entityType: "INBOX_CONNECTION",
       entityId: input.connectionId,
       action: input.action,
-      ...(input.metadata ? { metadata: toPrismaJson(input.metadata) } : {})
-    }
+      ...(metadataJson !== undefined ? { metadata: metadataJson } : {}),
+    },
   });
 };
 
@@ -305,25 +323,76 @@ export class InboxSyncProcessor {
         }
       });
 
+      const createdCount = syncResult.createdMessageIds?.length ?? 0;
+      const updatedCount = syncResult.updatedMessageIds?.length ?? 0;
+      const duplicateCount = syncResult.duplicateMessageIds?.length ?? 0;
+      const attachmentIngestCandidateCount =
+        "attachmentIngestCandidates" in syncResult &&
+        Array.isArray(
+          (syncResult as { attachmentIngestCandidates?: unknown[] })
+            .attachmentIngestCandidates
+        )
+          ? (
+              syncResult as {
+                attachmentIngestCandidates: unknown[];
+              }
+            ).attachmentIngestCandidates.length
+          : 0;
+      const skippedClearedCount =
+        "skippedClearedCount" in syncResult
+          ? ((syncResult as { skippedClearedCount?: number }).skippedClearedCount ??
+            0)
+          : 0;
+      const syncCursorAdvanced = Boolean(
+        syncResult.newestSyncCursor &&
+          syncResult.newestSyncCursor !== connection.syncCursor
+      );
+
       await logAuditEvent({
         prisma: this.prisma,
         workspaceId: context.workspaceId,
         connectionId: connection.id,
         action: "inbox_connection.sync_succeeded",
         ...(context.initiatedBy ? { actorUserId: context.initiatedBy } : {}),
-        metadata: {
-          jobId: context.jobId,
+        metadata: buildInboxSyncSucceededAuditMetadata({
           provider: providerKind,
+          jobId: context.jobId,
           refreshTokenRotated: Boolean(mailbox.refreshedRefreshToken),
-          ...syncResult
-        }
+          syncCursorAdvanced,
+          threadsImported: syncResult.threadsImported,
+          messagesImported: syncResult.messagesImported,
+          duplicatesSkipped: syncResult.duplicatesSkipped,
+          createdCount,
+          updatedCount,
+          duplicateCount,
+          attachmentIngestCandidateCount,
+          skippedClearedCount,
+          ...(syncResult.skipped
+            ? { skipped: true, skipReason: syncResult.skipReason }
+            : {}),
+        }),
       });
 
+      // Full operational detail stays in application logs, not AuditEvent.
       console.info("inbox-sync-completed", {
         jobId: context.jobId,
         provider: providerKind,
         refreshTokenRotated: Boolean(mailbox.refreshedRefreshToken),
-        ...syncResult
+        workspaceId: syncResult.workspaceId,
+        inboxConnectionId: syncResult.inboxConnectionId,
+        threadsImported: syncResult.threadsImported,
+        messagesImported: syncResult.messagesImported,
+        duplicatesSkipped: syncResult.duplicatesSkipped,
+        createdCount,
+        updatedCount,
+        duplicateCount,
+        attachmentIngestCandidateCount,
+        skippedClearedCount,
+        syncCursorAdvanced,
+        hasNewestSyncCursor: Boolean(syncResult.newestSyncCursor),
+        newestSyncCursorLength: syncResult.newestSyncCursor?.length ?? 0,
+        skipped: syncResult.skipped ?? false,
+        skipReason: syncResult.skipReason,
       });
 
       if (
@@ -361,10 +430,7 @@ export class InboxSyncProcessor {
           createdCount: syncResult.createdMessageIds?.length ?? 0,
           enqueued,
           skippedInflight,
-          skippedClearedCount:
-            "skippedClearedCount" in syncResult
-              ? (syncResult as { skippedClearedCount?: number }).skippedClearedCount ?? 0
-              : 0,
+          skippedClearedCount,
         });
       }
 

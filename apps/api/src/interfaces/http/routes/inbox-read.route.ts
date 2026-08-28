@@ -1283,18 +1283,13 @@ export const registerInboxReadRoutes = async (
     );
     const dbMs = Math.round(performance.now() - tDb);
 
-    app.services.auditEventLogger.log({
+    // View telemetry → application logs only (not permanent AuditEvent).
+    console.info("workspace.inbox_connections_viewed", {
       workspaceId: params.workspaceId,
       actorUserId: session.userId,
-      entityType: "WORKSPACE",
-      entityId: params.workspaceId,
-      action: "workspace.inbox_connections_viewed",
-      metadata: {
-        count: connections.length,
-        includeCounts,
-      },
-      request
-    }).catch(() => {});
+      count: connections.length,
+      includeCounts,
+    });
 
     const serialized = connections.map((connection) => {
       const counts =
@@ -1676,24 +1671,18 @@ export const registerInboxReadRoutes = async (
         stages: timings
       });
 
-      app.services.auditEventLogger.log({
+      // View telemetry → application logs only (not permanent AuditEvent).
+      console.info("inbox_connection.messages_viewed", {
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
-        entityType: "INBOX_CONNECTION",
-        entityId: params.id,
-        action: "inbox_connection.messages_viewed",
-        metadata: {
-          filters: {
-            classificationType: query.classificationType ?? null,
-            reviewOnly: query.reviewOnly,
-            lowConfidenceOnly: query.lowConfidenceOnly,
-            hasTaskCandidate: query.hasTaskCandidate ?? null
-          },
-          page: query.page,
-          pageSize: query.pageSize
-        },
-        request
-      }).catch(() => {});
+        inboxConnectionId: params.id,
+        page: query.page,
+        pageSize: query.pageSize,
+        classificationType: query.classificationType ?? null,
+        reviewOnly: query.reviewOnly,
+        lowConfidenceOnly: query.lowConfidenceOnly,
+        hasTaskCandidate: query.hasTaskCandidate ?? null,
+      });
 
       return reply.send(payload);
     }
@@ -2477,19 +2466,15 @@ export const registerInboxReadRoutes = async (
         });
       });
 
-      app.services.auditEventLogger.log({
+      // View telemetry → application logs only (not permanent AuditEvent).
+      console.info("inbox_connection.review_queue_viewed", {
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
-        entityType: "INBOX_CONNECTION",
-        entityId: params.id,
-        action: "inbox_connection.review_queue_viewed",
-        metadata: {
-          page: query.page,
-          pageSize: query.pageSize,
-          totalCount
-        },
-        request
-      }).catch(() => {});
+        inboxConnectionId: params.id,
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount,
+      });
 
       return reply.send(
         reviewListResponseSchema.parse({
@@ -2603,23 +2588,17 @@ export const registerInboxReadRoutes = async (
         })
       ]);
 
-      app.services.auditEventLogger.log({
+      // View telemetry → application logs only (not permanent AuditEvent).
+      console.info("inbox_connection.tasks_viewed", {
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
-        entityType: "INBOX_CONNECTION",
-        entityId: params.id,
-        action: "inbox_connection.tasks_viewed",
-        metadata: {
-          filters: {
-            reviewOnly: query.reviewOnly,
-            lowConfidenceOnly: query.lowConfidenceOnly,
-            status: query.status ?? null
-          },
-          page: query.page,
-          pageSize: query.pageSize
-        },
-        request
-      }).catch(() => {});
+        inboxConnectionId: params.id,
+        page: query.page,
+        pageSize: query.pageSize,
+        reviewOnly: query.reviewOnly,
+        lowConfidenceOnly: query.lowConfidenceOnly,
+        status: query.status ?? null,
+      });
 
       return reply.send(
         tasksListResponseSchema.parse({

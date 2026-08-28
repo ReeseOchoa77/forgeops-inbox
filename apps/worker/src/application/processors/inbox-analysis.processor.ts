@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { InboxAnalysisResult } from "@forgeops/shared";
+import { sanitizeAuditMetadata } from "@forgeops/shared";
 
 import { analyzeInboxConnection } from "../services/analyze-inbox-connection.js";
 import type { InboxAnalysisContext } from "../../domain/inbox-analysis-context.js";
@@ -17,6 +18,22 @@ const logAuditEvent = async (input: {
   action: string;
   metadata?: Record<string, unknown>;
 }): Promise<void> => {
+  let metadataJson: Prisma.InputJsonValue | undefined;
+  if (input.metadata) {
+    const sanitized = sanitizeAuditMetadata(input.metadata, {
+      onWarn: ({ byteLength, truncated, strippedKeys }) => {
+        console.warn("audit-metadata-oversized", {
+          action: input.action,
+          entityId: input.connectionId,
+          workspaceId: input.workspaceId,
+          byteLength,
+          truncated,
+          strippedKeys: strippedKeys.slice(0, 20),
+        });
+      },
+    });
+    metadataJson = toPrismaJson(sanitized.metadata);
+  }
   await input.prisma.auditEvent.create({
     data: {
       workspaceId: input.workspaceId,
@@ -24,8 +41,8 @@ const logAuditEvent = async (input: {
       entityType: "INBOX_CONNECTION",
       entityId: input.connectionId,
       action: input.action,
-      ...(input.metadata ? { metadata: toPrismaJson(input.metadata) } : {})
-    }
+      ...(metadataJson !== undefined ? { metadata: metadataJson } : {}),
+    },
   });
 };
 
@@ -75,13 +92,17 @@ export class InboxAnalysisProcessor {
         ...(context.initiatedBy ? { actorUserId: context.initiatedBy } : {}),
         metadata: {
           jobId: context.jobId,
-          ...result
-        }
+          messagesAnalyzed: result.messagesAnalyzed,
+          messagesClassified: result.messagesClassified,
+          taskCandidatesCreated: result.taskCandidatesCreated,
+          lowConfidenceItemsFlaggedForReview:
+            result.lowConfidenceItemsFlaggedForReview,
+        },
       });
 
       console.info("inbox-analysis-completed", {
         jobId: context.jobId,
-        ...result
+        ...result,
       });
 
       return result;

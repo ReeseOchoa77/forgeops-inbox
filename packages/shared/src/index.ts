@@ -17,5 +17,7 @@ export * from "./attachments/cid.js";
 export * from "./mailbox-category.js";
 export * from "./ingestion-ownership.js";
 export * from "./mailbox-classify-enqueue.js";
+export * from "./audit/audit-metadata.js";
+export * from "./audit/audit-retention.js";
 export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";
