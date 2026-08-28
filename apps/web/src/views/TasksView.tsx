@@ -5,6 +5,7 @@ import { PriorityBadge, StatusBadge } from '../components/Badges'
 interface Props {
   workspaceId: string
   connectionId: string
+  connections?: Array<{ email: string }>
   onSelectMessage?: (id: string) => void
   userRole?: string
 }
@@ -48,41 +49,60 @@ function isCreatedThisWeek(createdAt: string): boolean {
   return d >= start && d < end
 }
 
-export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole }: Props) {
+export function TasksView({ workspaceId, connectionId, connections, onSelectMessage, userRole }: Props) {
   const isViewer = userRole === 'VIEWER'
   const [allTasks, setAllTasks] = useState<TaskListItem[]>([])
-  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(new Set())
+  const [monitoredEmails, setMonitoredEmails] = useState<Set<string>>(() =>
+    new Set((connections ?? []).map(c => c.email.toLowerCase()))
+  )
   const [page, setPage] = useState(1)
   const [, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState<TaskFilter>('open')
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const hasMoreRef = useRef(false)
   const loadingMoreRef = useRef(false)
+  const hasPaintedRef = useRef(false)
 
   useEffect(() => {
+    if (connections && connections.length > 0) {
+      setMonitoredEmails(new Set(connections.map(c => c.email.toLowerCase())))
+      return
+    }
+    // Fallback only when App did not pass connections
     api.getConnections(workspaceId)
       .then(r => setMonitoredEmails(new Set(r.connections.map(c => c.email.toLowerCase()))))
       .catch(() => setMonitoredEmails(new Set()))
-  }, [workspaceId])
+  }, [workspaceId, connections])
 
   // Load page 1 whenever workspace/connection changes
   useEffect(() => {
-    setAllTasks([])
+    const soft = hasPaintedRef.current && allTasks.length > 0
+    if (!soft) {
+      setAllTasks([])
+      setLoading(true)
+    } else {
+      setRefreshing(true)
+    }
     setPage(1)
     setTotalPages(0)
-    setLoading(true)
     api.getTasks(workspaceId, connectionId, 1)
       .then(r => {
         setAllTasks(r.tasks)
         setTotalPages(r.pagination.totalPages)
         setTotalCount(r.pagination.totalCount)
         hasMoreRef.current = 1 < r.pagination.totalPages
+        hasPaintedRef.current = true
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        setLoading(false)
+        setRefreshing(false)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on workspace/connection
   }, [workspaceId, connectionId])
 
   // Load subsequent pages
@@ -186,7 +206,10 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
             <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Tasks</h2>
-            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>{filteredTasks.length} {filter === 'all' ? 'tasks' : filter.replace('_', ' ') + ' tasks'}{filter !== 'all' ? ` of ${totalCount}` : ''}</p>
+            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
+              {filteredTasks.length} {filter === 'all' ? 'tasks' : filter.replace('_', ' ') + ' tasks'}{filter !== 'all' ? ` of ${totalCount}` : ''}
+              {refreshing ? ' · Updating…' : ''}
+            </p>
           </div>
         </div>
 
@@ -204,7 +227,7 @@ export function TasksView({ workspaceId, connectionId, onSelectMessage, userRole
       </div>
 
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        {loading ? (
+        {loading && allTasks.length === 0 ? (
           <p style={{ color: '#888', padding: 8 }}>Loading tasks...</p>
         ) : filteredTasks.length === 0 ? (
           <div className="empty-state" style={{ padding: 24 }}>

@@ -109,9 +109,11 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       ];
     }
 
+    const LOOKUP_LIMIT = 500;
     const jobs = await app.services.prisma.job.findMany({
       where,
       orderBy: { name: "asc" },
+      take: LOOKUP_LIMIT,
       select: { id: true, jobNumber: true, name: true, status: true },
     });
 
@@ -120,12 +122,15 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
 
   // 1. GET /api/v1/workspaces/:workspaceId/jobs — List jobs with filters
   app.get("/api/v1/workspaces/:workspaceId/jobs", async (request, reply) => {
+    const t0 = performance.now();
     const { workspaceId } = wsParams.parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
 
     const query = listQuerySchema.parse(request.query);
     const skip = (query.page - 1) * query.pageSize;
+    const now = new Date();
+    const openTaskStatuses = ["OPEN", "IN_PROGRESS", "BLOCKED"] as const;
 
     const where: Record<string, unknown> = { workspaceId };
 
@@ -148,100 +153,165 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     if (query.assignedUserId) {
       where.members = { some: { userId: query.assignedUserId } };
     }
+    // Push overdue filter into SQL so pagination/totals stay correct
+    if (query.hasOverdueTasks) {
+      where.tasks = {
+        some: {
+          status: { in: [...openTaskStatuses] },
+          dueAt: { lt: now },
+        },
+      };
+    }
 
+    const tDb = performance.now();
     const [jobs, totalCount] = await Promise.all([
       app.services.prisma.job.findMany({
         where,
         skip,
         take: query.pageSize,
         orderBy: { [query.sortBy]: query.sortDir },
-        include: {
+        select: {
+          id: true,
+          jobNumber: true,
+          name: true,
+          status: true,
+          customerId: true,
+          startDate: true,
+          targetCompletionDate: true,
+          archivedAt: true,
+          createdAt: true,
           customer: { select: { id: true, name: true } },
           members: {
             select: { id: true, userId: true, role: true, createdAt: true },
             take: 10,
           },
-          _count: { select: { assignedEmails: true, tasks: true, members: true } },
+          _count: { select: { assignedEmails: true } },
         },
       }),
       app.services.prisma.job.count({ where }),
     ]);
 
-    const allMemberUserIds = [...new Set(jobs.flatMap((j) => j.members.map((m) => m.userId)))];
-    const memberUsers = allMemberUserIds.length
-      ? await app.services.prisma.user.findMany({
-          where: { id: { in: allMemberUserIds } },
-          select: { id: true, email: true, name: true },
-        })
-      : [];
+    const jobIds = jobs.map((j) => j.id);
+
+    const [memberUsers, openTaskGroups, overdueTaskGroups, nextDueGroups, lastActivities] =
+      jobIds.length === 0
+        ? [[], [], [], [], []] as const
+        : await Promise.all([
+            (() => {
+              const allMemberUserIds = [
+                ...new Set(jobs.flatMap((j) => j.members.map((m) => m.userId))),
+              ];
+              return allMemberUserIds.length
+                ? app.services.prisma.user.findMany({
+                    where: { id: { in: allMemberUserIds } },
+                    select: { id: true, email: true, name: true },
+                  })
+                : Promise.resolve([]);
+            })(),
+            app.services.prisma.task.groupBy({
+              by: ["jobId"],
+              where: {
+                jobId: { in: jobIds },
+                status: { in: [...openTaskStatuses] },
+              },
+              _count: { _all: true },
+            }),
+            app.services.prisma.task.groupBy({
+              by: ["jobId"],
+              where: {
+                jobId: { in: jobIds },
+                status: { in: [...openTaskStatuses] },
+                dueAt: { lt: now },
+              },
+              _count: { _all: true },
+            }),
+            app.services.prisma.task.groupBy({
+              by: ["jobId"],
+              where: {
+                jobId: { in: jobIds },
+                status: { in: [...openTaskStatuses] },
+                dueAt: { not: null },
+              },
+              _min: { dueAt: true },
+            }),
+            app.services.prisma.jobActivityLog.findMany({
+              where: { jobId: { in: jobIds } },
+              orderBy: { createdAt: "desc" },
+              distinct: ["jobId"],
+              select: { jobId: true, createdAt: true },
+            }),
+          ]);
+    const dbMs = Math.round(performance.now() - tDb);
+
     const memberUserMap = new Map(memberUsers.map((u) => [u.id, u]));
-
-    const now = new Date();
-    const enriched = await Promise.all(
-      jobs.map(async (job) => {
-        const [openTaskCount, overdueTaskCount, lastActivity, nextDueTask] = await Promise.all([
-          app.services.prisma.task.count({ where: { jobId: job.id, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] } } }),
-          app.services.prisma.task.count({
-            where: {
-              jobId: job.id,
-              status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] },
-              dueAt: { lt: now },
-            },
-          }),
-          app.services.prisma.jobActivityLog.findFirst({
-            where: { jobId: job.id },
-            orderBy: { createdAt: "desc" },
-            select: { createdAt: true },
-          }),
-          app.services.prisma.task.findFirst({
-            where: { jobId: job.id, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] }, dueAt: { not: null } },
-            orderBy: { dueAt: "asc" },
-            select: { dueAt: true },
-          }),
-        ]);
-
-        return {
-          id: job.id,
-          jobNumber: job.jobNumber,
-          name: job.name,
-          status: job.status,
-          customerId: job.customerId,
-          customerName: job.customer?.name ?? null,
-          description: job.description,
-          startDate: job.startDate,
-          targetCompletionDate: job.targetCompletionDate,
-          archivedAt: job.archivedAt,
-          createdAt: job.createdAt,
-          emailCount: job._count.assignedEmails,
-          openTaskCount,
-          overdueTaskCount,
-          lastActivityAt: lastActivity?.createdAt ?? null,
-          nextDueDate: nextDueTask?.dueAt ?? null,
-          assignedMembers: job.members.map((m) => {
-            const u = memberUserMap.get(m.userId);
-            return {
-              userId: m.userId,
-              name: u?.name ?? null,
-              email: u?.email ?? "",
-              role: m.role,
-            };
-          }),
-        };
-      }),
+    const openCountByJob = new Map(
+      openTaskGroups
+        .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
+        .map((g) => [g.jobId, g._count._all])
+    );
+    const overdueCountByJob = new Map(
+      overdueTaskGroups
+        .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
+        .map((g) => [g.jobId, g._count._all])
+    );
+    const nextDueByJob = new Map(
+      nextDueGroups
+        .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
+        .map((g) => [g.jobId, g._min.dueAt])
+    );
+    const lastActivityByJob = new Map(
+      lastActivities.map((a) => [a.jobId, a.createdAt])
     );
 
-    if (query.hasOverdueTasks) {
-      const filtered = enriched.filter((j) => j.overdueTaskCount > 0);
-      return reply.send({
-        jobs: filtered,
-        pagination: { page: query.page, pageSize: query.pageSize, totalCount, totalPages: Math.ceil(totalCount / query.pageSize) },
-      });
-    }
+    const enriched = jobs.map((job) => ({
+      id: job.id,
+      jobNumber: job.jobNumber,
+      name: job.name,
+      status: job.status,
+      customerId: job.customerId,
+      customerName: job.customer?.name ?? null,
+      description: null as string | null,
+      startDate: job.startDate,
+      targetCompletionDate: job.targetCompletionDate,
+      archivedAt: job.archivedAt,
+      createdAt: job.createdAt,
+      emailCount: job._count.assignedEmails,
+      openTaskCount: openCountByJob.get(job.id) ?? 0,
+      overdueTaskCount: overdueCountByJob.get(job.id) ?? 0,
+      lastActivityAt: lastActivityByJob.get(job.id) ?? null,
+      nextDueDate: nextDueByJob.get(job.id) ?? null,
+      assignedMembers: job.members.map((m) => {
+        const u = memberUserMap.get(m.userId);
+        return {
+          userId: m.userId,
+          name: u?.name ?? null,
+          email: u?.email ?? "",
+          role: m.role,
+        };
+      }),
+    }));
 
-    return reply.send({
+    const body = {
       jobs: enriched,
-      pagination: { page: query.page, pageSize: query.pageSize, totalCount, totalPages: Math.ceil(totalCount / query.pageSize) },
+      pagination: {
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount,
+        totalPages: Math.ceil(totalCount / query.pageSize),
+      },
+    };
+    const payloadBytes = Buffer.byteLength(JSON.stringify(body));
+    request.log.info({
+      event: "api-performance",
+      route: "jobs.list",
+      totalMs: Math.round(performance.now() - t0),
+      dbMs,
+      serializationMs: 0,
+      resultCount: enriched.length,
+      payloadBytes,
     });
+
+    return reply.send(body);
   });
 
   // 2. POST /api/v1/workspaces/:workspaceId/jobs — Create job

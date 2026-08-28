@@ -128,7 +128,8 @@ export function ReferenceDataView({
     setLoading(true)
     setError('')
     try {
-      const r = await fetchJson<Record<string, unknown[]>>(`/workspaces/${workspaceId}/reference/${t}`)
+      const q = t === 'customers' ? '?includeCounts=true' : ''
+      const r = await fetchJson<Record<string, unknown[]>>(`/workspaces/${workspaceId}/reference/${t}${q}`)
       setData(prev => ({ ...prev, [t]: Object.values(r)[0] as unknown[] }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed')

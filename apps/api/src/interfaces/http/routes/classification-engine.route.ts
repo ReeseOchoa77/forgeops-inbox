@@ -207,6 +207,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         isSpam: false,
         isTrashed: false,
         previousCategory: isRevert ? null : currentCategory,
+        itemStatus: "NEW",
         ...(body.priority ? { priority: body.priority } : {})
       }
     });
@@ -252,7 +253,10 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         businessCategory: legacyBusinessCategoryFromMailbox(body.mailboxCategory),
         reviewStatus: "APPROVED",
         reviewedByUserId: session.userId,
-        reviewedAt: new Date()
+        reviewedAt: new Date(),
+        requiresReview: false,
+        itemStatus: "NEW",
+        reviewQueue: null,
       };
       if (body.businessType !== undefined) classUpdate.businessTypeKey = body.businessType;
       if (body.customerId !== undefined) classUpdate.customerId = body.customerId;

@@ -442,35 +442,36 @@ const parseNormalizedSender = (value: unknown) =>
 const parseAttachmentMetadata = (value: unknown) =>
   z.array(attachmentMetadataSchema).parse(value ?? []);
 
-const serializeConnection = (connection: {
-  id: string;
-  provider: string;
-  email: string;
-  displayName: string | null;
-  providerAccountId: string | null;
-  status: "ACTIVE" | "PAUSED" | "ERROR" | "REQUIRES_REAUTH" | "DISCONNECTED";
-  connectedAt: Date | null;
-  lastSyncedAt: Date | null;
-  lastProcessedAt?: Date | null;
-  lastReceivedAt?: Date | null;
-  lastSyncError?: string | null;
-  ingestionSource?: string;
-  nativeListeningEnabled?: boolean;
-  listenIncoming?: boolean;
-  listenSent?: boolean;
-  excludeJunk?: boolean;
-  excludeTrash?: boolean;
-  grantedScopes: string[];
-  encryptedRefreshToken?: string | null;
-  _count: {
-    messages: number;
-    threads: number;
-  };
-}) => {
+const serializeConnection = (
+  connection: {
+    id: string;
+    provider: string;
+    email: string;
+    displayName: string | null;
+    providerAccountId: string | null;
+    status: "ACTIVE" | "PAUSED" | "ERROR" | "REQUIRES_REAUTH" | "DISCONNECTED";
+    connectedAt: Date | null;
+    lastSyncedAt: Date | null;
+    lastProcessedAt?: Date | null;
+    lastReceivedAt?: Date | null;
+    lastSyncError?: string | null;
+    ingestionSource?: string;
+    nativeListeningEnabled?: boolean;
+    listenIncoming?: boolean;
+    listenSent?: boolean;
+    excludeJunk?: boolean;
+    excludeTrash?: boolean;
+    grantedScopes: string[];
+  },
+  opts: {
+    hasRefreshToken: boolean;
+    counts: { messages: number; threads: number };
+  }
+) => {
   const auth = buildAuthorizationFields({
     provider: connection.provider,
     status: connection.status,
-    hasRefreshToken: Boolean(connection.encryptedRefreshToken),
+    hasRefreshToken: opts.hasRefreshToken,
     grantedScopes: connection.grantedScopes,
   });
 
@@ -495,10 +496,7 @@ const serializeConnection = (connection: {
     grantedScopes: connection.grantedScopes,
     authorizationStatus: auth.authorizationStatus,
     capabilities: auth.capabilities,
-    counts: {
-      messages: connection._count.messages,
-      threads: connection._count.threads
-    }
+    counts: opts.counts,
   });
 };
 
@@ -1156,6 +1154,7 @@ const loadWorkspaceSession = async (input: {
   };
 };
 
+/** Existence/auth fields only — no message/thread COUNTs, no refresh-token blob. */
 const loadWorkspaceConnection = async (input: {
   app: FastifyInstance;
   workspaceId: string;
@@ -1185,21 +1184,40 @@ const loadWorkspaceConnection = async (input: {
       excludeJunk: true,
       excludeTrash: true,
       grantedScopes: true,
-      encryptedRefreshToken: true,
-      _count: {
-        select: {
-          messages: true,
-          threads: true
-        }
-      }
     }
   });
+
+const connectionHasRefreshToken = async (
+  app: FastifyInstance,
+  connectionIds: string[]
+): Promise<Set<string>> => {
+  if (connectionIds.length === 0) return new Set();
+  const rows = await app.services.prisma.inboxConnection.findMany({
+    where: {
+      id: { in: connectionIds },
+      encryptedRefreshToken: { not: null },
+    },
+    select: { id: true },
+  });
+  return new Set(rows.map((r) => r.id));
+};
 
 export const registerInboxReadRoutes = async (
   app: FastifyInstance
 ): Promise<void> => {
   app.get("/api/v1/workspaces/:workspaceId/inbox-connections", async (request, reply) => {
+    const t0 = performance.now();
     const params = workspaceParamsSchema.parse(request.params);
+    const includeCounts =
+      z
+        .object({
+          includeCounts: z
+            .enum(["true", "false"])
+            .optional()
+            .transform((v) => v === "true"),
+        })
+        .parse(request.query).includeCounts === true;
+
     const { session, membership } = await loadWorkspaceSession({
       app,
       request,
@@ -1214,6 +1232,7 @@ export const registerInboxReadRoutes = async (
       return sendWorkspaceAccessDenied(reply);
     }
 
+    const tDb = performance.now();
     const connections = await app.services.prisma.inboxConnection.findMany({
       where: {
         workspaceId: params.workspaceId
@@ -1245,15 +1264,24 @@ export const registerInboxReadRoutes = async (
         excludeJunk: true,
         excludeTrash: true,
         grantedScopes: true,
-        encryptedRefreshToken: true,
-        _count: {
-          select: {
-            messages: true,
-            threads: true
-          }
-        }
+        ...(includeCounts
+          ? {
+              _count: {
+                select: {
+                  messages: true,
+                  threads: true,
+                },
+              },
+            }
+          : {}),
       }
     });
+
+    const tokenIds = await connectionHasRefreshToken(
+      app,
+      connections.map((c) => c.id)
+    );
+    const dbMs = Math.round(performance.now() - tDb);
 
     app.services.auditEventLogger.log({
       workspaceId: params.workspaceId,
@@ -1262,15 +1290,41 @@ export const registerInboxReadRoutes = async (
       entityId: params.workspaceId,
       action: "workspace.inbox_connections_viewed",
       metadata: {
-        count: connections.length
+        count: connections.length,
+        includeCounts,
       },
       request
     }).catch(() => {});
 
+    const serialized = connections.map((connection) => {
+      const counts =
+        includeCounts && "_count" in connection && connection._count
+          ? {
+              messages: (connection._count as { messages: number; threads: number })
+                .messages,
+              threads: (connection._count as { messages: number; threads: number })
+                .threads,
+            }
+          : { messages: 0, threads: 0 };
+      return serializeConnection(connection, {
+        hasRefreshToken: tokenIds.has(connection.id),
+        counts,
+      });
+    });
+
+    request.log.info({
+      event: "api-performance",
+      route: "inbox-connections.list",
+      totalMs: Math.round(performance.now() - t0),
+      dbMs,
+      resultCount: serialized.length,
+      includeCounts,
+    });
+
     return reply.send(
       connectionListResponseSchema.parse({
         workspaceId: params.workspaceId,
-        connections: connections.map(serializeConnection)
+        connections: serialized
       })
     );
   });
@@ -1305,6 +1359,14 @@ export const registerInboxReadRoutes = async (
         });
       }
 
+      const [tokenIds, counts] = await Promise.all([
+        connectionHasRefreshToken(app, [connection.id]),
+        app.services.prisma.inboxConnection.findFirst({
+          where: { id: connection.id },
+          select: { _count: { select: { messages: true, threads: true } } },
+        }),
+      ]);
+
       app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,
         actorUserId: session.userId,
@@ -1317,7 +1379,13 @@ export const registerInboxReadRoutes = async (
       return reply.send(
         connectionDetailResponseSchema.parse({
           workspaceId: params.workspaceId,
-          connection: serializeConnection(connection)
+          connection: serializeConnection(connection, {
+            hasRefreshToken: tokenIds.has(connection.id),
+            counts: {
+              messages: counts?._count.messages ?? 0,
+              threads: counts?._count.threads ?? 0,
+            },
+          })
         })
       );
     }
@@ -2474,7 +2542,13 @@ export const registerInboxReadRoutes = async (
         });
       }
 
-      const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
+      const needsThresholds = query.reviewOnly || query.lowConfidenceOnly;
+      const thresholds = needsThresholds
+        ? await getWorkspaceThresholds(app, params.workspaceId)
+        : {
+            classificationThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
+            taskThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
+          };
       const where = buildTasksWhere({
         workspaceId: params.workspaceId,
         inboxConnectionId: params.id,
@@ -2523,25 +2597,8 @@ export const registerInboxReadRoutes = async (
                 senderEmail: true,
                 receivedAt: true
               }
-            },
-            classification: {
-              select: {
-                id: true,
-                businessCategory: true,
-                emailType: true,
-                priority: true,
-                itemStatus: true,
-                summary: true,
-                confidence: true,
-                requiresReview: true,
-                reviewQueue: true,
-                reviewStatus: true,
-                containsActionRequest: true,
-                businessTypeKey: true,
-                businessTypeConfidence: true,
-                deadline: true,
-              }
             }
+            // classification omitted from list — detail/review paths still load it
           }
         })
       ]);
@@ -2592,7 +2649,7 @@ export const registerInboxReadRoutes = async (
                     receivedAt: serializeDate(task.sourceMessage.receivedAt)
                   }
                 : null,
-              classification: serializeClassification(task.classification)
+              classification: null
             })
           )
         })

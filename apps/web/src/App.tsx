@@ -38,7 +38,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
-  { page: 'review', label: 'Email Review', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
+  { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
@@ -46,7 +46,7 @@ const PAGE_TITLES: Record<Page, string> = {
   dashboard: 'Dashboard',
   inbox: 'Inbox',
   'message-detail': 'Message',
-  review: 'Email Review',
+  review: 'Email Classification',
   tasks: 'Tasks',
   calendar: 'Calendar',
   jobs: 'Jobs',
@@ -453,6 +453,7 @@ export default function App() {
     subject: string
     html: string
     files: File[]
+    existingAttachmentIds?: string[]
   }) => {
     setComposeSending(true)
     setComposeError(null)
@@ -692,7 +693,7 @@ export default function App() {
                   {connections.map(c => (
                     <option key={c.id} value={c.id}>
                       {pinnedInboxConnectionId === c.id ? '📌 ' : ''}
-                      {c.email} ({c.counts.messages} msgs)
+                      {c.email}
                     </option>
                   ))}
                 </select>
@@ -823,7 +824,7 @@ export default function App() {
           )}
           {!needsConnection && page === 'tasks' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} onSelectMessage={openMessage} userRole={currentRole} />
+              <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onSelectMessage={openMessage} userRole={currentRole} />
             </div>
           )}
 

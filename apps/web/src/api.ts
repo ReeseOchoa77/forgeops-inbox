@@ -281,6 +281,26 @@ export interface ReviewItem {
   reviewReasons: string[];
 }
 
+export interface ClassificationAuditItem {
+  classificationId: string;
+  messageId: string;
+  inboxConnectionId: string;
+  mailboxEmail: string | null;
+  date: string;
+  senderName: string | null;
+  senderEmail: string;
+  subject: string | null;
+  snippet: string | null;
+  predictedCategory: string;
+  finalCategory: string;
+  confidence: number;
+  reviewStatus: string;
+  auditStatus: 'AUTO' | 'NEEDS_REVIEW' | 'CONFIRMED' | 'CORRECTED' | 'DISMISSED';
+  requiresReview: boolean;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
 export interface TaskListItem {
   task: TaskSummary;
   sourceMessage: { id: string; subject: string | null; senderEmail: string; receivedAt: string | null } | null;
@@ -407,8 +427,25 @@ export const api = {
 
   logout: () => request<{ status: string }>('/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
 
-  getConnections: (workspaceId: string) =>
-    request<{ connections: ConnectionSummary[] }>(`/workspaces/${workspaceId}/inbox-connections`),
+  getConnections: (workspaceId: string, opts?: { includeCounts?: boolean }) => {
+    const q = opts?.includeCounts ? '?includeCounts=true' : '';
+    return request<{ connections: ConnectionSummary[] }>(
+      `/workspaces/${workspaceId}/inbox-connections${q}`
+    );
+  },
+
+  getDashboardSummary: (workspaceId: string, inboxConnectionId: string) =>
+    request<{
+      openTasks: number;
+      overdueTasks: number;
+      dueToday: number;
+      openRequests: number;
+      unreadBusiness: number;
+      activeJobs: number;
+      reviewCount: number;
+    }>(
+      `/workspaces/${workspaceId}/dashboard-summary?inboxConnectionId=${encodeURIComponent(inboxConnectionId)}`
+    ),
 
   getWorkspacePreferences: (workspaceId: string) =>
     request<{ pinnedInboxConnectionId: string | null }>(
@@ -617,6 +654,31 @@ export const api = {
     request<{ items: ReviewItem[]; pagination: { page: number; totalCount: number; totalPages: number }; thresholds: { classification: number; task: number } }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/review?page=${page}&pageSize=25`
     ),
+
+  getClassificationAudit: (
+    workspaceId: string,
+    connectionId: string,
+    opts?: {
+      page?: number;
+      pageSize?: number;
+      status?: 'ALL' | 'NEEDS_REVIEW' | 'REVIEWED';
+      category?: 'ALL' | 'BUSINESS' | 'PERSONAL';
+    }
+  ) => {
+    const p = new URLSearchParams();
+    p.set('page', String(opts?.page ?? 1));
+    p.set('pageSize', String(opts?.pageSize ?? 50));
+    if (opts?.status) p.set('status', opts.status);
+    if (opts?.category) p.set('category', opts.category);
+    return request<{
+      summary: { total: number; needsReview: number; reviewed: number };
+      pagination: { page: number; pageSize: number; totalCount: number; totalPages: number };
+      filters: { status: string; category: string };
+      items: ClassificationAuditItem[];
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/classification-audit?${p.toString()}`
+    );
+  },
 
   reviewClassification: (workspaceId: string, classificationId: string, reviewStatus: 'APPROVED' | 'REJECTED') =>
     request<{ status: string }>(`/workspaces/${workspaceId}/classifications/${classificationId}/review`, {
@@ -1023,6 +1085,50 @@ export const api = {
     method: 'POST', body: JSON.stringify(data)
   }),
 
+  previewJobImport: async (workspaceId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/workspaces/${workspaceId}/jobs/import/preview`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message ?? 'Preview failed');
+    }
+    return res.json() as Promise<JobImportPreviewResponse>;
+  },
+
+  confirmJobImport: (
+    workspaceId: string,
+    body: {
+      filename?: string;
+      rows: Array<{
+        rowIndex: number;
+        import: boolean;
+        date?: string | null;
+        jobNumber: string;
+        name: string;
+        rawCustomerName?: string | null;
+        customerAction: 'LINK' | 'CREATE' | 'NONE';
+        customerId?: string | null;
+      }>;
+    }
+  ) =>
+    request<{
+      importRunId: string;
+      status: string;
+      createdCount: number;
+      skippedCount: number;
+      errorCount: number;
+      errors: Array<{ rowIndex: number; error: string }>;
+      createdJobs: Array<{ id: string; jobNumber: string; name: string }>;
+    }>(`/workspaces/${workspaceId}/jobs/import/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   getJob: (workspaceId: string, jobId: string) =>
     request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`),
 
@@ -1358,6 +1464,42 @@ export interface JobDetail extends JobSummary {
   attachmentCount: number;
   members: Array<{ id: string; userId: string; name: string | null; email: string; role: string | null; createdAt: string }>;
   aliases: Array<{ id: string; alias: string; normalizedAlias: string }>;
+}
+
+export interface JobImportPreviewRow {
+  rowIndex: number;
+  date: string | null;
+  jobNumber: string;
+  name: string;
+  rawCustomerName: string | null;
+  matchedCustomerId: string | null;
+  matchedCustomerName: string | null;
+  customerStatus: 'MATCHED' | 'AMBIGUOUS' | 'NOT_FOUND' | 'EMPTY';
+  customerCandidates: Array<{ id: string; name: string; score: number }>;
+  status: 'READY' | 'EXISTING' | 'CONFLICT' | 'CUSTOMER_NOT_FOUND' | 'CUSTOMER_AMBIGUOUS' | 'INVALID';
+  selected: boolean;
+  existingJobId: string | null;
+  existingJobName: string | null;
+  errors: string[];
+  warnings: string[];
+  lowConfidence: boolean;
+}
+
+export interface JobImportPreviewResponse {
+  filename: string;
+  sheetName: string | null;
+  warnings: string[];
+  dateFieldMapping: string;
+  summary: {
+    total: number;
+    ready: number;
+    existing: number;
+    conflict: number;
+    customerReview: number;
+    invalid: number;
+  };
+  rows: JobImportPreviewRow[];
+  customers: Array<{ id: string; name: string }>;
 }
 
 export interface JobEmail {

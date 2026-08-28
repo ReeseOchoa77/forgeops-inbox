@@ -52,7 +52,7 @@ export function WorkspaceView({
   const refreshAll = () => {
     void Promise.all([
       api.getApprovedAccess(workspaceId).catch(() => ({ entries: [] as ApprovedAccessEntry[] })),
-      api.getConnections(workspaceId).catch(() => ({ connections: [] as ConnectionSummary[] })),
+      api.getConnections(workspaceId, { includeCounts: true }).catch(() => ({ connections: [] as ConnectionSummary[] })),
     ]).then(([m, c]) => {
       setMembers(m.entries)
       setConnections(c.connections)
@@ -60,7 +60,7 @@ export function WorkspaceView({
   }
 
   const refreshConnections = () => {
-    void api.getConnections(workspaceId).then((c) => setConnections(c.connections)).catch(() => {})
+    void api.getConnections(workspaceId, { includeCounts: true }).then((c) => setConnections(c.connections)).catch(() => {})
   }
 
   useEffect(() => {
@@ -68,7 +68,7 @@ export function WorkspaceView({
     let cancelled = false
     Promise.all([
       api.getApprovedAccess(workspaceId).catch(() => ({ entries: [] as ApprovedAccessEntry[] })),
-      api.getConnections(workspaceId).catch(() => ({ connections: [] as ConnectionSummary[] })),
+      api.getConnections(workspaceId, { includeCounts: true }).catch(() => ({ connections: [] as ConnectionSummary[] })),
     ]).then(([m, c]) => {
       if (cancelled) return
       setMembers(m.entries)

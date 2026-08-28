@@ -54,7 +54,11 @@ export const registerReviewActionRoutes = async (
           where: {
             id: params.classificationId,
             workspaceId: params.workspaceId
-          }
+          },
+          select: {
+            id: true,
+            messageId: true,
+          },
         });
 
       if (!classification) {
@@ -69,9 +73,24 @@ export const registerReviewActionRoutes = async (
           reviewStatus: body.reviewStatus,
           reviewedByUserId: session.userId,
           reviewedAt: new Date(),
-          requiresReview: false
-        }
+          requiresReview: false,
+          ...(body.reviewStatus === "APPROVED"
+            ? { itemStatus: "NEW", reviewQueue: null }
+            : {}),
+        },
       });
+
+      // Clear message-level NEEDS_REVIEW so confirmed rows leave Needs Review filter
+      if (classification.messageId && body.reviewStatus === "APPROVED") {
+        await app.services.prisma.emailMessage.updateMany({
+          where: {
+            id: classification.messageId,
+            workspaceId: params.workspaceId,
+            itemStatus: "NEEDS_REVIEW",
+          },
+          data: { itemStatus: "NEW" },
+        });
+      }
 
       await app.services.auditEventLogger.log({
         workspaceId: params.workspaceId,

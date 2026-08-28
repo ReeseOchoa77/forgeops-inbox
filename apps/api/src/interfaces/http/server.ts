@@ -48,6 +48,7 @@ import { registerInboxConnectionRoutes } from "./routes/inbox-connection.route.j
 import { registerMailboxControlRoutes } from "./routes/mailbox-control.route.js";
 import { registerInboxReadRoutes } from "./routes/inbox-read.route.js";
 import { registerReviewActionRoutes } from "./routes/review-action.route.js";
+import { registerClassificationAuditRoutes } from "./routes/classification-audit.route.js";
 import { registerAllowlistRoutes } from "./routes/allowlist.route.js";
 import { registerInboxActionsRoutes } from "./routes/inbox-actions.route.js";
 import { registerImportRoutes } from "./routes/import.route.js";
@@ -70,6 +71,8 @@ import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
 import { registerDocumentLibraryRoutes } from "./routes/document-library.route.js";
 import { registerCalendarRoutes } from "./routes/calendar.route.js";
+import { registerJobImportRoutes } from "./routes/job-import.route.js";
+import { registerDashboardRoutes } from "./routes/dashboard.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -339,6 +342,7 @@ export const buildServer = async () => {
   await registerHealthRoute(app);
   await registerGmailRoutes(app);
   await registerReviewActionRoutes(app);
+  await registerClassificationAuditRoutes(app);
   await registerAllowlistRoutes(app);
   await registerInboxActionsRoutes(app);
   await registerImportRoutes(app);
@@ -374,6 +378,8 @@ export const buildServer = async () => {
   await registerJobFilesRoutes(app);
   await registerWorkspacePreferencesRoutes(app);
   await registerCalendarRoutes(app);
+  await registerJobImportRoutes(app);
+  await registerDashboardRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

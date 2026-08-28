@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type JobSummary, type CustomerSummary } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import { JobImportView } from './JobImportView'
 
 interface Props {
   workspaceId: string
@@ -70,7 +71,9 @@ const EMPTY_FORM: CreateJobFormState = {
 export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [customerFilter, setCustomerFilter] = useState('')
   const [assignedUserFilter, setAssignedUserFilter] = useState('')
@@ -83,30 +86,40 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [form, setForm] = useState<CreateJobFormState>(EMPTY_FORM)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [filtersExpanded, setFiltersExpanded] = useState(false)
+  const hasPaintedRef = useRef(false)
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
 
   const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
+  const canImport = userRole === 'OWNER' || userRole === 'ADMIN'
 
   useEffect(() => {
     api.getCustomers(workspaceId).then(r => setCustomers(r.customers)).catch(() => {})
   }, [workspaceId])
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
   const loadJobs = useCallback(async () => {
-    setLoading(true)
+    const soft = hasPaintedRef.current
+    if (soft) setRefreshing(true)
+    else setLoading(true)
     try {
       const res = await api.getJobs(workspaceId, {
         page,
         pageSize: 25,
         status: statusFilter !== 'ALL' ? statusFilter : undefined,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         showArchived: showArchived || undefined,
         customerId: customerFilter || undefined,
         assignedUserId: assignedUserFilter || undefined,
@@ -117,16 +130,18 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       setJobs(res.jobs)
       setTotalPages(res.pagination.totalPages)
       setTotalCount(res.pagination.totalCount)
+      hasPaintedRef.current = true
     } catch {
       /* ignore */
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }, [workspaceId, page, statusFilter, search, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+  }, [workspaceId, page, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
-  useEffect(() => { loadJobs() }, [loadJobs])
+  useEffect(() => { void loadJobs() }, [loadJobs])
 
-  useEffect(() => { setPage(1) }, [statusFilter, search, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+  useEffect(() => { setPage(1) }, [statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
   const handleSort = (col: string) => {
     if (sortBy === col) {
@@ -484,27 +499,45 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         marginBottom: 20,
         gap: isPhone ? 12 : undefined
       }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Jobs</h2>
-        {canCreate && (
-          <button
-            onClick={() => { setShowCreateModal(true); setCreateError('') }}
-            style={{
-              padding: '8px 16px', background: '#1a1a2e', color: '#fff', border: 'none',
-              borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-              width: isPhone ? '100%' : undefined,
-              minHeight: isPhone ? 44 : undefined
-            }}
-          >
-            + Create Job
-          </button>
-        )}
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>
+          Jobs{refreshing ? <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#999' }}>Updating…</span> : null}
+        </h2>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canImport && (
+            <button
+              type="button"
+              onClick={() => setShowImportModal(true)}
+              style={{
+                padding: '8px 16px', background: '#fff', color: '#1a1a2e', border: '1px solid #1a1a2e',
+                borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                width: isPhone ? '100%' : undefined,
+                minHeight: isPhone ? 44 : undefined
+              }}
+            >
+              Import Jobs
+            </button>
+          )}
+          {canCreate && (
+            <button
+              onClick={() => { setShowCreateModal(true); setCreateError('') }}
+              style={{
+                padding: '8px 16px', background: '#1a1a2e', color: '#fff', border: 'none',
+                borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                width: isPhone ? '100%' : undefined,
+                minHeight: isPhone ? 44 : undefined
+              }}
+            >
+              + Create Job
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
       {isPhone ? renderPhoneFilters() : renderDesktopFilters()}
 
       {/* Loading */}
-      {loading && (
+      {loading && jobs.length === 0 && (
         <div style={{ textAlign: 'center', padding: 48, color: '#888' }}>Loading jobs...</div>
       )}
 
@@ -520,7 +553,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       )}
 
       {/* Job list */}
-      {!loading && jobs.length > 0 && (
+      {jobs.length > 0 && (
         <>
           {isPhone ? renderPhoneCards() : renderTable()}
           {renderPagination()}
@@ -617,6 +650,14 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
             </div>
           </div>
         </div>
+      )}
+
+      {showImportModal && (
+        <JobImportView
+          workspaceId={workspaceId}
+          onClose={() => setShowImportModal(false)}
+          onImported={() => { void loadJobs() }}
+        />
       )}
     </div>
   )

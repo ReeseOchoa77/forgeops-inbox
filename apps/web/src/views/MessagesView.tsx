@@ -361,6 +361,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [workspaceId, connectionId])
 
   useEffect(() => {
+    // Defer job lookup until the job filter is used (not on initial inbox paint)
+  }, [workspaceId])
+
+  const jobsLoadedRef = useRef(false)
+  const ensureJobsLoaded = useCallback(() => {
+    if (jobsLoadedRef.current) return
+    jobsLoadedRef.current = true
     api.getJobsLookup(workspaceId, { showArchived: false })
       .then(r => setJobs(r.jobs))
       .catch(() => setJobs([]))
@@ -778,7 +785,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       {showBusinessChrome && !isTablet && (
         <td style={{ padding: '7px 12px', position: 'relative' }} onClick={e => e.stopPropagation()}>
           <span
-            onClick={() => !isViewer && setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (isViewer) return
+              ensureJobsLoaded()
+              setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)
+            }}
             style={{
               fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
               background: m.job ? '#e0f2f1' : '#f0f0f0',
@@ -1023,6 +1035,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {/* Job filter */}
               <select
                 value={jobFilter}
+                onFocus={() => ensureJobsLoaded()}
                 onChange={e => setJobFilter(e.target.value)}
                 style={{
                   padding: '3px 8px', fontSize: 11, borderRadius: 6,

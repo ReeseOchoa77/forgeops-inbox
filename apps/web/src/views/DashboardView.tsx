@@ -62,13 +62,32 @@ const cardBody: CSSProperties = {
   WebkitOverflowScrolling: 'touch',
 }
 
+type DashboardSummary = {
+  openTasks: number
+  overdueTasks: number
+  dueToday: number
+  openRequests: number
+  unreadBusiness: number
+}
+
+type DashboardCacheEntry = {
+  summary: DashboardSummary
+  tasks: TaskListItem[]
+  recentEmails: MessageSummary[]
+  at: number
+}
+
+const dashboardCache = new Map<string, DashboardCacheEntry>()
+
 export function DashboardView({ workspaceId, connectionId, connections, onNavigate, breakpoint = 'desktop' }: Props) {
-  const [tasks, setTasks] = useState<TaskListItem[]>([])
-  const [recentEmails, setRecentEmails] = useState<MessageSummary[]>([])
-  const [unreadBusinessCount, setUnreadBusinessCount] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const cacheKey = `${workspaceId}:${connectionId}`
+  const cached = dashboardCache.get(cacheKey)
+  const [summary, setSummary] = useState<DashboardSummary | null>(cached?.summary ?? null)
+  const [tasks, setTasks] = useState<TaskListItem[]>(cached?.tasks ?? [])
+  const [recentEmails, setRecentEmails] = useState<MessageSummary[]>(cached?.recentEmails ?? [])
+  const [loading, setLoading] = useState(!cached)
   const [refreshing, setRefreshing] = useState(false)
-  const hasPaintedRef = useRef(false)
+  const hasPaintedRef = useRef(Boolean(cached))
 
   const isPhone = breakpoint === 'phone'
   const monitoredEmails = new Set(connections.map(c => c.email.toLowerCase()))
@@ -79,47 +98,86 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
       return
     }
 
-    const soft = hasPaintedRef.current
+    const soft = hasPaintedRef.current || dashboardCache.has(cacheKey)
     if (soft) setRefreshing(true)
     else setLoading(true)
 
     const mark = `dashboard-load-${connectionId}`
     performance.mark(`${mark}-start`)
+    let cancelled = false
 
-    // Parallel section loads — reuse App connections (no duplicate GET).
+    // Summary first (aggregates only — paints metric cards quickly)
+    api.getDashboardSummary(workspaceId, connectionId)
+      .then((s) => {
+        if (cancelled) return
+        const next = {
+          openTasks: s.openTasks,
+          overdueTasks: s.overdueTasks,
+          dueToday: s.dueToday,
+          openRequests: s.openRequests,
+          unreadBusiness: s.unreadBusiness,
+        }
+        setSummary(next)
+        hasPaintedRef.current = true
+        setLoading(false)
+        performance.mark(`${mark}-summary`)
+        try {
+          performance.measure('dashboardSummaryPaintMs', `${mark}-start`, `${mark}-summary`)
+          const entries = performance.getEntriesByName('dashboardSummaryPaintMs')
+          const last = entries[entries.length - 1]
+          if (last) console.info('dashboardSummaryPaintMs', { ms: Math.round(last.duration), soft })
+          performance.clearMeasures('dashboardSummaryPaintMs')
+          performance.clearMarks(`${mark}-summary`)
+        } catch { /* ignore */ }
+      })
+      .catch(() => { if (!cancelled) setLoading(false) })
+
+    // Secondary: task lists + recent mail (independent of summary)
     Promise.all([
-      api.getTasks(workspaceId, connectionId, 1, 40).catch(() => ({ tasks: [] as TaskListItem[], pagination: { totalCount: 0, totalPages: 0 } })),
-      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [] as MessageSummary[], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 6, hasMore: false } })),
-      api.getMessages(workspaceId, connectionId, 1, 1, { businessCategory: 'BUSINESS', unreadOnly: true, includeTotal: true }).catch(() => ({ messages: [] as MessageSummary[], pagination: { totalCount: 0, totalPages: 0, page: 1, pageSize: 1, hasMore: false } })),
-    ]).then(([t, m, unread]) => {
+      api.getTasks(workspaceId, connectionId, 1, 25).catch(() => ({ tasks: [] as TaskListItem[] })),
+      api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [] as MessageSummary[] })),
+    ]).then(([t, m]) => {
+      if (cancelled) return
       setTasks(t.tasks)
       setRecentEmails(m.messages)
-      const unreadTotal = unread.pagination.totalCount
-      setUnreadBusinessCount(typeof unreadTotal === 'number' ? unreadTotal : 0)
       hasPaintedRef.current = true
+      setRefreshing(false)
+      const prev = dashboardCache.get(cacheKey)
+      dashboardCache.set(cacheKey, {
+        summary: prev?.summary ?? summary ?? {
+          openTasks: 0, overdueTasks: 0, dueToday: 0, openRequests: 0, unreadBusiness: 0,
+        },
+        tasks: t.tasks,
+        recentEmails: m.messages,
+        at: Date.now(),
+      })
       performance.mark(`${mark}-paint`)
       try {
         performance.measure('dashboardMountToUsefulPaintMs', `${mark}-start`, `${mark}-paint`)
         const entries = performance.getEntriesByName('dashboardMountToUsefulPaintMs')
         const last = entries[entries.length - 1]
-        if (last) {
-          console.info('dashboardMountToUsefulPaintMs', {
-            ms: Math.round(last.duration),
-            connectionId,
-            soft,
-          })
-        }
+        if (last) console.info('dashboardMountToUsefulPaintMs', { ms: Math.round(last.duration), soft })
         performance.clearMarks(`${mark}-start`)
         performance.clearMarks(`${mark}-paint`)
         performance.clearMeasures('dashboardMountToUsefulPaintMs')
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     }).finally(() => {
-      setLoading(false)
-      setRefreshing(false)
+      if (!cancelled) setRefreshing(false)
     })
-  }, [workspaceId, connectionId])
+
+    return () => { cancelled = true }
+  }, [workspaceId, connectionId, cacheKey])
+
+  useEffect(() => {
+    if (!summary) return
+    const prev = dashboardCache.get(cacheKey)
+    dashboardCache.set(cacheKey, {
+      summary,
+      tasks: prev?.tasks ?? tasks,
+      recentEmails: prev?.recentEmails ?? recentEmails,
+      at: Date.now(),
+    })
+  }, [summary, cacheKey, tasks, recentEmails])
 
   if (!workspaceId) {
     return (
@@ -131,7 +189,12 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
   }
 
   if (loading && !hasPaintedRef.current) {
-    return <p style={{ color: '#888', padding: 8, fontSize: 13 }}>Loading dashboard...</p>
+    return (
+      <div style={{ padding: 8 }}>
+        <h2 style={{ fontSize: 20, margin: '0 0 8px', fontWeight: 700 }}>Dashboard</h2>
+        <p style={{ color: '#888', fontSize: 13 }}>Loading dashboard…</p>
+      </div>
+    )
   }
 
   const isRequestTask = (item: TaskListItem) => {
@@ -152,8 +215,11 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
     !t.task.isPinned &&
     !isOverdue(t.task.dueAt, t.task.status)
   )
-  const openCount = inboxTasks.filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS').length
-  const dueTodayCount = inboxTasks.filter(t => isDueToday(t.task.dueAt, t.task.status)).length
+  const openCount = summary?.openTasks ?? inboxTasks.filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS').length
+  const dueTodayCount = summary?.dueToday ?? inboxTasks.filter(t => isDueToday(t.task.dueAt, t.task.status)).length
+  const overdueCount = summary?.overdueTasks ?? overdueTasks.length
+  const unreadBusinessCount = summary?.unreadBusiness ?? 0
+  const openRequestsCount = summary?.openRequests ?? openRequests.length
 
   // New tasks: recently created open inbox tasks
   const newTasks = [...inboxTasks]
@@ -250,9 +316,9 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
 
   const metrics = [
     { label: 'Open Tasks', value: openCount, color: '#1565c0', bg: '#e3f2fd', nav: 'tasks' as const },
-    { label: 'Overdue', value: overdueTasks.length, color: '#c62828', bg: '#ffebee', nav: 'tasks' as const },
+    { label: 'Overdue', value: overdueCount, color: '#c62828', bg: '#ffebee', nav: 'tasks' as const },
     { label: 'Unread Business', value: unreadBusinessCount, color: '#6a1b9a', bg: '#f3e5f5', nav: 'inbox' as const },
-    { label: 'Requests', value: openRequests.length, color: '#00695c', bg: '#e0f2f1', nav: 'tasks' as const },
+    { label: 'Requests', value: openRequestsCount, color: '#00695c', bg: '#e0f2f1', nav: 'tasks' as const },
     { label: 'Due Today', value: dueTodayCount, color: '#e65100', bg: '#fff3e0', nav: 'tasks' as const },
   ]
 

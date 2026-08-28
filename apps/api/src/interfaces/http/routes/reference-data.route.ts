@@ -63,15 +63,44 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
 
+    const includeCounts =
+      z
+        .object({
+          includeCounts: z
+            .enum(["true", "false"])
+            .optional()
+            .transform((v) => v === "true"),
+        })
+        .parse(request.query).includeCounts === true;
+
     const customers = await app.services.prisma.customer.findMany({
       where: { workspaceId },
       orderBy: { name: "asc" },
-      include: {
-        _count: { select: { aliases: true, contacts: true, jobs: true } }
-      }
+      select: {
+        id: true,
+        name: true,
+        normalizedName: true,
+        primaryEmail: true,
+        domain: true,
+        phone: true,
+        externalRef: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        ...(includeCounts
+          ? { _count: { select: { aliases: true, contacts: true, jobs: true } } }
+          : {}),
+      },
     });
 
-    return reply.send({ customers });
+    return reply.send({
+      customers: includeCounts
+        ? customers
+        : customers.map((c) => ({
+            ...c,
+            _count: { aliases: 0, contacts: 0, jobs: 0 },
+          })),
+    });
   });
 
   // -- VENDORS CRUD --

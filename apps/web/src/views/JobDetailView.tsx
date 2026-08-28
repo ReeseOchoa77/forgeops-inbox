@@ -191,7 +191,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
 
   useEffect(() => {
     if (tab === 'overview') {
-      api.getJobEmails(workspaceId, jobId, 1, 100)
+      api.getJobEmails(workspaceId, jobId, 1, 20)
         .then(r => setOverviewEmails(r.emails))
         .catch(() => setOverviewEmails([]))
     }
