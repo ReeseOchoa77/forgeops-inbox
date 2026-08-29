@@ -16,6 +16,7 @@ import {
   extractDomain,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
+  resolveConfirmedWorkspaceJob,
   shouldRunProductionNativeClassification,
   shouldSkipNativeClassificationOverwrite,
   type MailboxClassifyJobPayload,
@@ -154,6 +155,15 @@ export async function classifyEmailMessageNative(
         senderEmail: true,
         bodyText: true,
         attachmentMetadata: true,
+        jobId: true,
+        job: {
+          select: {
+            id: true,
+            workspaceId: true,
+            jobNumber: true,
+            name: true,
+          },
+        },
         normalizedEmail: {
           select: {
             normalizedSubject: true,
@@ -168,6 +178,11 @@ export async function classifyEmailMessageNative(
     if (!message) {
       throw new Error(`EmailMessage not found: ${payload.emailMessageId}`);
     }
+
+    const confirmedJobAssociation = resolveConfirmedWorkspaceJob({
+      workspaceId: payload.workspaceId,
+      job: message.job,
+    });
 
     // No custom baseURL is passed — SDK default endpoint (api.openai.com).
     // API key is trimmed inside createOpenAIClient (centralized).
@@ -199,6 +214,9 @@ export async function classifyEmailMessageNative(
         senderEmail: message.senderEmail,
         senderDomain,
         attachmentNames: attachmentNamesFromMetadata(message.attachmentMetadata),
+        ...(confirmedJobAssociation
+          ? { confirmedJobAssociation }
+          : {}),
       },
       {
         candidatesService,

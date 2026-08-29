@@ -819,7 +819,7 @@ export default function App() {
           )}
           {!needsConnection && page === 'review' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <ReviewQueueView workspaceId={workspaceId} connectionId={concreteConnectionId} onSelectMessage={openMessage} />
+              <ReviewQueueView workspaceId={workspaceId} connectionId={concreteConnectionId} />
             </div>
           )}
           {!needsConnection && page === 'tasks' && concreteConnectionId && (

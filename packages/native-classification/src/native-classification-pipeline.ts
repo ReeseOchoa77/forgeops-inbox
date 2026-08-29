@@ -9,8 +9,10 @@ import type {
   TaskExtractionResult,
 } from "@forgeops/ai";
 import {
+  applyConfirmedJobAssociationOverride,
   decideMailboxCategoryFlagsCumulative,
   decideMailboxPriority,
+  type ConfirmedWorkspaceJob,
   type FlagsCumulativeClassifierResult,
   type PriorityDecisionPayload,
   type N8nPriority,
@@ -33,6 +35,11 @@ export interface NativeClassificationPipelineInput {
   senderDomain?: string | null | undefined;
   attachmentNames?: string[] | null | undefined;
   candidateLookupFailed?: boolean | undefined;
+  /**
+   * Pre-existing EmailMessage.jobId resolved to a valid same-workspace Job.
+   * Applied after flags B/P so PERSONAL cannot skip job stages when a real job is attached.
+   */
+  confirmedJobAssociation?: ConfirmedWorkspaceJob | null | undefined;
 }
 
 export type NativePriorityDecision = PriorityDecisionPayload & {
@@ -50,6 +57,8 @@ export interface NativeClassificationPipelineResult {
   priorityDecision: NativePriorityDecision;
   /** Stages intentionally skipped for PERSONAL (or other gates). */
   skippedStages: string[];
+  /** True when an existing confirmed job forced PERSONAL → BUSINESS. */
+  confirmedJobForcedBusiness: boolean;
 }
 
 export interface NativeClassificationPipelineDeps {
@@ -122,7 +131,7 @@ export async function runNativeClassificationPipeline(
     candidateLookupFailed,
   });
 
-  const mailboxDecision = decideMailboxCategoryFlagsCumulative({
+  let mailboxDecision = decideMailboxCategoryFlagsCumulative({
     contentBusinessProbability: semanticSignals.contentBusinessProbability,
     subjectBusinessProbability: semanticSignals.subjectBusinessProbability,
     jobReferenceConfidence: semanticSignals.jobReferenceConfidence,
@@ -135,6 +144,17 @@ export async function runNativeClassificationPipeline(
     jobExplanation: semanticSignals.signalExplanations.job,
     signatureExplanation: semanticSignals.signalExplanations.signature,
   });
+
+  let confirmedJobForcedBusiness = false;
+  if (input.confirmedJobAssociation) {
+    const overridden = applyConfirmedJobAssociationOverride(
+      mailboxDecision,
+      input.confirmedJobAssociation,
+      "existing_message_job"
+    );
+    confirmedJobForcedBusiness = overridden.overridden;
+    mailboxDecision = overridden;
+  }
 
   let businessSubtype: BusinessSubtypeResult | null = null;
   let entities: EntitySelectionResult | null = null;
@@ -208,5 +228,6 @@ export async function runNativeClassificationPipeline(
     tasks,
     priorityDecision,
     skippedStages,
+    confirmedJobForcedBusiness,
   };
 }

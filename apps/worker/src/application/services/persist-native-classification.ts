@@ -3,9 +3,12 @@ import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { NativeClassificationPipelineResult } from "@forgeops/native-classification";
 import {
+  applyConfirmedJobAssociationOverride,
+  buildJobCandidateMarker,
   mapN8nPriorityToStored,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
+  resolveConfirmedWorkspaceJob,
   type StoredPriority,
 } from "@forgeops/shared";
 
@@ -90,13 +93,13 @@ export async function persistNativeClassificationResult(input: {
   }
 
   const signals = input.pipeline.semanticSignals;
-  const decision = input.pipeline.mailboxDecision;
+  let decision = input.pipeline.mailboxDecision;
   const subtype = input.pipeline.businessSubtype;
   const entities = input.pipeline.entities;
   const tasks = input.pipeline.tasks;
   const priorityDecision = input.pipeline.priorityDecision;
   const storedPriority = mapN8nPriorityToStored(priorityDecision.priority);
-  const mailboxCategory = decision.mailboxCategory;
+  let mailboxCategory = decision.mailboxCategory;
 
   const confidence = Math.max(
     signals.contentBusinessProbability,
@@ -123,10 +126,9 @@ export async function persistNativeClassificationResult(input: {
     requiresReview = true;
   }
 
-  const rawAiPayload = {
+  const rawAiPayloadBase = {
     pipeline: "native-openai-pipeline",
     summary: signals.summary,
-    mailboxCategory,
     containsActionRequest: signals.containsActionRequest,
     contentBusinessProbability: signals.contentBusinessProbability,
     subjectBusinessProbability: signals.subjectBusinessProbability,
@@ -146,19 +148,8 @@ export async function persistNativeClassificationResult(input: {
     tasks,
     priority: priorityDecision.priority,
     priorityDecision,
-    classificationDecision: decision.classificationDecision,
     skippedStages: input.pipeline.skippedStages,
     candidateLookupFailed: input.pipeline.candidateLookupFailed,
-  };
-
-  const classificationEvidence = {
-    ...decision.classificationEvidence,
-    decisionRule: decision.decisionRule,
-    classificationDecision: decision.classificationDecision,
-    priorityDecision,
-    nativeEntityHint: {
-      selectedJobId: entities?.selectedJobId ?? null,
-    },
   };
 
   const normalized = normalizeEmailMessage({
@@ -200,6 +191,69 @@ export async function persistNativeClassificationResult(input: {
       });
     }
   }
+
+  // Feedback: JobMatcher-selected job is a confirmed association → BUSINESS.
+  // (Flags B/P runs before matching; this closes the loop without re-entering AI.)
+  if (jobMatch?.selectedJobId) {
+    const matchedJob = await input.prisma.job.findFirst({
+      where: {
+        id: jobMatch.selectedJobId,
+        workspaceId: input.workspaceId,
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        jobNumber: true,
+        name: true,
+      },
+    });
+    const confirmed = resolveConfirmedWorkspaceJob({
+      workspaceId: input.workspaceId,
+      job: matchedJob,
+    });
+    if (confirmed) {
+      const overridden = applyConfirmedJobAssociationOverride(
+        decision,
+        confirmed,
+        "job_matcher"
+      );
+      decision = overridden;
+      mailboxCategory = "BUSINESS";
+      if (overridden.overridden) requiresReview = false;
+    }
+  }
+
+  const jobCandidate = buildJobCandidateMarker({
+    jobReferenceConfidence: signals.jobReferenceConfidence,
+    explanation: signals.signalExplanations.job,
+    hintedJobId: entities?.selectedJobId ?? null,
+  });
+
+  const classificationEvidence = {
+    ...decision.classificationEvidence,
+    decisionRule: decision.decisionRule,
+    classificationDecision: decision.classificationDecision,
+    priorityDecision,
+    nativeEntityHint: {
+      selectedJobId: entities?.selectedJobId ?? null,
+    },
+    jobCandidate: jobCandidate ?? { status: "NONE" as const },
+    // Rewrite every persist so removed jobs do not leave a stale confirmed marker.
+    jobAssociation:
+      decision.classificationEvidence &&
+      typeof decision.classificationEvidence === "object" &&
+      (decision.classificationEvidence as { jobAssociation?: { status?: string } })
+        .jobAssociation?.status === "CONFIRMED"
+        ? (decision.classificationEvidence as { jobAssociation: unknown })
+            .jobAssociation
+        : { status: "NONE" as const },
+  };
+
+  const rawAiPayload = {
+    ...rawAiPayloadBase,
+    mailboxCategory,
+    classificationDecision: decision.classificationDecision,
+  };
 
   const itemStatus = requiresReview ? "NEEDS_REVIEW" : "NEW";
   const reviewQueue = requiresReview ? "TRIAGE" : null;

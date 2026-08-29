@@ -293,12 +293,150 @@ export interface ClassificationAuditItem {
   snippet: string | null;
   predictedCategory: string;
   finalCategory: string;
+  businessTypeKey?: string | null;
+  priority?: string | null;
+  job?: { id: string; jobNumber: string | null; name: string } | null;
   confidence: number;
   reviewStatus: string;
-  auditStatus: 'AUTO' | 'NEEDS_REVIEW' | 'CONFIRMED' | 'CORRECTED' | 'DISMISSED';
-  requiresReview: boolean;
+  historyStatus?: 'AUTO' | 'CONFIRMED' | 'CORRECTED' | 'DISMISSED';
+  /** @deprecated alias of historyStatus — never NEEDS_REVIEW */
+  auditStatus: 'AUTO' | 'CONFIRMED' | 'CORRECTED' | 'DISMISSED' | string;
   reviewedAt: string | null;
   createdAt: string;
+}
+
+export interface ClassificationInspection {
+  classification: {
+    id: string;
+    messageId: string;
+    mailboxCategory: string | null;
+    businessTypeKey: string | null;
+    businessTypeConfidence: number | null;
+    priority: string | null;
+    confidence: number;
+    containsActionRequest: boolean;
+    summary: string | null;
+    modelName: string | null;
+    modelVersion: string | null;
+    reviewStatus: string;
+    historyStatus: 'AUTO' | 'CONFIRMED' | 'CORRECTED' | 'DISMISSED';
+    createdAt: string;
+    processedAt: string | null;
+  };
+  decision: {
+    rule: string | null;
+    title: string | null;
+    summary: string | null;
+    category: 'BUSINESS' | 'PERSONAL' | null;
+    format: string | null;
+    cumulative: {
+      contentPoints: number | null;
+      subjectPoints: number | null;
+      jobPoints: number | null;
+      senderAdjustment: number | null;
+      total: number | null;
+      threshold: number | null;
+    } | null;
+  } | null;
+  signals: Array<{
+    key: string;
+    label: string;
+    direction: 'BUSINESS' | 'PERSONAL' | null;
+    probabilityPct: number | null;
+    strongFlag: boolean | null;
+    points: number | null;
+    explanation: string | null;
+    includedInDecision: boolean;
+    status: string | null;
+    cumulativeAdjustment: number | null;
+  }>;
+  priorityDecision: {
+    displayLabel: string;
+    reason: string;
+    jobConfidencePct: number | null;
+    jobThresholdPct: number | null;
+    actionRequestedLabel: string | null;
+    deadlineLabel: string | null;
+    showJobConfidence: boolean;
+    showActionRequested: boolean;
+    showDeadline: boolean;
+  } | null;
+  entities: {
+    customer: { id: string; name: string } | null;
+    vendor: { id: string; name: string } | null;
+    job: { id: string; jobNumber: string | null; name: string } | null;
+    entityMatchConfidence: number | null;
+    matchEvidence: unknown[];
+  };
+  jobAssociation:
+    | {
+        status: 'CONFIRMED';
+        jobId: string;
+        jobNumber: string | null;
+        name: string;
+        decisionEffect: string;
+        source: string;
+        forcedDecision: boolean;
+      }
+    | { status: 'NONE' };
+  jobCandidate:
+    | {
+        status: 'CANDIDATE';
+        confidencePct: number | null;
+        explanation: string | null;
+        hintedJobId: string | null;
+      }
+    | { status: 'NONE' };
+  tasks: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    dueAt: string | null;
+    priority: string;
+    status: string;
+    confidence: number;
+  }>;
+  senderEvidence: {
+    email: string;
+    status: string;
+    confidence: number;
+    displayName: string | null;
+    businessEvidenceCount: number;
+    personalEvidenceCount: number;
+    manualBusinessConfirmations: number;
+    manualPersonalConfirmations: number;
+  } | null;
+  domainEvidence: {
+    domain: string;
+    status: string;
+    confidence: number;
+    isPublicDomain: boolean;
+    businessEvidenceCount: number;
+    personalEvidenceCount: number;
+  } | null;
+  corrections: Array<{
+    id: string;
+    originalMailboxCategory: string | null;
+    correctedMailboxCategory: string | null;
+    originalBusinessType: string | null;
+    correctedBusinessType: string | null;
+    originalJobId: string | null;
+    correctedJobId: string | null;
+    originalPriority: string | null;
+    correctedPriority: string | null;
+    reason: string | null;
+    reviewedAt: string;
+  }>;
+  email: {
+    fromName: string | null;
+    fromEmail: string;
+    to: unknown;
+    subject: string | null;
+    date: string | null;
+    snippet: string | null;
+    bodyText?: string | null;
+  };
+  availableStages: string[];
 }
 
 export interface TaskListItem {
@@ -672,7 +810,7 @@ export const api = {
     opts?: {
       page?: number;
       pageSize?: number;
-      status?: 'ALL' | 'NEEDS_REVIEW' | 'REVIEWED';
+      status?: 'ALL' | 'CORRECTED' | 'CONFIRMED';
       category?: 'ALL' | 'BUSINESS' | 'PERSONAL';
     }
   ) => {
@@ -682,12 +820,26 @@ export const api = {
     if (opts?.status) p.set('status', opts.status);
     if (opts?.category) p.set('category', opts.category);
     return request<{
-      summary: { total: number; needsReview: number; reviewed: number };
+      summary: { total: number; corrected: number; confirmed: number };
       pagination: { page: number; pageSize: number; totalCount: number; totalPages: number };
       filters: { status: string; category: string };
       items: ClassificationAuditItem[];
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/classification-audit?${p.toString()}`
+    );
+  },
+
+  getClassificationInspection: (
+    workspaceId: string,
+    connectionId: string,
+    classificationId: string,
+    opts?: { includeBody?: boolean }
+  ) => {
+    const p = new URLSearchParams();
+    if (opts?.includeBody) p.set('includeBody', 'true');
+    const q = p.toString();
+    return request<ClassificationInspection>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/classification-audit/${classificationId}${q ? `?${q}` : ''}`
     );
   },
 

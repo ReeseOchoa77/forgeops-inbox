@@ -13,6 +13,7 @@ export type ClassificationDecisionRule =
   | "CUMULATIVE_BUSINESS_THRESHOLD"
   | "CUMULATIVE_PERSONAL"
   | "PERSONAL_FALLBACK"
+  | "CONFIRMED_JOB_ASSOCIATION"
   | string;
 
 export interface ClassificationDecisionPayload {
@@ -161,6 +162,7 @@ const RULE_TITLES: Record<string, string> = {
   CUMULATIVE_BUSINESS_THRESHOLD: "Cumulative business evidence",
   CUMULATIVE_PERSONAL: "Cumulative evidence below threshold",
   PERSONAL_FALLBACK: "Cumulative evidence below threshold",
+  CONFIRMED_JOB_ASSOCIATION: "Attached to confirmed ForgeOps job",
 };
 
 function ruleTitle(rule: string | null): string {
@@ -182,6 +184,8 @@ function ruleSummary(
   switch (rule) {
     case "CONFIRMED_BUSINESS_SENDER":
       return "Confirmed business sender → Business classification";
+    case "CONFIRMED_JOB_ASSOCIATION":
+      return "Attached to confirmed ForgeOps job → BUSINESS";
     case "CONFIRMED_PERSONAL_SENDER":
       return "Confirmed personal sender → Personal classification";
     case "ALL_THREE_BUSINESS_FLAGS_OVERRIDE_CONFIRMED_PERSONAL":
@@ -386,7 +390,8 @@ export function buildClassificationEvidenceViewModel(
 
   const showConfirmedSenderBanner =
     rule === "CONFIRMED_BUSINESS_SENDER" ||
-    rule === "CONFIRMED_PERSONAL_SENDER";
+    rule === "CONFIRMED_PERSONAL_SENDER" ||
+    rule === "CONFIRMED_JOB_ASSOCIATION";
   const showOverrideBanner =
     rule === "ALL_THREE_BUSINESS_FLAGS_OVERRIDE_CONFIRMED_PERSONAL";
   const showCumulativeBreakdown =
