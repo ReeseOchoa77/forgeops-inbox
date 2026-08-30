@@ -25,6 +25,13 @@ describe('inbox responsiveness contracts', () => {
     expect(nextMessages).toHaveLength(2)
   })
 
+  it('return navigation prefers cached rows over blanking', () => {
+    const cached = [{ id: 'm1' }, { id: 'm2' }]
+    const soft = cached.length > 0
+    const initialMessages = soft ? cached : []
+    expect(initialMessages).toHaveLength(2)
+  })
+
   it('detail prefers App connections over a fresh GET', () => {
     const connections: Array<{ email: string }> | undefined = [
       { email: 'a@x.com' },

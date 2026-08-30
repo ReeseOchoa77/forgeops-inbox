@@ -32,7 +32,7 @@ function baseWhere(overrides: Partial<Parameters<typeof buildMessagesWhere>[0]> 
 
 /**
  * Evaluates list-filter semantics for sent + optional category.
- * Mirrors buildMessagesWhere: monitored-sender OR/NOT, optional category, trash/archive.
+ * Mirrors buildMessagesWhere: monitored-sender in/notIn, optional category, trash/archive.
  */
 function matchesListWhere(
   where: ReturnType<typeof buildMessagesWhere>,
@@ -64,17 +64,38 @@ function matchesListWhere(
       if (cond.mailboxCategory !== msg.mailboxCategory) return false;
     }
 
+    if ("senderEmail" in cond && cond.senderEmail && typeof cond.senderEmail === "object") {
+      const se = cond.senderEmail as {
+        in?: string[];
+        notIn?: string[];
+        equals?: string;
+      };
+      const sender = msg.senderEmail.toLowerCase();
+      if (Array.isArray(se.in)) {
+        if (!se.in.map((e) => e.toLowerCase()).includes(sender)) return false;
+      }
+      if (Array.isArray(se.notIn)) {
+        if (se.notIn.map((e) => e.toLowerCase()).includes(sender)) return false;
+      }
+      if (typeof se.equals === "string") {
+        if (se.equals.toLowerCase() !== sender) return false;
+      }
+    }
+
     if ("OR" in cond && Array.isArray(cond.OR)) {
       const senderEquals = cond.OR.every(
         (c) => c && typeof c === "object" && "senderEmail" in c
       );
       if (senderEquals) {
         const ok = cond.OR.some((c) => {
-          const se = (c as { senderEmail?: { equals?: string } }).senderEmail;
-          return (
-            typeof se?.equals === "string" &&
-            se.equals.toLowerCase() === msg.senderEmail.toLowerCase()
-          );
+          const se = (c as { senderEmail?: { equals?: string; in?: string[] } }).senderEmail;
+          if (typeof se?.equals === "string") {
+            return se.equals.toLowerCase() === msg.senderEmail.toLowerCase();
+          }
+          if (Array.isArray(se?.in)) {
+            return se.in.map((e) => e.toLowerCase()).includes(msg.senderEmail.toLowerCase());
+          }
+          return false;
         });
         if (!ok) return false;
       }
@@ -159,7 +180,7 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
     expect(matchesListWhere(where, sentPersonal)).toBe(true);
   });
 
-  it("5. Multiple monitored mailboxes → OR across monitored emails", () => {
+  it("5. Multiple monitored mailboxes → in across monitored emails", () => {
     const where = baseWhere({ sentOnly: true });
     expect(
       matchesListWhere(where, { ...sentBusiness, senderEmail: "other@example.com" })
@@ -167,6 +188,23 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
     expect(
       matchesListWhere(where, { ...sentBusiness, senderEmail: "not-monitored@x.com" })
     ).toBe(false);
+    const and = where.AND as Array<Record<string, unknown>>;
+    const senderCond = and.find((c) => c && typeof c === "object" && "senderEmail" in c) as
+      | { senderEmail: { in?: string[] } }
+      | undefined;
+    expect(senderCond?.senderEmail?.in).toEqual(
+      expect.arrayContaining(["ed@tekstl.net", "other@example.com"])
+    );
+  });
+
+  it("uses notIn (not NOT/OR) to exclude monitored senders from Business", () => {
+    const where = baseWhere({ businessCategory: "BUSINESS", sentOnly: false });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const senderCond = and.find((c) => c && typeof c === "object" && "senderEmail" in c) as
+      | { senderEmail: { notIn?: string[] } }
+      | undefined;
+    expect(senderCond?.senderEmail?.notIn?.length).toBeGreaterThan(0);
+    expect(and.some((c) => c && typeof c === "object" && "NOT" in c)).toBe(false);
   });
 
   it("6. Incoming messages do not appear in Sent", () => {

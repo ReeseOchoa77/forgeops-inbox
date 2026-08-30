@@ -24,6 +24,7 @@ import {
   isAllMailboxesConnectionId,
   pickDefaultInboxConnectionId,
 } from './mailbox-selection'
+import { prefetchInboxList } from './inbox-list-cache'
 
 type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
 
@@ -334,6 +335,11 @@ export default function App() {
   }
 
   const navigate = (p: Page) => {
+    if (p === 'inbox') {
+      try {
+        performance.mark('inboxNavigationStart')
+      } catch { /* ignore */ }
+    }
     if (p === 'team-access') {
       setWorkspaceTabHint('team')
       setPage('workspace')
@@ -362,6 +368,21 @@ export default function App() {
     }
     if (p !== 'message-detail') setSelectedMessageId('')
     if (bp === 'phone') setDrawerOpen(false)
+  }
+
+  const prefetchInboxFirstPage = () => {
+    if (!workspaceId || !connectionId || connections.length === 0) return
+    prefetchInboxList(workspaceId, connectionId, async () => {
+      const r = await api.getMessages(workspaceId, connectionId, 1, 30, {
+        businessCategory: 'BUSINESS',
+      })
+      return {
+        messages: r.messages,
+        hasMore: r.pagination.hasMore,
+        totalCount: r.pagination.totalCount,
+        page: 1,
+      }
+    })
   }
 
   const openMessage = (id: string, opts?: { connectionId?: string; backPage?: Page }) => {
@@ -555,6 +576,12 @@ export default function App() {
             <button
               className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && item.page === 'jobs') ? 'active' : ''}
               onClick={() => navigate(item.page)}
+              onPointerDown={() => {
+                if (item.page === 'inbox') prefetchInboxFirstPage()
+              }}
+              onMouseEnter={() => {
+                if (item.page === 'inbox') prefetchInboxFirstPage()
+              }}
               title={effectiveCollapsed && !forDrawer ? item.label : undefined}
               style={effectiveCollapsed && !forDrawer ? { justifyContent: 'center', padding: '10px 0' } : undefined}
             >

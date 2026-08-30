@@ -1,6 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
 import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
+import {
+  getCachedInboxList,
+  setCachedInboxList,
+  INBOX_DEFAULT_LIST_FILTER_KEY,
+} from '../inbox-list-cache'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
@@ -186,14 +191,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const mailboxEmailFor = (m: MessageSummary) =>
     connections.find(c => c.id === (m.inboxConnectionId ?? connectionId))?.email ?? null
   const isSentEmail = (m: MessageSummary) => monitoredEmails.has(m.senderEmail.toLowerCase())
-  const [messages, setMessages] = useState<MessageSummary[]>([])
-  const [page, setPage] = useState(1)
-  const [totalCount, setTotalCount] = useState<number | null>(null)
-  const [hasMore, setHasMore] = useState(true)
-  const [loading, setLoading] = useState(true)
+
+  const initialCache = getCachedInboxList(workspaceId, connectionId)
+  const [messages, setMessages] = useState<MessageSummary[]>(() => initialCache?.messages ?? [])
+  const [page, setPage] = useState(() => initialCache?.page ?? 1)
+  const [totalCount, setTotalCount] = useState<number | null>(() => initialCache?.totalCount ?? null)
+  const [hasMore, setHasMore] = useState(() => initialCache?.hasMore ?? true)
+  const [loading, setLoading] = useState(() => !initialCache)
   const [loadingMore, setLoadingMore] = useState(false)
   /** Soft refresh: keep existing rows visible while filters refetch. */
   const [refreshing, setRefreshing] = useState(false)
+  const usefulPaintLoggedRef = useRef(false)
+  const requestSeqRef = useRef(0)
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
@@ -343,8 +352,35 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     } else {
       setLoadingMore(true)
     }
+    const seq = ++requestSeqRef.current
+    const markBase = `inbox-list-${workspaceId}-${connectionId}-${seq}`
+    try {
+      performance.mark(`${markBase}-messagesRequestStart`)
+    } catch { /* ignore */ }
     try {
       const r = await api.getMessages(workspaceId, connectionId, pageNum, PAGE_SIZE, filters)
+      try {
+        performance.mark(`${markBase}-messagesResponseReceived`)
+        performance.measure(
+          'inboxMessagesRequestMs',
+          `${markBase}-messagesRequestStart`,
+          `${markBase}-messagesResponseReceived`
+        )
+        const entries = performance.getEntriesByName('inboxMessagesRequestMs')
+        const last = entries[entries.length - 1]
+        if (last) {
+          console.info('inboxMessagesRequestMs', {
+            ms: Math.round(last.duration),
+            page: pageNum,
+            rows: r.messages.length,
+            soft: Boolean(opts?.soft),
+          })
+        }
+        performance.clearMeasures('inboxMessagesRequestMs')
+      } catch { /* ignore */ }
+
+      if (seq !== requestSeqRef.current) return
+
       if (append) {
         setMessages(prev => [...prev, ...r.messages])
       } else {
@@ -353,12 +389,69 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setTotalCount(r.pagination.totalCount)
       setHasMore(r.pagination.hasMore)
       setPage(pageNum)
+
+      // Cache default Business first page for warm return navigation.
+      const isDefaultBusiness =
+        pageNum === 1 &&
+        !append &&
+        filters.businessCategory === 'BUSINESS' &&
+        !filters.sentOnly &&
+        !filters.unreadOnly &&
+        !filters.search &&
+        !filters.jobId &&
+        !filters.category
+      if (isDefaultBusiness) {
+        setCachedInboxList(workspaceId, connectionId, INBOX_DEFAULT_LIST_FILTER_KEY, {
+          messages: r.messages,
+          hasMore: r.pagination.hasMore,
+          totalCount: r.pagination.totalCount,
+          page: pageNum,
+        })
+      }
     } finally {
-      setLoading(false)
-      setLoadingMore(false)
-      setRefreshing(false)
+      if (seq === requestSeqRef.current) {
+        setLoading(false)
+        setLoadingMore(false)
+        setRefreshing(false)
+      }
     }
   }, [workspaceId, connectionId])
+
+  useEffect(() => {
+    try {
+      performance.mark('inboxComponentMount')
+    } catch { /* ignore */ }
+  }, [])
+
+  // First useful rows painted (cached or network).
+  useEffect(() => {
+    if (usefulPaintLoggedRef.current) return
+    if (loading) return
+    usefulPaintLoggedRef.current = true
+    try {
+      performance.mark('firstInboxRowsPainted')
+      const hasNav = performance.getEntriesByName('inboxNavigationStart').length > 0
+      const startMark = hasNav ? 'inboxNavigationStart' : 'inboxComponentMount'
+      if (performance.getEntriesByName(startMark).length === 0) {
+        performance.clearMarks('firstInboxRowsPainted')
+        return
+      }
+      performance.measure('inboxInitialUsefulPaintMs', startMark, 'firstInboxRowsPainted')
+      const entries = performance.getEntriesByName('inboxInitialUsefulPaintMs')
+      const last = entries[entries.length - 1]
+      if (last) {
+        console.info('inboxInitialUsefulPaintMs', {
+          ms: Math.round(last.duration),
+          from: startMark,
+          rowCount: messages.length,
+        })
+      }
+      performance.clearMeasures('inboxInitialUsefulPaintMs')
+      performance.clearMarks('firstInboxRowsPainted')
+      performance.clearMarks('inboxNavigationStart')
+      performance.clearMarks('inboxComponentMount')
+    } catch { /* ignore */ }
+  }, [loading, messages.length])
 
   useEffect(() => {
     // Defer job lookup until the job filter is used (not on initial inbox paint)
@@ -385,7 +478,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   useEffect(() => {
     connectionResetRef.current = true
-    setMessages([])
+    usefulPaintLoggedRef.current = false
     setPage(1)
     setHasMore(true)
     setTotalCount(null)
@@ -398,7 +491,21 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     setJobFilter('')
     setMassDeleteMode(false)
-    loadPage(1, { businessCategory: 'BUSINESS' }, false)
+
+    const cached = getCachedInboxList(workspaceId, connectionId)
+    if (cached && cached.messages.length > 0) {
+      setMessages(cached.messages)
+      setPage(cached.page)
+      setHasMore(cached.hasMore)
+      setTotalCount(cached.totalCount)
+      setLoading(false)
+      // Soft revalidate — keep rows visible.
+      void loadPage(1, { businessCategory: 'BUSINESS' }, false, { soft: true })
+    } else {
+      setMessages([])
+      setLoading(true)
+      void loadPage(1, { businessCategory: 'BUSINESS' }, false)
+    }
   }, [workspaceId, connectionId])
 
   const sentOnly = readFilter === 'sent'
@@ -1057,7 +1164,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
       {/* Message list */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {loading ? (
+        {loading && messages.length === 0 ? (
           <div className="inbox-skeleton" aria-busy="true" aria-label="Loading inbox">
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="inbox-skeleton-row">

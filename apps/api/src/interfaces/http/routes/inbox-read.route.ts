@@ -855,6 +855,8 @@ export const buildMessagesWhere = (input: {
 
   // Sent = sender matches any monitored/connected inbox.
   // Sent tab: only those. All / Unread / Read: exclude them.
+  // Use a single `in`/`notIn` (case-insensitive) instead of N OR equals — same
+  // semantics, cheaper for the planner than NOT (OR equals…).
   {
     const monitoredEmails = (input.mailboxEmails ?? [])
       .map((email) => email.trim().toLowerCase())
@@ -862,20 +864,14 @@ export const buildMessagesWhere = (input: {
     if (input.sentOnly) {
       if (monitoredEmails.length > 0) {
         andConditions.push({
-          OR: monitoredEmails.map((email) => ({
-            senderEmail: { equals: email, mode: "insensitive" as const }
-          }))
+          senderEmail: { in: monitoredEmails, mode: "insensitive" as const },
         });
       } else {
         andConditions.push({ id: "__no_monitored_inboxes__" });
       }
     } else if (monitoredEmails.length > 0) {
       andConditions.push({
-        NOT: {
-          OR: monitoredEmails.map((email) => ({
-            senderEmail: { equals: email, mode: "insensitive" as const }
-          }))
-        }
+        senderEmail: { notIn: monitoredEmails, mode: "insensitive" as const },
       });
     }
   }
@@ -1411,35 +1407,36 @@ export const registerInboxReadRoutes = async (
         return sendWorkspaceAccessDenied(reply);
       }
 
-      // List path: no _count.messages/threads (those belong on connection detail/list).
+      // List path: resolve authorized mailboxes + monitored sender emails in ONE query
+      // (previously: connection lookup, then a second findMany just for emails).
       const isAllMailboxes = params.id === ALL_MAILBOXES_CONNECTION_ID;
+      const monitoredStatuses = ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] as const;
       const tConn0 = performance.now();
-      const connections = isAllMailboxes
-        ? await app.services.prisma.inboxConnection.findMany({
-            where: {
-              workspaceId: params.workspaceId,
-              status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
-            },
-            select: {
-              id: true,
-              email: true,
-              status: true
-            }
-          })
-        : await app.services.prisma.inboxConnection
-            .findFirst({
-              where: {
-                id: params.id,
-                workspaceId: params.workspaceId
-              },
-              select: {
-                id: true,
-                email: true,
-                status: true
-              }
-            })
-            .then((c) => (c ? [c] : []));
+      const workspaceConnections = await app.services.prisma.inboxConnection.findMany({
+        where: {
+          workspaceId: params.workspaceId,
+          ...(isAllMailboxes
+            ? { status: { in: [...monitoredStatuses] } }
+            : {
+                // Single mailbox: allow the requested id even if DISCONNECTED (legacy list behavior),
+                // while still loading other active mailboxes for sent-exclusion emails.
+                OR: [
+                  { status: { in: [...monitoredStatuses] } },
+                  { id: params.id },
+                ],
+              }),
+        },
+        select: {
+          id: true,
+          email: true,
+          status: true,
+        },
+      });
       timings.connectionMs = Math.round(performance.now() - tConn0);
+
+      const connections = isAllMailboxes
+        ? workspaceConnections
+        : workspaceConnections.filter((c) => c.id === params.id);
 
       if (connections.length === 0) {
         return reply.code(404).send({
@@ -1450,6 +1447,11 @@ export const registerInboxReadRoutes = async (
       }
 
       const connectionIds = connections.map((c) => c.id);
+      const monitoredStatusSet = new Set<string>(monitoredStatuses);
+      const monitoredInboxEmails = workspaceConnections
+        .filter((c) => monitoredStatusSet.has(c.status))
+        .map((c) => c.email);
+      timings.monitoredMs = 0;
 
       // Personal visibility: VIEWER/MEMBER only see personal from their own mailbox.
       // All Mailboxes aggregates BUSINESS by default; PERSONAL across others is denied for non-admin
@@ -1508,17 +1510,6 @@ export const registerInboxReadRoutes = async (
       } else {
         timings.thresholdsMs = 0;
       }
-
-      const tMonitored0 = performance.now();
-      const monitored = await app.services.prisma.inboxConnection.findMany({
-        where: {
-          workspaceId: params.workspaceId,
-          status: { in: ["ACTIVE", "PAUSED", "ERROR", "REQUIRES_REAUTH"] }
-        },
-        select: { email: true }
-      });
-      timings.monitoredMs = Math.round(performance.now() - tMonitored0);
-      const monitoredInboxEmails = monitored.map((c) => c.email);
 
       const where = buildMessagesWhere({
         workspaceId: params.workspaceId,
