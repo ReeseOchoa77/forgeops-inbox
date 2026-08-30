@@ -71,6 +71,7 @@ const EMPTY_FORM: CreateJobFormState = {
 export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -80,8 +81,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [hasOverdueTasks, setHasOverdueTasks] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   const [sortBy, setSortBy] = useState('createdAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -94,9 +95,12 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [filtersExpanded, setFiltersExpanded] = useState(false)
   const hasPaintedRef = useRef(false)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const loadMoreLock = useRef(false)
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
+  const PAGE_SIZE = 50
 
   const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
   const canImport = userRole === 'OWNER' || userRole === 'ADMIN'
@@ -110,14 +114,17 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     return () => window.clearTimeout(t)
   }, [search])
 
-  const loadJobs = useCallback(async () => {
-    const soft = hasPaintedRef.current
-    if (soft) setRefreshing(true)
+  const loadJobs = useCallback(async (opts?: { page?: number; append?: boolean }) => {
+    const nextPage = opts?.page ?? 1
+    const append = opts?.append === true
+    const soft = hasPaintedRef.current && !append
+    if (append) setLoadingMore(true)
+    else if (soft) setRefreshing(true)
     else setLoading(true)
     try {
       const res = await api.getJobs(workspaceId, {
-        page,
-        pageSize: 25,
+        page: nextPage,
+        pageSize: PAGE_SIZE,
         status: statusFilter !== 'ALL' ? statusFilter : undefined,
         search: debouncedSearch || undefined,
         showArchived: showArchived || undefined,
@@ -127,21 +134,38 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         sortBy,
         sortDir,
       })
-      setJobs(res.jobs)
-      setTotalPages(res.pagination.totalPages)
+      setJobs((prev) => (append ? [...prev, ...res.jobs] : res.jobs))
+      setPage(nextPage)
       setTotalCount(res.pagination.totalCount)
+      setHasMore(nextPage < res.pagination.totalPages)
       hasPaintedRef.current = true
     } catch {
       /* ignore */
     } finally {
       setLoading(false)
       setRefreshing(false)
+      setLoadingMore(false)
+      loadMoreLock.current = false
     }
-  }, [workspaceId, page, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+  }, [workspaceId, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
-  useEffect(() => { void loadJobs() }, [loadJobs])
+  useEffect(() => {
+    hasPaintedRef.current = false
+    setJobs([])
+    setPage(1)
+    setHasMore(false)
+    void loadJobs({ page: 1, append: false })
+  }, [loadJobs])
 
-  useEffect(() => { setPage(1) }, [statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+  const handleListScroll = () => {
+    const el = listRef.current
+    if (!el || !hasMore || loadingMore || loadMoreLock.current) return
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (remaining < 240) {
+      loadMoreLock.current = true
+      void loadJobs({ page: page + 1, append: true })
+    }
+  }
 
   const handleSort = (col: string) => {
     if (sortBy === col) {
@@ -172,7 +196,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       })
       setShowCreateModal(false)
       setForm(EMPTY_FORM)
-      loadJobs()
+      void loadJobs({ page: 1, append: false })
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create job')
     } finally {
@@ -188,11 +212,14 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const thStyle = (col: string): React.CSSProperties => ({
     padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151',
     cursor: 'pointer', userSelect: 'none',
-    background: sortBy === col ? '#f0f4ff' : undefined,
+    background: sortBy === col ? '#f0f4ff' : '#f9fafb',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
   })
 
   const renderPhoneFilters = () => (
-    <div style={{ marginBottom: 16 }}>
+    <div>
       <input
         type="text"
         placeholder="Search by job number, name, or customer..."
@@ -265,7 +292,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   )
 
   const renderDesktopFilters = () => (
-    <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
       <input
         type="text"
         placeholder="Search by job number, name, or customer..."
@@ -357,146 +384,107 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     </div>
   )
 
+  const stickyTh = (extra?: React.CSSProperties): React.CSSProperties => ({
+    padding: '10px 12px',
+    textAlign: 'left',
+    fontWeight: 600,
+    color: '#374151',
+    background: '#f9fafb',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    ...extra,
+  })
+
   const renderTable = () => {
     const hideExtraCols = isTablet
 
     return (
-      <div style={{ overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-              <th style={thStyle('jobNumber')} onClick={() => handleSort('jobNumber')}>Job #{sortIndicator('jobNumber')}</th>
-              <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
-              <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Customer</th>
-              <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
-              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Emails</th>
-              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Open Tasks</th>
-              <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#374151' }}>Overdue</th>
-              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Last Activity</th>}
-              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Next Due</th>}
-              {!hideExtraCols && <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Team</th>}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+            <th style={thStyle('jobNumber')} onClick={() => handleSort('jobNumber')}>Job #{sortIndicator('jobNumber')}</th>
+            <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
+            <th style={stickyTh()}>Customer</th>
+            <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
+            <th style={stickyTh({ textAlign: 'center' })}>Emails</th>
+            <th style={stickyTh({ textAlign: 'center' })}>Open Tasks</th>
+            <th style={stickyTh({ textAlign: 'center' })}>Overdue</th>
+            {!hideExtraCols && <th style={stickyTh()}>Last Activity</th>}
+            {!hideExtraCols && <th style={stickyTh()}>Next Due</th>}
+            {!hideExtraCols && <th style={stickyTh()}>Team</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map(job => (
+            <tr
+              key={job.id}
+              onClick={() => onSelectJob(job.id)}
+              style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+              onMouseLeave={e => (e.currentTarget.style.background = '')}
+            >
+              <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
+                {job.jobNumber ?? '—'}
+              </td>
+              <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
+              <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
+              <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
+              <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
+              <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
+              <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
+                {job.overdueTaskCount}
+              </td>
+              {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{relativeTime(job.lastActivityAt)}</td>}
+              {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.nextDueDate ? formatDate(job.nextDueDate) : '—'}</td>}
+              {!hideExtraCols && (
+                <td style={{ padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {job.assignedMembers.slice(0, 3).map(m => (
+                      <span
+                        key={m.userId}
+                        title={m.name ?? m.email}
+                        style={{
+                          width: 24, height: 24, borderRadius: '50%', background: '#e0e7ff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 10, fontWeight: 600, color: '#4338ca'
+                        }}
+                      >
+                        {(m.name ?? m.email)[0].toUpperCase()}
+                      </span>
+                    ))}
+                    {job.assignedMembers.length > 3 && (
+                      <span style={{ fontSize: 11, color: '#888', alignSelf: 'center', marginLeft: 4 }}>
+                        +{job.assignedMembers.length - 3}
+                      </span>
+                    )}
+                  </div>
+                </td>
+              )}
             </tr>
-          </thead>
-          <tbody>
-            {jobs.map(job => (
-              <tr
-                key={job.id}
-                onClick={() => onSelectJob(job.id)}
-                style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                onMouseLeave={e => (e.currentTarget.style.background = '')}
-              >
-                <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
-                  {job.jobNumber ?? '—'}
-                </td>
-                <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
-                <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
-                <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
-                <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
-                  {job.overdueTaskCount}
-                </td>
-                {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{relativeTime(job.lastActivityAt)}</td>}
-                {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.nextDueDate ? formatDate(job.nextDueDate) : '—'}</td>}
-                {!hideExtraCols && (
-                  <td style={{ padding: '10px 12px' }}>
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      {job.assignedMembers.slice(0, 3).map(m => (
-                        <span
-                          key={m.userId}
-                          title={m.name ?? m.email}
-                          style={{
-                            width: 24, height: 24, borderRadius: '50%', background: '#e0e7ff',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 10, fontWeight: 600, color: '#4338ca'
-                          }}
-                        >
-                          {(m.name ?? m.email)[0].toUpperCase()}
-                        </span>
-                      ))}
-                      {job.assignedMembers.length > 3 && (
-                        <span style={{ fontSize: 11, color: '#888', alignSelf: 'center', marginLeft: 4 }}>
-                          +{job.assignedMembers.length - 3}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     )
   }
 
-  const renderPagination = () => (
+  return (
     <div style={{
       display: 'flex',
-      flexDirection: isPhone ? 'column' : 'row',
-      justifyContent: 'space-between',
-      alignItems: isPhone ? 'stretch' : 'center',
-      marginTop: 16,
-      fontSize: 13,
-      color: '#555',
-      gap: isPhone ? 12 : undefined
+      flexDirection: 'column',
+      height: '100%',
+      minHeight: 0,
+      padding: isPhone ? 14 : 24,
+      boxSizing: 'border-box',
     }}>
-      <span style={{ textAlign: isPhone ? 'center' : undefined }}>{totalCount} job{totalCount !== 1 ? 's' : ''} total</span>
+      {/* Header — stays fixed outside the scroll container */}
       <div style={{
-        display: 'flex',
-        flexDirection: isPhone ? 'column' : 'row',
-        gap: 8,
-        alignItems: 'center'
-      }}>
-        <button
-          disabled={page <= 1}
-          onClick={() => setPage(p => p - 1)}
-          style={{
-            padding: '10px 12px',
-            border: '1px solid #d0d5dd',
-            borderRadius: 4,
-            background: '#fff',
-            cursor: page > 1 ? 'pointer' : 'not-allowed',
-            opacity: page <= 1 ? 0.5 : 1,
-            width: isPhone ? '100%' : undefined,
-            minHeight: isPhone ? 44 : undefined,
-            fontSize: 13
-          }}
-        >
-          Previous
-        </button>
-        <span>Page {page} of {totalPages}</span>
-        <button
-          disabled={page >= totalPages}
-          onClick={() => setPage(p => p + 1)}
-          style={{
-            padding: '10px 12px',
-            border: '1px solid #d0d5dd',
-            borderRadius: 4,
-            background: '#fff',
-            cursor: page < totalPages ? 'pointer' : 'not-allowed',
-            opacity: page >= totalPages ? 0.5 : 1,
-            width: isPhone ? '100%' : undefined,
-            minHeight: isPhone ? 44 : undefined,
-            fontSize: 13
-          }}
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  )
-
-  return (
-    <div style={{ padding: isPhone ? 14 : 24 }}>
-      {/* Header */}
-      <div style={{
+        flexShrink: 0,
         display: 'flex',
         flexDirection: isPhone ? 'column' : 'row',
         justifyContent: 'space-between',
         alignItems: isPhone ? 'stretch' : 'center',
-        marginBottom: 20,
+        marginBottom: 16,
         gap: isPhone ? 12 : undefined
       }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>
@@ -533,32 +521,62 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         </div>
       </div>
 
-      {/* Filters */}
-      {isPhone ? renderPhoneFilters() : renderDesktopFilters()}
+      {/* Filters — stay fixed outside the scroll container */}
+      <div style={{ flexShrink: 0, marginBottom: 12 }}>
+        {isPhone ? renderPhoneFilters() : renderDesktopFilters()}
+      </div>
 
-      {/* Loading */}
-      {loading && jobs.length === 0 && (
-        <div style={{ textAlign: 'center', padding: 48, color: '#888' }}>Loading jobs...</div>
-      )}
-
-      {/* Empty state */}
-      {!loading && jobs.length === 0 && (
-        <div style={{ textAlign: 'center', padding: 64, color: '#888' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🔨</div>
-          <h3 style={{ margin: '0 0 8px', fontSize: 17, fontWeight: 600, color: '#333' }}>No jobs found</h3>
-          <p style={{ margin: 0, fontSize: 14, color: '#888' }}>
-            {search || statusFilter !== 'ALL' ? 'Try adjusting your filters.' : 'Create your first job to get started.'}
-          </p>
+      {totalCount > 0 && (
+        <div style={{ flexShrink: 0, marginBottom: 8, fontSize: 13, color: '#555' }}>
+          Showing {jobs.length} of {totalCount} job{totalCount !== 1 ? 's' : ''}
         </div>
       )}
 
-      {/* Job list */}
-      {jobs.length > 0 && (
-        <>
-          {isPhone ? renderPhoneCards() : renderTable()}
-          {renderPagination()}
-        </>
-      )}
+      {/* Scrollable jobs container */}
+      <div
+        ref={listRef}
+        onScroll={handleListScroll}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: 'auto',
+          border: jobs.length > 0 ? '1px solid #e5e7eb' : undefined,
+          borderRadius: jobs.length > 0 ? 8 : undefined,
+          background: jobs.length > 0 ? '#fff' : undefined,
+        }}
+      >
+        {loading && jobs.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 48, color: '#888' }}>Loading jobs...</div>
+        )}
+
+        {!loading && jobs.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 64, color: '#888' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔨</div>
+            <h3 style={{ margin: '0 0 8px', fontSize: 17, fontWeight: 600, color: '#333' }}>No jobs found</h3>
+            <p style={{ margin: 0, fontSize: 14, color: '#888' }}>
+              {search || statusFilter !== 'ALL' ? 'Try adjusting your filters.' : 'Create your first job to get started.'}
+            </p>
+          </div>
+        )}
+
+        {jobs.length > 0 && (
+          <>
+            {isPhone ? (
+              <div style={{ padding: 10 }}>
+                {renderPhoneCards()}
+              </div>
+            ) : renderTable()}
+            {loadingMore && (
+              <div style={{ textAlign: 'center', padding: 16, fontSize: 13, color: '#888' }}>Loading more…</div>
+            )}
+            {!hasMore && jobs.length > 0 && (
+              <div style={{ textAlign: 'center', padding: 14, fontSize: 12, color: '#aaa' }}>
+                End of list
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Create Job Modal */}
       {showCreateModal && (
@@ -656,7 +674,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         <JobImportView
           workspaceId={workspaceId}
           onClose={() => setShowImportModal(false)}
-          onImported={() => { void loadJobs() }}
+          onImported={() => { void loadJobs({ page: 1, append: false }) }}
         />
       )}
     </div>

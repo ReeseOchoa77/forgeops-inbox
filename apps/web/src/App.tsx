@@ -839,7 +839,7 @@ export default function App() {
           )}
 
           {page === 'jobs' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} breakpoint={bp} />
             </div>
           )}
