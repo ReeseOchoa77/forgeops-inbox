@@ -129,7 +129,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/customers/:customerId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), customerId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
@@ -139,7 +140,20 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     });
     if (!existing) return reply.code(404).send({ message: "Customer not found" });
 
+    // Composite FKs ([workspaceId, customerId]) cannot ON DELETE SET NULL because workspaceId is required.
     await app.services.prisma.$transaction(async (tx) => {
+      await tx.classification.updateMany({
+        where: { workspaceId: params.workspaceId, customerId: params.customerId },
+        data: { customerId: null },
+      });
+      await tx.task.updateMany({
+        where: { workspaceId: params.workspaceId, customerId: params.customerId },
+        data: { customerId: null },
+      });
+      await tx.job.updateMany({
+        where: { workspaceId: params.workspaceId, customerId: params.customerId },
+        data: { customerId: null },
+      });
       await tx.entityAlias.deleteMany({
         where: { workspaceId: params.workspaceId, customerId: params.customerId },
       });
@@ -182,7 +196,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/vendors/:vendorId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), vendorId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
@@ -193,6 +208,14 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     if (!existing) return reply.code(404).send({ message: "Vendor not found" });
 
     await app.services.prisma.$transaction(async (tx) => {
+      await tx.classification.updateMany({
+        where: { workspaceId: params.workspaceId, vendorId: params.vendorId },
+        data: { vendorId: null },
+      });
+      await tx.task.updateMany({
+        where: { workspaceId: params.workspaceId, vendorId: params.vendorId },
+        data: { vendorId: null },
+      });
       await tx.entityAlias.deleteMany({
         where: { workspaceId: params.workspaceId, vendorId: params.vendorId },
       });
@@ -236,7 +259,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/jobs/:jobId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), jobId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
@@ -251,7 +275,20 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
       select: { storageKey: true },
     });
 
+    // Composite FKs cannot ON DELETE SET NULL (workspaceId is required). Clear refs first.
     await app.services.prisma.$transaction(async (tx) => {
+      await tx.classification.updateMany({
+        where: { workspaceId: params.workspaceId, jobId: params.jobId },
+        data: { jobId: null },
+      });
+      await tx.task.updateMany({
+        where: { workspaceId: params.workspaceId, jobId: params.jobId },
+        data: { jobId: null },
+      });
+      await tx.discoveredFolder.updateMany({
+        where: { workspaceId: params.workspaceId, matchedJobId: params.jobId },
+        data: { matchedJobId: null },
+      });
       await tx.entityAlias.deleteMany({
         where: { workspaceId: params.workspaceId, jobId: params.jobId },
       });
@@ -296,7 +333,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/contacts/:contactId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), contactId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
@@ -343,7 +381,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/aliases/:aliasId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), aliasId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
@@ -919,7 +958,8 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
   app.delete("/api/v1/workspaces/:workspaceId/reference/documents/:documentId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), documentId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
-    if (!auth || !requireEditor(auth.role)) {
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
       return reply.code(403).send({ message: "Edit permission required" });
     }
 
