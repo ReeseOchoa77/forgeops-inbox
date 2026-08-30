@@ -215,6 +215,66 @@ export const registerSenderEvidenceRoutes = async (app: FastifyInstance): Promis
     return reply.send({ status: "reset" });
   });
 
+  app.delete("/api/v1/workspaces/:workspaceId/sender-evidence/:evidenceId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), evidenceId: z.string().min(1) }).parse(request.params);
+    const session = await getSessionFromRequest(request);
+    if (!session) return reply.code(401).send({ message: "Authentication required" });
+    const membership = await requireWorkspaceMembership(app.services.prisma, session.userId, params.workspaceId);
+    if (!membership || membership.workspaceRole === "VIEWER") {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.senderEvidence.findFirst({
+      where: { id: params.evidenceId, workspaceId: params.workspaceId },
+      select: { id: true, senderEmail: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Sender evidence not found" });
+
+    await app.services.prisma.senderEvidence.delete({ where: { id: params.evidenceId } });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: session.userId,
+      entityType: "SENDER_EVIDENCE",
+      entityId: params.evidenceId,
+      action: "sender.deleted",
+      metadata: { email: existing.senderEmail },
+      request,
+    });
+
+    return reply.code(204).send();
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/domain-evidence/:evidenceId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), evidenceId: z.string().min(1) }).parse(request.params);
+    const session = await getSessionFromRequest(request);
+    if (!session) return reply.code(401).send({ message: "Authentication required" });
+    const membership = await requireWorkspaceMembership(app.services.prisma, session.userId, params.workspaceId);
+    if (!membership || membership.workspaceRole === "VIEWER") {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.domainEvidence.findFirst({
+      where: { id: params.evidenceId, workspaceId: params.workspaceId },
+      select: { id: true, domain: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Domain evidence not found" });
+
+    await app.services.prisma.domainEvidence.delete({ where: { id: params.evidenceId } });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: session.userId,
+      entityType: "DOMAIN_EVIDENCE",
+      entityId: params.evidenceId,
+      action: "domain.deleted",
+      metadata: { domain: existing.domain },
+      request,
+    });
+
+    return reply.code(204).send();
+  });
+
   app.post("/api/v1/workspaces/:workspaceId/sender-evidence/confirm-by-email", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
     const body = z.object({

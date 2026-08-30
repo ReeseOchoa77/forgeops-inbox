@@ -15,7 +15,10 @@ interface DomainRecord {
   status: string; confidence: string
 }
 
-interface Props { workspaceId: string }
+interface Props {
+  workspaceId: string
+  userRole?: string
+}
 
 type SortMode = 'most_emails' | 'least_emails' | 'alphabetical'
 
@@ -78,7 +81,8 @@ function sortDomains(list: DomainRecord[], sortBy: SortMode): DomainRecord[] {
   })
 }
 
-export function SenderEvidenceView({ workspaceId }: Props) {
+export function SenderEvidenceView({ workspaceId, userRole = 'MEMBER' }: Props) {
+  const isViewer = userRole === 'VIEWER'
   const [senders, setSenders] = useState<SenderRecord[]>([])
   const [domains, setDomains] = useState<DomainRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -86,6 +90,8 @@ export function SenderEvidenceView({ workspaceId }: Props) {
   /** Empty set = show all statuses. Passive sort stays applied regardless. */
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set())
   const [sortBy, setSortBy] = useState<SortMode>('most_emails')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [error, setError] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -122,6 +128,50 @@ export function SenderEvidenceView({ workspaceId }: Props) {
     load()
   }
 
+  const removeSender = async (s: SenderRecord) => {
+    if (isViewer) return
+    if (!window.confirm(`Delete sender ${s.senderEmail}? This cannot be undone.`)) return
+    setDeletingId(s.id)
+    setError('')
+    try {
+      const res = await fetch(`${BASE}/workspaces/${workspaceId}/sender-evidence/${s.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().catch(() => ({ message: res.statusText }))
+        throw new Error((err as { message?: string }).message ?? 'Delete failed')
+      }
+      setSenders((prev) => prev.filter((row) => row.id !== s.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const removeDomain = async (d: DomainRecord) => {
+    if (isViewer) return
+    if (!window.confirm(`Delete domain ${d.domain}? This cannot be undone.`)) return
+    setDeletingId(d.id)
+    setError('')
+    try {
+      const res = await fetch(`${BASE}/workspaces/${workspaceId}/domain-evidence/${d.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().catch(() => ({ message: res.statusText }))
+        throw new Error((err as { message?: string }).message ?? 'Delete failed')
+      }
+      setDomains((prev) => prev.filter((row) => row.id !== d.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const visibleSenders = useMemo(() => {
     const filtered = selectedStatuses.size === 0
       ? senders
@@ -142,6 +192,13 @@ export function SenderEvidenceView({ workspaceId }: Props) {
     <div>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Sender Evidence</h2>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>Track sender classification patterns and manually confirm business or personal senders.</p>
+
+      {error && (
+        <div style={{ padding: '8px 12px', marginBottom: 10, background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
+          <span>{error}</span>
+          <button type="button" onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 0, marginBottom: 8, borderBottom: '2px solid #e5e5e5' }}>
         {(['senders', 'domains'] as const).map(t => (
@@ -244,10 +301,26 @@ export function SenderEvidenceView({ workspaceId }: Props) {
                     <td style={{ padding: '6px 10px' }}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>{s.status.replace(/_/g, ' ')}</span></td>
                     <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{(Number(s.confidence) * 100).toFixed(0)}%</td>
                     <td style={{ padding: '6px 10px' }}>
-                      <div style={{ display: 'flex', gap: 3 }}>
-                        <button onClick={() => confirm(s.id, 'BUSINESS')} className="btn btn-sm btn-success" style={{ fontSize: 10, padding: '2px 6px' }}>Biz</button>
-                        <button onClick={() => confirm(s.id, 'PERSONAL')} className="btn btn-sm btn-outline" style={{ fontSize: 10, padding: '2px 6px' }}>Pers</button>
-                        <button onClick={() => reset(s.id)} className="btn btn-sm btn-outline" style={{ fontSize: 10, padding: '2px 6px', color: '#999' }}>Reset</button>
+                      <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                        {!isViewer && (
+                          <>
+                            <button onClick={() => confirm(s.id, 'BUSINESS')} className="btn btn-sm btn-success" style={{ fontSize: 10, padding: '2px 6px' }}>Biz</button>
+                            <button onClick={() => confirm(s.id, 'PERSONAL')} className="btn btn-sm btn-outline" style={{ fontSize: 10, padding: '2px 6px' }}>Pers</button>
+                            <button onClick={() => reset(s.id)} className="btn btn-sm btn-outline" style={{ fontSize: 10, padding: '2px 6px', color: '#999' }}>Reset</button>
+                            <button
+                              type="button"
+                              title={`Delete ${s.senderEmail}`}
+                              aria-label={`Delete ${s.senderEmail}`}
+                              disabled={deletingId === s.id}
+                              onClick={() => void removeSender(s)}
+                              style={{
+                                width: 26, height: 26, padding: 0, border: '1px solid #e5e5e5', borderRadius: 6,
+                                background: '#fff', color: '#c62828', fontSize: 15, lineHeight: 1,
+                                cursor: deletingId === s.id ? 'wait' : 'pointer', opacity: deletingId === s.id ? 0.5 : 1,
+                              }}
+                            >×</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -273,6 +346,7 @@ export function SenderEvidenceView({ workspaceId }: Props) {
               <th style={{ padding: '7px 10px' }}>Pers</th>
               <th style={{ padding: '7px 10px' }}>Status</th>
               <th style={{ padding: '7px 10px' }}>Conf</th>
+              {!isViewer && <th style={{ padding: '7px 10px', width: 40 }} />}
             </tr></thead>
             <tbody>
               {visibleDomains.map(d => {
@@ -287,6 +361,22 @@ export function SenderEvidenceView({ workspaceId }: Props) {
                     <td style={{ padding: '6px 10px' }}>{d.personalEvidenceCount}</td>
                     <td style={{ padding: '6px 10px' }}><span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: c.bg, color: c.fg }}>{d.status.replace(/_/g, ' ')}</span></td>
                     <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{(Number(d.confidence) * 100).toFixed(0)}%</td>
+                    {!isViewer && (
+                      <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          title={`Delete ${d.domain}`}
+                          aria-label={`Delete ${d.domain}`}
+                          disabled={deletingId === d.id}
+                          onClick={() => void removeDomain(d)}
+                          style={{
+                            width: 26, height: 26, padding: 0, border: '1px solid #e5e5e5', borderRadius: 6,
+                            background: '#fff', color: '#c62828', fontSize: 15, lineHeight: 1,
+                            cursor: deletingId === d.id ? 'wait' : 'pointer', opacity: deletingId === d.id ? 0.5 : 1,
+                          }}
+                        >×</button>
+                      </td>
+                    )}
                   </tr>
                 )
               })}

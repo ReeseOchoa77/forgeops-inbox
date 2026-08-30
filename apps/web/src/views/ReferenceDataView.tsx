@@ -76,6 +76,66 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function deleteJson(path: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', credentials: 'include' })
+  if (!res.ok && res.status !== 204) {
+    const err = await res.json().catch(() => ({ message: res.statusText }))
+    throw new Error((err as { message?: string }).message ?? 'Delete failed')
+  }
+}
+
+function deleteLabel(tab: ReferenceDataTab, item: Record<string, unknown>): string {
+  if (tab === 'aliases') return String(item.alias ?? 'this alias')
+  if (tab === 'documents') return String(item.filename ?? 'this document')
+  if (tab === 'contacts') return String(item.name || item.email || 'this contact')
+  if (tab === 'jobs') {
+    const num = item.jobNumber ? ` (${item.jobNumber})` : ''
+    return `${String(item.name ?? 'job')}${num}`
+  }
+  return String(item.name ?? 'this item')
+}
+
+function DeleteXButton({
+  disabled,
+  onClick,
+  label,
+}: {
+  disabled?: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      title={`Delete ${label}`}
+      aria-label={`Delete ${label}`}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      style={{
+        width: 28,
+        height: 28,
+        padding: 0,
+        border: '1px solid #e5e5e5',
+        borderRadius: 6,
+        background: '#fff',
+        color: '#c62828',
+        fontSize: 16,
+        lineHeight: 1,
+        cursor: disabled ? 'wait' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      ×
+    </button>
+  )
+}
+
 function formatDate(iso: string): string {
   try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
   catch { return iso }
@@ -109,6 +169,7 @@ export function ReferenceDataView({
   const [docUploading, setDocUploading] = useState(false)
   const [docUploadMsg, setDocUploadMsg] = useState('')
   const [runDocAi, setRunDocAi] = useState(true)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const docFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -180,8 +241,41 @@ export function ReferenceDataView({
     }
   }
 
+  const handleDelete = async (t: ReferenceDataTab, item: Record<string, unknown>) => {
+    const id = item.id as string | undefined
+    if (!id || isViewer) return
+    const label = deleteLabel(t, item)
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
+
+    const pathByTab: Partial<Record<ReferenceDataTab, string>> = {
+      customers: `/workspaces/${workspaceId}/reference/customers/${id}`,
+      vendors: `/workspaces/${workspaceId}/reference/vendors/${id}`,
+      jobs: `/workspaces/${workspaceId}/reference/jobs/${id}`,
+      contacts: `/workspaces/${workspaceId}/reference/contacts/${id}`,
+      aliases: `/workspaces/${workspaceId}/reference/aliases/${id}`,
+      documents: `/workspaces/${workspaceId}/reference/documents/${id}`,
+    }
+    const path = pathByTab[t]
+    if (!path) return
+
+    setDeletingId(id)
+    setError('')
+    try {
+      await deleteJson(path)
+      setData((prev) => ({
+        ...prev,
+        [t]: ((prev[t] ?? []) as Array<Record<string, unknown>>).filter((row) => row.id !== id),
+      }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const items = (data[tab] ?? []) as Array<Record<string, unknown>>
   const showEntityTable = tab !== 'senders' && tab !== 'documents'
+  const canDeleteTab = !isViewer && tab !== 'imports' && tab !== 'senders'
 
   return (
     <div>
@@ -288,6 +382,7 @@ export function ReferenceDataView({
                       <th style={{ padding: '7px 10px' }}>Job</th>
                       <th style={{ padding: '7px 10px' }}>Size</th>
                       <th style={{ padding: '7px 10px' }}>Uploaded</th>
+                      {!isViewer && <th style={{ padding: '7px 10px', width: 40 }} />}
                     </tr>
                   </thead>
                   <tbody>
@@ -306,6 +401,15 @@ export function ReferenceDataView({
                         </td>
                         <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{item.fileSize ? `${Math.round((item.fileSize as number) / 1024)} KB` : '—'}</td>
                         <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(String(item.uploadedAt ?? item.createdAt ?? ''))}</td>
+                        {!isViewer && (
+                          <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                            <DeleteXButton
+                              label={deleteLabel('documents', item)}
+                              disabled={deletingId === item.id}
+                              onClick={() => void handleDelete('documents', item)}
+                            />
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -387,7 +491,7 @@ export function ReferenceDataView({
       )}
 
       {tab === 'senders' && (
-        <SenderEvidenceView workspaceId={workspaceId} />
+        <SenderEvidenceView workspaceId={workspaceId} userRole={userRole} />
       )}
 
       {showEntityTable && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
@@ -406,17 +510,27 @@ export function ReferenceDataView({
                 {tab === 'contacts' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Entity</th><th style={{ padding: '7px 10px' }}>Source</th></>}
                 {tab === 'aliases' && <><th style={{ padding: '7px 10px' }}>Alias</th><th style={{ padding: '7px 10px' }}>Normalized</th><th style={{ padding: '7px 10px' }}>Type</th><th style={{ padding: '7px 10px' }}>Entity</th><th style={{ padding: '7px 10px' }}>Source</th></>}
                 {tab === 'imports' && <><th style={{ padding: '7px 10px' }}>Type</th><th style={{ padding: '7px 10px' }}>Status</th><th style={{ padding: '7px 10px' }}>Rows</th><th style={{ padding: '7px 10px' }}>Created</th><th style={{ padding: '7px 10px' }}>Skipped</th><th style={{ padding: '7px 10px' }}>Errors</th><th style={{ padding: '7px 10px' }}>Date</th></>}
+                {canDeleteTab && <th style={{ padding: '7px 10px', width: 40 }} />}
               </tr>
             </thead>
             <tbody>
               {items.map((item, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <tr key={(item.id as string) ?? i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   {tab === 'customers' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.jobs) ?? 0}</td></>}
                   {tab === 'vendors' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td></>}
                   {tab === 'jobs' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{(item.jobNumber as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.customer as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td></>}
                   {tab === 'contacts' && <><td style={{ padding: '6px 10px' }}>{(item.name as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.email as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}
                   {tab === 'aliases' && <><td style={{ padding: '6px 10px' }}>{item.alias as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{item.normalizedAlias as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{item.entityType as string}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? (item.job as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}
                   {tab === 'imports' && <><td style={{ padding: '6px 10px' }}>{item.importType as string}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px' }}>{item.rowsRead as number}</td><td style={{ padding: '6px 10px' }}>{item.createdCount as number}</td><td style={{ padding: '6px 10px' }}>{item.skippedCount as number}</td><td style={{ padding: '6px 10px', color: (item.errorCount as number) > 0 ? '#c62828' : '#888' }}>{item.errorCount as number}</td><td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{formatDate(item.createdAt as string)}</td></>}
+                  {canDeleteTab && (
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      <DeleteXButton
+                        label={deleteLabel(tab, item)}
+                        disabled={deletingId === item.id}
+                        onClick={() => void handleDelete(tab, item)}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -1,3 +1,5 @@
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -13,6 +15,27 @@ import {
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
+
+function localAttachmentRoot(): string {
+  return process.env.ATTACHMENT_STORAGE_PATH?.trim() || join(process.cwd(), "data", "attachments");
+}
+
+async function bestEffortDeleteStorage(
+  app: FastifyInstance,
+  storageKey: string | null | undefined
+): Promise<void> {
+  if (!storageKey) return;
+  try {
+    const storage = app.services.attachmentStorage;
+    if (storage.configured) await storage.delete(storageKey);
+    else {
+      const fullPath = join(localAttachmentRoot(), storageKey);
+      if (existsSync(fullPath)) unlinkSync(fullPath);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
 
 const wsParams = z.object({ workspaceId: z.string().min(1) });
 
@@ -103,6 +126,42 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     });
   });
 
+  app.delete("/api/v1/workspaces/:workspaceId/reference/customers/:customerId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), customerId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.customer.findFirst({
+      where: { id: params.customerId, workspaceId: params.workspaceId },
+      select: { id: true, name: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Customer not found" });
+
+    await app.services.prisma.$transaction(async (tx) => {
+      await tx.entityAlias.deleteMany({
+        where: { workspaceId: params.workspaceId, customerId: params.customerId },
+      });
+      await tx.entityContact.deleteMany({
+        where: { workspaceId: params.workspaceId, customerId: params.customerId },
+      });
+      await tx.customer.delete({ where: { id: params.customerId } });
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "CUSTOMER",
+      entityId: params.customerId,
+      action: "reference.customer_deleted",
+      metadata: { name: existing.name },
+      request,
+    });
+
+    return reply.code(204).send();
+  });
+
   // -- VENDORS CRUD --
   app.get("/api/v1/workspaces/:workspaceId/reference/vendors", async (request, reply) => {
     const { workspaceId } = wsParams.parse(request.params);
@@ -118,6 +177,42 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     });
 
     return reply.send({ vendors });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/reference/vendors/:vendorId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), vendorId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.vendor.findFirst({
+      where: { id: params.vendorId, workspaceId: params.workspaceId },
+      select: { id: true, name: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Vendor not found" });
+
+    await app.services.prisma.$transaction(async (tx) => {
+      await tx.entityAlias.deleteMany({
+        where: { workspaceId: params.workspaceId, vendorId: params.vendorId },
+      });
+      await tx.entityContact.deleteMany({
+        where: { workspaceId: params.workspaceId, vendorId: params.vendorId },
+      });
+      await tx.vendor.delete({ where: { id: params.vendorId } });
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "VENDOR",
+      entityId: params.vendorId,
+      action: "reference.vendor_deleted",
+      metadata: { name: existing.name },
+      request,
+    });
+
+    return reply.code(204).send();
   });
 
   // -- JOBS CRUD --
@@ -138,6 +233,48 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     return reply.send({ jobs });
   });
 
+  app.delete("/api/v1/workspaces/:workspaceId/reference/jobs/:jobId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), jobId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.job.findFirst({
+      where: { id: params.jobId, workspaceId: params.workspaceId },
+      select: { id: true, name: true, jobNumber: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Job not found" });
+
+    const files = await app.services.prisma.jobFile.findMany({
+      where: { workspaceId: params.workspaceId, jobId: params.jobId },
+      select: { storageKey: true },
+    });
+
+    await app.services.prisma.$transaction(async (tx) => {
+      await tx.entityAlias.deleteMany({
+        where: { workspaceId: params.workspaceId, jobId: params.jobId },
+      });
+      await tx.job.delete({ where: { id: params.jobId } });
+    });
+
+    for (const file of files) {
+      await bestEffortDeleteStorage(app, file.storageKey);
+    }
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "JOB",
+      entityId: params.jobId,
+      action: "reference.job_deleted",
+      metadata: { name: existing.name, jobNumber: existing.jobNumber },
+      request,
+    });
+
+    return reply.code(204).send();
+  });
+
   // -- CONTACTS --
   app.get("/api/v1/workspaces/:workspaceId/reference/contacts", async (request, reply) => {
     const { workspaceId } = wsParams.parse(request.params);
@@ -154,6 +291,34 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     });
 
     return reply.send({ contacts });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/reference/contacts/:contactId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), contactId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.entityContact.findFirst({
+      where: { id: params.contactId, workspaceId: params.workspaceId },
+      select: { id: true, name: true, email: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Contact not found" });
+
+    await app.services.prisma.entityContact.delete({ where: { id: params.contactId } });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "ENTITY_CONTACT",
+      entityId: params.contactId,
+      action: "reference.contact_deleted",
+      metadata: { name: existing.name, email: existing.email },
+      request,
+    });
+
+    return reply.code(204).send();
   });
 
   // -- ALIASES --
@@ -173,6 +338,34 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     });
 
     return reply.send({ aliases });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/reference/aliases/:aliasId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), aliasId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.entityAlias.findFirst({
+      where: { id: params.aliasId, workspaceId: params.workspaceId },
+      select: { id: true, alias: true, entityType: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Alias not found" });
+
+    await app.services.prisma.entityAlias.delete({ where: { id: params.aliasId } });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "ENTITY_ALIAS",
+      entityId: params.aliasId,
+      action: "reference.alias_deleted",
+      metadata: { alias: existing.alias, entityType: existing.entityType },
+      request,
+    });
+
+    return reply.code(204).send();
   });
 
   // -- IMPORT RUNS --
@@ -721,5 +914,34 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     if (!doc) return reply.code(404).send({ message: "Document not found" });
 
     return reply.send({ document: doc });
+  });
+
+  app.delete("/api/v1/workspaces/:workspaceId/reference/documents/:documentId", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), documentId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth || !requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const existing = await app.services.prisma.knowledgeDocument.findFirst({
+      where: { id: params.documentId, workspaceId: params.workspaceId },
+      select: { id: true, filename: true, storageReference: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Document not found" });
+
+    await app.services.prisma.knowledgeDocument.delete({ where: { id: params.documentId } });
+    await bestEffortDeleteStorage(app, existing.storageReference);
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "KNOWLEDGE_DOCUMENT",
+      entityId: params.documentId,
+      action: "reference.document_deleted",
+      metadata: { filename: existing.filename },
+      request,
+    });
+
+    return reply.code(204).send();
   });
 };
