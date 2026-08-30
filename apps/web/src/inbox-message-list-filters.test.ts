@@ -99,4 +99,29 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       })
     ).toEqual({ category: "trash" });
   });
+
+  it("Unclassified: unclassifiedOnly=true, no businessCategory", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "",
+      })
+    ).toEqual({ unclassifiedOnly: true });
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "unread",
+      })
+    ).toEqual({ unclassifiedOnly: true, unreadOnly: true });
+  });
+
+  it("Sent still wins over Unclassified tab", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "sent",
+      })
+    ).toEqual({ sentOnly: true });
+  });
 });

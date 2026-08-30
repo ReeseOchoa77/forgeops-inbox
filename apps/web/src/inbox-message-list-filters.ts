@@ -2,6 +2,7 @@
  * Builds query params for GET .../messages.
  * Sent is a global direction filter: sentOnly=true and no businessCategory.
  * Unread uses server-side unreadOnly (not client-only filtering).
+ * Unclassified is messages with no Classification row (pending/failed classify).
  */
 
 export type InboxListTab =
@@ -12,6 +13,7 @@ export type InboxListTab =
   | "ACCOUNTING"
   | "INTERNAL"
   | "OTHER"
+  | "UNCLASSIFIED"
   | "PERSONAL"
   | "TRASH";
 
@@ -24,6 +26,7 @@ export type InboxMessageListFilters = {
   category?: "trash";
   sentOnly?: true;
   unreadOnly?: true;
+  unclassifiedOnly?: true;
   search?: string;
   searchIn?: "all" | "sender";
 };
@@ -51,6 +54,8 @@ export function buildInboxMessageListFilters(input: {
     f.businessCategory = "NON_BUSINESS";
   } else if (input.inboxTab === "TRASH") {
     f.category = "trash";
+  } else if (input.inboxTab === "UNCLASSIFIED") {
+    f.unclassifiedOnly = true;
   } else {
     f.businessCategory = "BUSINESS";
     if (input.inboxTab !== "ALL_BUSINESS") {

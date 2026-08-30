@@ -162,7 +162,7 @@ interface Props {
 
 const PAGE_SIZE = 30
 
-type InboxTab = 'ALL_BUSINESS' | 'BIDS_ESTIMATING' | 'PROJECTS' | 'PURCHASING' | 'ACCOUNTING' | 'INTERNAL' | 'OTHER' | 'PERSONAL' | 'TRASH'
+type InboxTab = 'ALL_BUSINESS' | 'BIDS_ESTIMATING' | 'PROJECTS' | 'PURCHASING' | 'ACCOUNTING' | 'INTERNAL' | 'OTHER' | 'UNCLASSIFIED' | 'PERSONAL' | 'TRASH'
 
 const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
   { key: 'ALL_BUSINESS', label: 'All Business' },
@@ -172,6 +172,7 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
   { key: 'ACCOUNTING', label: 'Accounting' },
   { key: 'INTERNAL', label: 'Internal' },
   { key: 'OTHER', label: 'Other' },
+  { key: 'UNCLASSIFIED', label: 'Unclassified' },
   { key: 'PERSONAL', label: 'Personal' },
   { key: 'TRASH', label: 'Trash' },
 ]
@@ -255,10 +256,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
   const connectionResetRef = useRef(false)
 
-  const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH'
+  const isUnclassified = inboxTab === 'UNCLASSIFIED'
+  const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH' && !isUnclassified
   const isSentView = readFilter === 'sent'
-  /** Business subtype chrome (priority/job/type columns) — not on Personal, Trash, or global Sent. */
+  /** Business subtype chrome (priority/job/type columns) — not on Personal, Trash, Unclassified, or global Sent. */
   const showBusinessChrome = isBusiness && !isSentView
+  /** Compact status chrome for the Unclassified tab. */
+  const showUnclassifiedChrome = isUnclassified && !isSentView
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
@@ -336,7 +340,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setInboxTab(tab)
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
-    if (tab === 'PERSONAL' || tab === 'TRASH') setJobFilter('')
+    if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') setJobFilter('')
     if (tab === 'TRASH') setMassDeleteMode(false)
   }
 
@@ -726,6 +730,22 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               Unclassified
             </span>
           )}
+          {showUnclassifiedChrome && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 10,
+                background: '#fff8e1',
+                color: '#f57f17',
+                whiteSpace: 'nowrap',
+              }}
+              title="Waiting for classification, or classify job failed"
+            >
+              Unclassified
+            </span>
+          )}
           {showBusinessChrome && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
           )}
@@ -766,11 +786,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
         {!isViewer && (
           <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-            {inboxTab === 'PERSONAL' && (
+            {(inboxTab === 'PERSONAL' || showUnclassifiedChrome) && (
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', minHeight: 28 }}>Biz</button>
             )}
-            {showBusinessChrome && (
+            {(showBusinessChrome || showUnclassifiedChrome) && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', minHeight: 28 }}>Pers</button>
             )}
@@ -940,6 +960,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </td>
       )}
+      {showUnclassifiedChrome && !isTablet && (
+        <td style={{ padding: '7px 12px' }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '1px 7px',
+              borderRadius: 10,
+              background: '#fff8e1',
+              color: '#f57f17',
+              whiteSpace: 'nowrap',
+            }}
+            title="Waiting for classification, or classify job failed"
+          >
+            Unclassified
+          </span>
+        </td>
+      )}
       {showBusinessChrome && (
         <td style={{ padding: '7px 12px' }}>
           {m.classification && !isSentEmail(m)
@@ -951,11 +989,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
         {!isViewer && (
           <div style={{ display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
-            {inboxTab === 'PERSONAL' && (
+            {(inboxTab === 'PERSONAL' || showUnclassifiedChrome) && (
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer' }}>Biz</button>
             )}
-            {showBusinessChrome && (
+            {(showBusinessChrome || showUnclassifiedChrome) && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer' }}>Pers</button>
             )}
@@ -1177,13 +1215,15 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         ) : filteredMessages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
-            <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : isSentView ? '\uD83D\uDCE4' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : '\u2709'}</div>
+            <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : isSentView ? '\uD83D\uDCE4' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : inboxTab === 'UNCLASSIFIED' ? '\u26A0' : '\u2709'}</div>
             <h3>{activeSearch ? 'No results' : isSentView ? 'No sent emails' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
             <p>{activeSearch
               ? (searchIn === 'sender'
                 ? `No senders match "${activeSearch}"`
                 : `No messages match "${activeSearch}"`)
-              : 'Emails will appear here after syncing and classification.'}</p>
+              : inboxTab === 'UNCLASSIFIED'
+                ? 'Emails waiting for classification (or where classify failed) will appear here.'
+                : 'Emails will appear here after syncing and classification.'}</p>
           </div>
         ) : isPhone ? (
           <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff' }}>
@@ -1202,6 +1242,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
                   {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
                   {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
+                  {showUnclassifiedChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Status</th>}
                   {showBusinessChrome && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
                   <th style={{ padding: '8px 6px', width: 64 }}></th>

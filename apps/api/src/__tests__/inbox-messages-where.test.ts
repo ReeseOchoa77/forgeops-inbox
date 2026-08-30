@@ -227,6 +227,30 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
   });
 });
 
+describe("buildMessagesWhere — Unclassified tab", () => {
+  it("unclassifiedOnly requires classifications.none and no mailboxCategory", () => {
+    const where = baseWhere({ unclassifiedOnly: true });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "mailboxCategory" in c)).toBe(false);
+    const classCond = and.find((c) => c && "classifications" in c) as
+      | { classifications: { none?: object } }
+      | undefined;
+    expect(classCond?.classifications?.none).toEqual({});
+  });
+
+  it("Business tab requires a Classification row (excludes unclassified)", () => {
+    const where = baseWhere({ businessCategory: "BUSINESS" });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const catCond = and.find(
+      (c) => c && "mailboxCategory" in c && "classifications" in c
+    ) as
+      | { mailboxCategory: string; classifications: { some?: object } }
+      | undefined;
+    expect(catCond?.mailboxCategory).toBe("BUSINESS");
+    expect(catCond?.classifications?.some).toEqual({});
+  });
+});
+
 describe("thread list where (no sent exclusion)", () => {
   it("Mixed thread endpoint filters only by threadId", () => {
     const threadWhere = {

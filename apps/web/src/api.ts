@@ -684,6 +684,7 @@ export const api = {
     reclassifiedOnly?: boolean;
     sentOnly?: boolean;
     unreadOnly?: boolean;
+    unclassifiedOnly?: boolean;
     includeTotal?: boolean;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -699,6 +700,7 @@ export const api = {
     if (filters?.reclassifiedOnly) params.set('reclassifiedOnly', 'true');
     if (filters?.sentOnly) params.set('sentOnly', 'true');
     if (filters?.unreadOnly) params.set('unreadOnly', 'true');
+    if (filters?.unclassifiedOnly) params.set('unclassifiedOnly', 'true');
     if (filters?.includeTotal) params.set('includeTotal', 'true');
     return request<{
       messages: MessageSummary[];

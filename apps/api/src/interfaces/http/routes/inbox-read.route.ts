@@ -128,6 +128,11 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   reclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   sentOnly: booleanQueryWithDefaultFalseSchema,
   unreadOnly: booleanQueryWithDefaultFalseSchema,
+  /**
+   * Messages with no Classification row yet (pending / failed classify).
+   * Orthogonal to Business/Personal mailboxCategory tabs.
+   */
+  unclassifiedOnly: booleanQueryWithDefaultFalseSchema,
   /** When true, also run COUNT(*) and return totalCount/totalPages (not on default Inbox path). */
   includeTotal: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional(),
@@ -830,6 +835,8 @@ export const buildMessagesWhere = (input: {
   reclassifiedOnly?: boolean;
   sentOnly?: boolean;
   unreadOnly?: boolean;
+  /** No Classification row (ingest/classify pending or failed). */
+  unclassifiedOnly?: boolean;
   mailboxEmails?: string[];
   search?: string;
   searchIn?: "all" | "sender";
@@ -916,11 +923,17 @@ export const buildMessagesWhere = (input: {
     andConditions.push({ previousCategory: { not: null } });
   }
 
-  // Inbox tabs use EmailMessage.mailboxCategory as source of truth.
-  // (Legacy query param is BUSINESS | NON_BUSINESS; map to mailbox categories.)
-  if (input.businessCategory) {
+  // Unclassified tab: no Classification row yet (pending AI or failed job).
+  // Do not combine with Business/Personal mailboxCategory filters.
+  if (input.unclassifiedOnly) {
+    andConditions.push({ classifications: { none: {} } });
+  } else if (input.businessCategory) {
+    // Inbox tabs use EmailMessage.mailboxCategory as source of truth.
+    // (Legacy query param is BUSINESS | NON_BUSINESS; map to mailbox categories.)
+    // Require a Classification row so pending/failed classify mail lives under Unclassified.
     andConditions.push({
       mailboxCategory: mailboxCategoryFromLegacyBusinessFilter(input.businessCategory),
+      classifications: { some: {} },
     });
   }
 
@@ -1494,9 +1507,11 @@ export const registerInboxReadRoutes = async (
       }
 
       // All Mailboxes without an explicit category: force BUSINESS so personal is not leaked.
-      const effectiveBusinessCategory =
-        query.businessCategory ??
-        (isAllMailboxes ? ("BUSINESS" as const) : undefined);
+      // Unclassified is orthogonal — do not force BUSINESS onto that tab.
+      const effectiveBusinessCategory = query.unclassifiedOnly
+        ? undefined
+        : (query.businessCategory ??
+          (isAllMailboxes ? ("BUSINESS" as const) : undefined));
 
       const needsThresholds = query.reviewOnly || query.lowConfidenceOnly;
       let thresholds = {
@@ -1536,6 +1551,7 @@ export const registerInboxReadRoutes = async (
         reclassifiedOnly: query.reclassifiedOnly,
         sentOnly: query.sentOnly,
         unreadOnly: query.unreadOnly,
+        unclassifiedOnly: query.unclassifiedOnly,
         mailboxEmails: monitoredInboxEmails,
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
