@@ -71,13 +71,15 @@ export class GmailSyncProvider implements InboxSyncProvider {
       syncCursor: input.syncCursor ?? null,
       ...(input.maxThreads !== undefined ? { maxThreads: input.maxThreads } : {}),
       ...(input.receivedAfter ? { receivedAfter: input.receivedAfter } : {}),
+      ...(input.pageCursor ? { pageCursor: input.pageCursor } : {}),
     });
 
     return {
       threads: snapshot.threads.map(mapThread),
       newestSyncCursor: snapshot.newestHistoryId,
       accessToken: snapshot.accessToken,
-      accessTokenExpiresAt: snapshot.accessTokenExpiresAt
+      accessTokenExpiresAt: snapshot.accessTokenExpiresAt,
+      nextPageCursor: snapshot.nextPageCursor ?? null,
     };
   }
 }

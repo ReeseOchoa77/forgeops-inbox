@@ -253,6 +253,8 @@ export interface OutlookMailboxSyncSnapshot {
   accessToken: string | null;
   accessTokenExpiresAt: Date | null;
   refreshedRefreshToken: string | null;
+  /** Graph @odata.nextLink when more list pages remain (historical paging). */
+  nextPageCursor?: string | null;
 }
 
 export interface OutlookMailboxSyncInput {
@@ -262,6 +264,8 @@ export interface OutlookMailboxSyncInput {
   syncCursor?: string | null;
   maxMessages?: number;
   receivedAfter?: Date;
+  /** Historical list continuation (@odata.nextLink). Not a delta cursor. */
+  pageCursor?: string | null;
 }
 
 const mapGraphAddress = (
@@ -684,7 +688,8 @@ export class OutlookClient {
       input.maxMessages ?? MAX_MESSAGES_PER_SYNC,
       input.syncCursor ?? null,
       folderMap,
-      input.receivedAfter ?? null
+      input.receivedAfter ?? null,
+      input.pageCursor ?? null
     );
 
     if (messages.hasAttachmentIds.length > 0) {
@@ -702,7 +707,8 @@ export class OutlookClient {
       newestDeltaLink: messages.deltaLink,
       accessToken: tokenResult.accessToken,
       accessTokenExpiresAt: tokenResult.expiresAt,
-      refreshedRefreshToken: tokenResult.refreshedRefreshToken
+      refreshedRefreshToken: tokenResult.refreshedRefreshToken,
+      nextPageCursor: messages.nextPageCursor,
     };
   }
 
@@ -869,18 +875,24 @@ export class OutlookClient {
     maxMessages: number,
     syncCursor: string | null,
     folderMap: Map<string, string>,
-    receivedAfter: Date | null = null
+    receivedAfter: Date | null = null,
+    pageCursor: string | null = null
   ): Promise<{
     items: OutlookMessageSnapshot[];
     deltaLink: string | null;
     hasAttachmentIds: string[];
+    nextPageCursor: string | null;
   }> {
     const pageSize = Math.min(maxMessages, 50);
 
     let url: string | null;
     let isDelta = false;
 
-    if (receivedAfter) {
+    if (pageCursor && pageCursor.startsWith("http")) {
+      // Historical import continuation — full @odata.nextLink URL.
+      url = pageCursor;
+      isDelta = false;
+    } else if (receivedAfter) {
       // Date-bounded historical import: list newest-first with Graph filter (not delta).
       url =
         `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/inbox/messages` +
@@ -902,6 +914,7 @@ export class OutlookClient {
     const items: OutlookMessageSnapshot[] = [];
     const hasAttachmentIds: string[] = [];
     let deltaLink: string | null = null;
+    let nextPageCursor: string | null = null;
     const seenMessageIds = new Set<string>();
 
     while (url && items.length < maxMessages) {
@@ -919,7 +932,8 @@ export class OutlookClient {
           maxMessages,
           null,
           folderMap,
-          receivedAfter
+          receivedAfter,
+          null
         );
       }
 
@@ -990,12 +1004,18 @@ export class OutlookClient {
       }
 
       deltaLink = page["@odata.deltaLink"] ?? deltaLink;
-      url = items.length < maxMessages
-        ? (page["@odata.nextLink"] ?? null)
-        : null;
+      const pageNext = page["@odata.nextLink"] ?? null;
+      if (items.length >= maxMessages) {
+        // Preserve continuation for historical paging instead of dropping it.
+        nextPageCursor = pageNext;
+        url = null;
+      } else {
+        url = pageNext;
+        nextPageCursor = null;
+      }
     }
 
-    return { items, deltaLink, hasAttachmentIds };
+    return { items, deltaLink, hasAttachmentIds, nextPageCursor };
   }
 
   private async fetchAttachmentMetadata(

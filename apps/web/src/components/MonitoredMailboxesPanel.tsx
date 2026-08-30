@@ -766,7 +766,7 @@ export function MonitoredMailboxesPanel({
             <>
               <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>
                 Runs in the background. Progress appears on the mailbox card. Does not enable
-                the native listener. Max 250 emails per run.
+                the native listener.
               </p>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <button
@@ -786,7 +786,7 @@ export function MonitoredMailboxesPanel({
               </div>
               {importMode === 'count' ? (
                 <label style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
-                  How many recent emails?
+                  Import up to 250 of the most recent emails
                   <input
                     type="number"
                     min={1}
@@ -820,7 +820,8 @@ export function MonitoredMailboxesPanel({
                     style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
                   />
                   <span style={{ fontSize: 11, color: '#888', display: 'block', marginTop: 6 }}>
-                    Newest first, up to 250 emails on or after this date.
+                    Imports all available inbox emails on or after this date. Large imports run
+                    in batches in the background and may take several minutes.
                   </span>
                 </label>
               )}

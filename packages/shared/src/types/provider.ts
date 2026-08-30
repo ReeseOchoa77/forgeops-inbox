@@ -84,6 +84,11 @@ export interface ProviderMailboxSyncResult {
   accessToken: string | null;
   accessTokenExpiresAt: Date | null;
   refreshedRefreshToken?: string | null;
+  /**
+   * Opaque provider continuation for historical import paging
+   * (Graph @odata.nextLink or Gmail pageToken). Not a live delta cursor.
+   */
+  nextPageCursor?: string | null;
 }
 
 export interface ProviderAuthorizationUrlInput {
@@ -98,6 +103,11 @@ export interface ProviderMailboxSyncInput {
   maxThreads?: number;
   /** When set, providers prefer messages received on/after this instant. */
   receivedAfter?: Date;
+  /**
+   * Resume token from a prior historical page (Graph nextLink / Gmail pageToken).
+   * Distinct from live syncCursor / delta links.
+   */
+  pageCursor?: string | null;
 }
 
 export interface ProviderTokenResult {

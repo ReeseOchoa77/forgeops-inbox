@@ -169,4 +169,12 @@ describe("ingestion ownership", () => {
     );
     expect(() => parseHistoricalImportSinceDate("not-a-date")).toThrow(/Invalid sinceDate/);
   });
+
+  it("treats requestedLimit 0 as unlimited since-date import", async () => {
+    const { HISTORICAL_IMPORT_UNLIMITED, isUnlimitedHistoricalImport } =
+      await import("../ingestion-ownership.js");
+    expect(HISTORICAL_IMPORT_UNLIMITED).toBe(0);
+    expect(isUnlimitedHistoricalImport(0)).toBe(true);
+    expect(isUnlimitedHistoricalImport(250)).toBe(false);
+  });
 });

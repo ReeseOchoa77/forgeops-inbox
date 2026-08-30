@@ -358,8 +358,9 @@ model MailboxHistoricalImport {
   inboxConnectionId  String
   requestedByUserId  String?
   status             MailboxHistoricalImportStatus @default(PENDING)
+  /// By count: 1–250. Since date: 0 means unlimited (page until Graph/Gmail exhausted).
   requestedLimit     Int
-  /// When set, import targets messages received on/after this instant (newest-first, capped by requestedLimit).
+  /// When set, import targets messages received on/after this instant.
   sinceDate          DateTime?
   processedCount     Int                           @default(0)
   importedCount      Int                           @default(0)
@@ -369,6 +370,8 @@ model MailboxHistoricalImport {
   failedCount        Int                           @default(0)
   /// Provider message ids attempted in this run (for progress recount / idempotency).
   processedProviderMessageIds Json                 @default("[]")
+  /// Opaque Graph nextLink / Gmail pageToken for mid-import resume. Never write to AuditEvent.
+  resumeCursor       String?
   errorMessage       String?
   startedAt          DateTime?
   completedAt        DateTime?

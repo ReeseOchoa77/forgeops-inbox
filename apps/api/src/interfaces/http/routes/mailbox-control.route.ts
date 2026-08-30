@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   HISTORICAL_IMPORT_LIMIT_PRESETS,
   HISTORICAL_IMPORT_MAX_LIMIT,
+  HISTORICAL_IMPORT_UNLIMITED,
   normalizeEmail,
   parseHistoricalImportSinceDate,
   shouldRegisterNativePush,
@@ -405,8 +406,9 @@ export const registerMailboxControlRoutes = async (
       const sinceDate = body.sinceDate
         ? parseHistoricalImportSinceDate(body.sinceDate)
         : null;
+      // Since date: unlimited (0). By count: 1…250.
       const requestedLimit = sinceDate
-        ? HISTORICAL_IMPORT_MAX_LIMIT
+        ? HISTORICAL_IMPORT_UNLIMITED
         : (body.limit ??
           (body.preset ? Number(body.preset) : HISTORICAL_IMPORT_LIMIT_PRESETS[0]));
 

@@ -149,6 +149,7 @@ export interface GmailMailboxSyncSnapshot {
   newestHistoryId: string | null;
   accessToken: string | null;
   accessTokenExpiresAt: Date | null;
+  nextPageCursor?: string | null;
 }
 
 export interface GmailMailboxSyncInput {
@@ -158,6 +159,8 @@ export interface GmailMailboxSyncInput {
   syncCursor?: string | null;
   maxThreads?: number;
   receivedAfter?: Date;
+  /** Gmail threads.list pageToken for historical paging. */
+  pageCursor?: string | null;
 }
 
 const toHeaderMap = (
@@ -645,7 +648,8 @@ export class GmailClient {
     const query = `-in:chats${afterQuery}`.trim();
 
     const threadIds: string[] = [];
-    let listPageToken: string | undefined;
+    let listPageToken: string | undefined = input.pageCursor ?? undefined;
+    let leftoverPageToken: string | undefined;
     do {
       const threadListResponse = await gmail.users.threads.list({
         userId: GMAIL_ME,
@@ -661,8 +665,13 @@ export class GmailClient {
         if (threadIds.length >= maxThreads) break;
         threadIds.push(stub.id);
       }
-      listPageToken =
-        threadIds.length < maxThreads ? threadList.nextPageToken : undefined;
+      if (threadIds.length >= maxThreads) {
+        leftoverPageToken = threadList.nextPageToken;
+        listPageToken = undefined;
+      } else {
+        listPageToken = threadList.nextPageToken;
+        leftoverPageToken = undefined;
+      }
     } while (listPageToken && threadIds.length < maxThreads);
 
     const threads: GmailThreadSnapshot[] = [];
@@ -709,7 +718,8 @@ export class GmailClient {
       accessToken: accessTokenResponse.token ?? client.credentials.access_token ?? null,
       accessTokenExpiresAt: client.credentials.expiry_date
         ? new Date(client.credentials.expiry_date)
-        : null
+        : null,
+      nextPageCursor: leftoverPageToken ?? null,
     };
   }
 }

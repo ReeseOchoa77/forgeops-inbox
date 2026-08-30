@@ -16,10 +16,26 @@ export type IngestionSource = "NATIVE" | "N8N" | "SHADOW";
 
 export const NATIVE_INBOX_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
-/** Hard cap for a single historical import request. */
+/** Hard cap for a single "By count" historical import request. */
 export const HISTORICAL_IMPORT_MAX_LIMIT = 250;
 
 export const HISTORICAL_IMPORT_LIMIT_PRESETS = [25, 50, 100, 250] as const;
+
+/**
+ * Internal Graph/Gmail page size for historical import batches.
+ * Since-date mode pages until exhausted; By-count still respects requestedLimit.
+ */
+export const HISTORICAL_IMPORT_PAGE_SIZE = 50;
+
+/**
+ * requestedLimit=0 on MailboxHistoricalImport means Since-date with no total cap.
+ * By-count uses 1…HISTORICAL_IMPORT_MAX_LIMIT.
+ */
+export const HISTORICAL_IMPORT_UNLIMITED = 0;
+
+export function isUnlimitedHistoricalImport(requestedLimit: number): boolean {
+  return requestedLimit === HISTORICAL_IMPORT_UNLIMITED;
+}
 
 /**
  * Parse a YYYY-MM-DD or ISO date string into a UTC Date (start of that calendar day

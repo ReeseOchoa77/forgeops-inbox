@@ -61,8 +61,12 @@ export interface MailboxHistoricalImportJobPayload {
   workspaceId: string;
   inboxConnectionId: string;
   importId: string;
+  /**
+   * By count: 1…250.
+   * Since date: 0 (HISTORICAL_IMPORT_UNLIMITED) — import all pages since date.
+   */
   requestedLimit: number;
-  /** ISO timestamp — when set, import messages received on/after this instant (capped by requestedLimit). */
+  /** ISO timestamp — when set, import messages received on/after this instant. */
   sinceDate?: string;
   initiatedBy?: string;
 }

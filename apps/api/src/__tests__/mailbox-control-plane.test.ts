@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   HISTORICAL_IMPORT_MAX_LIMIT,
+  HISTORICAL_IMPORT_UNLIMITED,
+  isUnlimitedHistoricalImport,
   shouldEnqueueNativeClassification,
   shouldRegisterNativePush,
   shouldRunNativeInboxSync,
@@ -56,5 +58,11 @@ describe("mailbox control-plane safety gates", () => {
   it("historical import hard limit supports pagination beyond 25/50", () => {
     expect(HISTORICAL_IMPORT_MAX_LIMIT).toBeGreaterThanOrEqual(100);
     expect(HISTORICAL_IMPORT_MAX_LIMIT).toBe(250);
+  });
+
+  it("since-date historical import uses unlimited requestedLimit (0), not 250", () => {
+    expect(HISTORICAL_IMPORT_UNLIMITED).toBe(0);
+    expect(isUnlimitedHistoricalImport(HISTORICAL_IMPORT_UNLIMITED)).toBe(true);
+    expect(isUnlimitedHistoricalImport(HISTORICAL_IMPORT_MAX_LIMIT)).toBe(false);
   });
 });

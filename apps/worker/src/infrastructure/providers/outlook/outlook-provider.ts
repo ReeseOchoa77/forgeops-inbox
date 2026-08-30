@@ -86,6 +86,7 @@ export class OutlookSyncProvider implements InboxSyncProvider {
         ? { maxMessages: input.maxThreads }
         : {}),
       ...(input.receivedAfter ? { receivedAfter: input.receivedAfter } : {}),
+      ...(input.pageCursor ? { pageCursor: input.pageCursor } : {}),
     });
 
     return {
@@ -93,7 +94,8 @@ export class OutlookSyncProvider implements InboxSyncProvider {
       newestSyncCursor: snapshot.newestDeltaLink,
       accessToken: snapshot.accessToken,
       accessTokenExpiresAt: snapshot.accessTokenExpiresAt,
-      refreshedRefreshToken: snapshot.refreshedRefreshToken
+      refreshedRefreshToken: snapshot.refreshedRefreshToken,
+      nextPageCursor: snapshot.nextPageCursor ?? null,
     };
   }
 }

@@ -104,8 +104,33 @@ export const startMailboxHistoricalImportWorker = (
   worker.on("failed", (job, err) => {
     console.error("mailbox-historical-import-failed", {
       importId: job?.data.importId,
+      attemptsMade: job?.attemptsMade,
       error: err.message,
     });
+    const importId = job?.data.importId;
+    if (!importId || !job) return;
+    const maxAttempts = job.opts.attempts ?? 1;
+    // Final failure only — mid-attempt throws leave status RUNNING + resumeCursor.
+    if (job.attemptsMade < maxAttempts) return;
+    void prisma.mailboxHistoricalImport
+      .updateMany({
+        where: {
+          id: importId,
+          status: { in: ["PENDING", "RUNNING"] },
+        },
+        data: {
+          status: "FAILED",
+          errorMessage: err.message.slice(0, 2000),
+          completedAt: new Date(),
+        },
+      })
+      .catch((updateErr) => {
+        console.error("mailbox-historical-import-mark-failed-error", {
+          importId,
+          error:
+            updateErr instanceof Error ? updateErr.message : "unknown",
+        });
+      });
   });
 
   return { worker, queue };
