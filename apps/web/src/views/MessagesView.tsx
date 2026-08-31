@@ -7,6 +7,11 @@ import {
   INBOX_DEFAULT_LIST_FILTER_KEY,
 } from '../inbox-list-cache'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
+import {
+  JobAssignPicker,
+  formatJobPrimaryLabel,
+  formatJobTooltip,
+} from '../components/JobAssignPicker'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 import { prefetchThread } from '../message-thread-cache'
@@ -213,6 +218,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
   const [searchIn, setSearchIn] = useState<'all' | 'sender'>('all')
+  const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
+  const browserTimeZone =
+    typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      : 'UTC'
 
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
   const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
@@ -221,14 +231,30 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
   /** When on, clicking a list row trashes it instead of opening the email. */
   const [massDeleteMode, setMassDeleteMode] = useState(false)
+  const [reclassifySelected, setReclassifySelected] = useState<Set<string>>(() => new Set())
+  const [reclassifyBusy, setReclassifyBusy] = useState(false)
+  const [reclassifyNotice, setReclassifyNotice] = useState<string | null>(null)
   const massDeletingIds = useRef<Set<string>>(new Set())
 
-  const handleAssignJob = async (messageId: string, jobId: string) => {
+  const handleAssignJob = async (messageId: string, job: JobLookup) => {
     setJobAssigning(true)
     try {
-      await api.assignEmailToJob(workspaceId, jobId, { messageId })
-      const job = jobs.find(j => j.id === jobId)
-      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, job: job ? { id: job.id, jobNumber: job.jobNumber, name: job.name, status: job.status } : m.job } : m))
+      await api.assignEmailToJob(workspaceId, job.id, { messageId })
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === messageId
+            ? {
+                ...m,
+                job: {
+                  id: job.id,
+                  jobNumber: job.jobNumber,
+                  name: job.name,
+                  status: job.status,
+                },
+              }
+            : m
+        )
+      )
       setJobPickerOpen(null)
     } catch { /* */ }
     finally { setJobAssigning(false) }
@@ -317,11 +343,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     return buildInboxMessageListFilters({
       inboxTab,
       readFilter,
+      dateRange,
+      timezone: browserTimeZone,
       jobFilter,
       activeSearch,
       searchIn,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     if (key === 'sent') {
@@ -342,6 +370,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') setJobFilter('')
     if (tab === 'TRASH') setMassDeleteMode(false)
+    if (tab !== 'UNCLASSIFIED') {
+      setReclassifySelected(new Set())
+      setReclassifyNotice(null)
+    }
   }
 
   const loadPage = useCallback(async (
@@ -526,7 +558,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setTotalCount(null)
     // Soft refresh: keep prior rows visible until the new page arrives.
     loadPage(1, filters, false, { soft: true })
-  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -620,6 +652,117 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch { /* */ }
+  }
+
+  const softRefreshList = useCallback(() => {
+    void loadPage(1, buildFilters(), false, { soft: true })
+  }, [loadPage, buildFilters])
+
+  const formatRetryNotice = (r: {
+    queued?: number
+    alreadyProcessing?: number
+    alreadyClassified?: number
+    failed?: number
+    outcome?: string
+  }) => {
+    if (r.outcome) {
+      if (r.outcome === 'queued') return 'Classification queued'
+      if (r.outcome === 'already_processing') return 'Already processing'
+      if (r.outcome === 'already_classified') return 'Already classified'
+      return 'Failed to enqueue'
+    }
+    const parts = [
+      r.queued ? `${r.queued} queued` : null,
+      r.alreadyProcessing ? `${r.alreadyProcessing} processing` : null,
+      r.alreadyClassified ? `${r.alreadyClassified} already classified` : null,
+      r.failed ? `${r.failed} failed` : null,
+    ].filter(Boolean)
+    return parts.length ? parts.join(' · ') : 'No messages to reclassify'
+  }
+
+  const handleRetryClassificationOne = async (messageId: string) => {
+    if (reclassifyBusy) return
+    setReclassifyBusy(true)
+    setReclassifyNotice(null)
+    try {
+      const r = await api.retryClassification(workspaceId, messageId)
+      setReclassifyNotice(formatRetryNotice(r))
+      if (r.outcome === 'queued' || r.outcome === 'already_processing') {
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === messageId
+              ? { ...m, classificationStatus: r.outcome === 'queued' ? 'PENDING' : 'PROCESSING' }
+              : m
+          )
+        )
+      }
+      if (r.outcome === 'already_classified') {
+        setMessages(prev => prev.filter(m => m.id !== messageId))
+      }
+      softRefreshList()
+    } catch (e) {
+      setReclassifyNotice(e instanceof Error ? e.message : 'Retry failed')
+    } finally {
+      setReclassifyBusy(false)
+    }
+  }
+
+  const handleRetryClassificationBulk = async (mode: 'selected' | 'all') => {
+    if (reclassifyBusy) return
+    if (mode === 'selected' && reclassifySelected.size === 0) {
+      setReclassifyNotice('Select emails first')
+      return
+    }
+    setReclassifyBusy(true)
+    setReclassifyNotice(null)
+    try {
+      const r = await api.retryClassificationBulk(workspaceId, {
+        inboxConnectionId: connectionId,
+        ...(mode === 'selected'
+          ? { messageIds: [...reclassifySelected] }
+          : { allUnclassified: true }),
+      })
+      setReclassifyNotice(formatRetryNotice(r))
+      setReclassifySelected(new Set())
+      softRefreshList()
+    } catch (e) {
+      setReclassifyNotice(e instanceof Error ? e.message : 'Reclassify failed')
+    } finally {
+      setReclassifyBusy(false)
+    }
+  }
+
+  const toggleReclassifySelect = (messageId: string) => {
+    setReclassifySelected(prev => {
+      const next = new Set(prev)
+      if (next.has(messageId)) next.delete(messageId)
+      else next.add(messageId)
+      return next
+    })
+  }
+
+  const unclassifiedStatusBadge = (m: MessageSummary) => {
+    const status = m.classificationStatus
+    if (status === 'PENDING') {
+      return { label: 'Pending', bg: '#e3f2fd', color: '#1565c0', title: 'Queued for classification' }
+    }
+    if (status === 'PROCESSING') {
+      return { label: 'Processing', bg: '#fff3e0', color: '#ef6c00', title: 'Classification in progress' }
+    }
+    if (status === 'FAILED') {
+      return {
+        label: 'Failed',
+        bg: '#ffebee',
+        color: '#c62828',
+        title: m.classificationError ?? 'Classification failed',
+      }
+    }
+    return {
+      label: 'Unclassified',
+      bg: '#fff8e1',
+      color: '#f57f17',
+      title: 'Waiting for classification, or classify job never ran',
+    }
   }
 
   const handlePin = async (messageId: string, currentlyPinned: boolean) => {
@@ -730,22 +873,25 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               Unclassified
             </span>
           )}
-          {showUnclassifiedChrome && (
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '1px 7px',
-                borderRadius: 10,
-                background: '#fff8e1',
-                color: '#f57f17',
-                whiteSpace: 'nowrap',
-              }}
-              title="Waiting for classification, or classify job failed"
-            >
-              Unclassified
-            </span>
-          )}
+          {showUnclassifiedChrome && (() => {
+            const badge = unclassifiedStatusBadge(m)
+            return (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '1px 7px',
+                  borderRadius: 10,
+                  background: badge.bg,
+                  color: badge.color,
+                  whiteSpace: 'nowrap',
+                }}
+                title={badge.title}
+              >
+                {badge.label}
+              </span>
+            )
+          })()}
           {showBusinessChrome && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
           )}
@@ -754,8 +900,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
                 background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
-              }} title={m.job.name}>
-                {m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)}
+              }} title={formatJobTooltip(m.job)}>
+                {formatJobPrimaryLabel(m.job, 22)}
               </span>
             ) : (
               <span style={{
@@ -793,6 +939,20 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             {(showBusinessChrome || showUnclassifiedChrome) && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', minHeight: 28 }}>Pers</button>
+            )}
+            {showUnclassifiedChrome && (
+              <button
+                title="Retry classification"
+                disabled={reclassifyBusy}
+                onClick={() => void handleRetryClassificationOne(m.id)}
+                style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                  border: '1px solid #c5cae9', background: '#e8eaf6', color: '#3949ab',
+                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', minHeight: 28, opacity: reclassifyBusy ? 0.6 : 1,
+                }}
+              >
+                Retry
+              </button>
             )}
             <span style={{ flex: 1 }} />
             {inboxTab !== 'TRASH' ? (
@@ -915,7 +1075,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             onClick={(e) => {
               e.stopPropagation()
               if (isViewer) return
-              ensureJobsLoaded()
               setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)
             }}
             style={{
@@ -923,59 +1082,50 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               background: m.job ? '#e0f2f1' : '#f0f0f0',
               color: m.job ? '#00695c' : '#999',
               whiteSpace: 'nowrap', cursor: isViewer ? 'default' : 'pointer',
+              maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block',
             }}
-            title={m.job ? m.job.name : 'Click to assign a job'}
+            title={m.job ? formatJobTooltip(m.job) : 'Click to assign a job'}
           >
-            {m.job ? (m.job.jobNumber ?? (m.job.name.length > 18 ? `${m.job.name.slice(0, 18)}…` : m.job.name)) : 'Unassigned'}
+            {m.job ? formatJobPrimaryLabel(m.job, 24) : 'Unassigned'}
           </span>
           {jobPickerOpen === m.id && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, zIndex: 20,
-              background: '#fff', border: '1px solid #ddd', borderRadius: 6,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.12)', width: 240, maxHeight: 220, overflowY: 'auto',
-            }}>
-              {m.job && (
-                <div
-                  onClick={() => handleRemoveJob(m.id, m.job!.id)}
-                  style={{ padding: '6px 10px', fontSize: 11, color: '#c62828', cursor: 'pointer', borderBottom: '1px solid #f0f0f0' }}
-                >Remove from {m.job.jobNumber ?? m.job.name}</div>
-              )}
-              {jobs.map(j => (
-                <div
-                  key={j.id}
-                  onClick={() => !jobAssigning && handleAssignJob(m.id, j.id)}
-                  style={{
-                    padding: '6px 10px', fontSize: 11, cursor: 'pointer',
-                    background: m.job?.id === j.id ? '#e0f2f1' : 'transparent',
-                    fontWeight: m.job?.id === j.id ? 600 : 400,
-                  }}
-                  onMouseOver={e => { if (m.job?.id !== j.id) (e.currentTarget.style.background = '#f5f5f5') }}
-                  onMouseOut={e => { if (m.job?.id !== j.id) (e.currentTarget.style.background = 'transparent') }}
-                >
-                  {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
-                </div>
-              ))}
-              {jobs.length === 0 && <div style={{ padding: '8px 10px', fontSize: 11, color: '#999' }}>No jobs available</div>}
-            </div>
+            <JobAssignPicker
+              workspaceId={workspaceId}
+              selectedJobId={m.job?.id}
+              disabled={jobAssigning}
+              onSelect={(job) => void handleAssignJob(m.id, job)}
+              onRemove={
+                m.job
+                  ? () => void handleRemoveJob(m.id, m.job!.id)
+                  : undefined
+              }
+              removeLabel={m.job ? `Remove from ${m.job.name}` : undefined}
+              onClose={() => setJobPickerOpen(null)}
+            />
           )}
         </td>
       )}
       {showUnclassifiedChrome && !isTablet && (
         <td style={{ padding: '7px 12px' }}>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              padding: '1px 7px',
-              borderRadius: 10,
-              background: '#fff8e1',
-              color: '#f57f17',
-              whiteSpace: 'nowrap',
-            }}
-            title="Waiting for classification, or classify job failed"
-          >
-            Unclassified
-          </span>
+          {(() => {
+            const badge = unclassifiedStatusBadge(m)
+            return (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '1px 7px',
+                  borderRadius: 10,
+                  background: badge.bg,
+                  color: badge.color,
+                  whiteSpace: 'nowrap',
+                }}
+                title={badge.title}
+              >
+                {badge.label}
+              </span>
+            )
+          })()}
         </td>
       )}
       {showBusinessChrome && (
@@ -989,6 +1139,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
         {!isViewer && (
           <div style={{ display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
+            {showUnclassifiedChrome && (
+              <input
+                type="checkbox"
+                checked={reclassifySelected.has(m.id)}
+                onChange={() => toggleReclassifySelect(m.id)}
+                title="Select for reclassify"
+                aria-label="Select for reclassify"
+                style={{ marginRight: 4 }}
+              />
+            )}
             {(inboxTab === 'PERSONAL' || showUnclassifiedChrome) && (
               <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer' }}>Biz</button>
@@ -996,6 +1156,20 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             {(showBusinessChrome || showUnclassifiedChrome) && (
               <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
                 style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer' }}>Pers</button>
+            )}
+            {showUnclassifiedChrome && (
+              <button
+                title="Retry classification"
+                disabled={reclassifyBusy}
+                onClick={() => void handleRetryClassificationOne(m.id)}
+                style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                  border: '1px solid #c5cae9', background: '#e8eaf6', color: '#3949ab',
+                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer', opacity: reclassifyBusy ? 0.6 : 1,
+                }}
+              >
+                Retry
+              </button>
             )}
             <span style={{ width: 12 }} />
             {inboxTab !== 'TRASH' ? (
@@ -1042,6 +1216,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             >
               {deletingAllPersonal ? 'Deleting...' : 'Delete All'}
             </button>
+          )}
+          {showUnclassifiedChrome && !isViewer && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                disabled={reclassifyBusy || reclassifySelected.size === 0}
+                onClick={() => void handleRetryClassificationBulk('selected')}
+                style={{
+                  padding: '5px 10px', fontSize: 12, fontWeight: 500, borderRadius: 5,
+                  border: '1px solid #c5cae9', background: '#e8eaf6', color: '#3949ab',
+                  cursor: reclassifyBusy || reclassifySelected.size === 0 ? 'not-allowed' : 'pointer',
+                  opacity: reclassifyBusy || reclassifySelected.size === 0 ? 0.55 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Reclassify selected{reclassifySelected.size > 0 ? ` (${reclassifySelected.size})` : ''}
+              </button>
+              <button
+                type="button"
+                disabled={reclassifyBusy}
+                onClick={() => void handleRetryClassificationBulk('all')}
+                style={{
+                  padding: '5px 10px', fontSize: 12, fontWeight: 500, borderRadius: 5,
+                  border: '1px solid #9fa8da', background: '#fff', color: '#303f9f',
+                  cursor: reclassifyBusy ? 'not-allowed' : 'pointer',
+                  opacity: reclassifyBusy ? 0.6 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Reclassify all unclassified
+              </button>
+            </div>
           )}
           {!isViewer && inboxTab !== 'TRASH' && (
             <button
@@ -1110,6 +1316,29 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </div>
       )}
 
+      {reclassifyNotice && showUnclassifiedChrome && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 8, padding: '8px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+            background: '#e8eaf6', color: '#283593', border: '1px solid #c5cae9',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+          }}
+        >
+          <span>{reclassifyNotice}</span>
+          <button
+            type="button"
+            onClick={() => setReclassifyNotice(null)}
+            style={{
+              padding: '3px 10px', fontSize: 11, fontWeight: 600, borderRadius: 4,
+              border: '1px solid #c5cae9', background: '#fff', color: '#3949ab', cursor: 'pointer',
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div style={{
         display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', flexShrink: 0,
@@ -1149,6 +1378,32 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 color: readFilter === key ? '#fff' : '#666', cursor: 'pointer'
               }}>{label}</button>
             ))}
+          </div>
+
+          <span style={{ color: '#ddd' }}>|</span>
+
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            {([['', 'All dates'], ['TODAY', 'Today'], ['WEEK', 'This week'], ['MONTH', 'This month']] as const).map(
+              ([key, label]) => (
+                <button
+                  key={key || 'all-dates'}
+                  type="button"
+                  onClick={() => setDateRange(key)}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    borderRadius: 12,
+                    border: dateRange === key ? '1px solid #1a1a2e' : '1px solid #ddd',
+                    background: dateRange === key ? '#1a1a2e' : '#fff',
+                    color: dateRange === key ? '#fff' : '#666',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              )
+            )}
           </div>
 
           {showBusinessChrome && (
@@ -1191,7 +1446,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 <option value="unassigned">Unassigned</option>
                 {jobs.map(j => (
                   <option key={j.id} value={j.id}>
-                    {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
+                    {j.name}{j.jobNumber ? ` (#${j.jobNumber})` : ''}
                   </option>
                 ))}
               </select>

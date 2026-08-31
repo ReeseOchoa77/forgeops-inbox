@@ -116,8 +116,22 @@ export async function requeueUnclassifiedNativeMessages(input: {
       emailMessageId,
       ...(input.initiatedBy ? { initiatedBy: input.initiatedBy } : {}),
     });
-    if (outcome === "enqueued") enqueuedCount += 1;
-    else skippedCount += 1;
+    if (outcome === "enqueued") {
+      enqueuedCount += 1;
+      await input.prisma.emailMessage
+        .update({
+          where: { id: emailMessageId },
+          data: {
+            classificationStatus: "PENDING",
+            classificationLastAttemptAt: new Date(),
+            classificationAttemptCount: { increment: 1 },
+            classificationError: null,
+          },
+        })
+        .catch(() => {});
+    } else {
+      skippedCount += 1;
+    }
   }
 
   return {

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { api, type SessionResponse, type ConnectionSummary } from './api'
+import { api, type SessionResponse, type ConnectionSummary, type JobSummary } from './api'
 import { ComposeEditor } from './components/ComposeEditor'
 import { useBreakpoint } from './hooks/useBreakpoint'
 
@@ -93,6 +93,7 @@ export default function App() {
   }>>([])
   const [sendableLoading, setSendableLoading] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
+  const [selectedJobSummary, setSelectedJobSummary] = useState<JobSummary | null>(null)
   const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
   const [workspaceTabHint, setWorkspaceTabHint] = useState<'mailboxes' | 'team' | 'folders'>('mailboxes')
   const [referenceTabHint, setReferenceTabHint] = useState<ReferenceDataTab>(() => {
@@ -450,8 +451,9 @@ export default function App() {
     }
   }
 
-  const openJob = (id: string) => {
+  const openJob = (id: string, summary?: JobSummary) => {
     setSelectedJobId(id)
+    setSelectedJobSummary(summary && summary.id === id ? summary : null)
     setPage('job-detail')
   }
 
@@ -876,7 +878,13 @@ export default function App() {
                 workspaceId={workspaceId}
                 jobId={selectedJobId}
                 userRole={currentRole}
-                onBack={() => setPage('jobs')}
+                initialJob={
+                  selectedJobSummary?.id === selectedJobId ? selectedJobSummary : null
+                }
+                onBack={() => {
+                  setSelectedJobSummary(null)
+                  setPage('jobs')
+                }}
                 onOpenMessage={(messageId, inboxConnectionId) =>
                   openMessage(messageId, { connectionId: inboxConnectionId, backPage: 'job-detail' })
                 }

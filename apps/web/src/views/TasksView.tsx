@@ -1,6 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import { api, type TaskListItem } from '../api'
 import { PriorityBadge, StatusBadge } from '../components/Badges'
+import {
+  getCachedTasksList,
+  invalidateTasksListCache,
+  setCachedTasksList,
+} from '../tasks-list-cache'
 
 interface Props {
   workspaceId: string
@@ -10,7 +15,8 @@ interface Props {
   userRole?: string
 }
 
-type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'today' | 'this_week' | 'high_priority' | 'requests'
+type TaskFilter = 'all' | 'open' | 'completed' | 'overdue' | 'high_priority' | 'requests'
+type TaskDateRange = '' | 'TODAY' | 'WEEK' | 'MONTH'
 
 const FILTERS: Array<{ key: TaskFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -18,12 +24,10 @@ const FILTERS: Array<{ key: TaskFilter; label: string }> = [
   { key: 'requests', label: 'Requests' },
   { key: 'completed', label: 'Completed' },
   { key: 'overdue', label: 'Overdue' },
-  { key: 'today', label: 'Today' },
-  { key: 'this_week', label: 'This Week' },
   { key: 'high_priority', label: 'High Priority' },
 ]
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
   try {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -33,20 +37,6 @@ function formatDate(iso: string | null): string {
 function isOverdue(dueAt: string | null, status: string): boolean {
   if (!dueAt || status === 'DONE' || status === 'CANCELLED') return false
   return new Date(dueAt) < new Date()
-}
-
-function isCreatedToday(createdAt: string): boolean {
-  return new Date(createdAt).toDateString() === new Date().toDateString()
-}
-
-function isCreatedThisWeek(createdAt: string): boolean {
-  const now = new Date()
-  const day = now.getDay()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 7)
-  const d = new Date(createdAt)
-  return d >= start && d < end
 }
 
 export function TasksView({ workspaceId, connectionId, connections, onSelectMessage, userRole }: Props) {
@@ -62,11 +52,88 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState<TaskFilter>('open')
+  const [dateRange, setDateRange] = useState<TaskDateRange>('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const hasMoreRef = useRef(false)
   const loadingMoreRef = useRef(false)
   const hasPaintedRef = useRef(false)
+
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkBefore, setBulkBefore] = useState('')
+  const [bulkPreview, setBulkPreview] = useState<{ count: number; before: string } | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const browserTimeZone =
+    typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      : 'UTC'
+
+  const taskListFilters = {
+    ...(dateRange ? { dateRange, timezone: browserTimeZone } : {}),
+  } as const
+
+  const reloadTasks = () => {
+    setRefreshing(true)
+    setPage(1)
+    api.getTasks(workspaceId, connectionId, 1, 25, taskListFilters)
+      .then(r => {
+        setAllTasks(r.tasks)
+        setTotalPages(r.pagination.totalPages)
+        setTotalCount(r.pagination.totalCount)
+        hasMoreRef.current = 1 < r.pagination.totalPages
+        setCachedTasksList(workspaceId, connectionId, 1, {
+          tasks: r.tasks,
+          page: 1,
+          totalCount: r.pagination.totalCount,
+          totalPages: r.pagination.totalPages,
+        }, dateRange)
+      })
+      .catch(() => {})
+      .finally(() => setRefreshing(false))
+  }
+
+  const runBulkPreview = async () => {
+    if (!bulkBefore) return
+    setBulkBusy(true)
+    setBulkError(null)
+    try {
+      const preview = await api.previewTaskBulkDelete(
+        workspaceId,
+        connectionId,
+        bulkBefore,
+        browserTimeZone
+      )
+      setBulkPreview({ count: preview.count, before: preview.before })
+    } catch (e) {
+      setBulkPreview(null)
+      setBulkError(e instanceof Error ? e.message : 'Preview failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const runBulkDelete = async () => {
+    if (!bulkBefore || !bulkPreview) return
+    const ok = window.confirm(
+      `Delete ${bulkPreview.count} tasks before ${bulkBefore}?\n\nTasks on ${bulkBefore} and later will be kept.\nThis cannot be undone.`
+    )
+    if (!ok) return
+    setBulkBusy(true)
+    setBulkError(null)
+    try {
+      await api.bulkDeleteTasks(workspaceId, connectionId, bulkBefore, browserTimeZone)
+      setBulkOpen(false)
+      setBulkPreview(null)
+      setBulkBefore('')
+      invalidateTasksListCache(workspaceId, connectionId)
+      reloadTasks()
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (connections && connections.length > 0) {
@@ -79,38 +146,76 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
       .catch(() => setMonitoredEmails(new Set()))
   }, [workspaceId, connections])
 
-  // Load page 1 whenever workspace/connection changes
+  // Load page 1 whenever workspace/connection/dateRange changes
   useEffect(() => {
+    const cached = getCachedTasksList(workspaceId, connectionId, 1, dateRange)
     const soft = hasPaintedRef.current && allTasks.length > 0
-    if (!soft) {
+    const paintLogged = { current: false }
+
+    if (cached) {
+      setAllTasks(cached.tasks)
+      setTotalPages(cached.totalPages)
+      setTotalCount(cached.totalCount)
+      hasMoreRef.current = 1 < cached.totalPages
+      hasPaintedRef.current = true
+      setLoading(false)
+      setRefreshing(true)
+      console.info({
+        event: 'tasksInitialUsefulPaintMs',
+        source: 'cache',
+        ms: 0,
+        rowCount: cached.tasks.length,
+      })
+      paintLogged.current = true
+    } else if (!soft) {
       setAllTasks([])
       setLoading(true)
     } else {
       setRefreshing(true)
     }
     setPage(1)
-    setTotalPages(0)
-    api.getTasks(workspaceId, connectionId, 1)
+    if (!cached) setTotalPages(0)
+
+    const t0 = performance.now()
+    api.getTasks(workspaceId, connectionId, 1, 25, {
+      ...(dateRange ? { dateRange, timezone: browserTimeZone } : {}),
+    })
       .then(r => {
         setAllTasks(r.tasks)
         setTotalPages(r.pagination.totalPages)
         setTotalCount(r.pagination.totalCount)
         hasMoreRef.current = 1 < r.pagination.totalPages
         hasPaintedRef.current = true
+        setCachedTasksList(workspaceId, connectionId, 1, {
+          tasks: r.tasks,
+          page: 1,
+          totalCount: r.pagination.totalCount,
+          totalPages: r.pagination.totalPages,
+        }, dateRange)
+        if (!paintLogged.current) {
+          console.info({
+            event: 'tasksInitialUsefulPaintMs',
+            source: 'network',
+            ms: Math.round(performance.now() - t0),
+            rowCount: r.tasks.length,
+          })
+        }
       })
       .finally(() => {
         setLoading(false)
         setRefreshing(false)
       })
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on workspace/connection
-  }, [workspaceId, connectionId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset on workspace/connection/dateRange
+  }, [workspaceId, connectionId, dateRange, browserTimeZone])
 
   // Load subsequent pages
   useEffect(() => {
     if (page <= 1) return
     setLoadingMore(true)
     loadingMoreRef.current = true
-    api.getTasks(workspaceId, connectionId, page)
+    api.getTasks(workspaceId, connectionId, page, 25, {
+      ...(dateRange ? { dateRange, timezone: browserTimeZone } : {}),
+    })
       .then(r => {
         setAllTasks(prev => [...prev, ...r.tasks])
         setTotalPages(r.pagination.totalPages)
@@ -121,7 +226,7 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
         setLoadingMore(false)
         loadingMoreRef.current = false
       })
-  }, [page, workspaceId, connectionId])
+  }, [page, workspaceId, connectionId, dateRange, browserTimeZone])
 
   // Intersection observer for infinite scroll
   useEffect(() => {
@@ -154,8 +259,6 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
       case 'open': return !fromSent && (task.status === 'OPEN' || task.status === 'IN_PROGRESS')
       case 'completed': return !fromSent && task.status === 'DONE'
       case 'overdue': return !fromSent && isOverdue(task.dueAt, task.status)
-      case 'today': return !fromSent && isCreatedToday(task.createdAt)
-      case 'this_week': return !fromSent && isCreatedThisWeek(task.createdAt)
       case 'high_priority': return !fromSent && (task.priority === 'HIGH' || task.priority === 'URGENT') && task.status !== 'DONE'
       case 'requests': return fromSent && task.status !== 'CANCELLED'
       case 'all': return !fromSent
@@ -211,6 +314,127 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
               {refreshing ? ' · Updating…' : ''}
             </p>
           </div>
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => {
+                setBulkOpen(true)
+                setBulkError(null)
+                setBulkPreview(null)
+              }}
+              style={{
+                padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                border: '1px solid #ef9a9a', background: '#fff', color: '#c62828', cursor: 'pointer',
+              }}
+            >
+              Delete tasks before date…
+            </button>
+          )}
+        </div>
+
+        {bulkOpen && (
+          <div style={{
+            marginBottom: 12, padding: 14, border: '1px solid #ffcdd2', borderRadius: 8,
+            background: '#fff8f8',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#b71c1c' }}>
+              Delete tasks before a cutoff date
+            </div>
+            <p style={{ fontSize: 12, color: '#666', margin: '0 0 10px' }}>
+              Uses each task&apos;s <strong>source date</strong> (email date for email-sourced tasks).
+              Tasks on the selected date and later are kept. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <input
+                type="date"
+                value={bulkBefore}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => {
+                  setBulkBefore(e.target.value)
+                  setBulkPreview(null)
+                  setBulkError(null)
+                }}
+                style={{ padding: '6px 8px', fontSize: 13, border: '1px solid #ddd', borderRadius: 6 }}
+              />
+              <button
+                type="button"
+                disabled={!bulkBefore || bulkBusy}
+                onClick={() => void runBulkPreview()}
+                style={{
+                  padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                  border: '1px solid #1a1a2e', background: '#1a1a2e', color: '#fff',
+                  cursor: !bulkBefore || bulkBusy ? 'not-allowed' : 'pointer',
+                  opacity: !bulkBefore || bulkBusy ? 0.5 : 1,
+                }}
+              >
+                Preview count
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkOpen(false)
+                  setBulkPreview(null)
+                  setBulkError(null)
+                }}
+                style={{
+                  padding: '6px 12px', fontSize: 12, borderRadius: 6,
+                  border: '1px solid #ddd', background: '#fff', cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            {bulkError && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#c62828' }}>{bulkError}</div>
+            )}
+            {bulkPreview && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 13, marginBottom: 8 }}>
+                  Delete <strong>{bulkPreview.count}</strong> tasks before{' '}
+                  <strong>
+                    {new Date(bulkPreview.before + 'T12:00:00').toLocaleDateString('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric',
+                    })}
+                  </strong>
+                  ? Tasks dated that day and later will be kept.
+                </div>
+                <button
+                  type="button"
+                  disabled={bulkBusy || bulkPreview.count === 0}
+                  onClick={() => void runBulkDelete()}
+                  style={{
+                    padding: '7px 14px', fontSize: 12, fontWeight: 700, borderRadius: 6,
+                    border: 'none', background: '#c62828', color: '#fff',
+                    cursor: bulkBusy || bulkPreview.count === 0 ? 'not-allowed' : 'pointer',
+                    opacity: bulkBusy || bulkPreview.count === 0 ? 0.5 : 1,
+                  }}
+                >
+                  {bulkBusy ? 'Deleting…' : `Delete ${bulkPreview.count} tasks`}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          {([['', 'All dates'], ['TODAY', 'Today'], ['WEEK', 'This week'], ['MONTH', 'This month']] as const).map(
+            ([key, label]) => (
+              <button
+                key={key || 'all-dates'}
+                type="button"
+                onClick={() => setDateRange(key)}
+                style={{
+                  padding: '5px 12px', fontSize: 12, fontWeight: 500, borderRadius: 12,
+                  border: dateRange === key ? '1px solid #1a1a2e' : '1px solid #ddd',
+                  background: dateRange === key ? '#1a1a2e' : '#fff',
+                  color: dateRange === key ? '#fff' : '#666',
+                  cursor: 'pointer', minHeight: 32,
+                }}
+              >
+                {label}
+              </button>
+            )
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -237,8 +461,6 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
               filter === 'open' ? 'All tasks are completed.'
               : filter === 'requests' ? 'No request tasks yet. These come from emails sent by monitored inboxes.'
               : filter === 'overdue' ? 'No overdue tasks.'
-              : filter === 'today' ? 'No tasks created today.'
-              : filter === 'this_week' ? 'No tasks created this week.'
               : 'Tasks appear here after email analysis.'
             }</p>
           </div>
@@ -301,7 +523,7 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
                         Source: {sourceMessage.subject?.slice(0, 40) ?? sourceMessage.senderEmail}
                       </span>
                     )}
-                    <span>Created: {formatDate(task.createdAt)}</span>
+                    <span>Date: {formatDate(task.sourceDate ?? task.createdAt)}</span>
                   </div>
 
                   {!isViewer && (

@@ -6,6 +6,8 @@ import {
   scheduledInboxSyncJobId,
   shouldScheduleNativeInboxSync,
   ensureMailboxClassifyJob,
+  canAutoRequeueClassification,
+  MAX_AUTO_CLASSIFICATION_ATTEMPTS,
   type MailboxClassifyJobPayload,
   type MailboxClassifyJobResult,
 } from "@forgeops/shared";
@@ -123,6 +125,7 @@ const UNCLASSIFIED_RECONCILE_LIMIT_PER_CONN = 25;
 /**
  * Safety net: NATIVE messages with no Classification after a grace period
  * are re-enqueued via ensureMailboxClassifyJob (idempotent).
+ * Skips FAILED / auto-attempt-exhausted messages (manual retry still works).
  */
 async function reconcileUnclassifiedNative(): Promise<void> {
   const createdBefore = new Date(Date.now() - UNCLASSIFIED_GRACE_MS);
@@ -137,6 +140,7 @@ async function reconcileUnclassifiedNative(): Promise<void> {
   let totalEligible = 0;
   let totalEnqueued = 0;
   let totalSkipped = 0;
+  let totalSkippedCapped = 0;
 
   for (const conn of connections) {
     const rows = await prisma.emailMessage.findMany({
@@ -145,8 +149,17 @@ async function reconcileUnclassifiedNative(): Promise<void> {
         inboxConnectionId: conn.id,
         classifications: { none: {} },
         createdAt: { lt: createdBefore },
+        classificationAttemptCount: { lt: MAX_AUTO_CLASSIFICATION_ATTEMPTS },
+        OR: [
+          { classificationStatus: null },
+          { classificationStatus: { in: ["PENDING", "PROCESSING"] } },
+        ],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        classificationAttemptCount: true,
+        classificationStatus: true,
+      },
       orderBy: { createdAt: "asc" },
       take: UNCLASSIFIED_RECONCILE_LIMIT_PER_CONN,
     });
@@ -154,6 +167,15 @@ async function reconcileUnclassifiedNative(): Promise<void> {
     totalEligible += rows.length;
 
     for (const row of rows) {
+      if (
+        !canAutoRequeueClassification({
+          classificationAttemptCount: row.classificationAttemptCount,
+          classificationStatus: row.classificationStatus,
+        })
+      ) {
+        totalSkippedCapped += 1;
+        continue;
+      }
       try {
         const outcome = await ensureMailboxClassifyJob({
           queue: mailboxClassifyQueue,
@@ -162,8 +184,22 @@ async function reconcileUnclassifiedNative(): Promise<void> {
           emailMessageId: row.id,
           initiatedBy: "worker-unclassified-reconcile",
         });
-        if (outcome === "enqueued") totalEnqueued += 1;
-        else totalSkipped += 1;
+        if (outcome === "enqueued") {
+          totalEnqueued += 1;
+          await prisma.emailMessage
+            .update({
+              where: { id: row.id },
+              data: {
+                classificationStatus: "PENDING",
+                classificationLastAttemptAt: new Date(),
+                classificationAttemptCount: { increment: 1 },
+                classificationError: null,
+              },
+            })
+            .catch(() => {});
+        } else {
+          totalSkipped += 1;
+        }
       } catch (e) {
         console.warn("unclassified-reconcile-enqueue-failed", {
           emailMessageId: row.id,
@@ -179,7 +215,9 @@ async function reconcileUnclassifiedNative(): Promise<void> {
       eligible: totalEligible,
       enqueued: totalEnqueued,
       skippedInflight: totalSkipped,
+      skippedCapped: totalSkippedCapped,
       graceMs: UNCLASSIFIED_GRACE_MS,
+      maxAutoAttempts: MAX_AUTO_CLASSIFICATION_ATTEMPTS,
     });
   }
 }

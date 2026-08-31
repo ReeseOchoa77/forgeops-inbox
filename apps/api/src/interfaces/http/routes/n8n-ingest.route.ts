@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog } from "@forgeops/shared";
+import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, resolveTaskSourceDate } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -404,7 +404,7 @@ async function upsertEmailData(
       })
     );
 
-    const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority);
+    const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, existingMessage.id, existingMessage.threadId, classification.id, body, priority, receivedAt);
 
     return {
       status: "updated",
@@ -531,7 +531,7 @@ async function upsertEmailData(
     })
   );
 
-  const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority);
+  const taskIds = body.analysis.mailboxCategory === "PERSONAL" ? [] : await upsertTasks(tx, workspaceId, message.id, thread.id, classification.id, body, priority, receivedAt);
 
   return {
     status: "created",
@@ -550,10 +550,15 @@ async function upsertTasks(
   threadId: string,
   classificationId: string,
   body: N8nEmailResult,
-  messagePriority: "LOW" | "MEDIUM" | "HIGH" | "URGENT"
+  messagePriority: "LOW" | "MEDIUM" | "HIGH" | "URGENT",
+  messageSourceDate: Date
 ): Promise<string[]> {
   const taskIds: string[] = [];
   const incomingKeys = new Set<string>();
+  const sourceDate = resolveTaskSourceDate({
+    receivedAt: messageSourceDate,
+    sentAt: messageSourceDate,
+  });
 
   for (let i = 0; i < body.analysis.tasks.length; i++) {
     const task = body.analysis.tasks[i]!;
@@ -578,6 +583,7 @@ async function upsertTasks(
         description: task.description || null,
         assigneeGuess: task.recommendedOwner ?? null,
         dueAt,
+        sourceDate,
         priority: messagePriority,
         confidence: toConfidence(task.confidence),
         requiresReview: taskRequiresReview,
@@ -595,6 +601,7 @@ async function upsertTasks(
         description: task.description || null,
         assigneeGuess: task.recommendedOwner ?? null,
         dueAt,
+        sourceDate,
         priority: messagePriority,
         status: "OPEN",
         confidence: toConfidence(task.confidence),

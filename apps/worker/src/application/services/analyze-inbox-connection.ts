@@ -4,6 +4,7 @@ import {
   mailboxCategoryFromLegacyBusinessFilter,
   buildClassificationWriteLog,
   shouldSkipNativeClassificationOverwrite,
+  resolveTaskSourceDate,
   type InboxAnalysisResult,
 } from "@forgeops/shared";
 
@@ -442,6 +443,7 @@ export const analyzeInboxConnection = async (input: {
 
       if (taskCandidate) {
         const taskExisted = existingTaskMessageIds.has(message.id);
+        const sourceDate = resolveTaskSourceDate(message);
 
         await tx.task.upsert({
           where: {
@@ -461,6 +463,7 @@ export const analyzeInboxConnection = async (input: {
             summary: taskCandidate.summary,
             description: taskCandidate.summary,
             dueAt: taskCandidate.dueAt,
+            sourceDate,
             priority: taskCandidate.priority,
             status: "OPEN",
             confidence: toConfidence(taskCandidate.confidence),
@@ -482,6 +485,7 @@ export const analyzeInboxConnection = async (input: {
             summary: taskCandidate.summary,
             description: taskCandidate.summary,
             dueAt: taskCandidate.dueAt,
+            sourceDate,
             priority: taskCandidate.priority,
             status: "OPEN",
             confidence: toConfidence(taskCandidate.confidence),

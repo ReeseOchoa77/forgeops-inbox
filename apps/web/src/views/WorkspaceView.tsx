@@ -66,15 +66,47 @@ export function WorkspaceView({
   useEffect(() => {
     if (!workspaceId) return
     let cancelled = false
-    Promise.all([
+    const t0 = performance.now()
+    let painted = false
+
+    // Lean connections first so mailboxes list can paint without waiting on counts/members.
+    api.getConnections(workspaceId)
+      .then((c) => {
+        if (cancelled) return
+        setConnections(c.connections)
+        setLoadedFor(workspaceId)
+        if (!painted) {
+          painted = true
+          console.info({
+            event: 'workspaceInitialUsefulPaintMs',
+            source: 'lean',
+            ms: Math.round(performance.now() - t0),
+            connectionCount: c.connections.length,
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedFor(workspaceId)
+      })
+
+    void Promise.all([
       api.getApprovedAccess(workspaceId).catch(() => ({ entries: [] as ApprovedAccessEntry[] })),
       api.getConnections(workspaceId, { includeCounts: true }).catch(() => ({ connections: [] as ConnectionSummary[] })),
     ]).then(([m, c]) => {
       if (cancelled) return
       setMembers(m.entries)
-      setConnections(c.connections)
-      setLoadedFor(workspaceId)
+      if (c.connections.length > 0) setConnections(c.connections)
+      if (!painted) {
+        painted = true
+        setLoadedFor(workspaceId)
+        console.info({
+          event: 'workspaceInitialUsefulPaintMs',
+          source: 'full',
+          ms: Math.round(performance.now() - t0),
+        })
+      }
     })
+
     return () => { cancelled = true }
   }, [workspaceId])
 

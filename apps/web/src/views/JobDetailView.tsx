@@ -9,8 +9,16 @@ import {
   type JobLookup,
   type JobFileFolder,
   type JobStoredFile,
+  type JobLibraryFile,
+  type JobSummary,
 } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import {
+  getCachedJobDetail,
+  invalidateJobDetailCache,
+  jobDetailShellFromSummary,
+  setCachedJobDetail,
+} from '../job-detail-cache'
 
 interface Props {
   workspaceId: string
@@ -19,6 +27,8 @@ interface Props {
   onBack: () => void
   onOpenMessage?: (messageId: string, inboxConnectionId: string) => void
   breakpoint?: Breakpoint
+  /** Optional list-row shell for instant paint before getJob returns. */
+  initialJob?: JobSummary | null
 }
 
 type ThreadSummary = {
@@ -122,10 +132,29 @@ function MetricCard({ label, value, accent }: { label: string; value: string | n
   )
 }
 
-export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMessage, breakpoint = 'desktop' }: Props) {
+export function JobDetailView({
+  workspaceId,
+  jobId,
+  userRole,
+  onBack,
+  onOpenMessage,
+  breakpoint = 'desktop',
+  initialJob = null,
+}: Props) {
   const isPhone = breakpoint === 'phone'
-  const [job, setJob] = useState<JobDetail | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [job, setJob] = useState<JobDetail | null>(() => {
+    const cached = getCachedJobDetail(workspaceId, jobId)
+    if (cached) return cached.job
+    if (initialJob && initialJob.id === jobId) return jobDetailShellFromSummary(initialJob)
+    return null
+  })
+  const [loading, setLoading] = useState(() => {
+    if (getCachedJobDetail(workspaceId, jobId)) return false
+    return !(initialJob && initialJob.id === jobId)
+  })
+  const [refreshing, setRefreshing] = useState(false)
+  const paintLoggedRef = useRef(false)
+  const hasShellRef = useRef(job != null)
   const [tab, setTab] = useState<Tab>('overview')
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [overviewEmails, setOverviewEmails] = useState<JobEmail[]>([])
@@ -133,7 +162,12 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
   const [emailTotalPages, setEmailTotalPages] = useState(1)
   const [emailSearch, setEmailSearch] = useState('')
   const [tasks, setTasks] = useState<JobTask[]>([])
-  const [documents, setDocuments] = useState<JobDocument[]>([])
+  const [libraryFiles, setLibraryFiles] = useState<JobLibraryFile[]>([])
+  const [libraryTotal, setLibraryTotal] = useState(0)
+  const [fileTypeFilter, setFileTypeFilter] = useState<
+    'ALL' | 'IMAGES' | 'PDF' | 'SPREADSHEETS' | 'DOCUMENTS' | 'OTHER'
+  >('ALL')
+  const [fileSort, setFileSort] = useState<'newest' | 'oldest'>('newest')
   const [fileFolders, setFileFolders] = useState<JobFileFolder[]>([])
   const [jobFiles, setJobFiles] = useState<JobStoredFile[]>([])
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
@@ -160,34 +194,80 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
 
   const [moveJobId, setMoveJobId] = useState('')
   const [allJobs, setAllJobs] = useState<JobLookup[]>([])
+  const [jobsLookupLoading, setJobsLookupLoading] = useState(false)
   const [showMoveModal, setShowMoveModal] = useState<string | null>(null)
 
   const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
+  const applyJobToEditForm = (j: JobDetail) => {
+    setEditName(j.name)
+    setEditJobNumber(j.jobNumber ?? '')
+    setEditStatus(j.status)
+    setEditDescription(j.description ?? '')
+    setEditNotes(j.notes ?? '')
+    setEditStartDate(j.startDate?.split('T')[0] ?? '')
+    setEditTargetDate(j.targetCompletionDate?.split('T')[0] ?? '')
+  }
+
   const loadJob = useCallback(async () => {
-    setLoading(true)
+    const soft = hasShellRef.current
+    if (soft) setRefreshing(true)
+    else setLoading(true)
+    const t0 = performance.now()
     try {
       const res = await api.getJob(workspaceId, jobId)
       setJob(res.job)
-      setEditName(res.job.name)
-      setEditJobNumber(res.job.jobNumber ?? '')
-      setEditStatus(res.job.status)
-      setEditDescription(res.job.description ?? '')
-      setEditNotes(res.job.notes ?? '')
-      setEditStartDate(res.job.startDate?.split('T')[0] ?? '')
-      setEditTargetDate(res.job.targetCompletionDate?.split('T')[0] ?? '')
+      setCachedJobDetail(workspaceId, jobId, res.job)
+      applyJobToEditForm(res.job)
+      hasShellRef.current = true
+      if (!paintLoggedRef.current) {
+        paintLoggedRef.current = true
+        console.info({
+          event: 'jobDetailInitialUsefulPaintMs',
+          source: 'network',
+          ms: Math.round(performance.now() - t0),
+        })
+      }
     } catch { /* ignore */ } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }, [workspaceId, jobId])
 
-  useEffect(() => { loadJob() }, [loadJob])
-
   useEffect(() => {
+    const cached = getCachedJobDetail(workspaceId, jobId)
+    const shell =
+      cached?.job ??
+      (initialJob && initialJob.id === jobId ? jobDetailShellFromSummary(initialJob) : null)
+    paintLoggedRef.current = false
+    hasShellRef.current = shell != null
+    setJob(shell)
+    setLoading(shell == null)
+    setTab('overview')
+    if (shell) {
+      applyJobToEditForm(shell)
+      paintLoggedRef.current = true
+      console.info({
+        event: 'jobDetailInitialUsefulPaintMs',
+        source: cached ? 'cache' : 'shell',
+        ms: 0,
+      })
+    }
+    void loadJob()
+    // initialJob read on navigate; omit from deps to avoid re-fetch loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, jobId, loadJob])
+
+  // Defer jobs lookup until move-email modal opens
+  useEffect(() => {
+    if (!showMoveModal) return
+    if (allJobs.length > 0 || jobsLookupLoading) return
+    setJobsLookupLoading(true)
     api.getJobsLookup(workspaceId, { showArchived: false })
       .then(r => setAllJobs(r.jobs))
       .catch(() => {})
-  }, [workspaceId])
+      .finally(() => setJobsLookupLoading(false))
+  }, [showMoveModal, workspaceId, allJobs.length, jobsLookupLoading])
 
   useEffect(() => {
     if (tab === 'overview') {
@@ -219,20 +299,39 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
       const [filesRes, emailDocs] = await Promise.all([
         api.getJobFiles(workspaceId, jobId, folderId),
         folderId
-          ? Promise.resolve({ documents: [] as JobDocument[] })
-          : api.getJobDocuments(workspaceId, jobId).catch(() => ({ documents: [] as JobDocument[] })),
+          ? Promise.resolve({
+              files: [] as JobLibraryFile[],
+              documents: [] as JobDocument[],
+              pagination: { page: 1, pageSize: 100, totalCount: 0, totalPages: 1 },
+              filters: { type: 'ALL', sort: 'newest' },
+            })
+          : api
+              .getJobDocuments(workspaceId, jobId, {
+                type: fileTypeFilter,
+                sort: fileSort,
+                pageSize: 200,
+              })
+              .catch(() => ({
+                files: [] as JobLibraryFile[],
+                documents: [] as JobDocument[],
+                pagination: { page: 1, pageSize: 100, totalCount: 0, totalPages: 1 },
+                filters: { type: 'ALL', sort: 'newest' },
+              })),
       ])
       setFileFolders(filesRes.folders)
       setJobFiles(filesRes.files)
       setFolderBreadcrumb(filesRes.breadcrumb)
       setCurrentFolderId(filesRes.folderId)
-      if (!folderId) setDocuments(emailDocs.documents)
+      if (!folderId) {
+        setLibraryFiles(emailDocs.files ?? [])
+        setLibraryTotal(emailDocs.pagination?.totalCount ?? emailDocs.files?.length ?? 0)
+      }
     } catch (e) {
       setFileError(e instanceof Error ? e.message : 'Failed to load files')
     } finally {
       setFilesLoading(false)
     }
-  }, [workspaceId, jobId])
+  }, [workspaceId, jobId, fileTypeFilter, fileSort])
 
   useEffect(() => {
     if (tab === 'documents') {
@@ -263,6 +362,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
         targetCompletionDate: editTargetDate || null,
       })
       setJob(res.job)
+      setCachedJobDetail(workspaceId, jobId, res.job)
     } catch { /* ignore */ } finally {
       setSaving(false)
     }
@@ -275,6 +375,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
     } else {
       await api.archiveJob(workspaceId, jobId)
     }
+    invalidateJobDetailCache(workspaceId, jobId)
     loadJob()
   }
 
@@ -282,16 +383,19 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
     if (!newAlias.trim()) return
     await api.addJobAlias(workspaceId, jobId, newAlias.trim())
     setNewAlias('')
+    invalidateJobDetailCache(workspaceId, jobId)
     loadJob()
   }
 
   const handleRemoveAlias = async (aliasId: string) => {
     await api.removeJobAlias(workspaceId, jobId, aliasId)
+    invalidateJobDetailCache(workspaceId, jobId)
     loadJob()
   }
 
   const handleRemoveMember = async (userId: string) => {
     await api.removeJobMember(workspaceId, jobId, userId)
+    invalidateJobDetailCache(workspaceId, jobId)
     loadJob()
   }
 
@@ -437,6 +541,7 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
           {job.jobNumber && <span style={{ fontSize: 13, color: '#6b7280', fontFamily: 'monospace' }}>#{job.jobNumber}</span>}
           <StatusBadge status={job.status} />
           {job.archivedAt && <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 500 }}>ARCHIVED</span>}
+          {refreshing && <span style={{ fontSize: 11, color: '#9ca3af' }}>Updating…</span>}
         </div>
       </div>
 
@@ -664,9 +769,12 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
                 <select
                   value={moveJobId}
                   onChange={e => setMoveJobId(e.target.value)}
+                  disabled={jobsLookupLoading}
                   style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, marginBottom: 14 }}
                 >
-                  <option value="">Select target job...</option>
+                  <option value="">
+                    {jobsLookupLoading ? 'Loading jobs…' : 'Select target job...'}
+                  </option>
                   {allJobs.filter(j => j.id !== jobId).map(j => (
                     <option key={j.id} value={j.id}>
                       {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
@@ -996,40 +1104,148 @@ export function JobDetailView({ workspaceId, jobId, userRole, onBack, onOpenMess
               </div>
 
               {!currentFolderId && (
-                <Card title="From emails">
-                  {documents.length === 0 ? (
-                    <div style={{ fontSize: 13, color: '#888' }}>No email attachments linked to this job.</div>
+                <Card title={`All files (${libraryTotal})`}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+                    {([
+                      ['ALL', 'All'],
+                      ['IMAGES', 'Images'],
+                      ['PDF', 'PDF'],
+                      ['SPREADSHEETS', 'Spreadsheets'],
+                      ['DOCUMENTS', 'Documents'],
+                      ['OTHER', 'Other'],
+                    ] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setFileTypeFilter(key)}
+                        style={{
+                          padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
+                          border: fileTypeFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
+                          background: fileTypeFilter === key ? '#1a1a2e' : '#fff',
+                          color: fileTypeFilter === key ? '#fff' : '#666', cursor: 'pointer',
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <span style={{ flex: 1 }} />
+                    <select
+                      value={fileSort}
+                      onChange={(e) => setFileSort(e.target.value as 'newest' | 'oldest')}
+                      style={{ padding: '3px 8px', fontSize: 11, borderRadius: 6, border: '1px solid #ddd' }}
+                    >
+                      <option value="newest">Newest first</option>
+                      <option value="oldest">Oldest first</option>
+                    </select>
+                  </div>
+                  {libraryFiles.length === 0 ? (
+                    <div style={{ fontSize: 13, color: '#888' }}>
+                      No files linked to this job yet. Email attachments and uploads will appear here.
+                    </div>
                   ) : (
-                    <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
-                      {documents.map((doc, i) => (
-                        <div
-                          key={doc.id}
-                          style={{
-                            padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12,
-                            borderBottom: i < documents.length - 1 ? '1px solid #f3f4f6' : undefined,
-                          }}
-                        >
-                          <span style={{ fontSize: 16 }}>📎</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {doc.filename}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: isPhone ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))',
+                      gap: 10,
+                    }}>
+                      {libraryFiles.map((file) => {
+                        const downloadUrl =
+                          file.sourceType === 'EMAIL_ATTACHMENT'
+                            ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id)
+                            : api.getJobFileDownloadUrl(workspaceId, jobId, file.id)
+                        const previewUrl =
+                          file.previewable
+                            ? (file.sourceType === 'EMAIL_ATTACHMENT'
+                              ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id, true)
+                              : downloadUrl)
+                            : null
+                        return (
+                          <div
+                            key={`${file.sourceType}-${file.id}`}
+                            style={{
+                              border: '1px solid #e5e7eb', borderRadius: 8, padding: 10,
+                              display: 'flex', flexDirection: 'column', gap: 8, background: '#fff',
+                            }}
+                          >
+                            {previewUrl ? (
+                              <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
+                                <img
+                                  src={previewUrl}
+                                  alt={file.filename}
+                                  loading="lazy"
+                                  style={{
+                                    width: '100%', height: 120, objectFit: 'cover', borderRadius: 6,
+                                    background: '#f3f4f6',
+                                  }}
+                                />
+                              </a>
+                            ) : (
+                              <div style={{
+                                height: 72, borderRadius: 6, background: '#f8fafc',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 28, color: '#94a3b8',
+                              }}>
+                                {file.fileType === 'PDF' ? 'PDF' : file.extension || 'FILE'}
+                              </div>
+                            )}
+                            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.filename}>
+                              {file.filename}
                             </div>
-                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                              {formatBytes(doc.sizeBytes)}
-                              {doc.emailSenderEmail ? ` · ${doc.emailSenderEmail}` : ''}
-                              {doc.emailSubject ? ` · ${doc.emailSubject}` : ''}
+                            <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4 }}>
+                              {formatBytes(file.sizeBytes)} · {formatDate(file.date)}
+                              <br />
+                              {file.sourceType === 'EMAIL_ATTACHMENT' ? 'Email attachment' : 'Job upload'}
+                              {file.extension ? ` · ${file.extension}` : ''}
+                              {file.sender ? (
+                                <>
+                                  <br />
+                                  From {file.sender}
+                                </>
+                              ) : null}
+                              {file.emailSubject ? (
+                                <>
+                                  <br />
+                                  <span title={file.emailSubject}>
+                                    {file.emailSubject.length > 40
+                                      ? `${file.emailSubject.slice(0, 40)}…`
+                                      : file.emailSubject}
+                                  </span>
+                                </>
+                              ) : null}
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+                              <a
+                                href={downloadUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  fontSize: 11, color: '#1565c0', fontWeight: 600, textDecoration: 'none',
+                                }}
+                              >
+                                Download
+                              </a>
+                              {file.emailId && onOpenMessage && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    // Job emails endpoint includes connection; fall back to empty if unknown.
+                                    const email = [...emails, ...overviewEmails].find(e => e.id === file.emailId)
+                                    if (email?.inboxConnectionId) {
+                                      onOpenMessage(file.emailId!, email.inboxConnectionId)
+                                    }
+                                  }}
+                                  style={{
+                                    background: 'none', border: 'none', padding: 0, fontSize: 11,
+                                    color: '#6b7280', cursor: 'pointer', textDecoration: 'underline',
+                                  }}
+                                >
+                                  Open email
+                                </button>
+                              )}
                             </div>
                           </div>
-                          <a
-                            href={api.getStoredAttachmentDownloadUrl(workspaceId, doc.id)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ fontSize: 11, color: '#1565c0', fontWeight: 600, textDecoration: 'none' }}
-                          >
-                            Download
-                          </a>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </Card>

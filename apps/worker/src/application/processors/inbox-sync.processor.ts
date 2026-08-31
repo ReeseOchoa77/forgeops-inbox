@@ -414,8 +414,20 @@ export class InboxSyncProcessor {
                 ? { initiatedBy: context.initiatedBy }
                 : {}),
             });
-            if (outcome === "enqueued") enqueued += 1;
-            else skippedInflight += 1;
+            if (outcome === "enqueued") {
+              enqueued += 1;
+              await this.prisma.emailMessage
+                .update({
+                  where: { id: emailMessageId },
+                  data: {
+                    classificationStatus: "PENDING",
+                    classificationLastAttemptAt: new Date(),
+                    classificationAttemptCount: { increment: 1 },
+                    classificationError: null,
+                  },
+                })
+                .catch(() => {});
+            } else skippedInflight += 1;
           } catch (e) {
             console.warn("auto-classify-queue-failed", {
               emailMessageId,

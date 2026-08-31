@@ -9,7 +9,7 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { getSessionFromRequest } from "../authentication.js";
-import { mapStoredPriorityToN8n } from "@forgeops/shared";
+import { mapStoredPriorityToN8n, inboxDateRangeBounds, taskSourceDateRangeBounds } from "@forgeops/shared";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = new Prisma.Decimal("0.75");
 
@@ -133,6 +133,13 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
    * Orthogonal to Business/Personal mailboxCategory tabs.
    */
   unclassifiedOnly: booleanQueryWithDefaultFalseSchema,
+  /**
+   * Inbox date preset. Bounds computed server-side with `timezone` (IANA).
+   * Week starts Sunday (matches Tasks "This Week").
+   */
+  dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).optional(),
+  /** IANA timezone for dateRange (default UTC). */
+  timezone: z.string().min(1).max(80).optional().default("UTC"),
   /** When true, also run COUNT(*) and return totalCount/totalPages (not on default Inbox path). */
   includeTotal: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional(),
@@ -150,7 +157,9 @@ const jobSummarySchema = z.object({
 const tasksListQuerySchema = paginationQuerySchema.extend({
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
-  status: z.enum(taskStatusValues).optional()
+  status: z.enum(taskStatusValues).optional(),
+  dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).optional(),
+  timezone: z.string().min(1).max(80).optional()
 });
 
 const reviewListQuerySchema = paginationQuerySchema;
@@ -244,7 +253,9 @@ const taskSummarySchema = z.object({
   reviewStatus: z.enum(reviewStatusValues),
   isPinned: z.boolean().optional(),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  updatedAt: z.string().datetime(),
+  /** Canonical timeline date (email receivedAt/sentAt for email-sourced tasks). */
+  sourceDate: z.string().datetime().optional()
 });
 
 /** Sentinel for All Mailboxes aggregate list (not a real InboxConnection id). */
@@ -277,7 +288,14 @@ const messageSummarySchema = z.object({
   job: jobSummarySchema.nullable().optional(),
   jobAssignmentSource: z.string().nullable().optional(),
   jobAssignmentIsManual: z.boolean().optional(),
-  jobMatchConfidence: z.number().nullable().optional()
+  jobMatchConfidence: z.number().nullable().optional(),
+  classificationStatus: z
+    .enum(["PENDING", "PROCESSING", "CLASSIFIED", "FAILED"])
+    .nullable()
+    .optional(),
+  classificationLastAttemptAt: z.string().datetime().nullable().optional(),
+  classificationAttemptCount: z.number().int().optional(),
+  classificationError: z.string().nullable().optional()
 });
 
 const normalizedEmailDetailSchema = z.object({
@@ -417,7 +435,9 @@ const tasksListResponseSchema = z.object({
   filters: z.object({
     reviewOnly: z.boolean(),
     lowConfidenceOnly: z.boolean(),
-    status: z.enum(taskStatusValues).nullable()
+    status: z.enum(taskStatusValues).nullable(),
+    dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).nullable().optional(),
+    timezone: z.string().nullable().optional()
   }),
   pagination: z.object({
     page: z.number().int().positive(),
@@ -562,6 +582,7 @@ const serializeTask = (task: {
   isPinned?: boolean;
   createdAt: Date;
   updatedAt: Date;
+  sourceDate?: Date;
 } | null) =>
   task
     ? taskSummarySchema.parse({
@@ -579,7 +600,8 @@ const serializeTask = (task: {
         reviewStatus: task.reviewStatus,
         isPinned: task.isPinned ?? false,
         createdAt: task.createdAt.toISOString(),
-        updatedAt: task.updatedAt.toISOString()
+        updatedAt: task.updatedAt.toISOString(),
+        sourceDate: (task.sourceDate ?? task.createdAt).toISOString()
       })
     : null;
 
@@ -696,6 +718,10 @@ const serializeInboxListMessage = (message: {
     name: string;
     status: string;
   } | null;
+  classificationStatus?: "PENDING" | "PROCESSING" | "CLASSIFIED" | "FAILED" | null;
+  classificationLastAttemptAt?: Date | null;
+  classificationAttemptCount?: number;
+  classificationError?: string | null;
 }) => {
   const c = message.classifications[0] ?? null;
   return messageSummarySchema.parse({
@@ -743,7 +769,13 @@ const serializeInboxListMessage = (message: {
     job: serializeJobSummary(message.job),
     jobAssignmentSource: null,
     jobAssignmentIsManual: false,
-    jobMatchConfidence: null
+    jobMatchConfidence: null,
+    classificationStatus: message.classificationStatus ?? null,
+    classificationLastAttemptAt: serializeDate(
+      message.classificationLastAttemptAt ?? null
+    ),
+    classificationAttemptCount: message.classificationAttemptCount ?? 0,
+    classificationError: message.classificationError ?? null
   });
 };
 
@@ -837,6 +869,9 @@ export const buildMessagesWhere = (input: {
   unreadOnly?: boolean;
   /** No Classification row (ingest/classify pending or failed). */
   unclassifiedOnly?: boolean;
+  /** Inbox date preset bounds (UTC instants). */
+  receivedAfter?: Date;
+  receivedBefore?: Date;
   mailboxEmails?: string[];
   search?: string;
   searchIn?: "all" | "sender";
@@ -887,6 +922,19 @@ export const buildMessagesWhere = (input: {
 
   if (input.unreadOnly) {
     andConditions.push({ isRead: false });
+  }
+
+  // Date range: prefer receivedAt, fall back to sentAt (matches list display/sort).
+  if (input.receivedAfter || input.receivedBefore) {
+    const range: Prisma.DateTimeFilter = {};
+    if (input.receivedAfter) range.gte = input.receivedAfter;
+    if (input.receivedBefore) range.lte = input.receivedBefore;
+    andConditions.push({
+      OR: [
+        { receivedAt: range },
+        { AND: [{ receivedAt: null }, { sentAt: range }] },
+      ],
+    });
   }
 
   if (input.jobId) {
@@ -1023,13 +1071,16 @@ export const buildMessagesWhere = (input: {
   };
 };
 
-const buildTasksWhere = (input: {
+/** Exported for unit tests — Task list filters compose independently. */
+export const buildTasksWhere = (input: {
   workspaceId: string;
   inboxConnectionId: string;
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   status?: (typeof taskStatusValues)[number];
   taskThreshold: Prisma.Decimal;
+  dateRange?: "TODAY" | "WEEK" | "MONTH";
+  timezone?: string;
 }): Prisma.TaskWhereInput => {
   const andConditions: Prisma.TaskWhereInput[] = [
     {
@@ -1062,6 +1113,23 @@ const buildTasksWhere = (input: {
         lt: input.taskThreshold
       }
     });
+  }
+
+  if (input.dateRange) {
+    try {
+      const bounds = taskSourceDateRangeBounds(
+        input.dateRange,
+        input.timezone || "UTC"
+      );
+      andConditions.push({
+        sourceDate: {
+          gte: bounds.sourceAfter,
+          lt: bounds.sourceBefore
+        }
+      });
+    } catch {
+      // Invalid timezone — ignore date filter rather than 500
+    }
   }
 
   return {
@@ -1552,6 +1620,22 @@ export const registerInboxReadRoutes = async (
         sentOnly: query.sentOnly,
         unreadOnly: query.unreadOnly,
         unclassifiedOnly: query.unclassifiedOnly,
+        ...(query.dateRange
+          ? (() => {
+              try {
+                const bounds = inboxDateRangeBounds(
+                  query.dateRange,
+                  query.timezone || "UTC"
+                );
+                return {
+                  receivedAfter: bounds.receivedAfter,
+                  receivedBefore: bounds.receivedBefore,
+                };
+              } catch {
+                return {};
+              }
+            })()
+          : {}),
         mailboxEmails: monitoredInboxEmails,
         classificationThreshold: thresholds.classificationThreshold,
         taskThreshold: thresholds.taskThreshold
@@ -1590,6 +1674,10 @@ export const registerInboxReadRoutes = async (
           isPinned: true,
           hasAttachments: true,
           mailboxCategory: true,
+          classificationStatus: true,
+          classificationLastAttemptAt: true,
+          classificationAttemptCount: true,
+          classificationError: true,
           job: {
             select: {
               id: true,
@@ -2547,6 +2635,8 @@ export const registerInboxReadRoutes = async (
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         ...(query.status ? { status: query.status } : {}),
+        ...(query.dateRange ? { dateRange: query.dateRange } : {}),
+        ...(query.timezone ? { timezone: query.timezone } : {}),
         taskThreshold: thresholds.taskThreshold
       });
       const skip = (query.page - 1) * query.pageSize;
@@ -2560,6 +2650,7 @@ export const registerInboxReadRoutes = async (
           orderBy: [
             { isPinned: "desc" },
             { pinnedAt: { sort: "desc", nulls: "last" } },
+            { sourceDate: "desc" },
             { createdAt: "desc" },
             { updatedAt: "desc" }
           ],
@@ -2580,6 +2671,7 @@ export const registerInboxReadRoutes = async (
             isPinned: true,
             createdAt: true,
             updatedAt: true,
+            sourceDate: true,
             sourceMessage: {
               select: {
                 id: true,
@@ -2605,6 +2697,7 @@ export const registerInboxReadRoutes = async (
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         status: query.status ?? null,
+        dateRange: query.dateRange ?? null,
       });
 
       return reply.send(
@@ -2614,7 +2707,9 @@ export const registerInboxReadRoutes = async (
           filters: {
             reviewOnly: query.reviewOnly,
             lowConfidenceOnly: query.lowConfidenceOnly,
-            status: query.status ?? null
+            status: query.status ?? null,
+            dateRange: query.dateRange ?? null,
+            timezone: query.timezone ?? null
           },
           pagination: {
             page: query.page,

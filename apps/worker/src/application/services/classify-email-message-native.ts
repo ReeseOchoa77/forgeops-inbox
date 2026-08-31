@@ -72,6 +72,19 @@ export async function classifyEmailMessageNative(
   console.info({ event: "native-classification-started", ...baseLog });
 
   try {
+    await deps.prisma.emailMessage
+      .updateMany({
+        where: {
+          id: payload.emailMessageId,
+          workspaceId: payload.workspaceId,
+        },
+        data: {
+          classificationStatus: "PROCESSING",
+          classificationLastAttemptAt: new Date(),
+        },
+      })
+      .catch(() => {});
+
     const connection = await deps.prisma.inboxConnection.findFirst({
       where: {
         id: payload.inboxConnectionId,

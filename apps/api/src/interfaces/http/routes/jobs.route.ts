@@ -1,7 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { normalizeName } from "@forgeops/shared";
+import {
+  classifyJobFileType,
+  fileExtension,
+  isPreviewableImage,
+  JOB_FILE_TYPE_FILTERS,
+  normalizeName,
+  type JobFileTypeFilter,
+} from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -103,21 +110,37 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       where.archivedAt = null;
     }
     if (query.search) {
+      const term = query.search.trim();
       where.OR = [
-        { name: { contains: query.search, mode: "insensitive" } },
-        { jobNumber: { contains: query.search, mode: "insensitive" } },
+        { name: { contains: term, mode: "insensitive" } },
+        { jobNumber: { contains: term, mode: "insensitive" } },
+        { customer: { name: { contains: term, mode: "insensitive" } } },
       ];
     }
 
-    const LOOKUP_LIMIT = 500;
+    const LOOKUP_LIMIT = query.search ? 50 : 500;
     const jobs = await app.services.prisma.job.findMany({
       where,
       orderBy: { name: "asc" },
       take: LOOKUP_LIMIT,
-      select: { id: true, jobNumber: true, name: true, status: true },
+      select: {
+        id: true,
+        jobNumber: true,
+        name: true,
+        status: true,
+        customer: { select: { name: true } },
+      },
     });
 
-    return reply.send({ jobs });
+    return reply.send({
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        jobNumber: j.jobNumber,
+        name: j.name,
+        status: j.status,
+        customerName: j.customer?.name ?? null,
+      })),
+    });
   });
 
   // 1. GET /api/v1/workspaces/:workspaceId/jobs — List jobs with filters
@@ -180,22 +203,26 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           targetCompletionDate: true,
           archivedAt: true,
           createdAt: true,
+          updatedAt: true,
           customer: { select: { id: true, name: true } },
           members: {
             select: { id: true, userId: true, role: true, createdAt: true },
-            take: 10,
+            take: 8,
           },
           _count: { select: { assignedEmails: true } },
         },
       }),
       app.services.prisma.job.count({ where }),
     ]);
+    const primaryQueryMs = Math.round(performance.now() - tDb);
 
     const jobIds = jobs.map((j) => j.id);
 
-    const [memberUsers, openTaskGroups, overdueTaskGroups, nextDueGroups, lastActivities] =
+    const tAgg = performance.now();
+    // Skip jobActivityLog distinct — use job.updatedAt as lastActivity proxy (list only).
+    const [memberUsers, openTaskGroups, overdueTaskGroups, nextDueGroups] =
       jobIds.length === 0
-        ? [[], [], [], [], []] as const
+        ? [[], [], [], []] as const
         : await Promise.all([
             (() => {
               const allMemberUserIds = [
@@ -234,14 +261,9 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
               },
               _min: { dueAt: true },
             }),
-            app.services.prisma.jobActivityLog.findMany({
-              where: { jobId: { in: jobIds } },
-              orderBy: { createdAt: "desc" },
-              distinct: ["jobId"],
-              select: { jobId: true, createdAt: true },
-            }),
           ]);
-    const dbMs = Math.round(performance.now() - tDb);
+    const aggregateMs = Math.round(performance.now() - tAgg);
+    const dbMs = primaryQueryMs + aggregateMs;
 
     const memberUserMap = new Map(memberUsers.map((u) => [u.id, u]));
     const openCountByJob = new Map(
@@ -259,9 +281,6 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
         .map((g) => [g.jobId, g._min.dueAt])
     );
-    const lastActivityByJob = new Map(
-      lastActivities.map((a) => [a.jobId, a.createdAt])
-    );
 
     const enriched = jobs.map((job) => ({
       id: job.id,
@@ -278,7 +297,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       emailCount: job._count.assignedEmails,
       openTaskCount: openCountByJob.get(job.id) ?? 0,
       overdueTaskCount: overdueCountByJob.get(job.id) ?? 0,
-      lastActivityAt: lastActivityByJob.get(job.id) ?? null,
+      lastActivityAt: job.updatedAt,
       nextDueDate: nextDueByJob.get(job.id) ?? null,
       assignedMembers: job.members.map((m) => {
         const u = memberUserMap.get(m.userId);
@@ -305,8 +324,9 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       event: "api-performance",
       route: "jobs.list",
       totalMs: Math.round(performance.now() - t0),
+      primaryQueryMs,
+      aggregateMs,
       dbMs,
-      serializationMs: 0,
       resultCount: enriched.length,
       payloadBytes,
     });
@@ -410,12 +430,15 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     return reply.code(201).send({ job });
   });
 
-  // 3. GET /api/v1/workspaces/:workspaceId/jobs/:jobId — Job detail
+  // 3. GET /api/v1/workspaces/:workspaceId/jobs/:jobId — Job detail (lean core + metrics)
   app.get("/api/v1/workspaces/:workspaceId/jobs/:jobId", async (request, reply) => {
+    const t0 = performance.now();
     const { workspaceId, jobId } = jobParams.parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
+    const authMs = Math.round(performance.now() - t0);
 
+    const tPrimary = performance.now();
     const job = await app.services.prisma.job.findFirst({
       where: { id: jobId, workspaceId },
       include: {
@@ -437,21 +460,19 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     if (!job) {
       return reply.code(404).send({ message: "Job not found" });
     }
-
-    const memberUserIds = job.members.map((m) => m.userId);
-    const users = memberUserIds.length
-      ? await app.services.prisma.user.findMany({
-          where: { id: { in: memberUserIds } },
-          select: { id: true, email: true, name: true, avatarUrl: true },
-        })
-      : [];
-    const userMap = new Map(users.map((u) => [u.id, u]));
+    const primaryQueryMs = Math.round(performance.now() - tPrimary);
 
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const memberUserIds = job.members.map((m) => m.userId);
 
+    const tAgg = performance.now();
+    // Users + metrics in ONE parallel wave (was sequential users then aggregates).
+    // Skip expensive emailAttachment join — Documents tab loads its own library.
+    // Prefer cheap JobFile count for Attachments metric.
     const [
+      users,
       emailCount,
       openTasks,
       overdueTasks,
@@ -460,30 +481,52 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       recentEmails30d,
       lastActivity,
       nextDueTask,
-      attachmentCount,
+      jobFileCount,
     ] = await Promise.all([
+      memberUserIds.length
+        ? app.services.prisma.user.findMany({
+            where: { id: { in: memberUserIds } },
+            select: { id: true, email: true, name: true, avatarUrl: true },
+          })
+        : Promise.resolve([]),
       app.services.prisma.emailMessage.count({ where: { jobId, workspaceId } }),
-      app.services.prisma.task.count({ where: { jobId, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] } } }),
       app.services.prisma.task.count({
-        where: { jobId, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] }, dueAt: { lt: now } },
+        where: { jobId, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] } },
+      }),
+      app.services.prisma.task.count({
+        where: {
+          jobId,
+          status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] },
+          dueAt: { lt: now },
+        },
       }),
       app.services.prisma.task.count({ where: { jobId, status: "DONE" } }),
-      app.services.prisma.emailMessage.count({ where: { jobId, workspaceId, sentAt: { gte: sevenDaysAgo } } }),
-      app.services.prisma.emailMessage.count({ where: { jobId, workspaceId, sentAt: { gte: thirtyDaysAgo } } }),
+      app.services.prisma.emailMessage.count({
+        where: { jobId, workspaceId, sentAt: { gte: sevenDaysAgo } },
+      }),
+      app.services.prisma.emailMessage.count({
+        where: { jobId, workspaceId, sentAt: { gte: thirtyDaysAgo } },
+      }),
       app.services.prisma.jobActivityLog.findFirst({
         where: { jobId },
         orderBy: { createdAt: "desc" },
         select: { createdAt: true },
       }),
       app.services.prisma.task.findFirst({
-        where: { jobId, status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] }, dueAt: { not: null } },
+        where: {
+          jobId,
+          status: { in: ["OPEN", "IN_PROGRESS", "BLOCKED"] },
+          dueAt: { not: null },
+        },
         orderBy: { dueAt: "asc" },
         select: { dueAt: true },
       }),
-      app.services.prisma.emailAttachment.count({
-        where: { emailMessage: { jobId, workspaceId } },
+      app.services.prisma.jobFile.count({
+        where: { jobId, workspaceId, uploadStatus: "UPLOADED" },
       }),
     ]);
+    const aggregateMs = Math.round(performance.now() - tAgg);
+    const userMap = new Map(users.map((u) => [u.id, u]));
 
     const mappedMembers = job.members.map((m) => {
       const u = userMap.get(m.userId);
@@ -497,7 +540,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       };
     });
 
-    return reply.send({
+    const body = {
       job: {
         id: job.id,
         jobNumber: job.jobNumber,
@@ -520,7 +563,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         recentEmails30d,
         lastActivityAt: lastActivity?.createdAt?.toISOString() ?? null,
         nextDueDate: nextDueTask?.dueAt?.toISOString() ?? null,
-        attachmentCount,
+        attachmentCount: jobFileCount,
         members: mappedMembers,
         aliases: job.aliases.map((a) => ({
           id: a.id,
@@ -534,7 +577,19 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           role: m.role,
         })),
       },
+    };
+    const payloadBytes = Buffer.byteLength(JSON.stringify(body));
+    request.log.info({
+      event: "api-performance",
+      route: "jobs.detail",
+      totalMs: Math.round(performance.now() - t0),
+      authMs,
+      primaryQueryMs,
+      aggregateMs,
+      payloadBytes,
     });
+
+    return reply.send(body);
   });
 
   // 4. PUT /api/v1/workspaces/:workspaceId/jobs/:jobId — Update job
@@ -1024,7 +1079,8 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     return reply.send({ tasks });
   });
 
-  // 12. GET /api/v1/workspaces/:workspaceId/jobs/:jobId/documents — List job documents
+  // 12. GET /api/v1/workspaces/:workspaceId/jobs/:jobId/documents
+  // Unified Job file library: email attachments + direct JobFile uploads (metadata only).
   app.get("/api/v1/workspaces/:workspaceId/jobs/:jobId/documents", async (request, reply) => {
     const { workspaceId, jobId } = jobParams.parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);
@@ -1033,42 +1089,152 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const existing = await loadJobWithTenantCheck(app, reply, jobId, workspaceId);
     if (!existing) return;
 
-    const attachments = await app.services.prisma.emailAttachment.findMany({
-      where: {
-        emailMessage: { jobId, workspaceId },
-        isInline: false,
-        uploadStatus: "UPLOADED",
-      },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        filename: true,
-        mimeType: true,
-        sizeBytes: true,
-        createdAt: true,
-        emailMessage: {
-          select: {
-            id: true,
-            subject: true,
-            senderEmail: true,
-            sentAt: true,
+    const query = z
+      .object({
+        type: z.enum(JOB_FILE_TYPE_FILTERS).optional().default("ALL"),
+        sort: z.enum(["newest", "oldest"]).optional().default("newest"),
+        page: z.coerce.number().int().positive().default(1),
+        pageSize: z.coerce.number().int().positive().max(200).default(100),
+      })
+      .parse(request.query ?? {});
+
+    const [attachments, jobUploads] = await Promise.all([
+      app.services.prisma.emailAttachment.findMany({
+        where: {
+          workspaceId,
+          emailMessage: { jobId, workspaceId },
+          isInline: false,
+          uploadStatus: "UPLOADED",
+        },
+        select: {
+          id: true,
+          filename: true,
+          mimeType: true,
+          sizeBytes: true,
+          createdAt: true,
+          emailMessage: {
+            select: {
+              id: true,
+              subject: true,
+              senderEmail: true,
+              senderName: true,
+              receivedAt: true,
+              sentAt: true,
+            },
           },
         },
-      },
+      }),
+      app.services.prisma.jobFile.findMany({
+        where: {
+          workspaceId,
+          jobId,
+          uploadStatus: "UPLOADED",
+        },
+        select: {
+          id: true,
+          filename: true,
+          mimeType: true,
+          sizeBytes: true,
+          createdAt: true,
+          folderId: true,
+        },
+      }),
+    ]);
+
+    type LibraryFile = {
+      id: string;
+      filename: string;
+      mimeType: string;
+      extension: string;
+      sizeBytes: number;
+      date: string;
+      sourceType: "EMAIL_ATTACHMENT" | "JOB_UPLOAD";
+      fileType: ReturnType<typeof classifyJobFileType>;
+      emailId: string | null;
+      emailSubject: string | null;
+      sender: string | null;
+      folderId: string | null;
+      previewable: boolean;
+    };
+
+    const files: LibraryFile[] = [
+      ...attachments.map((a) => {
+        const date =
+          a.emailMessage.receivedAt ?? a.emailMessage.sentAt ?? a.createdAt;
+        return {
+          id: a.id,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          extension: fileExtension(a.filename),
+          sizeBytes: a.sizeBytes,
+          date: date.toISOString(),
+          sourceType: "EMAIL_ATTACHMENT" as const,
+          fileType: classifyJobFileType(a.mimeType, a.filename),
+          emailId: a.emailMessage.id,
+          emailSubject: a.emailMessage.subject,
+          sender:
+            a.emailMessage.senderName?.trim() ||
+            a.emailMessage.senderEmail ||
+            null,
+          folderId: null,
+          previewable: isPreviewableImage(a.mimeType, a.filename),
+        };
+      }),
+      ...jobUploads.map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        mimeType: f.mimeType,
+        extension: fileExtension(f.filename),
+        sizeBytes: f.sizeBytes,
+        date: f.createdAt.toISOString(),
+        sourceType: "JOB_UPLOAD" as const,
+        fileType: classifyJobFileType(f.mimeType, f.filename),
+        emailId: null,
+        emailSubject: null,
+        sender: null,
+        folderId: f.folderId,
+        previewable: isPreviewableImage(f.mimeType, f.filename),
+      })),
+    ];
+
+    const typeFilter = query.type as JobFileTypeFilter;
+    const filtered =
+      typeFilter === "ALL"
+        ? files
+        : files.filter((f) => f.fileType === typeFilter);
+
+    filtered.sort((a, b) => {
+      const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      return query.sort === "oldest" ? diff : -diff;
     });
 
+    const totalCount = filtered.length;
+    const skip = (query.page - 1) * query.pageSize;
+    const pageFiles = filtered.slice(skip, skip + query.pageSize);
+
+    // Backward-compatible `documents` = email attachments only (legacy shape).
+    const documents = attachments.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      sizeBytes: a.sizeBytes,
+      createdAt: a.createdAt,
+      emailSubject: a.emailMessage.subject,
+      emailSenderEmail: a.emailMessage.senderEmail,
+      emailMessageId: a.emailMessage.id,
+      source: "email" as const,
+    }));
+
     return reply.send({
-      documents: attachments.map(a => ({
-        id: a.id,
-        filename: a.filename,
-        mimeType: a.mimeType,
-        sizeBytes: a.sizeBytes,
-        createdAt: a.createdAt,
-        emailSubject: a.emailMessage.subject,
-        emailSenderEmail: a.emailMessage.senderEmail,
-        emailMessageId: a.emailMessage.id,
-        source: "email" as const,
-      })),
+      files: pageFiles,
+      documents,
+      pagination: {
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / query.pageSize)),
+      },
+      filters: { type: typeFilter, sort: query.sort },
     });
   });
 

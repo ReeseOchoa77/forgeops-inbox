@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment, type ConnectionSummary } from '../api'
 import { PriorityBadge } from '../components/Badges'
+import {
+  JobAssignPicker,
+  formatJobPrimaryLabel,
+  formatJobTooltip,
+} from '../components/JobAssignPicker'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import {
@@ -639,12 +644,10 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  const [jobs, setJobs] = useState<JobLookup[]>([])
-  const [jobsLoading, setJobsLoading] = useState(false)
-  const [jobsLoaded, setJobsLoaded] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
+  const [jobPickerOpen, setJobPickerOpen] = useState(false)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
   /** Prevents duplicate ForgeOps Email Debug logs across React rerenders for the same open. */
@@ -661,18 +664,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
-  const ensureJobsLoaded = () => {
-    if (jobsLoaded || jobsLoading) return
-    setJobsLoading(true)
-    api.getJobsLookup(workspaceId, { showArchived: false })
-      .then(r => setJobs(r.jobs))
-      .catch(() => setJobs([]))
-      .finally(() => {
-        setJobsLoaded(true)
-        setJobsLoading(false)
-      })
-  }
-
   useEffect(() => {
     const markName = `email-open-${messageId}`
     performance.mark(`${markName}-click`)
@@ -680,8 +671,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     setComposeMode(null)
     setSendResult(null)
     setJobError(null)
-    setJobs([])
-    setJobsLoaded(false)
+    setJobPickerOpen(false)
     emailDebugLoggedForId.current = null
 
     const applyThread = (td: ThreadDetail, fromCache: boolean) => {
@@ -912,16 +902,16 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     }
   }
 
-  const handleAssignJob = async () => {
-    if (!selectedJobId || !clickedMessage) return
+  const handleAssignJob = async (job: JobLookup) => {
+    if (!clickedMessage) return
     setJobBusy(true)
     setJobError(null)
     try {
-      await api.assignEmailToJob(workspaceId, selectedJobId, { messageId: clickedMessage.id })
+      await api.assignEmailToJob(workspaceId, job.id, { messageId: clickedMessage.id })
       const td = await loadThread()
       setThreadData(td)
-      const updated = td.messages.find(m => m.id === messageId)
-      if (updated?.job?.id) setSelectedJobId(updated.job.id)
+      setSelectedJobId(job.id)
+      setJobPickerOpen(false)
     } catch (e) {
       setJobError(e instanceof Error ? e.message : 'Failed to assign job')
     } finally {
@@ -938,6 +928,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       const td = await loadThread()
       setThreadData(td)
       setSelectedJobId('')
+      setJobPickerOpen(false)
     } catch (e) {
       setJobError(e instanceof Error ? e.message : 'Failed to remove job')
     } finally {
@@ -1045,59 +1036,52 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                         fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
                         background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
                         color: clickedMessage.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
+                      }} title={formatJobTooltip(clickedMessage.job)}>
+                        {formatJobPrimaryLabel(clickedMessage.job, 36)}
+                        {clickedMessage.job.jobNumber ? ` · #${clickedMessage.job.jobNumber}` : ''}
+                      </span>
+                    )}
+                    {clickedMessage.job && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                        background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
+                        color: clickedMessage.jobAssignmentIsManual ? '#1565c0' : '#6a1b9a'
                       }}>
                         {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
                       </span>
                     )}
-                    <select
-                      value={selectedJobId}
-                      onChange={e => setSelectedJobId(e.target.value)}
-                      onFocus={ensureJobsLoaded}
-                      onMouseDown={ensureJobsLoaded}
-                      disabled={jobBusy}
-                      title="Assign job"
-                      style={{
-                        padding: '4px 8px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
-                        minWidth: isPhone ? 120 : 160, minHeight: 32,
-                        background: '#fff', maxWidth: 220,
-                      }}
-                    >
-                      <option value="">{clickedMessage.job ? 'Change job…' : 'Select a job…'}</option>
-                      {jobsLoading && jobs.length === 0 && (
-                        <option value="" disabled>Loading jobs…</option>
-                      )}
-                      {jobs.map(j => (
-                        <option key={j.id} value={j.id}>
-                          {j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      disabled={jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id}
-                      onClick={handleAssignJob}
-                      style={{
-                        fontSize: 12, padding: '4px 10px', borderRadius: 5, minHeight: 32,
-                        border: '1px solid #d0d5dd', background: '#f9fafb', color: '#111',
-                        cursor: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 'not-allowed' : 'pointer',
-                        opacity: jobBusy || !selectedJobId || selectedJobId === clickedMessage.job?.id ? 0.5 : 1,
-                        fontWeight: 500,
-                      }}
-                    >
-                      {clickedMessage.job ? 'Move' : 'Assign'}
-                    </button>
-                    {clickedMessage.job && (
+                    <div style={{ position: 'relative' }}>
                       <button
+                        type="button"
                         disabled={jobBusy}
-                        onClick={handleRemoveJob}
+                        onClick={() => setJobPickerOpen(v => !v)}
                         style={{
-                          fontSize: 12, padding: '4px 8px', borderRadius: 5, minHeight: 32,
-                          border: 'none', background: 'none', color: '#888',
-                          cursor: jobBusy ? 'not-allowed' : 'pointer', textDecoration: 'underline',
+                          padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
+                          minHeight: 32, background: '#fff', cursor: jobBusy ? 'not-allowed' : 'pointer',
+                          fontWeight: 500,
                         }}
                       >
-                        Remove
+                        {clickedMessage.job ? 'Change job…' : 'Assign job…'}
                       </button>
-                    )}
+                      {jobPickerOpen && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 40, marginTop: 4 }}>
+                          <JobAssignPicker
+                            workspaceId={workspaceId}
+                            selectedJobId={clickedMessage.job?.id ?? selectedJobId}
+                            disabled={jobBusy}
+                            variant="dropdown"
+                            onSelect={(job) => void handleAssignJob(job)}
+                            onRemove={
+                              clickedMessage.job
+                                ? () => void handleRemoveJob()
+                                : undefined
+                            }
+                            removeLabel="Remove job"
+                            onClose={() => setJobPickerOpen(false)}
+                          />
+                        </div>
+                      )}
+                    </div>
                     {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
                   </>
                 )}

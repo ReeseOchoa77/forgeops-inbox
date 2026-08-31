@@ -150,6 +150,8 @@ export interface TaskSummary {
   reviewStatus: string;
   isPinned?: boolean;
   createdAt: string;
+  /** Canonical timeline date (email date for email-sourced tasks). */
+  sourceDate?: string;
 }
 
 export interface MessageJobSummary {
@@ -187,6 +189,10 @@ export interface MessageSummary {
   jobAssignmentSource?: string | null;
   jobAssignmentIsManual?: boolean;
   jobMatchConfidence?: number | null;
+  classificationStatus?: 'PENDING' | 'PROCESSING' | 'CLASSIFIED' | 'FAILED' | null;
+  classificationLastAttemptAt?: string | null;
+  classificationAttemptCount?: number;
+  classificationError?: string | null;
 }
 
 export interface Participant { name: string | null; email: string; role: string }
@@ -660,6 +666,35 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body ?? {}) }
     ),
 
+  retryClassification: (workspaceId: string, messageId: string) =>
+    request<{
+      messageId: string
+      outcome: 'queued' | 'already_processing' | 'already_classified' | 'failed_to_enqueue'
+    }>(
+      `/workspaces/${workspaceId}/messages/${messageId}/retry-classification`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  retryClassificationBulk: (
+    workspaceId: string,
+    body: {
+      inboxConnectionId?: string
+      messageIds?: string[]
+      allUnclassified?: boolean
+      limit?: number
+    }
+  ) =>
+    request<{
+      totalFound: number
+      queued: number
+      alreadyProcessing: number
+      alreadyClassified: number
+      failed: number
+    }>(
+      `/workspaces/${workspaceId}/retry-classification`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   clearInbox: (workspaceId: string, connectionId: string) =>
     request<{
       status: string
@@ -685,6 +720,8 @@ export const api = {
     sentOnly?: boolean;
     unreadOnly?: boolean;
     unclassifiedOnly?: boolean;
+    dateRange?: 'TODAY' | 'WEEK' | 'MONTH';
+    timezone?: string;
     includeTotal?: boolean;
   }) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -701,6 +738,8 @@ export const api = {
     if (filters?.sentOnly) params.set('sentOnly', 'true');
     if (filters?.unreadOnly) params.set('unreadOnly', 'true');
     if (filters?.unclassifiedOnly) params.set('unclassifiedOnly', 'true');
+    if (filters?.dateRange) params.set('dateRange', filters.dateRange);
+    if (filters?.timezone) params.set('timezone', filters.timezone);
     if (filters?.includeTotal) params.set('includeTotal', 'true');
     return request<{
       messages: MessageSummary[];
@@ -796,10 +835,28 @@ export const api = {
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
     `${BASE}/workspaces/${encodeURIComponent(workspaceId)}/inbox-connections/${encodeURIComponent(connectionId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
 
-  getTasks: (workspaceId: string, connectionId: string, page = 1, pageSize = 25) =>
-    request<{ tasks: TaskListItem[]; pagination: { page: number; totalCount: number; totalPages: number } }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?page=${page}&pageSize=${pageSize}`
-    ),
+  getTasks: (
+    workspaceId: string,
+    connectionId: string,
+    page = 1,
+    pageSize = 25,
+    filters?: {
+      dateRange?: 'TODAY' | 'WEEK' | 'MONTH'
+      timezone?: string
+    }
+  ) => {
+    const p = new URLSearchParams()
+    p.set('page', String(page))
+    p.set('pageSize', String(pageSize))
+    if (filters?.dateRange) p.set('dateRange', filters.dateRange)
+    if (filters?.timezone) p.set('timezone', filters.timezone)
+    return request<{
+      tasks: TaskListItem[]
+      pagination: { page: number; totalCount: number; totalPages: number }
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?${p}`
+    )
+  },
 
   getReviewQueue: (workspaceId: string, connectionId: string, page = 1) =>
     request<{ items: ReviewItem[]; pagination: { page: number; totalCount: number; totalPages: number }; thresholds: { classification: number; task: number } }>(
@@ -1343,8 +1400,66 @@ export const api = {
   getJobTasks: (workspaceId: string, jobId: string) =>
     request<{ tasks: JobTask[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks`),
 
-  getJobDocuments: (workspaceId: string, jobId: string) =>
-    request<{ documents: JobDocument[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/documents`),
+  getJobDocuments: (
+    workspaceId: string,
+    jobId: string,
+    params?: {
+      type?: 'ALL' | 'IMAGES' | 'PDF' | 'SPREADSHEETS' | 'DOCUMENTS' | 'OTHER';
+      sort?: 'newest' | 'oldest';
+      page?: number;
+      pageSize?: number;
+    }
+  ) => {
+    const p = new URLSearchParams();
+    if (params?.type && params.type !== 'ALL') p.set('type', params.type);
+    if (params?.sort) p.set('sort', params.sort);
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    const qs = p.toString();
+    return request<{
+      files: JobLibraryFile[];
+      documents: JobDocument[];
+      pagination: { page: number; pageSize: number; totalCount: number; totalPages: number };
+      filters: { type: string; sort: string };
+    }>(`/workspaces/${workspaceId}/jobs/${jobId}/documents${qs ? `?${qs}` : ''}`);
+  },
+
+  previewTaskBulkDelete: (
+    workspaceId: string,
+    connectionId: string,
+    before: string,
+    timezone?: string
+  ) => {
+    const p = new URLSearchParams({ before });
+    if (timezone) p.set('timezone', timezone);
+    return request<{
+      count: number;
+      before: string;
+      timezone: string;
+      cutoffAt: string;
+      dateField: 'sourceDate' | 'createdAt';
+      keepRule: string;
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks/bulk-delete-preview?${p}`
+    );
+  },
+
+  bulkDeleteTasks: (
+    workspaceId: string,
+    connectionId: string,
+    before: string,
+    timezone?: string
+  ) =>
+    request<{
+      deleted: number;
+      before: string;
+      timezone: string;
+      cutoffAt: string;
+      dateField: 'sourceDate' | 'createdAt';
+    }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ before, timezone: timezone ?? 'UTC' }),
+    }),
 
   getJobFiles: (workspaceId: string, jobId: string, folderId?: string | null) => {
     const q = folderId ? `?folderId=${encodeURIComponent(folderId)}` : ''
@@ -1605,6 +1720,23 @@ export interface JobLookup {
   jobNumber: string | null;
   name: string;
   status: string;
+  customerName?: string | null;
+}
+
+export interface JobLibraryFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  extension: string;
+  sizeBytes: number;
+  date: string;
+  sourceType: 'EMAIL_ATTACHMENT' | 'JOB_UPLOAD';
+  fileType: 'IMAGES' | 'PDF' | 'SPREADSHEETS' | 'DOCUMENTS' | 'OTHER';
+  emailId: string | null;
+  emailSubject: string | null;
+  sender: string | null;
+  folderId: string | null;
+  previewable: boolean;
 }
 
 export interface JobSummary {

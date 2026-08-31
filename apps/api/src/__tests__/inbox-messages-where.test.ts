@@ -251,6 +251,19 @@ describe("buildMessagesWhere — Unclassified tab", () => {
   });
 });
 
+describe("buildMessagesWhere — Inbox dateRange", () => {
+  it("applies receivedAfter/before against receivedAt with sentAt fallback", () => {
+    const after = new Date("2026-08-01T00:00:00.000Z");
+    const before = new Date("2026-08-31T23:59:59.000Z");
+    const where = baseWhere({ receivedAfter: after, receivedBefore: before });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const rangeCond = and.find((c) => c && "OR" in c && Array.isArray(c.OR)) as
+      | { OR: Array<Record<string, unknown>> }
+      | undefined;
+    expect(rangeCond?.OR?.some((c) => "receivedAt" in c)).toBe(true);
+  });
+});
+
 describe("thread list where (no sent exclusion)", () => {
   it("Mixed thread endpoint filters only by threadId", () => {
     const threadWhere = {

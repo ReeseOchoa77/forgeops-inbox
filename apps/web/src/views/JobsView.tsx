@@ -2,11 +2,17 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type JobSummary, type CustomerSummary } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { JobImportView } from './JobImportView'
+import {
+  getCachedJobsList,
+  invalidateJobsListCache,
+  jobsListCacheKey,
+  setCachedJobsList,
+} from '../jobs-list-cache'
 
 interface Props {
   workspaceId: string
   userRole: string
-  onSelectJob: (jobId: string) => void
+  onSelectJob: (jobId: string, summary?: JobSummary) => void
   breakpoint?: Breakpoint
 }
 
@@ -104,41 +110,71 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
 
   const canCreate = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
   const canImport = userRole === 'OWNER' || userRole === 'ADMIN'
+  const paintLoggedRef = useRef(false)
 
+  // Customers only needed for filters / create — do not block Jobs list paint.
   useEffect(() => {
+    if (!filtersExpanded && !showCreateModal) return
     api.getCustomers(workspaceId).then(r => setCustomers(r.customers)).catch(() => {})
-  }, [workspaceId])
+  }, [workspaceId, filtersExpanded, showCreateModal])
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 300)
     return () => window.clearTimeout(t)
   }, [search])
 
+  const filterParams = {
+    status: statusFilter !== 'ALL' ? statusFilter : undefined,
+    search: debouncedSearch || undefined,
+    showArchived: showArchived || undefined,
+    customerId: customerFilter || undefined,
+    assignedUserId: assignedUserFilter || undefined,
+    hasOverdueTasks: hasOverdueTasks || undefined,
+    sortBy,
+    sortDir,
+  } as const
+
   const loadJobs = useCallback(async (opts?: { page?: number; append?: boolean }) => {
     const nextPage = opts?.page ?? 1
     const append = opts?.append === true
+    const cacheKey = jobsListCacheKey(workspaceId, { ...filterParams, page: nextPage })
+    const cached = !append ? getCachedJobsList(cacheKey) : null
     const soft = hasPaintedRef.current && !append
+
     if (append) setLoadingMore(true)
-    else if (soft) setRefreshing(true)
+    else if (soft || cached) setRefreshing(true)
     else setLoading(true)
+
+    const t0 = performance.now()
     try {
       const res = await api.getJobs(workspaceId, {
         page: nextPage,
         pageSize: PAGE_SIZE,
-        status: statusFilter !== 'ALL' ? statusFilter : undefined,
-        search: debouncedSearch || undefined,
-        showArchived: showArchived || undefined,
-        customerId: customerFilter || undefined,
-        assignedUserId: assignedUserFilter || undefined,
-        hasOverdueTasks: hasOverdueTasks || undefined,
-        sortBy,
-        sortDir,
+        ...filterParams,
       })
       setJobs((prev) => (append ? [...prev, ...res.jobs] : res.jobs))
       setPage(nextPage)
       setTotalCount(res.pagination.totalCount)
-      setHasMore(nextPage < res.pagination.totalPages)
+      const more = nextPage < res.pagination.totalPages
+      setHasMore(more)
       hasPaintedRef.current = true
+      if (!append) {
+        setCachedJobsList(cacheKey, {
+          jobs: res.jobs,
+          page: nextPage,
+          totalCount: res.pagination.totalCount,
+          hasMore: more,
+        })
+      }
+      if (!paintLoggedRef.current) {
+        paintLoggedRef.current = true
+        console.info({
+          event: 'jobsInitialUsefulPaintMs',
+          source: 'network',
+          ms: Math.round(performance.now() - t0),
+          rowCount: res.jobs.length,
+        })
+      }
     } catch {
       /* ignore */
     } finally {
@@ -147,15 +183,56 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       setLoadingMore(false)
       loadMoreLock.current = false
     }
-  }, [workspaceId, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
+  }, [
+    workspaceId,
+    statusFilter,
+    debouncedSearch,
+    showArchived,
+    customerFilter,
+    assignedUserFilter,
+    hasOverdueTasks,
+    sortBy,
+    sortDir,
+  ])
 
   useEffect(() => {
-    hasPaintedRef.current = false
-    setJobs([])
-    setPage(1)
-    setHasMore(false)
+    paintLoggedRef.current = false
+    const key = jobsListCacheKey(workspaceId, {
+      page: 1,
+      status: statusFilter !== 'ALL' ? statusFilter : undefined,
+      search: debouncedSearch || undefined,
+      showArchived: showArchived || undefined,
+      customerId: customerFilter || undefined,
+      assignedUserId: assignedUserFilter || undefined,
+      hasOverdueTasks: hasOverdueTasks || undefined,
+      sortBy,
+      sortDir,
+    })
+    const cached = getCachedJobsList(key)
+    if (cached) {
+      setJobs(cached.jobs)
+      setPage(cached.page)
+      setTotalCount(cached.totalCount)
+      setHasMore(cached.hasMore)
+      setLoading(false)
+      hasPaintedRef.current = true
+      if (!paintLoggedRef.current) {
+        paintLoggedRef.current = true
+        console.info({
+          event: 'jobsInitialUsefulPaintMs',
+          source: 'cache',
+          ms: 0,
+          rowCount: cached.jobs.length,
+        })
+      }
+    } else {
+      hasPaintedRef.current = false
+      setJobs([])
+      setPage(1)
+      setHasMore(false)
+    }
     void loadJobs({ page: 1, append: false })
-  }, [loadJobs])
+  }, [loadJobs, workspaceId, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
   const handleListScroll = () => {
     const el = listRef.current
@@ -196,6 +273,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       })
       setShowCreateModal(false)
       setForm(EMPTY_FORM)
+      invalidateJobsListCache(workspaceId)
       void loadJobs({ page: 1, append: false })
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create job')
@@ -353,7 +431,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       {jobs.map(job => (
         <div
           key={job.id}
-          onClick={() => onSelectJob(job.id)}
+          onClick={() => onSelectJob(job.id, job)}
           style={{
             padding: 14, border: '1px solid #e5e7eb', borderRadius: 8,
             background: '#fff', cursor: 'pointer', minHeight: 44,
@@ -419,7 +497,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           {jobs.map(job => (
             <tr
               key={job.id}
-              onClick={() => onSelectJob(job.id)}
+              onClick={() => onSelectJob(job.id, job)}
               style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
               onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
               onMouseLeave={e => (e.currentTarget.style.background = '')}
@@ -674,7 +752,10 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         <JobImportView
           workspaceId={workspaceId}
           onClose={() => setShowImportModal(false)}
-          onImported={() => { void loadJobs({ page: 1, append: false }) }}
+          onImported={() => {
+            invalidateJobsListCache(workspaceId)
+            void loadJobs({ page: 1, append: false })
+          }}
         />
       )}
     </div>

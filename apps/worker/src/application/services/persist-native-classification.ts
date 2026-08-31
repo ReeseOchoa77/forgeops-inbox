@@ -9,6 +9,7 @@ import {
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
+  resolveTaskSourceDate,
   type StoredPriority,
 } from "@forgeops/shared";
 
@@ -436,6 +437,7 @@ export async function persistNativeClassificationResult(input: {
         incomingKeys.add(sourceTaskKey);
         const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;
         const dueAt = task.dueDate ? new Date(task.dueDate) : null;
+        const sourceDate = resolveTaskSourceDate(message);
 
         await tx.task.upsert({
           where: {
@@ -453,6 +455,7 @@ export async function persistNativeClassificationResult(input: {
             description: task.description || null,
             assigneeGuess: task.recommendedOwner ?? null,
             dueAt,
+            sourceDate,
             priority: storedPriority,
             confidence: toConfidence(task.confidence),
             requiresReview: taskRequiresReview,
@@ -474,6 +477,7 @@ export async function persistNativeClassificationResult(input: {
             description: task.description || null,
             assigneeGuess: task.recommendedOwner ?? null,
             dueAt,
+            sourceDate,
             priority: storedPriority,
             status: "OPEN",
             confidence: toConfidence(task.confidence),
@@ -511,6 +515,9 @@ export async function persistNativeClassificationResult(input: {
         mailboxCategory,
         priority: storedPriority,
         itemStatus,
+        classificationStatus: "CLASSIFIED",
+        classificationError: null,
+        classificationLastAttemptAt: new Date(),
       },
     });
 

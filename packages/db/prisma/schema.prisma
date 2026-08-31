@@ -134,6 +134,14 @@ enum ReviewStatus {
   REJECTED
 }
 
+/// Queue/worker lifecycle for native classification (orthogonal to ReviewStatus).
+enum ClassificationProcessingStatus {
+  PENDING
+  PROCESSING
+  CLASSIFIED
+  FAILED
+}
+
 enum RoutingRuleActionType {
   ASSIGN
   SET_PRIORITY
@@ -476,6 +484,12 @@ model EmailMessage {
   jobAssignmentIsManual   Boolean  @default(false)
   isPinned         Boolean       @default(false)
   pinnedAt         DateTime?
+  /// Native classify queue lifecycle — null means never attempted / unknown.
+  classificationStatus          ClassificationProcessingStatus?
+  classificationLastAttemptAt   DateTime?
+  classificationAttemptCount    Int       @default(0)
+  /// Truncated last error for FAILED/debug — never stack traces or provider payloads.
+  classificationError           String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -507,6 +521,7 @@ model EmailMessage {
   @@index([jobId])
   @@index([workspaceId, jobId, sentAt])
   @@index([workspaceId, inboxConnectionId, isTrashed, isArchived, receivedAt])
+  @@index([workspaceId, inboxConnectionId, classificationStatus, createdAt])
 }
 
 model NormalizedEmail {
@@ -636,6 +651,9 @@ model Task {
   customerId       String?
   vendorId         String?
   jobId            String?
+  /// Canonical timeline date for Task list filters / bulk delete (email receivedAt/sentAt for email-sourced tasks).
+  /// Distinct from createdAt (DB insert) and dueAt (deadline).
+  sourceDate       DateTime
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -662,6 +680,7 @@ model Task {
   @@index([customerId])
   @@index([vendorId])
   @@index([jobId])
+  @@index([workspaceId, sourceDate])
 }
 
 /// ForgeOps-native calendar item (meetings/events/notes). Task due dates are aggregated separately, not duplicated here.

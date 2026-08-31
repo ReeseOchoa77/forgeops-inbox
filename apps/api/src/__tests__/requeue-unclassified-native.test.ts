@@ -19,6 +19,7 @@ describe("requeueUnclassifiedNativeMessages", () => {
       },
       emailMessage: {
         findMany: vi.fn().mockResolvedValue([{ id: "m1" }, { id: "m2" }]),
+        update: vi.fn().mockResolvedValue({}),
       },
     };
     const add = vi.fn().mockResolvedValue({});

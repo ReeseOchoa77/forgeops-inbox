@@ -124,4 +124,33 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       })
     ).toEqual({ sentOnly: true });
   });
+
+  it("dateRange + timezone compose with Business and Unclassified", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        dateRange: "TODAY",
+        timezone: "America/Chicago",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      dateRange: "TODAY",
+      timezone: "America/Chicago",
+    });
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "unread",
+        dateRange: "WEEK",
+        timezone: "UTC",
+      })
+    ).toEqual({
+      unclassifiedOnly: true,
+      unreadOnly: true,
+      dateRange: "WEEK",
+      timezone: "UTC",
+    });
+  });
 });

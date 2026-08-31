@@ -352,7 +352,7 @@ export async function processMailboxHistoricalImport(
       if (shouldEnqueueNativeClassification(connection)) {
         for (const emailMessageId of batchCreatedIds) {
           try {
-            await ensureMailboxClassifyJob({
+            const outcome = await ensureMailboxClassifyJob({
               queue: deps.classifyQueue,
               workspaceId: payload.workspaceId,
               inboxConnectionId: connection.id,
@@ -361,6 +361,19 @@ export async function processMailboxHistoricalImport(
                 ? { initiatedBy: payload.initiatedBy }
                 : {}),
             });
+            if (outcome === "enqueued") {
+              await deps.prisma.emailMessage
+                .update({
+                  where: { id: emailMessageId },
+                  data: {
+                    classificationStatus: "PENDING",
+                    classificationLastAttemptAt: new Date(),
+                    classificationAttemptCount: { increment: 1 },
+                    classificationError: null,
+                  },
+                })
+                .catch(() => {});
+            }
           } catch (e) {
             failedCount += 1;
             console.warn("historical-classify-queue-failed", {

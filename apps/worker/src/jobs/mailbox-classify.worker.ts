@@ -2,6 +2,8 @@ import { prisma } from "@forgeops/db";
 import { serializeOpenAiError } from "@forgeops/ai";
 import {
   QueueNames,
+  MAX_AUTO_CLASSIFICATION_ATTEMPTS,
+  truncateClassificationError,
   type MailboxClassifyJobPayload,
   type MailboxClassifyJobResult,
 } from "@forgeops/shared";
@@ -38,9 +40,32 @@ export const startMailboxClassifyWorker = (
       emailMessageId: job?.data.emailMessageId,
       workspaceId: job?.data.workspaceId,
       inboxConnectionId: job?.data.inboxConnectionId,
+      attemptsMade: job?.attemptsMade,
       error: err.message,
       ...serializeOpenAiError(err),
     });
+
+    if (!job?.data.emailMessageId) return;
+    const maxAttempts = job.opts.attempts ?? 3;
+    const isFinal = (job.attemptsMade ?? 0) >= maxAttempts;
+    if (!isFinal) return;
+
+    void prisma.emailMessage
+      .updateMany({
+        where: {
+          id: job.data.emailMessageId,
+          workspaceId: job.data.workspaceId,
+          classifications: { none: {} },
+        },
+        data: {
+          classificationStatus: "FAILED",
+          classificationLastAttemptAt: new Date(),
+          classificationError: truncateClassificationError(err.message),
+          // Cap auto attempts so safety-net stops after permanent failure.
+          classificationAttemptCount: MAX_AUTO_CLASSIFICATION_ATTEMPTS,
+        },
+      })
+      .catch(() => {});
   });
 
   return { worker };

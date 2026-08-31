@@ -19,6 +19,8 @@ export type InboxListTab =
 
 export type InboxReadFilter = "" | "unread" | "read" | "sent";
 
+export type InboxDateRangeFilter = "" | "TODAY" | "WEEK" | "MONTH";
+
 export type InboxMessageListFilters = {
   businessCategory?: "BUSINESS" | "NON_BUSINESS";
   businessTypeGroup?: string;
@@ -27,6 +29,8 @@ export type InboxMessageListFilters = {
   sentOnly?: true;
   unreadOnly?: true;
   unclassifiedOnly?: true;
+  dateRange?: "TODAY" | "WEEK" | "MONTH";
+  timezone?: string;
   search?: string;
   searchIn?: "all" | "sender";
 };
@@ -34,6 +38,8 @@ export type InboxMessageListFilters = {
 export function buildInboxMessageListFilters(input: {
   inboxTab: InboxListTab;
   readFilter: InboxReadFilter;
+  dateRange?: InboxDateRangeFilter;
+  timezone?: string;
   jobFilter?: string;
   activeSearch?: string;
   searchIn?: "all" | "sender";
@@ -43,6 +49,10 @@ export function buildInboxMessageListFilters(input: {
   // Global Sent: direction only — never combine with Business/Personal category.
   if (input.readFilter === "sent") {
     f.sentOnly = true;
+    if (input.dateRange) {
+      f.dateRange = input.dateRange;
+      if (input.timezone) f.timezone = input.timezone;
+    }
     if (input.activeSearch) {
       f.search = input.activeSearch;
       if (input.searchIn === "sender") f.searchIn = "sender";
@@ -67,6 +77,11 @@ export function buildInboxMessageListFilters(input: {
   // Server-side unread (API has unreadOnly; no readOnly yet — Read stays client-side).
   if (input.readFilter === "unread") {
     f.unreadOnly = true;
+  }
+
+  if (input.dateRange) {
+    f.dateRange = input.dateRange;
+    if (input.timezone) f.timezone = input.timezone;
   }
 
   if (input.activeSearch) {
