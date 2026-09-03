@@ -14,4 +14,9 @@ describe('prefetch does not mark read', () => {
     const openActions = ['getMessageThread', 'markAsRead'] as const
     expect(openActions).toContain('markAsRead')
   })
+
+  it('sidebar thread selection must not mark read', () => {
+    const sidebarSelectActions = ['setReadingMessageId', 'getMessageDetail'] as const
+    expect(sidebarSelectActions).not.toContain('markAsRead')
+  })
 })

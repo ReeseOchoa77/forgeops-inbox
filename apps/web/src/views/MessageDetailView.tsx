@@ -308,8 +308,8 @@ function EmailBody({
           ref={htmlBodyRef}
           className="email-html-body"
           style={{
-            fontSize: 14, lineHeight: 1.6, padding: '8px 0', overflow: 'auto', maxHeight: 600,
-            wordBreak: 'break-word'
+            fontSize: 14, lineHeight: 1.6, padding: '8px 0',
+            wordBreak: 'break-word',
           }}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(htmlToRender, { ADD_ATTR: ['target'] }) }}
         />
@@ -317,7 +317,7 @@ function EmailBody({
         <div style={{
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           fontSize: 13, lineHeight: 1.6, padding: '8px 0',
-          maxHeight: 600, overflow: 'auto'
+          maxWidth: 720,
         }}>
           {bodyText}
         </div>
@@ -326,153 +326,24 @@ function EmailBody({
   )
 }
 
-function MessageCard({ msg, expanded, onToggle, workspaceId, connectionId, isLast, onReply, onForward, onLoadBody, isPhone }: {
-  msg: ThreadMessage
-  expanded: boolean
-  onToggle: () => void
-  workspaceId: string
-  connectionId: string
-  isLast: boolean
-  onReply: () => void
-  onForward: () => void
-  onLoadBody: () => void
-  isPhone?: boolean
-}) {
-  const senderDisplay = msg.senderName ?? msg.senderEmail
-  const toDisplay = msg.toAddresses.map(a => a.name ?? a.email).join(', ')
 
-  const replyActions = isLast ? (
-    <div style={{
-      display: 'flex', gap: 8, flexWrap: 'wrap',
-      padding: expanded ? undefined : (isPhone ? '0 12px 12px' : '0 16px 12px'),
-      marginTop: expanded ? 12 : 0,
-      borderBottom: expanded ? undefined : '1px solid #f0f0f0',
-    }}>
-      <button className="btn btn-sm btn-outline" onClick={onReply} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Reply</button>
-      <button className="btn btn-sm btn-outline" onClick={onForward} style={isPhone ? { flex: 1, minHeight: 44 } : undefined}>Forward</button>
-    </div>
-  ) : null
+const SIDEBAR_COLLAPSED_KEY = 'forgeops_email_reader_sidebar_collapsed'
 
-  if (!expanded) {
-    return (
-      <div>
-        <div
-          onClick={onToggle}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
-          title="Expand message"
-          style={{
-            padding: isPhone ? '12px' : '10px 16px', cursor: 'pointer', display: 'flex', gap: 12, alignItems: 'center',
-            borderBottom: isLast ? 'none' : '1px solid #f0f0f0', fontSize: 13, minHeight: 44,
-          }}
-          onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-          onMouseOut={e => (e.currentTarget.style.background = '')}
-        >
-          <div style={{
-            width: 32, height: 32, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14, flexShrink: 0
-          }}>
-            {senderDisplay.charAt(0).toUpperCase()}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ fontWeight: 500 }}>{senderDisplay}</span>
-            {!isPhone && <span style={{ color: '#999', marginLeft: 8 }}>{msg.snippet?.slice(0, 80) ?? ''}</span>}
-            {isPhone && msg.snippet && (
-              <div style={{ color: '#999', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.snippet.slice(0, 60)}</div>
-            )}
-          </div>
-          <div style={{ color: '#aaa', fontSize: 11, flexShrink: 0 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</div>
-          {msg.hasAttachments && <span style={{ fontSize: 14 }} title="Has attachments">{'\u{1F4CE}'}</span>}
-          <span style={{ fontSize: 12, color: '#bbb', flexShrink: 0 }} aria-hidden>&#9656;</span>
-        </div>
-        {replyActions}
-      </div>
-    )
+function formatCompactWhen(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const sameYear = d.getFullYear() === now.getFullYear()
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' as const }),
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
   }
-
-  return (
-    <div style={{ padding: isPhone ? '12px' : '16px', borderBottom: '1px solid #f0f0f0' }}>
-      <div
-        onClick={onToggle}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
-        title="Collapse message"
-        style={{
-          display: 'flex', gap: 12, marginBottom: 12, flexWrap: isPhone ? 'wrap' : undefined,
-          cursor: 'pointer', borderRadius: 6, marginLeft: -4, marginRight: -4, padding: '4px',
-        }}
-        onMouseOver={e => (e.currentTarget.style.background = '#f8f9fb')}
-        onMouseOut={e => (e.currentTarget.style.background = '')}
-      >
-        <div style={{
-          width: 36, height: 36, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15, flexShrink: 0
-        }}>
-          {senderDisplay.charAt(0).toUpperCase()}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: isPhone ? 'wrap' : undefined, gap: isPhone ? 4 : 0 }}>
-            <div>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{senderDisplay}</span>
-              {msg.senderName && <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>&lt;{msg.senderEmail}&gt;</span>}
-              {msg.labelIds.includes('n8n-ingested') && (
-                <span style={{ fontSize: 10, color: '#6a1b9a', background: '#f3e5f5', padding: '1px 6px', borderRadius: 3, marginLeft: 6, fontWeight: 500 }}>via n8n</span>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(msg.receivedAt ?? msg.sentAt)}</span>
-              <button
-                type="button"
-                onClick={e => { e.stopPropagation(); onToggle() }}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#999',
-                  padding: 0, minWidth: 36, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-                title="Collapse"
-                aria-label="Collapse message"
-              >
-                &#9650;
-              </button>
-            </div>
-          </div>
-          <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
-            to {toDisplay}
-            {msg.ccAddresses.length > 0 && <span>, cc: {msg.ccAddresses.map(a => a.name ?? a.email).join(', ')}</span>}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ paddingLeft: isPhone ? 0 : 48 }}>
-        {msg.bodyTruncated && !msg.bodyText && !msg.bodyHtml ? (
-          <div style={{ padding: '12px 0' }}>
-            <button
-              onClick={onLoadBody}
-              style={{
-                background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 4,
-                padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#555',
-                minHeight: 44,
-              }}
-            >
-              Show full message
-            </button>
-          </div>
-        ) : (
-          <EmailBody
-            bodyHtml={msg.bodyHtml}
-            bodyText={msg.bodyText}
-            workspaceId={workspaceId}
-            connectionId={connectionId}
-            emailId={msg.id}
-            attachmentMetadata={msg.attachmentMetadata}
-          />
-        )}
-
-        {replyActions}
-      </div>
-    </div>
-  )
 }
 
 function statusBadge(status: StoredAttachment['uploadStatus']) {
@@ -493,131 +364,6 @@ function statusBadge(status: StoredAttachment['uploadStatus']) {
   )
 }
 
-function StoredAttachmentsSection({
-  workspaceId,
-  emailIds,
-  compact,
-}: {
-  workspaceId: string
-  emailIds: string[]
-  compact?: boolean
-}) {
-  const [attachments, setAttachments] = useState<StoredAttachment[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
-
-  const emailIdsKey = emailIds.join(',')
-
-  useEffect(() => {
-    if (emailIds.length === 0) {
-      setAttachments([])
-      setLoading(false)
-      setError(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    setError(false)
-    Promise.all(
-      emailIds.map(id =>
-        api.getEmailAttachments(workspaceId, id)
-          .then(r => ({ ok: true as const, attachments: r.attachments }))
-          .catch(() => ({ ok: false as const, attachments: [] as StoredAttachment[] }))
-      )
-    )
-      .then(results => {
-        if (cancelled) return
-        const byId = new Map<string, StoredAttachment>()
-        let anyOk = false
-        let anyFail = false
-        for (const result of results) {
-          if (result.ok) anyOk = true
-          else anyFail = true
-          for (const att of result.attachments) byId.set(att.id, att)
-        }
-        setAttachments([...byId.values()])
-        setError(anyFail && !anyOk)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [workspaceId, emailIdsKey])
-
-  if (loading) {
-    return (
-      <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#999' }}>
-        Loading attachments…
-      </div>
-    )
-  }
-
-  if (error && attachments.length === 0) {
-    return (
-      <div style={{ marginTop: compact ? 8 : 0, fontSize: 12, color: '#c62828' }}>
-        Failed to load attachments
-      </div>
-    )
-  }
-
-  // Downloadable files only — inline images render in the email body via cid: rewrite
-  const downloadable = attachments.filter(a => !isInlineImage(a))
-  if (downloadable.length === 0) return null
-
-  return (
-    <div style={{
-      marginTop: compact ? 8 : 0,
-      marginBottom: compact ? 0 : 12,
-      padding: compact ? '8px 10px' : '10px 14px',
-      background: '#fff',
-      border: '1px solid #e5e5e5',
-      borderRadius: 8,
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
-        Attachments ({downloadable.length})
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: compact ? 160 : undefined, overflowY: compact ? 'auto' : undefined }}>
-        {downloadable.map(att => (
-          <div
-            key={att.id}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
-              border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa',
-              fontSize: 13, flexWrap: 'wrap',
-            }}
-          >
-            <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(att.mimeType)}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {att.filename}
-              </div>
-              <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>
-                {formatSize(att.sizeBytes)}
-                {att.mimeType ? ` · ${att.mimeType.split('/').pop()}` : ''}
-              </div>
-            </div>
-            {statusBadge(att.uploadStatus)}
-            {att.uploadStatus === 'UPLOADED' && (
-              <a
-                href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  fontSize: 12, color: '#1565c0', textDecoration: 'none', fontWeight: 500,
-                  padding: '4px 10px', border: '1px solid #1565c0', borderRadius: 4,
-                  flexShrink: 0, minHeight: 32, display: 'inline-flex', alignItems: 'center',
-                }}
-              >
-                Download
-              </a>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function jobSourceLabel(source: string | null | undefined, isManual: boolean | undefined): string {
   if (isManual || source === 'USER_ASSIGNED') return 'Manual'
   if (!source) return 'Unknown'
@@ -628,10 +374,360 @@ function jobSourceLabel(source: string | null | undefined, isManual: boolean | u
   return source
 }
 
+/** Compact thread navigator row — metadata/snippet only; never loads body. */
+function ThreadMessageRow({
+  msg,
+  selected,
+  onSelect,
+  isSent,
+}: {
+  msg: ThreadMessage
+  selected: boolean
+  onSelect: () => void
+  isSent?: boolean
+}) {
+  const senderDisplay = msg.senderName ?? msg.senderEmail
+  const when = formatCompactWhen(msg.receivedAt ?? msg.sentAt)
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      style={{
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        borderBottom: '1px solid #f0f0f0',
+        background: selected ? '#eef3ff' : 'transparent',
+        borderLeft: selected ? '3px solid #1565c0' : '3px solid transparent',
+        padding: '8px 10px',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'baseline' }}>
+        <span style={{ fontWeight: selected ? 700 : 600, fontSize: 12, color: '#1a1a2e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {senderDisplay}
+        </span>
+        <span style={{ fontSize: 10, color: '#999', flexShrink: 0 }}>{when}</span>
+      </div>
+      <div style={{
+        fontSize: 11, color: '#777', marginTop: 2,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {msg.snippet?.slice(0, 100) || '(no preview)'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center' }}>
+        {msg.hasAttachments && (
+          <span style={{ fontSize: 11 }} title="Has attachments">
+            {'\u{1F4CE}'}
+          </span>
+        )}
+        {isSent && (
+          <span style={{ fontSize: 9, fontWeight: 600, color: '#666', background: '#eee', padding: '0 5px', borderRadius: 3 }}>
+            Sent
+          </span>
+        )}
+      </div>
+    </button>
+  )
+}
+
+function SelectedMessagePane({
+  msg,
+  workspaceId,
+  connectionId,
+  onReply,
+  onForward,
+  onLoadBody,
+  bodyLoading,
+  isPhone,
+}: {
+  msg: ThreadMessage
+  workspaceId: string
+  connectionId: string
+  onReply: () => void
+  onForward: () => void
+  onLoadBody: () => void
+  bodyLoading?: boolean
+  isPhone?: boolean
+}) {
+  const [showAllRecipients, setShowAllRecipients] = useState(false)
+  const senderDisplay = msg.senderName ?? msg.senderEmail
+  const toList = msg.toAddresses.map(a => a.name ?? a.email)
+  const ccList = msg.ccAddresses.map(a => a.name ?? a.email)
+  const toPreview = toList.slice(0, 3).join(', ') + (toList.length > 3 ? ` +${toList.length - 3}` : '')
+  const needsBody = Boolean(msg.bodyTruncated && !msg.bodyText && !msg.bodyHtml)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+      <div style={{ padding: isPhone ? '12px 12px 8px' : '14px 18px 10px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%', background: '#e3f2fd', color: '#1565c0',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 15, flexShrink: 0
+          }}>
+            {senderDisplay.charAt(0).toUpperCase()}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{senderDisplay}</div>
+                {msg.senderName && (
+                  <div style={{ fontSize: 12, color: '#888' }}>&lt;{msg.senderEmail}&gt;</div>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: '#999', flexShrink: 0 }}>
+                {formatDate(msg.receivedAt ?? msg.sentAt)}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+              to {showAllRecipients ? toList.join(', ') : toPreview}
+              {showAllRecipients && ccList.length > 0 && (
+                <span>; cc {ccList.join(', ')}</span>
+              )}
+              {(toList.length > 3 || ccList.length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllRecipients(v => !v)}
+                  style={{ background: 'none', border: 'none', color: '#1565c0', fontSize: 11, cursor: 'pointer', marginLeft: 6, padding: 0 }}
+                >
+                  {showAllRecipients ? 'Less' : 'Details'}
+                </button>
+              )}
+            </div>
+            {msg.labelIds.includes('n8n-ingested') && (
+              <span style={{ fontSize: 10, color: '#6a1b9a', background: '#f3e5f5', padding: '1px 6px', borderRadius: 3, marginTop: 4, display: 'inline-block', fontWeight: 500 }}>via n8n</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: isPhone ? '8px 12px 12px' : '10px 18px 16px' }}>
+        {needsBody ? (
+          <div style={{ padding: '16px 0' }}>
+            {bodyLoading ? (
+              <span style={{ fontSize: 13, color: '#888' }}>Loading message…</span>
+            ) : (
+              <button
+                type="button"
+                onClick={onLoadBody}
+                style={{
+                  background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 4,
+                  padding: '6px 14px', fontSize: 12, cursor: 'pointer', color: '#555', minHeight: 36,
+                }}
+              >
+                Show full message
+              </button>
+            )}
+          </div>
+        ) : (
+          <EmailBody
+            bodyHtml={msg.bodyHtml}
+            bodyText={msg.bodyText}
+            workspaceId={workspaceId}
+            connectionId={connectionId}
+            emailId={msg.id}
+            attachmentMetadata={msg.attachmentMetadata}
+          />
+        )}
+      </div>
+
+      <div style={{
+        display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0,
+        padding: isPhone ? '10px 12px' : '10px 18px',
+        borderTop: '1px solid #f0f0f0', background: '#fafafa',
+      }}>
+        <button className="btn btn-sm btn-outline" onClick={onReply} style={isPhone ? { flex: 1, minHeight: 40 } : undefined}>Reply</button>
+        <button className="btn btn-sm btn-outline" onClick={onForward} style={isPhone ? { flex: 1, minHeight: 40 } : undefined}>Forward</button>
+      </div>
+    </div>
+  )
+}
+
+/** Attachments for one email (selected message). Does not mark read. */
+function SelectedAttachmentsPanel({
+  workspaceId,
+  emailId,
+  threadOtherIds,
+  compact,
+}: {
+  workspaceId: string
+  emailId: string
+  /** Other thread message ids that have attachments — loaded only on demand. */
+  threadOtherIds: string[]
+  compact?: boolean
+}) {
+  const [attachments, setAttachments] = useState<StoredAttachment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+  const [threadExtra, setThreadExtra] = useState<StoredAttachment[] | null>(null)
+  const [threadLoading, setThreadLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(false)
+    setShowAll(false)
+    setThreadExtra(null)
+    api.getEmailAttachments(workspaceId, emailId)
+      .then(r => {
+        if (cancelled) return
+        setAttachments(r.attachments)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAttachments([])
+          setError(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [workspaceId, emailId])
+
+  const loadThreadExtras = () => {
+    if (threadExtra || threadOtherIds.length === 0) return
+    setThreadLoading(true)
+    Promise.all(
+      threadOtherIds.map(id =>
+        api.getEmailAttachments(workspaceId, id)
+          .then(r => r.attachments)
+          .catch(() => [] as StoredAttachment[])
+      )
+    )
+      .then(lists => {
+        const byId = new Map<string, StoredAttachment>()
+        for (const list of lists) for (const a of list) byId.set(a.id, a)
+        setThreadExtra([...byId.values()])
+      })
+      .finally(() => setThreadLoading(false))
+  }
+
+  if (loading) {
+    return <div style={{ fontSize: 11, color: '#999', padding: '6px 0' }}>Loading attachments…</div>
+  }
+  if (error && attachments.length === 0) {
+    return <div style={{ fontSize: 11, color: '#c62828', padding: '6px 0' }}>Failed to load attachments</div>
+  }
+
+  const downloadable = attachments.filter(a => !isInlineImage(a))
+  const visible = showAll ? downloadable : downloadable.slice(0, 5)
+  const threadDownloadable = (threadExtra ?? []).filter(a => !isInlineImage(a))
+
+  if (downloadable.length === 0 && threadOtherIds.length === 0) return null
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6 }}>
+        Selected message{downloadable.length ? ` · ${downloadable.length}` : ''}
+      </div>
+      {downloadable.length === 0 ? (
+        <div style={{ fontSize: 11, color: '#999', marginBottom: 6 }}>No downloadable attachments</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: compact ? 180 : 260, overflowY: 'auto' }}>
+          {visible.map(att => (
+            <div
+              key={att.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px',
+                border: '1px solid #f0f0f0', borderRadius: 5, background: '#fafafa', fontSize: 12,
+              }}
+            >
+              <span style={{ fontSize: 14, flexShrink: 0 }}>{fileIcon(att.mimeType)}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {att.filename}
+                </div>
+                <div style={{ fontSize: 10, color: '#888' }}>{formatSize(att.sizeBytes)}</div>
+              </div>
+              {statusBadge(att.uploadStatus)}
+              {att.uploadStatus === 'UPLOADED' && (
+                <a
+                  href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Download"
+                  style={{
+                    fontSize: 14, color: '#1565c0', textDecoration: 'none', flexShrink: 0,
+                    padding: '2px 6px', lineHeight: 1,
+                  }}
+                >
+                  ↓
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {downloadable.length > 5 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(v => !v)}
+          style={{ background: 'none', border: 'none', color: '#1565c0', fontSize: 11, cursor: 'pointer', padding: '6px 0 0', fontFamily: 'inherit' }}
+        >
+          {showAll ? 'Show fewer' : `Show all (${downloadable.length})`}
+        </button>
+      )}
+
+      {threadOtherIds.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #eee' }}>
+          {!threadExtra ? (
+            <button
+              type="button"
+              onClick={loadThreadExtras}
+              disabled={threadLoading}
+              style={{ background: 'none', border: 'none', color: '#1565c0', fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+            >
+              {threadLoading ? 'Loading…' : `Also in thread (${threadOtherIds.length} msg)`}
+            </button>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6 }}>
+                Other messages · {threadDownloadable.length}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 140, overflowY: 'auto' }}>
+                {threadDownloadable.map(att => (
+                  <div
+                    key={att.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px',
+                      border: '1px solid #f0f0f0', borderRadius: 5, background: '#fafafa', fontSize: 12,
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{fileIcon(att.mimeType)}</span>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                      {att.filename}
+                    </div>
+                    {att.uploadStatus === 'UPLOADED' && (
+                      <a
+                        href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 14, color: '#1565c0', textDecoration: 'none' }}
+                      >
+                        ↓
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function MessageDetailView({ workspaceId, connectionId, messageId, onBack, breakpoint = 'desktop', connections }: Props) {
   const [threadData, setThreadData] = useState<ThreadDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  /** Message shown in the main reader — independent of inbox open id (mark-read). */
+  const [readingMessageId, setReadingMessageId] = useState<string>('')
+  const [bodyLoadingId, setBodyLoadingId] = useState<string | null>(null)
 
   const [composeMode, setComposeMode] = useState<'reply' | 'forward' | null>(null)
   const [composeDefaults, setComposeDefaults] = useState({ to: '', cc: '', subject: '' })
@@ -650,10 +746,15 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobPickerOpen, setJobPickerOpen] = useState(false)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
-  /** Prevents duplicate ForgeOps Email Debug logs across React rerenders for the same open. */
   const emailDebugLoggedForId = useRef<string | null>(null)
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
+  })
+  const [mobilePanel, setMobilePanel] = useState<'none' | 'thread' | 'attachments'>('none')
+
   const isPhone = breakpoint === 'phone'
+  const isDesktop = breakpoint === 'desktop'
 
   const connectionEmailsKey = (connections ?? []).map(c => c.email.toLowerCase()).sort().join('|')
   const monitoredEmails = useMemo(
@@ -664,6 +765,11 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
   const loadThread = () => api.getMessageThread(workspaceId, connectionId, messageId)
 
+  const persistSidebarCollapsed = (next: boolean) => {
+    setSidebarCollapsed(next)
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next)) } catch { /* */ }
+  }
+
   useEffect(() => {
     const markName = `email-open-${messageId}`
     performance.mark(`${markName}-click`)
@@ -672,17 +778,19 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     setSendResult(null)
     setJobError(null)
     setJobPickerOpen(false)
+    setMobilePanel('none')
     emailDebugLoggedForId.current = null
 
     const applyThread = (td: ThreadDetail, fromCache: boolean) => {
       setThreadData(td)
       setCachedThread(workspaceId, connectionId, messageId, td)
+      // Mark-read ONLY for the intentionally opened inbox message — never for sidebar selection.
       api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
       const clickedMsg = td.messages.find(m => m.id === messageId)
       if (clickedMsg?.job?.id) setSelectedJobId(clickedMsg.job.id)
       else setSelectedJobId('')
       const lastMsg = td.messages[td.messages.length - 1]
-      setExpandedIds(new Set(lastMsg ? [lastMsg.id] : []))
+      setReadingMessageId(lastMsg?.id ?? messageId)
       setLoading(false)
       performance.mark(`${markName}-paint`)
       try {
@@ -723,10 +831,39 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       })
   }, [workspaceId, connectionId, messageId])
 
-  // TEMP V1 DEBUG:
-  // Remove or gate behind development/debug flag after pilot stabilization.
-  // Logs the complete thread/message payload already loaded for MessageDetailView (no extra API call).
-  // Does not log OAuth tokens, session cookies, or credentials.
+  // Lazy-load body for selected reader message without blocking selection / without mark-read.
+  useEffect(() => {
+    if (!threadData || !readingMessageId) return
+    const msg = threadData.messages.find(m => m.id === readingMessageId)
+    if (!msg) return
+    if (!(msg.bodyTruncated && !msg.bodyText && !msg.bodyHtml)) return
+
+    let cancelled = false
+    setBodyLoadingId(msg.id)
+    api.getMessageDetail(workspaceId, connectionId, msg.id)
+      .then(r => {
+        if (cancelled) return
+        setThreadData(prev => {
+          if (!prev) return prev
+          const next = {
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === msg.id
+                ? { ...m, bodyText: r.data.message.bodyText, bodyHtml: r.data.message.bodyHtml, bodyTruncated: false }
+                : m
+            ),
+          }
+          setCachedThread(workspaceId, connectionId, messageId, next)
+          return next
+        })
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setBodyLoadingId(null)
+      })
+    return () => { cancelled = true }
+  }, [threadData, readingMessageId, workspaceId, connectionId, messageId])
+
   useEffect(() => {
     if (loading || !monitoredEmailsReady || !threadData || threadData.messages.length === 0) return
     if (emailDebugLoggedForId.current === messageId) return
@@ -740,7 +877,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
     const mailboxCategory = message.mailboxCategory ?? null
     const isSent = monitoredEmails.has(message.senderEmail.toLowerCase())
-    // Inbox chrome treats Sent as its own view; persisted category may still be BUSINESS/PERSONAL.
     const emailKind = isSent ? 'SENT' : (mailboxCategory ?? 'UNKNOWN')
     const classification = message.classification
     const businessTypeKey = classification?.businessTypeKey ?? null
@@ -819,14 +955,19 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const lastMessage = messages[messages.length - 1]!
   const subject = threadData.thread.subject ?? lastMessage.subject ?? '(no subject)'
   const isBusinessMessage = clickedMessage?.mailboxCategory === 'BUSINESS'
+  const readingMessage = messages.find(m => m.id === readingMessageId) ?? lastMessage
 
-  const toggleExpand = (id: string) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const attachmentMsgIds = messages.filter(m => m.hasAttachments).map(m => m.id)
+  const otherAttachmentIds = attachmentMsgIds.filter(id => id !== readingMessage.id)
+  const anyAttachments = attachmentMsgIds.length > 0
+  const showThreadNav = messages.length > 1
+  const showSidebarContent = showThreadNav || anyAttachments
+  const useTwoColumn = isDesktop && showSidebarContent && !sidebarCollapsed
+
+  const selectReadingMessage = (id: string) => {
+    setReadingMessageId(id)
+    setMobilePanel('none')
+    // Intentionally does NOT call markAsRead — sidebar selection must not mutate read state.
   }
 
   const openReply = () => {
@@ -849,7 +990,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     })
     setSendResult(null)
     setForwardAttachments([])
-    // Load non-inline attachments from the thread for forward inclusion (default: all included).
     const ids = messages.filter(m => m.hasAttachments).map(m => m.id)
     if (ids.length === 0) return
     Promise.all(ids.map(id => api.getEmailAttachments(workspaceId, id).catch(() => ({ attachments: [] as StoredAttachment[] }))))
@@ -888,7 +1028,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         body: payload.html,
         bodyFormat: 'html',
         files: payload.files,
-        // Reply: never send existingAttachmentIds even if present
         existingAttachmentIds:
           composeMode === 'forward' ? payload.existingAttachmentIds : [],
       })
@@ -947,11 +1086,79 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     finally { setReclassifyBusy(false) }
   }
 
-  return (
-    <div>
-      {/* Sticky action bar — always visible while scrolling */}
+  const threadList = (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: showThreadNav ? 1 : undefined }}>
       <div style={{
-        position: 'sticky', top: 0, zIndex: 20, marginBottom: 12,
+        padding: '8px 10px', fontSize: 11, fontWeight: 700, color: '#555',
+        borderBottom: '1px solid #eee', flexShrink: 0, letterSpacing: 0.2,
+      }}>
+        THREAD · {messages.length}
+      </div>
+      <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+        {[...messages].reverse().map(msg => (
+          <ThreadMessageRow
+            key={msg.id}
+            msg={msg}
+            selected={msg.id === readingMessage.id}
+            onSelect={() => selectReadingMessage(msg.id)}
+            isSent={monitoredEmails.has(msg.senderEmail.toLowerCase())}
+          />
+        ))}
+      </div>
+    </div>
+  )
+
+  const attachmentsBlock = anyAttachments ? (
+    <div style={{
+      borderTop: showThreadNav ? '1px solid #e8e8e8' : undefined,
+      padding: '8px 10px 10px',
+      flexShrink: 0,
+      maxHeight: showThreadNav ? '38%' : undefined,
+      overflow: 'auto',
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 6, letterSpacing: 0.2 }}>
+        ATTACHMENTS
+      </div>
+      <SelectedAttachmentsPanel
+        workspaceId={workspaceId}
+        emailId={readingMessage.id}
+        threadOtherIds={otherAttachmentIds}
+        compact
+      />
+    </div>
+  ) : null
+
+  const sidebar = (
+    <aside style={{
+      width: useTwoColumn ? '26%' : '100%',
+      minWidth: useTwoColumn ? 240 : undefined,
+      maxWidth: useTwoColumn ? 340 : undefined,
+      flexShrink: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#fff',
+      border: '1px solid #e5e5e5',
+      borderRadius: 8,
+      overflow: 'hidden',
+      minHeight: 0,
+      maxHeight: useTwoColumn ? '100%' : undefined,
+    }}>
+      {showThreadNav && threadList}
+      {attachmentsBlock}
+    </aside>
+  )
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: isDesktop ? 'calc(100vh - 64px)' : undefined,
+      minHeight: 0,
+      maxHeight: isDesktop ? 'calc(100vh - 64px)' : undefined,
+    }}>
+      {/* Sticky thread header */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 20, marginBottom: 10, flexShrink: 0,
         padding: '8px 0 10px', background: '#f5f5f6',
         borderBottom: '1px solid #e8e8e8',
       }}>
@@ -973,7 +1180,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 160px', minWidth: 0 }}>
                 <h2 style={{
-                  fontSize: isPhone ? 16 : 18, margin: 0, lineHeight: 1.3, fontWeight: 600,
+                  fontSize: isPhone ? 16 : 17, margin: 0, lineHeight: 1.3, fontWeight: 600,
                   overflow: 'hidden', textOverflow: 'ellipsis',
                   display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
                 }}>
@@ -998,6 +1205,19 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
                 flexShrink: 0, justifyContent: 'flex-end',
               }}>
+                {isDesktop && showSidebarContent && (
+                  <button
+                    type="button"
+                    onClick={() => persistSidebarCollapsed(!sidebarCollapsed)}
+                    title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                    style={{
+                      fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #ddd',
+                      background: '#fff', cursor: 'pointer', color: '#555', minHeight: 32,
+                    }}
+                  >
+                    {sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                  </button>
+                )}
                 {clickedMessage?.mailboxCategory === 'BUSINESS' && lastMessage.classification?.priority && (
                   <PriorityBadge priority={lastMessage.classification.priority} />
                 )}
@@ -1088,18 +1308,47 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
               </div>
             </div>
 
-            <StoredAttachmentsSection
-              workspaceId={workspaceId}
-              emailIds={messages.filter(m => m.hasAttachments).map(m => m.id)}
-              compact
-            />
+            {!isDesktop && showSidebarContent && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                {showThreadNav && (
+                  <button
+                    type="button"
+                    onClick={() => setMobilePanel(p => p === 'thread' ? 'none' : 'thread')}
+                    style={{
+                      fontSize: 12, padding: '5px 10px', borderRadius: 6,
+                      border: mobilePanel === 'thread' ? '1px solid #1565c0' : '1px solid #ddd',
+                      background: mobilePanel === 'thread' ? '#e3f2fd' : '#fff',
+                      color: mobilePanel === 'thread' ? '#1565c0' : '#444',
+                      fontWeight: 600, cursor: 'pointer', minHeight: 36,
+                    }}
+                  >
+                    Thread ({messages.length})
+                  </button>
+                )}
+                {anyAttachments && (
+                  <button
+                    type="button"
+                    onClick={() => setMobilePanel(p => p === 'attachments' ? 'none' : 'attachments')}
+                    style={{
+                      fontSize: 12, padding: '5px 10px', borderRadius: 6,
+                      border: mobilePanel === 'attachments' ? '1px solid #1565c0' : '1px solid #ddd',
+                      background: mobilePanel === 'attachments' ? '#e3f2fd' : '#fff',
+                      color: mobilePanel === 'attachments' ? '#1565c0' : '#444',
+                      fontWeight: 600, cursor: 'pointer', minHeight: 36,
+                    }}
+                  >
+                    Attachments{attachmentMsgIds.length ? ` (${attachmentMsgIds.length})` : ''}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {sendResult && (
         <div style={{
-          padding: '8px 12px', marginBottom: 10, borderRadius: 4, fontSize: 13,
+          padding: '8px 12px', marginBottom: 10, borderRadius: 4, fontSize: 13, flexShrink: 0,
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           background: sendResult.type === 'success' ? '#e6f4ea' : '#fce4ec',
           border: `1px solid ${sendResult.type === 'success' ? '#a8d5a2' : '#e8a09a'}`
@@ -1109,40 +1358,77 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         </div>
       )}
 
-      {/* Thread messages */}
-      <div style={{ background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, overflow: 'hidden' }}>
-        {messages.map((msg, i) => (
-          <MessageCard
-            key={msg.id}
-            msg={msg}
-            expanded={expandedIds.has(msg.id)}
-            onToggle={() => toggleExpand(msg.id)}
+      {!isDesktop && mobilePanel === 'thread' && showThreadNav && (
+        <div style={{ marginBottom: 10, maxHeight: 280, overflow: 'hidden', flexShrink: 0 }}>
+          {sidebar}
+        </div>
+      )}
+      {!isDesktop && mobilePanel === 'attachments' && anyAttachments && (
+        <div style={{
+          marginBottom: 10, padding: 10, background: '#fff', border: '1px solid #e5e5e5',
+          borderRadius: 8, flexShrink: 0, maxHeight: 280, overflow: 'auto',
+        }}>
+          <SelectedAttachmentsPanel
+            workspaceId={workspaceId}
+            emailId={readingMessage.id}
+            threadOtherIds={otherAttachmentIds}
+            compact
+          />
+        </div>
+      )}
+
+      <div style={{
+        display: 'flex',
+        gap: 10,
+        flex: 1,
+        minHeight: 0,
+        alignItems: 'stretch',
+      }}>
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: isDesktop ? 0 : 320,
+          background: '#fff',
+          border: '1px solid #e5e5e5',
+          borderRadius: 8,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          <SelectedMessagePane
+            msg={readingMessage}
             workspaceId={workspaceId}
             connectionId={connectionId}
-            isLast={i === messages.length - 1}
             onReply={openReply}
             onForward={openForward}
+            bodyLoading={bodyLoadingId === readingMessage.id}
             isPhone={isPhone}
             onLoadBody={() => {
-              api.getMessageDetail(workspaceId, connectionId, msg.id).then(r => {
+              setBodyLoadingId(readingMessage.id)
+              api.getMessageDetail(workspaceId, connectionId, readingMessage.id).then(r => {
                 setThreadData(prev => {
                   if (!prev) return prev
-                  return {
+                  const next = {
                     ...prev,
                     messages: prev.messages.map(m =>
-                      m.id === msg.id ? { ...m, bodyText: r.data.message.bodyText, bodyHtml: r.data.message.bodyHtml, bodyTruncated: false } : m
-                    )
+                      m.id === readingMessage.id
+                        ? { ...m, bodyText: r.data.message.bodyText, bodyHtml: r.data.message.bodyHtml, bodyTruncated: false }
+                        : m
+                    ),
                   }
+                  setCachedThread(workspaceId, connectionId, messageId, next)
+                  return next
                 })
-              }).catch(() => {})
+              }).catch(() => {}).finally(() => setBodyLoadingId(null))
             }}
           />
-        ))}
+        </div>
+
+        {useTwoColumn && sidebar}
       </div>
 
-      {/* Compose panel */}
       {composeMode && (
-        <div className="card" style={{ marginTop: 12, borderLeft: '3px solid #5c7cfa' }}>
+        <div className="card" style={{ marginTop: 12, borderLeft: '3px solid #5c7cfa', flexShrink: 0 }}>
           <h3 style={{ fontSize: 15, margin: '0 0 12px', fontWeight: 600 }}>
             {composeMode === 'reply' ? 'Reply' : 'Forward'}
           </h3>
