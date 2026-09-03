@@ -217,7 +217,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [jobFilter, setJobFilter] = useState('')
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
-  const [searchIn, setSearchIn] = useState<'all' | 'sender'>('all')
+  const [searchIn, setSearchIn] = useState<'all' | 'sender' | 'id'>('all')
   const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
   const browserTimeZone =
     typeof Intl !== 'undefined'
@@ -337,7 +337,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     return msgs
   }, [inboxTab, canSeeAllPersonal, isOwnInbox])
 
-  const filteredMessages = applyRoleFilter(applyClientFilter(messages))
+  const filteredMessages =
+    searchIn === 'id' && activeSearch.trim()
+      ? messages
+      : applyRoleFilter(applyClientFilter(messages))
 
   const buildFilters = useCallback(() => {
     return buildInboxMessageListFilters({
@@ -1256,7 +1259,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 5, overflow: 'hidden', background: '#fff' }}>
             <select
               value={searchIn}
-              onChange={e => setSearchIn(e.target.value as 'all' | 'sender')}
+              onChange={e => setSearchIn(e.target.value as 'all' | 'sender' | 'id')}
               aria-label="Search in"
               style={{
                 padding: '5px 6px 5px 8px', fontSize: 12, border: 'none', borderRight: '1px solid #eee',
@@ -1265,15 +1268,22 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             >
               <option value="all">All</option>
               <option value="sender">Sender</option>
+              <option value="id">Email ID</option>
             </select>
             <input
               type="text"
-              placeholder={searchIn === 'sender' ? 'Filter by sender name or email…' : 'Search emails…'}
+              placeholder={
+                searchIn === 'sender'
+                  ? 'Filter by sender name or email…'
+                  : searchIn === 'id'
+                    ? 'Paste EmailMessage id or provider message id…'
+                    : 'Search emails…'
+              }
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{
                 padding: '5px 10px', border: 'none', fontSize: 13, outline: 'none',
-                width: isPhone ? 140 : 200, background: 'transparent',
+                width: isPhone ? 140 : searchIn === 'id' ? 260 : 200, background: 'transparent',
               }}
             />
           </div>
@@ -1450,7 +1460,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <p>{activeSearch
               ? (searchIn === 'sender'
                 ? `No senders match "${activeSearch}"`
-                : `No messages match "${activeSearch}"`)
+                : searchIn === 'id'
+                  ? `No email found for id "${activeSearch}"`
+                  : `No messages match "${activeSearch}"`)
               : inboxTab === 'UNCLASSIFIED'
                 ? 'Emails waiting for classification (or where classify failed) will appear here.'
                 : 'Emails will appear here after syncing and classification.'}</p>

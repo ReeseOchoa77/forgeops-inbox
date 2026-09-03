@@ -29,3 +29,5 @@ export * from "./job-file-types.js";
 export * from "./date-bounds.js";
 export * from "./project-folders/match-folder-to-job.js";
 export * from "./project-folders/verified-folder-job-assignment.js";
+export * from "./mailbox-reclassify-filters.js";
+export * from "./classifier-generated-tasks.js";

@@ -5,6 +5,7 @@ import type { NativeClassificationPipelineResult } from "@forgeops/native-classi
 import {
   applyConfirmedJobAssociationOverride,
   buildJobCandidateMarker,
+  classifierGeneratedTasksForMessageWhere,
   extractPrismaClientDiagnostic,
   formatClassificationFailureMessage,
   mapN8nPriorityToStored,
@@ -12,6 +13,7 @@ import {
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
   resolveTaskSourceDate,
+  type ReclassifyTaskMode,
   type StoredPriority,
 } from "@forgeops/shared";
 
@@ -61,10 +63,15 @@ export async function persistNativeClassificationResult(input: {
   inboxConnectionId: string;
   emailMessageId: string;
   pipeline: NativeClassificationPipelineResult;
+  /**
+   * Reclassification console only. Undefined = production semantics unchanged.
+   */
+  taskMode?: ReclassifyTaskMode;
 }): Promise<{
   classificationId: string;
   tasksWritten: number;
   tasksFailed: number;
+  tasksRemoved: number;
   mailboxCategory: "BUSINESS" | "PERSONAL";
   priority: StoredPriority;
 }> {
@@ -473,7 +480,37 @@ export async function persistNativeClassificationResult(input: {
   // ── OPTIONAL ENRICHMENT: per-task isolation (must not flip CLASSIFIED) ─────
   let tasksWritten = 0;
   let tasksFailed = 0;
+  let tasksRemoved = 0;
   const incomingKeys = new Set<string>();
+  const classifierWhere = classifierGeneratedTasksForMessageWhere({
+    workspaceId: input.workspaceId,
+    sourceMessageId: message.id,
+  });
+
+  // Reclassify REMOVE_ONLY: after successful core classify, drop classifier tasks
+  // and skip extraction/persist. Manual / non-native keys untouched.
+  if (input.taskMode === "REMOVE_ONLY") {
+    try {
+      const removed = await input.prisma.task.deleteMany({ where: classifierWhere });
+      tasksRemoved = removed.count;
+    } catch (error) {
+      console.error({
+        event: "native-task-reclassify-remove-failed",
+        workspaceId: input.workspaceId,
+        emailMessageId: message.id,
+        classificationId: core.classificationId,
+        ...extractPrismaClientDiagnostic(error),
+      });
+    }
+    return {
+      classificationId: core.classificationId,
+      tasksWritten: 0,
+      tasksFailed: 0,
+      tasksRemoved,
+      mailboxCategory: core.mailboxCategory,
+      priority: core.priority,
+    };
+  }
 
   if (mailboxCategory === "BUSINESS" && tasks.length > 0) {
     const sourceDate = resolveTaskSourceDate(message);
@@ -571,14 +608,7 @@ export async function persistNativeClassificationResult(input: {
     // Remove prior native/heuristic tasks no longer produced (successful keys only).
     try {
       const stale = await input.prisma.task.findMany({
-        where: {
-          workspaceId: input.workspaceId,
-          sourceMessageId: message.id,
-          OR: [
-            { sourceTaskKey: { startsWith: "native:" } },
-            { sourceTaskKey: "heuristic-primary" },
-          ],
-        },
+        where: classifierWhere,
         select: { id: true, sourceTaskKey: true },
       });
       const staleIds = stale
@@ -587,7 +617,10 @@ export async function persistNativeClassificationResult(input: {
         )
         .map((t) => t.id);
       if (staleIds.length > 0) {
-        await input.prisma.task.deleteMany({ where: { id: { in: staleIds } } });
+        const removed = await input.prisma.task.deleteMany({
+          where: { id: { in: staleIds } },
+        });
+        tasksRemoved = removed.count;
       }
     } catch (error) {
       console.error({
@@ -598,19 +631,17 @@ export async function persistNativeClassificationResult(input: {
         ...extractPrismaClientDiagnostic(error),
       });
     }
-  } else if (mailboxCategory !== "BUSINESS") {
-    // PERSONAL: drop prior native/heuristic tasks if any remain.
+  } else if (
+    mailboxCategory !== "BUSINESS" ||
+    input.taskMode === "REGENERATE"
+  ) {
+    // PERSONAL (always): drop prior native/heuristic tasks if any remain.
+    // REGENERATE + empty task set: full replacement → remove all classifier tasks.
     try {
-      await input.prisma.task.deleteMany({
-        where: {
-          workspaceId: input.workspaceId,
-          sourceMessageId: message.id,
-          OR: [
-            { sourceTaskKey: { startsWith: "native:" } },
-            { sourceTaskKey: "heuristic-primary" },
-          ],
-        },
+      const removed = await input.prisma.task.deleteMany({
+        where: classifierWhere,
       });
+      tasksRemoved = removed.count;
     } catch (error) {
       console.error({
         event: "native-task-stale-cleanup-failed",
@@ -626,6 +657,7 @@ export async function persistNativeClassificationResult(input: {
     classificationId: core.classificationId,
     tasksWritten,
     tasksFailed,
+    tasksRemoved,
     mailboxCategory: core.mailboxCategory,
     priority: core.priority,
   };

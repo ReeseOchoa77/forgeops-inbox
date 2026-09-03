@@ -42,6 +42,10 @@ declare module "fastify" {
         import("@forgeops/shared").ProjectFolderEmailAnalyzeJobPayload,
         import("@forgeops/shared").ProjectFolderEmailAnalyzeJobResult
       >;
+      mailboxReclassifyQueue: Queue<
+        import("@forgeops/shared").MailboxReclassifyJobPayload,
+        import("@forgeops/shared").MailboxReclassifyJobResult
+      >;
       googleOAuthService: GoogleOAuthService;
       providerRegistry: ProviderRegistry;
       sessionStore: RedisSessionStore;

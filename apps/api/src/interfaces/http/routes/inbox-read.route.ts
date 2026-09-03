@@ -143,8 +143,8 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   /** When true, also run COUNT(*) and return totalCount/totalPages (not on default Inbox path). */
   includeTotal: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional(),
-  /** Restrict free-text search to sender name/email when "sender". Default: all fields. */
-  searchIn: z.enum(["all", "sender"]).optional().default("all")
+  /** Restrict free-text search: all fields, sender only, or exact EmailMessage / provider id. */
+  searchIn: z.enum(["all", "sender", "id"]).optional().default("all")
 });
 
 const jobSummarySchema = z.object({
@@ -874,7 +874,7 @@ export const buildMessagesWhere = (input: {
   receivedBefore?: Date;
   mailboxEmails?: string[];
   search?: string;
-  searchIn?: "all" | "sender";
+  searchIn?: "all" | "sender" | "id";
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
 }): Prisma.EmailMessageWhereInput => {
@@ -884,6 +884,16 @@ export const buildMessagesWhere = (input: {
       inboxConnectionId: input.inboxConnectionId
     }
   ];
+
+  // Exact EmailMessage / provider id lookup — bypass tab filters so the email is findable.
+  if (input.search && input.searchIn === "id") {
+    const term = input.search.trim();
+    andConditions.push({
+      OR: [{ id: term }, { gmailMessageId: term }],
+    });
+    andConditions.push({ isArchived: false });
+    return { AND: andConditions };
+  }
 
   if (input.category === "important") {
     andConditions.push({ isImportant: true });

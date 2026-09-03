@@ -17,6 +17,7 @@ import {
   importProgressPercent,
   isImportInProgress,
 } from '../mailbox-import-progress'
+import { ReclassifyEmailsModal } from './ReclassifyEmailsModal'
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -96,6 +97,7 @@ export function MonitoredMailboxesPanel({
   >({})
   const [importError, setImportError] = useState<string | null>(null)
   const [requeueBusyId, setRequeueBusyId] = useState<string | null>(null)
+  const [reclassifyFor, setReclassifyFor] = useState<ConnectionSummary | null>(null)
 
   // Resume any in-flight imports when the panel loads / mailbox set changes.
   // Depend on connection ids (not the connections array identity) so settings
@@ -402,6 +404,17 @@ export function MonitoredMailboxesPanel({
                           {requeueBusyId === c.id
                             ? 'Queuing…'
                             : 'Classify Unclassified Emails'}
+                        </button>
+                      )}
+                      {c.ingestionSource === 'NATIVE' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: 10, padding: '2px 8px' }}
+                          title="Filter and reclassify already-ingested emails via the canonical classifier"
+                          onClick={() => setReclassifyFor(c)}
+                        >
+                          Reclassify Emails
                         </button>
                       )}
                       {c.nativeListeningEnabled ? (
@@ -866,6 +879,14 @@ export function MonitoredMailboxesPanel({
             </>
           </div>
         </div>
+      )}
+
+      {reclassifyFor && (
+        <ReclassifyEmailsModal
+          workspaceId={workspaceId}
+          connection={reclassifyFor}
+          onClose={() => setReclassifyFor(null)}
+        />
       )}
     </>
   )

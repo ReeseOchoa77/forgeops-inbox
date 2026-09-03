@@ -131,28 +131,37 @@ export async function classifyEmailMessageNative(
     });
 
     if (shouldSkipNativeClassificationOverwrite(existingClassification)) {
+      if (!payload.forceReclassify) {
+        console.info({
+          event: "native-classification-completed",
+          ...baseLog,
+          status: "skipped",
+          skipReason: "n8n_or_manual_owned",
+          durationMs: Date.now() - started,
+          ...buildClassificationWriteLog({
+            workspaceId: payload.workspaceId,
+            inboxConnectionId: payload.inboxConnectionId,
+            emailMessageId: payload.emailMessageId,
+            source: "NATIVE_ANALYSIS",
+            previousCategory: existingClassification?.mailboxCategory ?? null,
+            newCategory: existingClassification?.mailboxCategory ?? null,
+            modelName: existingClassification?.modelName ?? null,
+          }),
+        });
+        return {
+          ...payload,
+          status: "skipped",
+          skipReason: "n8n_or_manual_owned",
+          durationMs: Date.now() - started,
+        };
+      }
+      // forceReclassify: overwrite native classifications (protected Job still preserved at persist).
       console.info({
-        event: "native-classification-completed",
+        event: "native-classification-force-overwrite",
         ...baseLog,
-        status: "skipped",
-        skipReason: "n8n_or_manual_owned",
-        durationMs: Date.now() - started,
-        ...buildClassificationWriteLog({
-          workspaceId: payload.workspaceId,
-          inboxConnectionId: payload.inboxConnectionId,
-          emailMessageId: payload.emailMessageId,
-          source: "NATIVE_ANALYSIS",
-          previousCategory: existingClassification?.mailboxCategory ?? null,
-          newCategory: existingClassification?.mailboxCategory ?? null,
-          modelName: existingClassification?.modelName ?? null,
-        }),
+        previousModelName: existingClassification?.modelName ?? null,
+        previousReviewStatus: existingClassification?.reviewStatus ?? null,
       });
-      return {
-        ...payload,
-        status: "skipped",
-        skipReason: "n8n_or_manual_owned",
-        durationMs: Date.now() - started,
-      };
     }
 
     const message = await deps.prisma.emailMessage.findFirst({
@@ -228,6 +237,9 @@ export async function classifyEmailMessageNative(
         senderEmail: message.senderEmail,
         senderDomain,
         attachmentNames: attachmentNamesFromMetadata(message.attachmentMetadata),
+        ...(payload.taskMode === "REMOVE_ONLY"
+          ? { skipTaskExtraction: true }
+          : {}),
         ...(confirmedJobAssociation
           ? {
               confirmedJobAssociation,
@@ -265,6 +277,7 @@ export async function classifyEmailMessageNative(
       inboxConnectionId: payload.inboxConnectionId,
       emailMessageId: payload.emailMessageId,
       pipeline,
+      ...(payload.taskMode ? { taskMode: payload.taskMode } : {}),
     });
 
     const durationMs = Date.now() - started;
@@ -273,6 +286,10 @@ export async function classifyEmailMessageNative(
       ...baseLog,
       status: "completed",
       mailboxCategory: persisted.mailboxCategory,
+      taskMode: payload.taskMode ?? null,
+      tasksWritten: persisted.tasksWritten,
+      tasksRemoved: persisted.tasksRemoved,
+      tasksFailed: persisted.tasksFailed,
       durationMs,
     });
 
@@ -283,6 +300,9 @@ export async function classifyEmailMessageNative(
       modelVersion: NATIVE_PIPELINE_MODEL_VERSION,
       mailboxCategory: persisted.mailboxCategory,
       durationMs,
+      tasksRemoved: persisted.tasksRemoved,
+      tasksGenerated: persisted.tasksWritten,
+      taskPersistFailures: persisted.tasksFailed,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";

@@ -42,6 +42,20 @@ export interface MailboxClassifyJobPayload {
   inboxConnectionId: string;
   emailMessageId: string;
   initiatedBy?: string;
+  /**
+   * Admin/testing: allow overwrite of an existing native Classification
+   * (still respects NATIVE ingestion gate).
+   */
+  forceReclassify?: boolean;
+  /** When set, classify worker updates MailboxReclassifyRun counters. */
+  reclassifyRunId?: string;
+  /**
+   * Only for reclassification console jobs.
+   * REMOVE_ONLY: skip task extraction; delete classifier tasks after successful core classify.
+   * REGENERATE: run task extraction; replace classifier tasks (stale cleanup).
+   * Undefined = normal production behavior (unchanged).
+   */
+  taskMode?: "REMOVE_ONLY" | "REGENERATE";
 }
 
 export interface MailboxClassifyJobResult {
@@ -54,6 +68,27 @@ export interface MailboxClassifyJobResult {
   modelVersion?: string;
   mailboxCategory?: string | null;
   durationMs?: number;
+  errorMessage?: string;
+  tasksRemoved?: number;
+  tasksGenerated?: number;
+  taskPersistFailures?: number;
+}
+
+/** Orchestrator job: page matching emails and enqueue mailbox-classify with force. */
+export interface MailboxReclassifyJobPayload {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  initiatedBy?: string;
+}
+
+export interface MailboxReclassifyJobResult {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  status: "completed" | "cancelled" | "failed";
+  queued: number;
+  skipped: number;
   errorMessage?: string;
 }
 

@@ -6,6 +6,7 @@ export const QueueNames = {
   MAILBOX_HISTORICAL_IMPORT: "mailbox-historical-import",
   MAILBOX_CLASSIFY: "mailbox-classify",
   PROJECT_FOLDER_EMAIL_ANALYZE: "project-folder-email-analyze",
+  MAILBOX_RECLASSIFY: "mailbox-reclassify",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -26,5 +27,10 @@ export function buildMailboxClassifyJobId(emailMessageId: string): string {
 /** Deterministic job id for a project-folder email analyze run. */
 export function buildProjectFolderEmailAnalyzeJobId(runId: string): string {
   return `project-folder-email-analyze-${runId}`;
+}
+
+/** Deterministic job id for a mailbox reclassification orchestrator run. */
+export function buildMailboxReclassifyJobId(runId: string): string {
+  return `mailbox-reclassify-${runId}`;
 }
 

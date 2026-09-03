@@ -231,6 +231,7 @@ model Workspace {
   discoveredFolders    DiscoveredFolder[]
   jobFolderRoots       JobFolderRoot[]
   projectFolderEmailAnalyzeRuns ProjectFolderEmailAnalyzeRun[]
+  mailboxReclassifyRuns MailboxReclassifyRun[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
@@ -1274,6 +1275,53 @@ model ProjectFolderEmailAnalyzeRun {
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @updatedAt
   workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, inboxConnectionId, status])
+}
+
+enum MailboxReclassifyRunStatus {
+  PENDING
+  RUNNING
+  CANCELLING
+  CANCELLED
+  COMPLETED
+  FAILED
+}
+
+enum MailboxReclassifyTaskMode {
+  REMOVE_ONLY
+  REGENERATE
+}
+
+/// Controlled admin reclassification run (canonical mailbox-classify only).
+model MailboxReclassifyRun {
+  id                  String                     @id @default(cuid())
+  workspaceId         String
+  inboxConnectionId   String
+  status              MailboxReclassifyRunStatus  @default(PENDING)
+  /// Snapshot of filter / selection inputs (JSON object; no bodies).
+  filtersSnapshot     Json
+  /// null = all matching filters; string[] = explicit message ids.
+  selectedMessageIds  Json?
+  /// REMOVE_ONLY (default): delete classifier tasks after success, skip extraction.
+  /// REGENERATE: extract + replace classifier tasks after success.
+  taskMode            MailboxReclassifyTaskMode   @default(REMOVE_ONLY)
+  totalMatched        Int                        @default(0)
+  queued              Int                        @default(0)
+  completed           Int                        @default(0)
+  failed              Int                        @default(0)
+  skipped             Int                        @default(0)
+  tasksRemoved        Int                        @default(0)
+  tasksGenerated      Int                        @default(0)
+  taskPersistFailures Int                        @default(0)
+  errorMessage        String?
+  initiatedByUserId   String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  workspace           Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, inboxConnectionId, status])

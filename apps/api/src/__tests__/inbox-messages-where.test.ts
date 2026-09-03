@@ -251,6 +251,30 @@ describe("buildMessagesWhere — Unclassified tab", () => {
   });
 });
 
+describe("buildMessagesWhere — Email ID lookup", () => {
+  it("matches EmailMessage id or provider gmailMessageId and skips tab filters", () => {
+    const where = baseWhere({
+      search: "clxyz123abc",
+      searchIn: "id",
+      businessCategory: "BUSINESS",
+      sentOnly: true,
+      unreadOnly: true,
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          OR: [{ id: "clxyz123abc" }, { gmailMessageId: "clxyz123abc" }],
+        }),
+        { isArchived: false },
+      ])
+    );
+    expect(and.some((c) => c && "mailboxCategory" in c)).toBe(false);
+    expect(and.some((c) => c && "isTrashed" in c)).toBe(false);
+    expect(and.some((c) => c && "senderEmail" in c)).toBe(false);
+  });
+});
+
 describe("buildMessagesWhere — Inbox dateRange", () => {
   it("applies receivedAfter/before against receivedAt with sentAt fallback", () => {
     const after = new Date("2026-08-01T00:00:00.000Z");

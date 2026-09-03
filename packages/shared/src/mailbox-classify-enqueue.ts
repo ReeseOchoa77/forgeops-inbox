@@ -35,6 +35,9 @@ export async function ensureMailboxClassifyJob(input: {
   inboxConnectionId: string;
   emailMessageId: string;
   initiatedBy?: string;
+  forceReclassify?: boolean;
+  reclassifyRunId?: string;
+  taskMode?: "REMOVE_ONLY" | "REGENERATE";
 }): Promise<"enqueued" | "skipped_inflight"> {
   const jobId = buildMailboxClassifyJobId(input.emailMessageId);
   const existing = await input.queue.getJob(jobId);
@@ -62,6 +65,9 @@ export async function ensureMailboxClassifyJob(input: {
     inboxConnectionId: input.inboxConnectionId,
     emailMessageId: input.emailMessageId,
     ...(input.initiatedBy ? { initiatedBy: input.initiatedBy } : {}),
+    ...(input.forceReclassify ? { forceReclassify: true } : {}),
+    ...(input.reclassifyRunId ? { reclassifyRunId: input.reclassifyRunId } : {}),
+    ...(input.taskMode ? { taskMode: input.taskMode } : {}),
   };
 
   try {

@@ -23,6 +23,8 @@ import {
   type MailboxHistoricalImportJobResult,
   type ProjectFolderEmailAnalyzeJobPayload,
   type ProjectFolderEmailAnalyzeJobResult,
+  type MailboxReclassifyJobPayload,
+  type MailboxReclassifyJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -65,6 +67,7 @@ import { registerReferenceDataRoutes } from "./routes/reference-data.route.js";
 import { registerDocumentImportRoutes } from "./routes/document-import.route.js";
 import { registerClassificationEngineRoutes } from "./routes/classification-engine.route.js";
 import { registerRetryClassificationRoutes } from "./routes/retry-classification.route.js";
+import { registerMailboxReclassifyRoutes } from "./routes/mailbox-reclassify.route.js";
 import { registerFolderDiscoveryRoutes } from "./routes/folder-discovery.route.js";
 import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js";
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
@@ -151,6 +154,12 @@ export const buildServer = async () => {
     ProjectFolderEmailAnalyzeJobPayload,
     ProjectFolderEmailAnalyzeJobResult
   >(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const mailboxReclassifyQueue = new Queue<
+    MailboxReclassifyJobPayload,
+    MailboxReclassifyJobResult
+  >(QueueNames.MAILBOX_RECLASSIFY, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -319,6 +328,7 @@ export const buildServer = async () => {
       mailboxHistoricalImportQueue,
       mailboxClassifyQueue,
       projectFolderEmailAnalyzeQueue,
+      mailboxReclassifyQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -382,6 +392,7 @@ export const buildServer = async () => {
   await registerDocumentLibraryRoutes(app);
   await registerClassificationEngineRoutes(app);
   await registerRetryClassificationRoutes(app);
+  await registerMailboxReclassifyRoutes(app);
   await registerFolderDiscoveryRoutes(app);
   await registerSenderEvidenceRoutes(app);
   await registerEmailAttachmentRoutes(app);
@@ -449,6 +460,7 @@ export const buildServer = async () => {
     await mailboxHistoricalImportQueue.close();
     await mailboxClassifyQueue.close();
     await projectFolderEmailAnalyzeQueue.close();
+    await mailboxReclassifyQueue.close();
     await attachmentIngestQueue.close();
     await redis.quit();
     await prisma.$disconnect();

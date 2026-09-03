@@ -683,6 +683,131 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body ?? {}) }
     ),
 
+  reclassifyMeta: (workspaceId: string, connectionId: string) =>
+    request<{
+      mailbox: {
+        id: string
+        email: string
+        provider: string
+        ingestionSource: string
+        status: string
+      }
+      businessSubtypeKeys: string[]
+      priorityValues: string[]
+    }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/meta`),
+
+  reclassifySearchSenders: (
+    workspaceId: string,
+    connectionId: string,
+    q: string
+  ) =>
+    request<{ senders: Array<{ senderEmail: string; count: number }> }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/senders?q=${encodeURIComponent(q)}`
+    ),
+
+  reclassifyPreview: (
+    workspaceId: string,
+    connectionId: string,
+    body: {
+      filters: Record<string, unknown>
+      messageIds?: string[]
+      taskMode?: 'REMOVE_ONLY' | 'REGENERATE'
+    }
+  ) =>
+    request<{
+      totalMatched: number
+      classifierTasksToRemove: number
+      taskMode: 'REMOVE_ONLY' | 'REGENERATE'
+      breakdown: {
+        byProcessingStatus: Record<string, number>
+        byMailboxCategory: Record<string, number>
+        read: number
+        unread: number
+      }
+      sample: Array<{
+        id: string
+        subject: string | null
+        senderEmail: string
+        receivedAt: string | null
+        sentAt: string
+        mailboxCategory: string
+        classificationStatus: string | null
+        priority: string | null
+        jobId: string | null
+        businessTypeKey: string | null
+        isRead: boolean
+      }>
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/preview`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  reclassifyStart: (
+    workspaceId: string,
+    connectionId: string,
+    body: {
+      filters: Record<string, unknown>
+      messageIds?: string[]
+      taskMode?: 'REMOVE_ONLY' | 'REGENERATE'
+      confirm: true
+    }
+  ) =>
+    request<{
+      run: {
+        id: string
+        status: string
+        taskMode: string
+        totalMatched: number
+        queued: number
+        completed: number
+        failed: number
+        skipped: number
+        tasksRemoved: number
+        tasksGenerated: number
+        taskPersistFailures: number
+      }
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/runs`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  reclassifyGetRun: (
+    workspaceId: string,
+    connectionId: string,
+    runId: string
+  ) =>
+    request<{
+      run: {
+        id: string
+        status: string
+        taskMode: string
+        totalMatched: number
+        queued: number
+        completed: number
+        failed: number
+        skipped: number
+        tasksRemoved: number
+        tasksGenerated: number
+        taskPersistFailures: number
+        errorMessage: string | null
+        startedAt: string | null
+        completedAt: string | null
+        createdAt: string
+      }
+    }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/runs/${runId}`
+    ),
+
+  reclassifyCancel: (
+    workspaceId: string,
+    connectionId: string,
+    runId: string
+  ) =>
+    request<{ run: { id: string; status: string } }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/reclassify/runs/${runId}/cancel`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
   retryClassification: (workspaceId: string, messageId: string) =>
     request<{
       messageId: string
@@ -725,7 +850,7 @@ export const api = {
 
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
     search?: string;
-    searchIn?: 'all' | 'sender';
+    searchIn?: 'all' | 'sender' | 'id';
     businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
     classificationType?: string;
     hasTaskCandidate?: boolean;

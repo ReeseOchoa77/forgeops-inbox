@@ -45,6 +45,11 @@ export interface NativeClassificationPipelineInput {
    * e.g. existing_message_job | verified_project_folder | job_matcher
    */
   confirmedJobAssociationSource?: string | null | undefined;
+  /**
+   * When true, skip OpenAI task extraction (tasks = []).
+   * Used by reclassification REMOVE_ONLY mode. Production callers omit this.
+   */
+  skipTaskExtraction?: boolean | undefined;
 }
 
 export type NativePriorityDecision = PriorityDecisionPayload & {
@@ -197,7 +202,10 @@ export async function runNativeClassificationPipeline(
       candidateLookupFailed,
     });
 
-    if (!semanticSignals.containsActionRequest) {
+    if (input.skipTaskExtraction === true) {
+      skippedStages.push("taskExtraction");
+      tasks = [];
+    } else if (!semanticSignals.containsActionRequest) {
       skippedStages.push("taskExtractionModelCall");
       tasks = [];
     } else {

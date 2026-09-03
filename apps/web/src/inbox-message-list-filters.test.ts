@@ -125,6 +125,21 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     ).toEqual({ sentOnly: true });
   });
 
+  it("Email ID search ignores tab filters and uses searchIn=id", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "unread",
+        jobFilter: "job1",
+        activeSearch: "clmsg123",
+        searchIn: "id",
+      })
+    ).toEqual({
+      search: "clmsg123",
+      searchIn: "id",
+    });
+  });
+
   it("dateRange + timezone compose with Business and Unclassified", () => {
     expect(
       buildInboxMessageListFilters({

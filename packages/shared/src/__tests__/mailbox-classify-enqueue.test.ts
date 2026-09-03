@@ -53,16 +53,27 @@ describe("ensureMailboxClassifyJob", () => {
     expect(add).toHaveBeenCalled();
   });
 
-  it("treats already-exists add error as skipped_inflight", async () => {
-    const add = vi.fn().mockRejectedValue(new Error("Job mailbox-classify-m1 already exists"));
+  it("passes forceReclassify, reclassifyRunId, and taskMode on payload", async () => {
+    const add = vi.fn().mockResolvedValue({});
     const getJob = vi.fn().mockResolvedValue(null);
-    const outcome = await ensureMailboxClassifyJob({
+    await ensureMailboxClassifyJob({
       queue: { add, getJob },
       workspaceId: "ws",
       inboxConnectionId: "c1",
       emailMessageId: "m1",
+      forceReclassify: true,
+      reclassifyRunId: "run1",
+      taskMode: "REMOVE_ONLY",
     });
-    expect(outcome).toBe("skipped_inflight");
+    expect(add).toHaveBeenCalledWith(
+      QueueNames.MAILBOX_CLASSIFY,
+      expect.objectContaining({
+        forceReclassify: true,
+        reclassifyRunId: "run1",
+        taskMode: "REMOVE_ONLY",
+      }),
+      expect.anything()
+    );
   });
 });
 

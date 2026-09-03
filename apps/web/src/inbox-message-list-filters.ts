@@ -32,7 +32,7 @@ export type InboxMessageListFilters = {
   dateRange?: "TODAY" | "WEEK" | "MONTH";
   timezone?: string;
   search?: string;
-  searchIn?: "all" | "sender";
+  searchIn?: "all" | "sender" | "id";
 };
 
 export function buildInboxMessageListFilters(input: {
@@ -42,9 +42,17 @@ export function buildInboxMessageListFilters(input: {
   timezone?: string;
   jobFilter?: string;
   activeSearch?: string;
-  searchIn?: "all" | "sender";
+  searchIn?: "all" | "sender" | "id";
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
+
+  // ID lookup: exact message/provider id — ignore tab/direction filters so the email is found.
+  if (input.searchIn === "id" && input.activeSearch?.trim()) {
+    return {
+      search: input.activeSearch.trim(),
+      searchIn: "id",
+    };
+  }
 
   // Global Sent: direction only — never combine with Business/Personal category.
   if (input.readFilter === "sent") {

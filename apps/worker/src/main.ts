@@ -19,6 +19,7 @@ import { startInboxAnalysisWorker } from "./jobs/inbox-analysis.worker.js";
 import { startInboxSyncWorker } from "./jobs/inbox-sync.worker.js";
 import { startMailboxClassifyWorker } from "./jobs/mailbox-classify.worker.js";
 import { startMailboxHistoricalImportWorker } from "./jobs/mailbox-historical-import.worker.js";
+import { startMailboxReclassifyWorker } from "./jobs/mailbox-reclassify.worker.js";
 import { startProjectFolderEmailAnalyzeWorker } from "./jobs/project-folder-email-analyze.worker.js";
 import { createBullMqConnection } from "./infrastructure/redis/connection.js";
 
@@ -29,6 +30,7 @@ const attachmentIngest = startAttachmentIngestWorker(env);
 const historicalImport = startMailboxHistoricalImportWorker(env);
 const projectFolderEmailAnalyze = startProjectFolderEmailAnalyzeWorker(env);
 const mailboxClassify = startMailboxClassifyWorker(env);
+const mailboxReclassify = startMailboxReclassifyWorker(env);
 
 /** Producer queue for safety-net re-enqueue (worker only consumes). */
 const mailboxClassifyQueue = new Queue<
@@ -247,6 +249,7 @@ const shutdown = async (signal: string): Promise<void> => {
     historicalImport.worker.close(),
     projectFolderEmailAnalyze.worker.close(),
     mailboxClassify.worker.close(),
+    mailboxReclassify.worker.close(),
     inboxSync.syncQueue.close(),
     historicalImport.queue.close(),
     projectFolderEmailAnalyze.queue.close(),
@@ -275,6 +278,7 @@ console.info("worker-started", {
     "mailbox-historical-import",
     "project-folder-email-analyze",
     "mailbox-classify",
+    "mailbox-reclassify",
   ],
 });
 
