@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type ConnectionSummary } from '../api'
 
 type Filters = {
@@ -95,12 +95,30 @@ export function ReclassifyEmailsModal({ workspaceId, connection, onClose }: Prop
     []
   )
 
-  useEffect(() => {
+  const [metaLoaded, setMetaLoaded] = useState(false)
+  const [metaRetry, setMetaRetry] = useState(0)
+
+  const loadMeta = useCallback(() => {
+    setError(null)
     void api
       .reclassifyMeta(workspaceId, connection.id)
-      .then((r) => setSubtypeKeys(r.businessSubtypeKeys))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load meta'))
+      .then((r) => {
+        setSubtypeKeys(r.businessSubtypeKeys)
+        setMetaLoaded(true)
+      })
+      .catch((e) => {
+        setMetaLoaded(false)
+        setError(
+          e instanceof Error
+            ? e.message
+            : 'Could not load reclassification options.'
+        )
+      })
   }, [workspaceId, connection.id])
+
+  useEffect(() => {
+    loadMeta()
+  }, [loadMeta, metaRetry])
 
   useEffect(() => {
     if (filters.jobScope !== 'SPECIFIC' || jobQuery.trim().length < 2) {
@@ -299,7 +317,17 @@ export function ReclassifyEmailsModal({ workspaceId, connection, onClose }: Prop
 
         {error && (
           <div style={{ background: '#ffebee', color: '#c62828', padding: '8px 10px', borderRadius: 6, marginBottom: 10, fontSize: 13 }}>
-            {error}
+            <div style={{ marginBottom: 6 }}>
+              {!metaLoaded
+                ? 'Could not load reclassification options.'
+                : null}{' '}
+              {error}
+            </div>
+            {!metaLoaded && (
+              <button type="button" onClick={() => setMetaRetry((n) => n + 1)}>
+                Retry
+              </button>
+            )}
           </div>
         )}
 

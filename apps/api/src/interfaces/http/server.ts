@@ -392,7 +392,18 @@ export const buildServer = async () => {
   await registerDocumentLibraryRoutes(app);
   await registerClassificationEngineRoutes(app);
   await registerRetryClassificationRoutes(app);
-  await registerMailboxReclassifyRoutes(app);
+  registerMailboxReclassifyRoutes(app);
+  app.log.info({
+    event: "mailbox_reclassify_routes_registered",
+    routes: [
+      "GET /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/meta",
+      "GET /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/senders",
+      "POST /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/preview",
+      "POST /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/runs",
+      "GET /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/runs/:runId",
+      "POST /api/v1/workspaces/:workspaceId/inbox-connections/:connectionId/reclassify/runs/:runId/cancel",
+    ],
+  });
   await registerFolderDiscoveryRoutes(app);
   await registerSenderEvidenceRoutes(app);
   await registerEmailAttachmentRoutes(app);

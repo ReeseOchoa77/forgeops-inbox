@@ -6,6 +6,11 @@ import { describe, expect, it } from 'vitest'
  */
 const RECLASSIFY_UI_CONTRACT = {
   entryLabel: 'Reclassify Emails',
+  obsoleteEntryLabels: [
+    'Classify Unclassified Emails',
+    'Reclassify Unclassified Emails',
+    'Requeue unclassified',
+  ] as const,
   previewBeforeEnqueue: true,
   confirmLabel: 'Confirm reclassify',
   requiresConfirmTrue: true,
@@ -15,6 +20,8 @@ const RECLASSIFY_UI_CONTRACT = {
   defaultTaskMode: 'REMOVE_ONLY',
   regenerateTaskMode: 'REGENERATE',
   taskSectionLabel: 'TASKS',
+  metaPath: '/reclassify/meta',
+  metaErrorCopy: 'Could not load reclassification options.',
 }
 
 describe('Reclassify Emails UI contract', () => {
@@ -39,5 +46,16 @@ describe('Reclassify Emails UI contract', () => {
     expect(RECLASSIFY_UI_CONTRACT.defaultTaskMode).toBe('REMOVE_ONLY')
     expect(RECLASSIFY_UI_CONTRACT.regenerateTaskMode).toBe('REGENERATE')
     expect(RECLASSIFY_UI_CONTRACT.taskSectionLabel).toBe('TASKS')
+  })
+
+  it('uses a single Reclassify Emails entry and drops obsolete unclassified action labels', () => {
+    expect(RECLASSIFY_UI_CONTRACT.entryLabel).toBe('Reclassify Emails')
+    expect(RECLASSIFY_UI_CONTRACT.metaPath).toBe('/reclassify/meta')
+    expect(RECLASSIFY_UI_CONTRACT.metaErrorCopy).toBe(
+      'Could not load reclassification options.'
+    )
+    for (const label of RECLASSIFY_UI_CONTRACT.obsoleteEntryLabels) {
+      expect(label).not.toBe(RECLASSIFY_UI_CONTRACT.entryLabel)
+    }
   })
 })
