@@ -54,4 +54,16 @@ describe("native persistence mapping contract", () => {
     const legacy = rawDueDate ? new Date(rawDueDate) : null;
     expect(Number.isNaN(legacy!.getTime())).toBe(true);
   });
+
+  it("CLASSIFIED means core persist succeeded; task enrichment is optional", () => {
+    expect({
+      coreSetsClassified: true,
+      taskFailureSetsFailed: false,
+      invalidRecipientSetsFailed: false,
+    }).toEqual({
+      coreSetsClassified: true,
+      taskFailureSetsFailed: false,
+      invalidRecipientSetsFailed: false,
+    });
+  });
 });

@@ -287,14 +287,38 @@ export async function classifyEmailMessageNative(
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
     const openaiError = serializeOpenAiError(error);
+    const failureStage = inferNativeClassificationFailureStage(message);
     console.error({
       event: "native-classification-failed",
       ...baseLog,
+      failureStage,
       durationMs: Date.now() - started,
-      error: message,
+      error: message.slice(0, 480),
       ...openaiError,
     });
     // Rethrow so BullMQ retries independently per message.
+    // Optional task enrichment failures are handled inside persist and do not reach here.
     throw error instanceof Error ? error : new Error(message);
   }
+}
+
+function inferNativeClassificationFailureStage(message: string): string {
+  if (/semantic signal|semantic signals|for semantic/i.test(message)) {
+    return "semantic";
+  }
+  if (/business subtype/i.test(message)) return "subtype";
+  if (/entity selection/i.test(message)) return "entity";
+  if (/task extraction/i.test(message)) return "task_extract";
+  if (/senderEmail is not a valid email|CLASSIFICATION_PERSIST_FAILED/i.test(message)) {
+    return "classification_persist";
+  }
+  if (/EmailMessage not found|Inbox connection not found/i.test(message)) {
+    return "load";
+  }
+  if (/prisma\.(classification|normalizedEmail)/i.test(message)) {
+    return "classification_persist";
+  }
+  if (/prisma\.task/i.test(message)) return "task_persist";
+  if (/OpenAI is not configured/i.test(message)) return "openai_config";
+  return "unknown";
 }

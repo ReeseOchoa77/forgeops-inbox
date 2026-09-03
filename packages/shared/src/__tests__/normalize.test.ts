@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeName, normalizeEmail, extractDomain, computeSimilarity, findDuplicates } from "../reference/normalize.js";
+import { normalizeName, normalizeEmail, isValidEmailFormat, safeOptionalEmail, extractDomain, computeSimilarity, findDuplicates } from "../reference/normalize.js";
 
 describe("normalizeName", () => {
   it("lowercases and trims", () => {
@@ -37,6 +37,26 @@ describe("normalizeName", () => {
 describe("normalizeEmail", () => {
   it("lowercases and trims", () => {
     expect(normalizeEmail("  John@Example.COM  ")).toBe("john@example.com");
+  });
+});
+
+describe("isValidEmailFormat / safeOptionalEmail", () => {
+  it("accepts normal addresses", () => {
+    expect(isValidEmailFormat("pm@example.com")).toBe(true);
+    expect(safeOptionalEmail("  PM@Example.COM ")).toBe("pm@example.com");
+  });
+
+  it("rejects newsletter-style malformed addresses", () => {
+    expect(isValidEmailFormat("undisclosed-recipients:")).toBe(false);
+    expect(isValidEmailFormat("mailer-daemon@")).toBe(false);
+    expect(isValidEmailFormat("not-an-email")).toBe(false);
+    expect(safeOptionalEmail("undisclosed-recipients:")).toBeNull();
+    expect(safeOptionalEmail("")).toBeNull();
+    expect(safeOptionalEmail(null)).toBeNull();
+  });
+
+  it("unwraps simple display-name angle addresses", () => {
+    expect(safeOptionalEmail("Sam <sam@forgeops.test>")).toBe("sam@forgeops.test");
   });
 });
 

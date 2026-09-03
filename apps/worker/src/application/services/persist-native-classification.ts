@@ -5,15 +5,17 @@ import type { NativeClassificationPipelineResult } from "@forgeops/native-classi
 import {
   applyConfirmedJobAssociationOverride,
   buildJobCandidateMarker,
+  extractPrismaClientDiagnostic,
+  formatClassificationFailureMessage,
   mapN8nPriorityToStored,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
-  normalizeTaskDueAt,
   resolveTaskSourceDate,
   type StoredPriority,
 } from "@forgeops/shared";
 
+import { buildNativeTaskPersistPayload } from "./native-task-persist-payload.js";
 import { persistJobMatchResult } from "./persist-job-match.js";
 import { createJobMatcherService } from "./prisma-job-match-loader.js";
 import { normalizeEmailMessage } from "./normalize-email-message.js";
@@ -49,6 +51,9 @@ function nativeTaskKey(title: string, index: number): string {
  * - AI selectedJobId is stored ONLY in rawAiPayload / evidence as a hint.
  * - Classification.jobId + EmailMessage.jobId are owned by JobMatcherService
  *   (JobMatcher may overwrite entityMatchConfidence/matchEvidence afterward, same as n8n).
+ *
+ * CLASSIFIED means core classification succeeded (NormalizedEmail + Classification +
+ * status). Task persistence is optional enrichment and must not roll back CLASSIFIED.
  */
 export async function persistNativeClassificationResult(input: {
   prisma: PrismaClient;
@@ -59,6 +64,7 @@ export async function persistNativeClassificationResult(input: {
 }): Promise<{
   classificationId: string;
   tasksWritten: number;
+  tasksFailed: number;
   mailboxCategory: "BUSINESS" | "PERSONAL";
   priority: StoredPriority;
 }> {
@@ -154,6 +160,8 @@ export async function persistNativeClassificationResult(input: {
     candidateLookupFailed: input.pipeline.candidateLookupFailed,
   };
 
+  // Recipient sanitization happens here — invalid optional addresses are dropped,
+  // not allowed to fail core classification (production: Zod path [0,"email"]).
   const normalized = normalizeEmailMessage({
     subject: message.subject,
     threadSubject: message.thread.subject,
@@ -167,6 +175,7 @@ export async function persistNativeClassificationResult(input: {
     bccAddresses: message.bccAddresses,
     replyToAddresses: message.replyToAddresses,
     labelIds: message.labelIds,
+    emailMessageId: message.id,
   });
 
   const jobMatcher = createJobMatcherService(input.prisma);
@@ -261,7 +270,9 @@ export async function persistNativeClassificationResult(input: {
   const reviewQueue = requiresReview ? "TRIAGE" : null;
   const reviewStatus = requiresReview ? "PENDING" : "NOT_REQUIRED";
 
-  const result = await input.prisma.$transaction(async (tx) => {
+  // ── TRANSACTION A: core classification (REQUIRED) ─────────────────────────
+  // CLASSIFIED means this transaction committed. Task enrichment is separate.
+  const core = await input.prisma.$transaction(async (tx) => {
     await tx.normalizedEmail.upsert({
       where: {
         workspaceId_messageId: {
@@ -429,90 +440,6 @@ export async function persistNativeClassificationResult(input: {
       });
     }
 
-    const incomingKeys = new Set<string>();
-    let tasksWritten = 0;
-    if (mailboxCategory === "BUSINESS") {
-      for (let i = 0; i < tasks.length; i++) {
-        const task = tasks[i]!;
-        const sourceTaskKey = nativeTaskKey(task.title, i);
-        incomingKeys.add(sourceTaskKey);
-        const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;
-        // One normalized value for both create + update — never pass Invalid Date to Prisma.
-        const dueAt = normalizeTaskDueAt(task.dueDate, {
-          emailMessageId: message.id,
-        });
-        const sourceDate = resolveTaskSourceDate(message);
-
-        await tx.task.upsert({
-          where: {
-            workspaceId_sourceMessageId_sourceTaskKey: {
-              workspaceId: input.workspaceId,
-              sourceMessageId: message.id,
-              sourceTaskKey,
-            },
-          },
-          update: {
-            sourceThreadId: message.threadId,
-            classificationId: classification.id,
-            title: task.title,
-            summary: task.description || null,
-            description: task.description || null,
-            assigneeGuess: task.recommendedOwner ?? null,
-            dueAt,
-            sourceDate,
-            priority: storedPriority,
-            confidence: toConfidence(task.confidence),
-            requiresReview: taskRequiresReview,
-            reviewQueue: taskRequiresReview ? "EXTRACTION" : null,
-            reviewStatus: taskRequiresReview ? "PENDING" : "NOT_REQUIRED",
-            reviewedByUserId: null,
-            reviewedAt: null,
-            completedAt: null,
-            status: "OPEN",
-          },
-          create: {
-            workspaceId: input.workspaceId,
-            sourceThreadId: message.threadId,
-            sourceMessageId: message.id,
-            sourceTaskKey,
-            classificationId: classification.id,
-            title: task.title,
-            summary: task.description || null,
-            description: task.description || null,
-            assigneeGuess: task.recommendedOwner ?? null,
-            dueAt,
-            sourceDate,
-            priority: storedPriority,
-            status: "OPEN",
-            confidence: toConfidence(task.confidence),
-            requiresReview: taskRequiresReview,
-            reviewQueue: taskRequiresReview ? "EXTRACTION" : null,
-            reviewStatus: taskRequiresReview ? "PENDING" : "NOT_REQUIRED",
-          },
-        });
-        tasksWritten += 1;
-      }
-    }
-
-    // Remove prior native/heuristic tasks for this message that are no longer produced.
-    const stale = await tx.task.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        sourceMessageId: message.id,
-        OR: [
-          { sourceTaskKey: { startsWith: "native:" } },
-          { sourceTaskKey: "heuristic-primary" },
-        ],
-      },
-      select: { id: true, sourceTaskKey: true },
-    });
-    const staleIds = stale
-      .filter((t) => t.sourceTaskKey != null && !incomingKeys.has(t.sourceTaskKey))
-      .map((t) => t.id);
-    if (staleIds.length > 0) {
-      await tx.task.deleteMany({ where: { id: { in: staleIds } } });
-    }
-
     await tx.emailMessage.update({
       where: { id: message.id },
       data: {
@@ -538,11 +465,168 @@ export async function persistNativeClassificationResult(input: {
 
     return {
       classificationId: classification.id,
-      tasksWritten,
       mailboxCategory,
       priority: storedPriority,
     };
   });
 
-  return result;
+  // ── OPTIONAL ENRICHMENT: per-task isolation (must not flip CLASSIFIED) ─────
+  let tasksWritten = 0;
+  let tasksFailed = 0;
+  const incomingKeys = new Set<string>();
+
+  if (mailboxCategory === "BUSINESS" && tasks.length > 0) {
+    const sourceDate = resolveTaskSourceDate(message);
+
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i]!;
+      const sourceTaskKey = nativeTaskKey(task.title, i);
+      try {
+        const payload = buildNativeTaskPersistPayload({
+          sourceTaskKey,
+          title: task.title,
+          description: task.description,
+          recommendedOwner: task.recommendedOwner,
+          dueDate: task.dueDate,
+          sourceDate,
+          priority: storedPriority,
+          confidence: task.confidence,
+          requiresReview: task.confidence < TASK_REVIEW_THRESHOLD,
+          emailMessageId: message.id,
+        });
+
+        await input.prisma.task.upsert({
+          where: {
+            workspaceId_sourceMessageId_sourceTaskKey: {
+              workspaceId: input.workspaceId,
+              sourceMessageId: message.id,
+              sourceTaskKey: payload.sourceTaskKey,
+            },
+          },
+          update: {
+            sourceThreadId: message.threadId,
+            classificationId: core.classificationId,
+            title: payload.title,
+            summary: payload.summary,
+            description: payload.description,
+            assigneeGuess: payload.assigneeGuess,
+            dueAt: payload.dueAt,
+            sourceDate: payload.sourceDate,
+            priority: payload.priority,
+            confidence: toConfidence(payload.confidence),
+            requiresReview: payload.requiresReview,
+            reviewQueue: payload.reviewQueue,
+            reviewStatus: payload.reviewStatus,
+            reviewedByUserId: payload.reviewedByUserId,
+            reviewedAt: payload.reviewedAt,
+            completedAt: payload.completedAt,
+            status: payload.status,
+          },
+          create: {
+            workspaceId: input.workspaceId,
+            sourceThreadId: message.threadId,
+            sourceMessageId: message.id,
+            sourceTaskKey: payload.sourceTaskKey,
+            classificationId: core.classificationId,
+            title: payload.title,
+            summary: payload.summary,
+            description: payload.description,
+            assigneeGuess: payload.assigneeGuess,
+            dueAt: payload.dueAt,
+            sourceDate: payload.sourceDate,
+            priority: payload.priority,
+            status: payload.status,
+            confidence: toConfidence(payload.confidence),
+            requiresReview: payload.requiresReview,
+            reviewQueue: payload.reviewQueue,
+            reviewStatus: payload.reviewStatus,
+          },
+        });
+
+        incomingKeys.add(sourceTaskKey);
+        tasksWritten += 1;
+      } catch (error) {
+        tasksFailed += 1;
+        const diag = extractPrismaClientDiagnostic(error);
+        console.error({
+          event: "native-task-persist-failed",
+          workspaceId: input.workspaceId,
+          emailMessageId: message.id,
+          classificationId: core.classificationId,
+          sourceTaskKey,
+          taskTitle: task.title.slice(0, 120),
+          errorName: diag.errorName,
+          prismaCode: diag.prismaCode,
+          compactErrorMessage: diag.compactMessage,
+          invalidFieldIfKnown: diag.invalidField,
+          // Bounded stage-prefixed message for operators (not persisted as FAILED).
+          classificationErrorPreview: formatClassificationFailureMessage(
+            "task_persist",
+            error
+          ),
+        });
+      }
+    }
+
+    // Remove prior native/heuristic tasks no longer produced (successful keys only).
+    try {
+      const stale = await input.prisma.task.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          sourceMessageId: message.id,
+          OR: [
+            { sourceTaskKey: { startsWith: "native:" } },
+            { sourceTaskKey: "heuristic-primary" },
+          ],
+        },
+        select: { id: true, sourceTaskKey: true },
+      });
+      const staleIds = stale
+        .filter(
+          (t) => t.sourceTaskKey != null && !incomingKeys.has(t.sourceTaskKey)
+        )
+        .map((t) => t.id);
+      if (staleIds.length > 0) {
+        await input.prisma.task.deleteMany({ where: { id: { in: staleIds } } });
+      }
+    } catch (error) {
+      console.error({
+        event: "native-task-stale-cleanup-failed",
+        workspaceId: input.workspaceId,
+        emailMessageId: message.id,
+        classificationId: core.classificationId,
+        ...extractPrismaClientDiagnostic(error),
+      });
+    }
+  } else if (mailboxCategory !== "BUSINESS") {
+    // PERSONAL: drop prior native/heuristic tasks if any remain.
+    try {
+      await input.prisma.task.deleteMany({
+        where: {
+          workspaceId: input.workspaceId,
+          sourceMessageId: message.id,
+          OR: [
+            { sourceTaskKey: { startsWith: "native:" } },
+            { sourceTaskKey: "heuristic-primary" },
+          ],
+        },
+      });
+    } catch (error) {
+      console.error({
+        event: "native-task-stale-cleanup-failed",
+        workspaceId: input.workspaceId,
+        emailMessageId: message.id,
+        classificationId: core.classificationId,
+        ...extractPrismaClientDiagnostic(error),
+      });
+    }
+  }
+
+  return {
+    classificationId: core.classificationId,
+    tasksWritten,
+    tasksFailed,
+    mailboxCategory: core.mailboxCategory,
+    priority: core.priority,
+  };
 }

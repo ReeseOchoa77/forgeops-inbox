@@ -3,6 +3,7 @@ import { serializeOpenAiError } from "@forgeops/ai";
 import {
   QueueNames,
   MAX_AUTO_CLASSIFICATION_ATTEMPTS,
+  formatClassificationFailureMessage,
   truncateClassificationError,
   type MailboxClassifyJobPayload,
   type MailboxClassifyJobResult,
@@ -60,7 +61,9 @@ export const startMailboxClassifyWorker = (
         data: {
           classificationStatus: "FAILED",
           classificationLastAttemptAt: new Date(),
-          classificationError: truncateClassificationError(err.message),
+          classificationError: truncateClassificationError(
+            formatClassificationFailureMessage("classification", err)
+          ),
           // Cap auto attempts so safety-net stops after permanent failure.
           classificationAttemptCount: MAX_AUTO_CLASSIFICATION_ATTEMPTS,
         },

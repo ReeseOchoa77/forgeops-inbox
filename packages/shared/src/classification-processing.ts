@@ -1,3 +1,5 @@
+import { extractPrismaClientDiagnostic } from "./prisma-error-diagnostic.js";
+
 /** Max automatic enqueue cycles (safety-net) before marking FAILED permanently. */
 export const MAX_AUTO_CLASSIFICATION_ATTEMPTS = 3;
 
@@ -16,8 +18,20 @@ export type RetryClassificationOutcome =
   | "already_classified"
   | "failed_to_enqueue";
 
+/**
+ * Bound a classificationError for DB persistence.
+ * When given a raw Prisma invocation dump, prefers the useful field diagnostic
+ * so the bounded string is not only the useless opening lines.
+ * Stage-prefixed messages (e.g. TASK_PERSIST: ...) are left intact aside from length.
+ */
 export function truncateClassificationError(message: string): string {
-  const cleaned = message.replace(/\s+/g, " ").trim();
+  const looksLikeRawPrismaDump = /Invalid `prisma\.[^`]+` invocation/i.test(
+    message
+  );
+  const source = looksLikeRawPrismaDump
+    ? extractPrismaClientDiagnostic(message).compactMessage || message
+    : message;
+  const cleaned = source.replace(/\s+/g, " ").trim();
   if (cleaned.length <= CLASSIFICATION_ERROR_MAX_LEN) return cleaned;
   return `${cleaned.slice(0, CLASSIFICATION_ERROR_MAX_LEN - 1)}…`;
 }

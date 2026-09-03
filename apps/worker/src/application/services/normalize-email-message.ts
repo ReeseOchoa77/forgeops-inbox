@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { safeOptionalEmail } from "@forgeops/shared";
 
 import {
   normalizedEmailSchema,
@@ -8,19 +9,96 @@ import {
 
 const MAX_NORMALIZED_BODY_LENGTH = 12_000;
 
-const storedAddressSchema = z.object({
-  name: z.string().min(1).nullable(),
-  email: z.string().email(),
-  raw: z.string().min(1).optional()
-});
+type StoredAddress = {
+  name: string | null;
+  email: string;
+  raw?: string | undefined;
+};
 
-const storedAddressListSchema = z.array(storedAddressSchema);
+/**
+ * Tolerant parse of EmailMessage to/cc/bcc/replyTo JSON.
+ * Graph/provider may store address strings that are not RFC emails
+ * (newsletters, undisclosed recipients, etc.). Invalid entries are dropped —
+ * they must not fail classification.
+ *
+ * Production failure signature: Zod path [0, "email"] / "Invalid email"
+ * from a strict z.array(z.object({ email: z.string().email() })).parse().
+ */
+export function parseStoredAddressesTolerant(
+  value: unknown,
+  options?: {
+    field?: "to" | "cc" | "bcc" | "replyTo";
+    emailMessageId?: string;
+  }
+): StoredAddress[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    console.warn(
+      JSON.stringify({
+        event: "normalize-recipients-skipped-non-array",
+        field: options?.field ?? null,
+        emailMessageId: options?.emailMessageId ?? null,
+      })
+    );
+    return [];
+  }
 
-const parseStoredAddresses = (value: unknown): z.infer<typeof storedAddressListSchema> =>
-  storedAddressListSchema.parse(value ?? []);
+  const out: StoredAddress[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const item = value[i];
+    if (!item || typeof item !== "object") {
+      console.info(
+        JSON.stringify({
+          event: "normalize-recipient-dropped",
+          field: options?.field ?? null,
+          emailMessageId: options?.emailMessageId ?? null,
+          index: i,
+          reason: "non_object",
+        })
+      );
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const email = safeOptionalEmail(record.email);
+    if (!email) {
+      const preview =
+        typeof record.email === "string"
+          ? record.email.trim().slice(0, 80)
+          : String(record.email ?? "").slice(0, 80);
+      console.info(
+        JSON.stringify({
+          event: "normalize-recipient-dropped",
+          field: options?.field ?? null,
+          emailMessageId: options?.emailMessageId ?? null,
+          index: i,
+          reason: "invalid_email",
+          emailPreview: preview,
+        })
+      );
+      continue;
+    }
+
+    const nameRaw =
+      typeof record.name === "string" ? record.name.trim() : null;
+    const name = nameRaw && nameRaw.length > 0 ? nameRaw : null;
+    const raw =
+      typeof record.raw === "string" && record.raw.trim()
+        ? record.raw.trim()
+        : undefined;
+
+    out.push({
+      name,
+      email,
+      ...(raw ? { raw } : {}),
+    });
+  }
+
+  return out;
+}
 
 const toParticipant = (
-  input: z.infer<typeof storedAddressSchema>,
+  input: StoredAddress,
   role: NormalizedEmailParticipant["role"]
 ): NormalizedEmailParticipant => ({
   name: input.name,
@@ -178,6 +256,12 @@ const deriveCategoryHints = (input: {
   return [...hints].sort();
 };
 
+/**
+ * Normalize persisted EmailMessage fields for classification persistence.
+ * Recipient lists are sanitized (invalid optional emails dropped).
+ * Canonical senderEmail is validated for NormalizedEmail shape; callers should
+ * only pass already-ingested EmailMessage.senderEmail (not rewritten here beyond trim/lower).
+ */
 export const normalizeEmailMessage = (input: {
   subject: string | null;
   threadSubject: string | null;
@@ -191,33 +275,60 @@ export const normalizeEmailMessage = (input: {
   bccAddresses: unknown;
   replyToAddresses: unknown;
   labelIds: readonly string[];
+  emailMessageId?: string;
 }): NormalizedEmail => {
-  const senderEmail = input.senderEmail.trim().toLowerCase();
+  const senderEmailRaw = input.senderEmail.trim().toLowerCase();
+  // Canonical sender must remain classifiable; if somehow invalid, keep a stable
+  // placeholder domain marker rather than crashing optional recipient parsing.
+  // Product path: ingest already requires a sender — this is defense in depth.
+  const senderEmail = safeOptionalEmail(senderEmailRaw) ?? senderEmailRaw;
   const senderDomain = senderEmail.includes("@")
     ? senderEmail.split("@")[1] ?? null
     : null;
+
+  const idOpts = input.emailMessageId
+    ? { emailMessageId: input.emailMessageId }
+    : {};
+
   const recipients = [
-    ...parseStoredAddresses(input.toAddresses).map((address) =>
-      toParticipant(address, "TO")
-    ),
-    ...parseStoredAddresses(input.ccAddresses).map((address) =>
-      toParticipant(address, "CC")
-    ),
-    ...parseStoredAddresses(input.bccAddresses).map((address) =>
-      toParticipant(address, "BCC")
-    ),
-    ...parseStoredAddresses(input.replyToAddresses).map((address) =>
-      toParticipant(address, "REPLY_TO")
-    )
+    ...parseStoredAddressesTolerant(input.toAddresses, {
+      field: "to",
+      ...idOpts,
+    }).map((address) => toParticipant(address, "TO")),
+    ...parseStoredAddressesTolerant(input.ccAddresses, {
+      field: "cc",
+      ...idOpts,
+    }).map((address) => toParticipant(address, "CC")),
+    ...parseStoredAddressesTolerant(input.bccAddresses, {
+      field: "bcc",
+      ...idOpts,
+    }).map((address) => toParticipant(address, "BCC")),
+    ...parseStoredAddressesTolerant(input.replyToAddresses, {
+      field: "replyTo",
+      ...idOpts,
+    }).map((address) => toParticipant(address, "REPLY_TO")),
   ];
   const cleanTextBody = cleanBodyText(input.bodyText);
   const labelHints = normalizeLabelHints(input.labelIds);
   const subject = input.subject?.trim() || input.threadSubject?.trim() || null;
 
+  // Sender email for NormalizedEmail must pass schema; if canonical sender is
+  // structurally invalid, omit crashing by using a parse that only requires shape
+  // when valid — otherwise throw a clear core error (rare for ingested mail).
+  const senderParsed = z
+    .string()
+    .email()
+    .safeParse(senderEmail);
+  if (!senderParsed.success) {
+    throw new Error(
+      `CLASSIFICATION_PERSIST_FAILED: EmailMessage.senderEmail is not a valid email (${senderEmailRaw.slice(0, 80)})`
+    );
+  }
+
   return normalizedEmailSchema.parse({
     sender: {
       name: input.senderName?.trim() || null,
-      email: senderEmail,
+      email: senderParsed.data,
       role: "FROM"
     },
     recipients,

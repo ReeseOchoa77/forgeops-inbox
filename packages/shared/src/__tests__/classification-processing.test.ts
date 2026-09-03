@@ -33,4 +33,18 @@ describe("classification-processing", () => {
   it("truncates long errors", () => {
     expect(truncateClassificationError("  hello   world  ")).toBe("hello world");
   });
+
+  it("prefers Prisma field diagnostic over invocation dump prefix", () => {
+    const dump = [
+      "Invalid `prisma.task.upsert()` invocation:",
+      "{",
+      '  where: { workspaceId_sourceMessageId_sourceTaskKey: { workspaceId: "ws" } },',
+      "  create: { title: \"x\", dueAt: new Date(Invalid Date) }",
+      "}",
+      "Invalid value for argument `dueAt`. Expected DateTime or Null, provided Date.",
+    ].join("\n");
+    const bounded = truncateClassificationError(dump);
+    expect(bounded).toContain("dueAt");
+    expect(bounded).not.toContain("workspaceId_sourceMessageId");
+  });
 });
