@@ -17,7 +17,6 @@ import { WorkspaceView } from './views/WorkspaceView'
 import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
 import { JobsView } from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
-import { JobDiscoveryView } from './views/JobDiscoveryView'
 import { CalendarView } from './views/CalendarView'
 import {
   ALL_MAILBOXES_CONNECTION_ID,
@@ -37,7 +36,6 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'calendar', label: 'Calendar', icon: '\uD83D\uDCC5' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
-  { page: 'outlook-folders', label: 'Job Discovery', icon: '📂', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
@@ -52,7 +50,7 @@ const PAGE_TITLES: Record<Page, string> = {
   calendar: 'Calendar',
   jobs: 'Jobs',
   'job-detail': 'Job Detail',
-  'outlook-folders': 'Job Discovery',
+  'outlook-folders': 'Email Analysis',
   documents: 'Documents',
   reference: 'Company Data',
   'team-access': 'Team Access',
@@ -108,6 +106,13 @@ export default function App() {
   useEffect(() => {
     if (page !== 'team-access') return
     setWorkspaceTabHint('team')
+    setPage('workspace')
+  }, [page])
+
+  // Legacy Job Discovery top-level page → Workspace → Email Analysis tab
+  useEffect(() => {
+    if (page !== 'outlook-folders') return
+    setWorkspaceTabHint('folders')
     setPage('workspace')
   }, [page])
 
@@ -343,6 +348,9 @@ export default function App() {
     }
     if (p === 'team-access') {
       setWorkspaceTabHint('team')
+      setPage('workspace')
+    } else if (p === 'outlook-folders') {
+      setWorkspaceTabHint('folders')
       setPage('workspace')
     } else if (p === 'documents') {
       setReferenceTabHint('documents')
@@ -890,12 +898,6 @@ export default function App() {
                 }
                 breakpoint={bp}
               />
-            </div>
-          )}
-
-          {page === 'outlook-folders' && workspaceId && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <JobDiscoveryView workspaceId={workspaceId} userRole={currentRole} />
             </div>
           )}
 

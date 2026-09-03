@@ -8,7 +8,6 @@ const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> 
   { page: 'tasks' },
   { page: 'jobs' },
   { page: 'reference', section: 'Manage' },
-  { page: 'outlook-folders', section: 'Manage' },
   { page: 'workspace' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
   { page: 'admin', section: 'System' },
@@ -28,11 +27,11 @@ describe('documents navigation consolidation', () => {
 })
 
 describe('job discovery navigation consolidation', () => {
-  it('Job Discovery lives under Manage, not as a primary unsectioned item', () => {
-    const jobDiscovery = NAV_SECTIONS.find((i) => i.page === 'outlook-folders')
-    expect(jobDiscovery?.section).toBe('Manage')
+  it('retires top-level Job Discovery in favor of Workspace → Email Analysis', () => {
+    expect(NAV_SECTIONS.map((i) => i.page)).not.toContain('outlook-folders')
+    expect(NAV_SECTIONS.map((i) => i.page)).toContain('workspace')
     const managePages = NAV_SECTIONS.filter((i) => i.section === 'Manage').map((i) => i.page)
-    expect(managePages).toEqual(['reference', 'outlook-folders'])
+    expect(managePages).toEqual(['reference'])
   })
 })
 

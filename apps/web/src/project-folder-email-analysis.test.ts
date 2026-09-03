@@ -18,10 +18,13 @@ const EMAIL_ANALYSIS_CONTRACT = {
   mailboxScopedFolders: true,
   hideFoldersWithoutMailbox: true,
   autoSelectSingleOutlookMailbox: true,
-  matchStatuses: ['UNMATCHED', 'SUGGESTED', 'VERIFIED'] as const,
   listPathUsesConnectionId: '/discovered-folders?connectionId=',
   scanPath: '/project-folders/scan',
   analyzePath: '/project-folders/analyze-emails',
+  /** Retired top-level nav page key — App redirects to Workspace → Email Analysis. */
+  legacyJobDiscoveryPage: 'outlook-folders',
+  retiredJobDiscoveryNavLabel: 'Job Discovery',
+  canonicalFolderMatcher: 'matchFolderToExistingJobs',
 }
 
 describe('Workspace Email Analysis UX contracts', () => {
@@ -33,8 +36,6 @@ describe('Workspace Email Analysis UX contracts', () => {
     expect(EMAIL_ANALYSIS_CONTRACT.autoAnalyzeEmailsOnMount).toBe(false)
     expect(EMAIL_ANALYSIS_CONTRACT.verifiedOnlyEligible).toBe(true)
     expect(EMAIL_ANALYSIS_CONTRACT.usesJobAssignPicker).toBe(true)
-    expect(EMAIL_ANALYSIS_CONTRACT.matchStatuses).toContain('VERIFIED')
-    expect(EMAIL_ANALYSIS_CONTRACT.matchStatuses).not.toContain('DISCOVERED')
   })
 
   it('requires mailbox-scoped folder loads and case-insensitive Outlook filter', () => {
@@ -47,5 +48,14 @@ describe('Workspace Email Analysis UX contracts', () => {
     expect(EMAIL_ANALYSIS_CONTRACT.analyzePath).toBe('/project-folders/analyze-emails')
     expect(EMAIL_ANALYSIS_CONTRACT.analyzeSelectedLabel).toContain('selected')
     expect(EMAIL_ANALYSIS_CONTRACT.analyzeAllVerifiedLabel).toContain('all verified')
+  })
+
+  it('retires Job Discovery nav in favor of Email Analysis', () => {
+    expect(EMAIL_ANALYSIS_CONTRACT.legacyJobDiscoveryPage).toBe('outlook-folders')
+    expect(EMAIL_ANALYSIS_CONTRACT.retiredJobDiscoveryNavLabel).toBe('Job Discovery')
+    expect(EMAIL_ANALYSIS_CONTRACT.workspaceTabLabel).not.toBe(
+      EMAIL_ANALYSIS_CONTRACT.retiredJobDiscoveryNavLabel
+    )
+    expect(EMAIL_ANALYSIS_CONTRACT.canonicalFolderMatcher).toBe('matchFolderToExistingJobs')
   })
 })

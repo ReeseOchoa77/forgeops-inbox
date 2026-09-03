@@ -30,4 +30,20 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(view).not.toContain("c.provider === 'OUTLOOK'");
     expect(api).toContain("if (params?.connectionId) p.set('connectionId', params.connectionId)");
   });
+
+  it("retires Job Discovery UI while keeping shared folder-discovery backend", () => {
+    const app = readFileSync(join(here, "../../../web/src/App.tsx"), "utf8");
+    expect(app).not.toContain("JobDiscoveryView");
+    expect(app).not.toContain("label: 'Job Discovery'");
+    expect(app).toContain("Legacy Job Discovery top-level page");
+    expect(app).toContain("setWorkspaceTabHint('folders')");
+
+    const route = readFileSync(
+      join(here, "../interfaces/http/routes/folder-discovery.route.ts"),
+      "utf8"
+    );
+    expect(route).toContain("/project-folders/scan");
+    expect(route).toContain("/discovered-folders");
+    expect(route).toContain("/job-folder-roots");
+  });
 });
