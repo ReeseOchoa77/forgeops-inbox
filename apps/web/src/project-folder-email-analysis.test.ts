@@ -8,11 +8,20 @@ const EMAIL_ANALYSIS_CONTRACT = {
   workspaceTabLabel: 'Email Analysis',
   scanButtonLabel: 'Analyze Project Folders',
   analyzeEmailsLabel: 'Analyze Emails',
+  analyzeSelectedLabel: 'Analyze Emails (selected)',
+  analyzeAllVerifiedLabel: 'Analyze Emails (all verified)',
   verifiedOnlyEligible: true,
   autoScanOnWorkspaceMount: false,
   autoAnalyzeEmailsOnMount: false,
   usesJobAssignPicker: true,
+  providerFilter: 'outlook (case-insensitive)',
+  mailboxScopedFolders: true,
+  hideFoldersWithoutMailbox: true,
+  autoSelectSingleOutlookMailbox: true,
   matchStatuses: ['UNMATCHED', 'SUGGESTED', 'VERIFIED'] as const,
+  listPathUsesConnectionId: '/discovered-folders?connectionId=',
+  scanPath: '/project-folders/scan',
+  analyzePath: '/project-folders/analyze-emails',
 }
 
 describe('Workspace Email Analysis UX contracts', () => {
@@ -26,5 +35,17 @@ describe('Workspace Email Analysis UX contracts', () => {
     expect(EMAIL_ANALYSIS_CONTRACT.usesJobAssignPicker).toBe(true)
     expect(EMAIL_ANALYSIS_CONTRACT.matchStatuses).toContain('VERIFIED')
     expect(EMAIL_ANALYSIS_CONTRACT.matchStatuses).not.toContain('DISCOVERED')
+  })
+
+  it('requires mailbox-scoped folder loads and case-insensitive Outlook filter', () => {
+    expect(EMAIL_ANALYSIS_CONTRACT.providerFilter).toContain('outlook')
+    expect(EMAIL_ANALYSIS_CONTRACT.mailboxScopedFolders).toBe(true)
+    expect(EMAIL_ANALYSIS_CONTRACT.hideFoldersWithoutMailbox).toBe(true)
+    expect(EMAIL_ANALYSIS_CONTRACT.autoSelectSingleOutlookMailbox).toBe(true)
+    expect(EMAIL_ANALYSIS_CONTRACT.listPathUsesConnectionId).toContain('connectionId')
+    expect(EMAIL_ANALYSIS_CONTRACT.scanPath).toBe('/project-folders/scan')
+    expect(EMAIL_ANALYSIS_CONTRACT.analyzePath).toBe('/project-folders/analyze-emails')
+    expect(EMAIL_ANALYSIS_CONTRACT.analyzeSelectedLabel).toContain('selected')
+    expect(EMAIL_ANALYSIS_CONTRACT.analyzeAllVerifiedLabel).toContain('all verified')
   })
 })

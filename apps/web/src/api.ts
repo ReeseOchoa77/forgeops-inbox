@@ -1710,12 +1710,13 @@ export const api = {
 
   // Discovered Folders
   getDiscoveredFolders: (workspaceId: string, params?: {
-    status?: string; mailboxEmail?: string; search?: string; hasMatch?: boolean;
+    status?: string; mailboxEmail?: string; connectionId?: string; search?: string; hasMatch?: boolean;
     root?: string; page?: number; pageSize?: number;
   }) => {
     const p = new URLSearchParams();
     if (params?.status) p.set('status', params.status);
     if (params?.mailboxEmail) p.set('mailboxEmail', params.mailboxEmail);
+    if (params?.connectionId) p.set('connectionId', params.connectionId);
     if (params?.search) p.set('search', params.search);
     if (params?.hasMatch !== undefined) p.set('hasMatch', String(params.hasMatch));
     if (params?.root) p.set('root', params.root);

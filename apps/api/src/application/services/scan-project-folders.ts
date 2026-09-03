@@ -454,18 +454,25 @@ export async function getVerifiedProjectFolders(
     mailboxEmail?: string;
   }
 ) {
+  const mailboxEmail = input.mailboxEmail?.toLowerCase();
   return prisma.discoveredFolder.findMany({
     where: {
       workspaceId: input.workspaceId,
       status: "APPROVED",
       matchedJobId: { not: null },
       missingFromProvider: false,
-      ...(input.inboxConnectionId
-        ? { inboxConnectionId: input.inboxConnectionId }
-        : {}),
-      ...(input.mailboxEmail
-        ? { mailboxEmail: input.mailboxEmail.toLowerCase() }
-        : {}),
+      ...(input.inboxConnectionId && mailboxEmail
+        ? {
+            OR: [
+              { inboxConnectionId: input.inboxConnectionId },
+              { inboxConnectionId: null, mailboxEmail },
+            ],
+          }
+        : input.inboxConnectionId
+          ? { inboxConnectionId: input.inboxConnectionId }
+          : mailboxEmail
+            ? { mailboxEmail }
+            : {}),
     },
     orderBy: { folderPath: "asc" },
     include: {

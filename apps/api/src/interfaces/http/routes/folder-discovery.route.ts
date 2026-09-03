@@ -50,6 +50,36 @@ async function requireAuth(
   return { userId: session.userId, role: membership.role, workspaceRole: membership.workspaceRole };
 }
 
+/** Map common Prisma schema-drift errors to actionable API messages. */
+function prismaSchemaDriftMessage(error: unknown): string | null {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (
+    code === "P2022" ||
+    code === "P2021" ||
+    /column .* does not exist/i.test(message) ||
+    /relation .* does not exist/i.test(message) ||
+    /invalid.*enum/i.test(message) ||
+    /type .* does not exist/i.test(message)
+  ) {
+    return "Required database migration has not been applied";
+  }
+  return null;
+}
+
+function serializeDiscoveredFolderRow<T extends Record<string, unknown>>(folder: T) {
+  const matchConfidence = folder.matchConfidence;
+  return {
+    ...folder,
+    matchConfidence:
+      matchConfidence == null ? null : Number(matchConfidence as string | number),
+  };
+}
+
 function isAdminOrOwner(role: string): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
@@ -433,6 +463,11 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
 
       return reply.send({ status: "ok", ...summary });
     } catch (e) {
+      const drift = prismaSchemaDriftMessage(e);
+      if (drift) {
+        request.log.error({ err: e, event: "project_folders_scan_schema_drift" });
+        return reply.code(503).send({ message: drift, code: "SCHEMA_DRIFT" });
+      }
       if (e instanceof ProjectFolderScanError) {
         const status =
           e.code === "CONNECTION_NOT_FOUND" || e.code === "NOT_OUTLOOK"
@@ -466,10 +501,22 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       })
       .parse(request.query);
 
+    let mailboxEmail = query.mailboxEmail?.toLowerCase();
+    if (query.connectionId) {
+      const conn = await app.services.prisma.inboxConnection.findFirst({
+        where: { id: query.connectionId, workspaceId },
+        select: { id: true, email: true },
+      });
+      if (!conn) {
+        return reply.code(404).send({ message: "Mailbox connection not found in this workspace" });
+      }
+      mailboxEmail = conn.email.toLowerCase();
+    }
+
     const folders = await getVerifiedProjectFolders(app.services.prisma, {
       workspaceId,
       ...(query.connectionId ? { inboxConnectionId: query.connectionId } : {}),
-      ...(query.mailboxEmail ? { mailboxEmail: query.mailboxEmail } : {}),
+      ...(mailboxEmail ? { mailboxEmail } : {}),
     });
 
     return reply.send({
@@ -585,6 +632,8 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     const query = z.object({
       status: z.enum(["DISCOVERED", "APPROVED", "IGNORED", "MATCHED", "ARCHIVED"]).optional(),
       mailboxEmail: z.string().optional(),
+      /** Prefer this over mailboxEmail — scopes to InboxConnection + recoverable legacy rows. */
+      connectionId: z.string().min(1).optional(),
       search: z.string().optional(),
       hasMatch: z.enum(["true", "false"]).optional().transform(v => v === "true" ? true : v === "false" ? false : undefined),
       root: z.string().optional(),
@@ -592,69 +641,123 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       pageSize: z.coerce.number().int().min(1).max(200).default(50),
     }).parse(request.query);
 
-    const where: Record<string, unknown> = { workspaceId };
-    if (query.status) where.status = query.status;
-    if (query.mailboxEmail) where.mailboxEmail = query.mailboxEmail.toLowerCase();
-    if (query.hasMatch === true) where.matchedJobId = { not: null };
-    if (query.hasMatch === false) where.matchedJobId = null;
-    if (query.root) {
-      where.folderPath = { startsWith: query.root, mode: "insensitive" };
+    try {
+      const where: Record<string, unknown> = { workspaceId };
+      if (query.status) where.status = query.status;
+      if (query.hasMatch === true) where.matchedJobId = { not: null };
+      if (query.hasMatch === false) where.matchedJobId = null;
+      if (query.root) {
+        where.folderPath = { startsWith: query.root, mode: "insensitive" };
+      }
+
+      let scopeMailboxEmail: string | null = null;
+      if (query.connectionId) {
+        const conn = await app.services.prisma.inboxConnection.findFirst({
+          where: { id: query.connectionId, workspaceId },
+          select: { id: true, email: true },
+        });
+        if (!conn) {
+          return reply.code(404).send({ message: "Mailbox connection not found in this workspace" });
+        }
+        scopeMailboxEmail = conn.email.toLowerCase();
+        // Bound rows: this connection, or legacy NULL inboxConnectionId for the same mailbox email.
+        where.OR = [
+          { inboxConnectionId: conn.id },
+          { inboxConnectionId: null, mailboxEmail: scopeMailboxEmail },
+        ];
+      } else if (query.mailboxEmail) {
+        scopeMailboxEmail = query.mailboxEmail.toLowerCase();
+        where.mailboxEmail = scopeMailboxEmail;
+      }
+
+      if (query.search) {
+        const searchOr = [
+          { rawFolderName: { contains: query.search, mode: "insensitive" } },
+          { folderPath: { contains: query.search, mode: "insensitive" } },
+          { detectedJobNumber: { contains: query.search, mode: "insensitive" } },
+          { detectedJobName: { contains: query.search, mode: "insensitive" } },
+        ];
+        if (where.OR) {
+          where.AND = [{ OR: where.OR }, { OR: searchOr }];
+          delete where.OR;
+        } else {
+          where.OR = searchOr;
+        }
+      }
+
+      const summaryWhere: Record<string, unknown> = { workspaceId };
+      if (query.connectionId && scopeMailboxEmail) {
+        summaryWhere.OR = [
+          { inboxConnectionId: query.connectionId },
+          { inboxConnectionId: null, mailboxEmail: scopeMailboxEmail },
+        ];
+      } else if (scopeMailboxEmail) {
+        summaryWhere.mailboxEmail = scopeMailboxEmail;
+      }
+
+      const [folders, total, metrics] = await Promise.all([
+        app.services.prisma.discoveredFolder.findMany({
+          where,
+          orderBy: [{ status: "asc" }, { folderPath: "asc" }],
+          include: { matchedJob: { select: { id: true, name: true, jobNumber: true } } },
+          skip: (query.page - 1) * query.pageSize,
+          take: query.pageSize,
+        }),
+        app.services.prisma.discoveredFolder.count({ where }),
+        app.services.prisma.discoveredFolder.groupBy({
+          by: ["status"],
+          where: summaryWhere,
+          _count: true,
+        }),
+      ]);
+
+      const lastSynced = await app.services.prisma.discoveredFolder.findFirst({
+        where: summaryWhere,
+        orderBy: { lastSeenAt: "desc" },
+        select: { lastSeenAt: true },
+      });
+
+      const mailboxes = await app.services.prisma.discoveredFolder.groupBy({
+        by: ["mailboxEmail"],
+        where: summaryWhere,
+      });
+
+      const summary = {
+        total: metrics.reduce((sum, m) => sum + m._count, 0),
+        discovered: metrics.find(m => m.status === "DISCOVERED")?._count ?? 0,
+        matched: metrics.find(m => m.status === "MATCHED")?._count ?? 0,
+        approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
+        ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
+        archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
+        lastSyncAt: lastSynced?.lastSeenAt ?? null,
+        mailboxes: mailboxes.map(m => m.mailboxEmail),
+      };
+      summary.total =
+        summary.discovered +
+        summary.matched +
+        summary.approved +
+        summary.ignored +
+        summary.archived;
+
+      return reply.send({
+        folders: folders.map((f) => serializeDiscoveredFolderRow(f as unknown as Record<string, unknown>)),
+        pagination: {
+          page: query.page,
+          pageSize: query.pageSize,
+          totalCount: total,
+          totalPages: Math.ceil(total / query.pageSize),
+        },
+        summary,
+      });
+    } catch (e) {
+      const drift = prismaSchemaDriftMessage(e);
+      if (drift) {
+        request.log.error({ err: e, event: "discovered_folders_schema_drift" });
+        return reply.code(503).send({ message: drift, code: "SCHEMA_DRIFT" });
+      }
+      throw e;
     }
-    if (query.search) {
-      where.OR = [
-        { rawFolderName: { contains: query.search, mode: "insensitive" } },
-        { folderPath: { contains: query.search, mode: "insensitive" } },
-        { detectedJobNumber: { contains: query.search, mode: "insensitive" } },
-        { detectedJobName: { contains: query.search, mode: "insensitive" } },
-      ];
-    }
-
-    const [folders, total, metrics] = await Promise.all([
-      app.services.prisma.discoveredFolder.findMany({
-        where,
-        orderBy: [{ status: "asc" }, { folderPath: "asc" }],
-        include: { matchedJob: { select: { id: true, name: true, jobNumber: true } } },
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
-      }),
-      app.services.prisma.discoveredFolder.count({ where }),
-      app.services.prisma.discoveredFolder.groupBy({
-        by: ["status"],
-        where: { workspaceId },
-        _count: true,
-      }),
-    ]);
-
-    const lastSynced = await app.services.prisma.discoveredFolder.findFirst({
-      where: { workspaceId },
-      orderBy: { lastSeenAt: "desc" },
-      select: { lastSeenAt: true },
-    });
-
-    const mailboxes = await app.services.prisma.discoveredFolder.groupBy({
-      by: ["mailboxEmail"],
-      where: { workspaceId },
-    });
-
-    const summary = {
-      total: metrics.reduce((sum, m) => sum + m._count, 0),
-      discovered: metrics.find(m => m.status === "DISCOVERED")?._count ?? 0,
-      matched: metrics.find(m => m.status === "MATCHED")?._count ?? 0,
-      approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
-      ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
-      archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
-      lastSyncAt: lastSynced?.lastSeenAt ?? null,
-      mailboxes: mailboxes.map(m => m.mailboxEmail),
-    };
-    summary.total = summary.discovered + summary.matched + summary.approved + summary.ignored + summary.archived;
-
-    return reply.send({
-      folders,
-      pagination: { page: query.page, pageSize: query.pageSize, totalCount: total, totalPages: Math.ceil(total / query.pageSize) },
-      summary,
-    });
   });
-
   app.get("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId", async (request, reply) => {
     const params = z.object({ workspaceId: z.string().min(1), folderId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
