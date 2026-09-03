@@ -59,24 +59,71 @@ function prismaSchemaDriftMessage(error: unknown): string | null {
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
   if (
-    code === "P2022" ||
-    code === "P2021" ||
+    code.startsWith("P20") ||
     /column .* does not exist/i.test(message) ||
     /relation .* does not exist/i.test(message) ||
     /invalid.*enum/i.test(message) ||
-    /type .* does not exist/i.test(message)
+    /type .* does not exist/i.test(message) ||
+    /does not exist in the current database/i.test(message) ||
+    /Unknown argument/i.test(message) ||
+    /Unknown field/i.test(message)
   ) {
     return "Required database migration has not been applied";
   }
   return null;
 }
 
-function serializeDiscoveredFolderRow<T extends Record<string, unknown>>(folder: T) {
+function toIso(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
+/** Explicit JSON-safe folder row — avoids Decimal/Date serialization 500s. */
+function serializeDiscoveredFolderRow(folder: Record<string, unknown>) {
+  const matchedJob = folder.matchedJob as
+    | { id: string; name: string; jobNumber: string | null }
+    | null
+    | undefined;
   const matchConfidence = folder.matchConfidence;
   return {
-    ...folder,
+    id: folder.id,
+    workspaceId: folder.workspaceId,
+    inboxConnectionId: folder.inboxConnectionId ?? null,
+    provider: folder.provider,
+    mailboxEmail: folder.mailboxEmail,
+    providerFolderId: folder.providerFolderId,
+    parentProviderFolderId: folder.parentProviderFolderId ?? null,
+    folderPath: folder.folderPath,
+    rawFolderName: folder.rawFolderName,
+    normalizedFolderName: folder.normalizedFolderName,
+    detectedJobNumber: folder.detectedJobNumber ?? null,
+    detectedJobName: folder.detectedJobName ?? null,
+    matchedJobId: folder.matchedJobId ?? null,
+    matchedJob: matchedJob
+      ? {
+          id: matchedJob.id,
+          name: matchedJob.name,
+          jobNumber: matchedJob.jobNumber ?? null,
+        }
+      : null,
     matchConfidence:
-      matchConfidence == null ? null : Number(matchConfidence as string | number),
+      matchConfidence == null || matchConfidence === ""
+        ? null
+        : Number(matchConfidence),
+    matchReason: folder.matchReason ?? null,
+    missingFromProvider: Boolean(folder.missingFromProvider),
+    status: folder.status,
+    childFolderCount: Number(folder.childFolderCount ?? 0),
+    firstSeenAt: toIso(folder.firstSeenAt),
+    lastSeenAt: toIso(folder.lastSeenAt),
+    approvedAt: toIso(folder.approvedAt),
+    approvedByUserId: folder.approvedByUserId ?? null,
+    ignoredAt: toIso(folder.ignoredAt),
+    ignoredByUserId: folder.ignoredByUserId ?? null,
+    createdAt: toIso(folder.createdAt),
+    updatedAt: toIso(folder.updatedAt),
   };
 }
 
@@ -521,10 +568,21 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
 
     return reply.send({
       folders: folders.map((f) => ({
-        ...f,
+        id: f.id,
+        workspaceId: f.workspaceId,
+        inboxConnectionId: f.inboxConnectionId,
+        mailboxEmail: f.mailboxEmail,
+        providerFolderId: f.providerFolderId,
+        folderPath: f.folderPath,
+        rawFolderName: f.rawFolderName,
+        matchedJobId: f.matchedJobId,
+        matchedJob: f.matchedJob,
+        missingFromProvider: f.missingFromProvider,
+        status: f.status,
         matchStatus: folderStatusToMatchUi(f.status as FolderStatusDb),
         matchConfidence:
           f.matchConfidence != null ? Number(f.matchConfidence) : null,
+        matchReason: f.matchReason,
       })),
     });
   });
@@ -660,14 +718,18 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           return reply.code(404).send({ message: "Mailbox connection not found in this workspace" });
         }
         scopeMailboxEmail = conn.email.toLowerCase();
-        // Bound rows: this connection, or legacy NULL inboxConnectionId for the same mailbox email.
+        // Bound rows: this connection, or legacy NULL inboxConnectionId for same mailbox
+        // (case-insensitive — legacy rows may predate email normalization).
         where.OR = [
           { inboxConnectionId: conn.id },
-          { inboxConnectionId: null, mailboxEmail: scopeMailboxEmail },
+          {
+            inboxConnectionId: null,
+            mailboxEmail: { equals: scopeMailboxEmail, mode: "insensitive" },
+          },
         ];
       } else if (query.mailboxEmail) {
         scopeMailboxEmail = query.mailboxEmail.toLowerCase();
-        where.mailboxEmail = scopeMailboxEmail;
+        where.mailboxEmail = { equals: scopeMailboxEmail, mode: "insensitive" };
       }
 
       if (query.search) {
@@ -689,10 +751,16 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       if (query.connectionId && scopeMailboxEmail) {
         summaryWhere.OR = [
           { inboxConnectionId: query.connectionId },
-          { inboxConnectionId: null, mailboxEmail: scopeMailboxEmail },
+          {
+            inboxConnectionId: null,
+            mailboxEmail: { equals: scopeMailboxEmail, mode: "insensitive" },
+          },
         ];
       } else if (scopeMailboxEmail) {
-        summaryWhere.mailboxEmail = scopeMailboxEmail;
+        summaryWhere.mailboxEmail = {
+          equals: scopeMailboxEmail,
+          mode: "insensitive",
+        };
       }
 
       const [folders, total, metrics] = await Promise.all([
@@ -729,7 +797,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
         ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
         archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
-        lastSyncAt: lastSynced?.lastSeenAt ?? null,
+        lastSyncAt: lastSynced?.lastSeenAt ? lastSynced.lastSeenAt.toISOString() : null,
         mailboxes: mailboxes.map(m => m.mailboxEmail),
       };
       summary.total =
@@ -740,7 +808,9 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         summary.archived;
 
       return reply.send({
-        folders: folders.map((f) => serializeDiscoveredFolderRow(f as unknown as Record<string, unknown>)),
+        folders: folders.map((f) =>
+          serializeDiscoveredFolderRow(f as unknown as Record<string, unknown>)
+        ),
         pagination: {
           page: query.page,
           pageSize: query.pageSize,
@@ -752,10 +822,29 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     } catch (e) {
       const drift = prismaSchemaDriftMessage(e);
       if (drift) {
-        request.log.error({ err: e, event: "discovered_folders_schema_drift" });
+        request.log.error({
+          err: e,
+          event: "discovered_folders_schema_drift",
+          workspaceId,
+          connectionId: (request.query as { connectionId?: string })?.connectionId,
+        });
         return reply.code(503).send({ message: drift, code: "SCHEMA_DRIFT" });
       }
-      throw e;
+      request.log.error({
+        err: e,
+        event: "discovered_folders_list_failed",
+        workspaceId,
+        connectionId: (request.query as { connectionId?: string })?.connectionId,
+        prismaCode:
+          e && typeof e === "object" && "code" in e
+            ? String((e as { code: unknown }).code)
+            : undefined,
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      return reply.code(500).send({
+        message: "Could not load discovered folders",
+        code: "DISCOVERED_FOLDERS_LIST_FAILED",
+      });
     }
   });
   app.get("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId", async (request, reply) => {

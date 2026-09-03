@@ -105,7 +105,9 @@ function toConfidence(value: number | null): Prisma.Decimal | null {
 
 /**
  * Persist Graph folders under /Projects and match against existing Jobs.
- * Idempotent on (workspaceId, mailboxEmail, providerFolderId).
+ * Directory discovery ONLY — never lists folder messages, creates EmailMessage,
+ * classifies, or enqueues attachments. Idempotent on
+ * (workspaceId, mailboxEmail, providerFolderId).
  */
 export async function scanNativeProjectFolders(input: {
   prisma: PrismaClient;
@@ -191,6 +193,8 @@ export async function scanNativeProjectFolders(input: {
     );
   }
 
+  const mailboxEmail = connection.email.toLowerCase();
+
   // Ensure a Projects JobFolderRoot exists for this workspace (config + future filters).
   const projectsNormalized = normalizeName(PROJECTS_ROOT_DISPLAY_NAME);
   await input.prisma.jobFolderRoot.upsert({
@@ -204,7 +208,7 @@ export async function scanNativeProjectFolders(input: {
       workspaceId: input.workspaceId,
       rootName: PROJECTS_ROOT_DISPLAY_NAME,
       normalizedName: projectsNormalized,
-      mailboxEmail: connection.email,
+      mailboxEmail,
       provider: "OUTLOOK",
       providerFolderId: projectsRoot.id,
       folderPath: projectsRoot.path,
@@ -214,7 +218,7 @@ export async function scanNativeProjectFolders(input: {
       createdByUserId: input.actorUserId ?? null,
     },
     update: {
-      mailboxEmail: connection.email,
+      mailboxEmail,
       providerFolderId: projectsRoot.id,
       folderPath: projectsRoot.path,
       folderName: projectsRoot.displayName,
@@ -282,18 +286,35 @@ export async function scanNativeProjectFolders(input: {
     else if (match.status === "MATCHED") suggested += 1;
     else unmatched += 1;
 
-    const existing = await input.prisma.discoveredFolder.findUnique({
-      where: {
-        workspaceId_mailboxEmail_providerFolderId: {
-          workspaceId: input.workspaceId,
-          mailboxEmail: connection.email,
-          providerFolderId: folder.id,
+    const existing =
+      (await input.prisma.discoveredFolder.findUnique({
+        where: {
+          workspaceId_mailboxEmail_providerFolderId: {
+            workspaceId: input.workspaceId,
+            mailboxEmail,
+            providerFolderId: folder.id,
+          },
         },
-      },
-    });
+      })) ??
+      // Legacy / casing variants: same provider folder for this mailbox, possibly
+      // with NULL inboxConnectionId or non-normalized mailboxEmail.
+      (await input.prisma.discoveredFolder.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          providerFolderId: folder.id,
+          OR: [
+            { inboxConnectionId: connection.id },
+            {
+              inboxConnectionId: null,
+              mailboxEmail: { equals: mailboxEmail, mode: "insensitive" },
+            },
+          ],
+        },
+      }));
 
     const scalarFields = {
       inboxConnectionId: connection.id,
+      mailboxEmail,
       provider: "OUTLOOK" as const,
       parentProviderFolderId: folder.parentFolderId,
       folderPath: folder.path,
@@ -373,7 +394,6 @@ export async function scanNativeProjectFolders(input: {
       await input.prisma.discoveredFolder.create({
         data: {
           workspaceId: input.workspaceId,
-          mailboxEmail: connection.email,
           providerFolderId: folder.id,
           matchedJobId: match.matchedJobId,
           status: match.status,
@@ -413,15 +433,21 @@ export async function scanNativeProjectFolders(input: {
   }
 
   // Soft-mark folders under this mailbox that vanished from Projects tree
+  // (scoped connection rows + legacy NULL inboxConnectionId for same mailbox).
   const missingResult = await input.prisma.discoveredFolder.updateMany({
     where: {
       workspaceId: input.workspaceId,
-      mailboxEmail: connection.email,
-      inboxConnectionId: connection.id,
       providerFolderId: { notIn: [...seenProviderIds] },
       status: { notIn: ["IGNORED", "ARCHIVED"] },
       missingFromProvider: false,
       folderPath: { startsWith: `${projectsRoot.path}/` },
+      OR: [
+        { inboxConnectionId: connection.id },
+        {
+          inboxConnectionId: null,
+          mailboxEmail: { equals: mailboxEmail, mode: "insensitive" },
+        },
+      ],
     },
     data: {
       missingFromProvider: true,
@@ -465,13 +491,16 @@ export async function getVerifiedProjectFolders(
         ? {
             OR: [
               { inboxConnectionId: input.inboxConnectionId },
-              { inboxConnectionId: null, mailboxEmail },
+              {
+                inboxConnectionId: null,
+                mailboxEmail: { equals: mailboxEmail, mode: "insensitive" },
+              },
             ],
           }
         : input.inboxConnectionId
           ? { inboxConnectionId: input.inboxConnectionId }
           : mailboxEmail
-            ? { mailboxEmail }
+            ? { mailboxEmail: { equals: mailboxEmail, mode: "insensitive" } }
             : {}),
     },
     orderBy: { folderPath: "asc" },

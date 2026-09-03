@@ -13,9 +13,10 @@ describe("Email Analysis discovered-folders contract", () => {
     );
     expect(src).toContain('connectionId: z.string().min(1).optional()');
     expect(src).toContain("{ inboxConnectionId: conn.id }");
-    expect(src).toContain("{ inboxConnectionId: null, mailboxEmail: scopeMailboxEmail }");
-    expect(src).toContain("Required database migration has not been applied");
+    expect(src).toContain('mode: "insensitive"');
+    expect(src).toContain("Could not load discovered folders");
     expect(src).toContain("serializeDiscoveredFolderRow");
+    expect(src).toContain("DISCOVERED_FOLDERS_LIST_FAILED");
   });
 
   it("frontend FoldersView uses case-insensitive outlook + connectionId list param", () => {
@@ -26,9 +27,59 @@ describe("Email Analysis discovered-folders contract", () => {
     const api = readFileSync(join(here, "../../../web/src/api.ts"), "utf8");
     expect(view).toContain("c.provider.toLowerCase() === 'outlook'");
     expect(view).toContain("connectionId: connectionIdForScope");
-    expect(view).toContain("Select an Outlook mailbox");
+    expect(view).toContain("loadSeqRef");
+    expect(view).toContain("isMailboxSafeFolder");
+    expect(view).toContain("eligibleVerified");
     expect(view).not.toContain("c.provider === 'OUTLOOK'");
     expect(api).toContain("if (params?.connectionId) p.set('connectionId', params.connectionId)");
+  });
+
+  it("unique DiscoveredFolder key is workspaceId+mailboxEmail+providerFolderId", () => {
+    const schema = readFileSync(
+      join(here, "../../../../packages/db/prisma/schema.prisma"),
+      "utf8"
+    );
+    expect(schema).toContain("@@unique([workspaceId, mailboxEmail, providerFolderId])");
+    expect(schema).toContain("inboxConnectionId       String?");
+  });
+
+  it("scan is directory-only — no message/email import APIs", () => {
+    const scan = readFileSync(
+      join(here, "../application/services/scan-project-folders.ts"),
+      "utf8"
+    );
+    const folders = readFileSync(
+      join(here, "../application/services/outlook-mail-folders.ts"),
+      "utf8"
+    );
+    expect(scan).toContain("matchFolderToExistingJobs");
+    expect(scan).not.toMatch(/listMailFolderMessages|emailMessage\.create|mailbox-classify|attachment-ingest/i);
+    expect(folders).toContain("/mailFolders");
+    expect(folders).not.toMatch(/\/messages/i);
+  });
+
+  it("scan upgrades legacy NULL inboxConnectionId rows by providerFolderId", () => {
+    const scan = readFileSync(
+      join(here, "../application/services/scan-project-folders.ts"),
+      "utf8"
+    );
+    expect(scan).toContain("mailboxEmail = connection.email.toLowerCase()");
+    expect(scan).toContain("findFirst");
+    expect(scan).toContain("inboxConnectionId: null");
+    expect(scan).toContain('mode: "insensitive"');
+  });
+
+  it("FoldersView labels Scan Project Folders separately from Analyze Emails", () => {
+    const view = readFileSync(
+      join(here, "../../../web/src/views/FoldersView.tsx"),
+      "utf8"
+    );
+    expect(view).toContain("Scan Project Folders");
+    expect(view).toContain("Analyze Emails (selected)");
+    expect(view).toContain("Analyze Emails (all verified)");
+    expect(view).toContain("Folder scan result");
+    expect(view).toContain("Email analysis:");
+    expect(view).not.toContain(">Analyze Project Folders<");
   });
 
   it("retires Job Discovery UI while keeping shared folder-discovery backend", () => {

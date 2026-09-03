@@ -164,7 +164,8 @@ export type DiscoveredGraphFolder = GraphMailFolder & {
 };
 
 /**
- * Walk descendants under Projects (BFS). Does not scan unrelated mailbox trees.
+ * Walk descendants under Projects (BFS). Folder metadata only — never lists
+ * messages inside those folders.
  */
 export async function discoverFoldersUnderProjectsRoot(
   accessToken: string,

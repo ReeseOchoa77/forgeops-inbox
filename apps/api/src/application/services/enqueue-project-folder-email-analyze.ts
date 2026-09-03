@@ -73,6 +73,8 @@ export async function enqueueProjectFolderEmailAnalyze(input: {
     );
   }
 
+  const mailboxEmail = connection.email.toLowerCase();
+
   const requestedIds = (input.folderIds ?? []).filter(Boolean);
 
   const verified = await input.prisma.discoveredFolder.findMany({
@@ -81,16 +83,30 @@ export async function enqueueProjectFolderEmailAnalyze(input: {
       status: "APPROVED",
       matchedJobId: { not: null },
       missingFromProvider: false,
+      providerFolderId: { not: "" },
       OR: [
         { inboxConnectionId: connection.id },
-        { inboxConnectionId: null, mailboxEmail: connection.email },
+        {
+          inboxConnectionId: null,
+          mailboxEmail: { equals: mailboxEmail, mode: "insensitive" },
+        },
       ],
       ...(requestedIds.length > 0 ? { id: { in: requestedIds } } : {}),
     },
-    select: { id: true, status: true, matchedJobId: true },
+    select: {
+      id: true,
+      status: true,
+      matchedJobId: true,
+      providerFolderId: true,
+      inboxConnectionId: true,
+      matchedJob: { select: { id: true } },
+    },
   });
 
-  if (verified.length === 0) {
+  // Drop rows whose Job FK is broken (matchedJobId set but Job missing).
+  const verifiedWithJob = verified.filter((v) => v.matchedJobId && v.matchedJob);
+
+  if (verifiedWithJob.length === 0) {
     throw new ProjectFolderEmailAnalyzeError(
       "NO_VERIFIED_FOLDERS",
       requestedIds.length > 0
@@ -99,9 +115,9 @@ export async function enqueueProjectFolderEmailAnalyze(input: {
     );
   }
 
-  // Reject if client asked for folders that are not verified
-  if (requestedIds.length > 0 && verified.length !== requestedIds.length) {
-    const ok = new Set(verified.map((v) => v.id));
+  // Reject if client asked for folders that are not verified / mailbox-safe
+  if (requestedIds.length > 0 && verifiedWithJob.length !== requestedIds.length) {
+    const ok = new Set(verifiedWithJob.map((v) => v.id));
     const bad = requestedIds.filter((id) => !ok.has(id));
     throw new ProjectFolderEmailAnalyzeError(
       "INVALID_REQUEST",
@@ -110,14 +126,14 @@ export async function enqueueProjectFolderEmailAnalyze(input: {
   }
 
   const progress = emptyProjectFolderEmailAnalyzeProgress();
-  progress.foldersTotal = verified.length;
+  progress.foldersTotal = verifiedWithJob.length;
 
   const run = await input.prisma.projectFolderEmailAnalyzeRun.create({
     data: {
       workspaceId: input.workspaceId,
       inboxConnectionId: connection.id,
       status: "PENDING",
-      folderIds: verified.map((v) => v.id),
+      folderIds: verifiedWithJob.map((v) => v.id),
       progress: progress as unknown as Prisma.InputJsonValue,
       initiatedByUserId: input.initiatedByUserId ?? null,
     },

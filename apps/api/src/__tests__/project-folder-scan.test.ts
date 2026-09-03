@@ -170,9 +170,17 @@ describe("scanNativeProjectFolders persistence", () => {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       discoveredFolder: {
-        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { workspaceId_mailboxEmail_providerFolderId: { providerFolderId: string } } }) => {
-          const id = where.workspaceId_mailboxEmail_providerFolderId.providerFolderId;
-          return store.folders.get(id) ?? null;
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { workspaceId_mailboxEmail_providerFolderId: { providerFolderId: string; mailboxEmail: string } } }) => {
+          const key = where.workspaceId_mailboxEmail_providerFolderId;
+          const row = store.folders.get(key.providerFolderId);
+          if (!row) return null;
+          // Mirror Postgres unique: exact mailboxEmail match (case-sensitive).
+          if (row.mailboxEmail != null && row.mailboxEmail !== key.mailboxEmail) return null;
+          return row;
+        }),
+        findFirst: vi.fn().mockImplementation(async ({ where }: { where: { providerFolderId?: string } }) => {
+          if (!where.providerFolderId) return null;
+          return store.folders.get(where.providerFolderId) ?? null;
         }),
         create: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
           store.folders.set(String(data.providerFolderId), { id: `df-${data.providerFolderId}`, ...data });
@@ -332,6 +340,72 @@ describe("scanNativeProjectFolders persistence", () => {
     expect(store.folders.get("pf-1")?.rawFolderName).toBe("2209 Renamed Patio");
     expect(store.folders.get("pf-1")?.status).toBe("APPROVED");
     expect(store.folders.get("pf-1")?.matchedJobId).toBe("j2209");
+  });
+
+  it("upgrades legacy NULL inboxConnectionId rows instead of duplicating", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("oauth2")) return jsonRes({ access_token: "access" });
+      if (String(url).includes("/childFolders")) {
+        return jsonRes({
+          value: [
+            {
+              id: "pf-legacy",
+              displayName: "2209 BSC BLDG 3 Patio Rail",
+              parentFolderId: "root-projects",
+              childFolderCount: 0,
+            },
+          ],
+        });
+      }
+      return jsonRes({
+        value: [
+          {
+            id: "root-projects",
+            displayName: "Projects",
+            parentFolderId: null,
+            childFolderCount: 1,
+          },
+        ],
+      });
+    });
+
+    const store = {
+      folders: new Map<string, Record<string, unknown>>([
+        [
+          "pf-legacy",
+          {
+            id: "df-legacy",
+            providerFolderId: "pf-legacy",
+            mailboxEmail: "Ops@Example.com",
+            inboxConnectionId: null,
+            status: "APPROVED",
+            matchedJobId: "j2209",
+            rawFolderName: "2209 Old",
+          },
+        ],
+      ]),
+    };
+    const prisma = mockPrisma(store);
+
+    const result = await scanNativeProjectFolders({
+      prisma: prisma as never,
+      workspaceId: "ws1",
+      connectionId: "conn1",
+      decryptRefreshToken: () => "refresh",
+      env: {
+        OUTLOOK_CLIENT_ID: "id",
+        OUTLOOK_CLIENT_SECRET: "secret",
+      },
+    });
+
+    expect(result.created).toBe(0);
+    expect(result.updated).toBe(1);
+    expect(store.folders.size).toBe(1);
+    expect(store.folders.get("pf-legacy")?.inboxConnectionId).toBe("conn1");
+    expect(store.folders.get("pf-legacy")?.mailboxEmail).toBe("ops@example.com");
+    expect(store.folders.get("pf-legacy")?.status).toBe("APPROVED");
+    expect(store.folders.get("pf-legacy")?.matchedJobId).toBe("j2209");
   });
 
   it("rejects missing / unauthorized connections", async () => {

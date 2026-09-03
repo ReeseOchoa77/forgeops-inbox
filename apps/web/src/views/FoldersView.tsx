@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   type ConnectionSummary,
@@ -71,6 +71,30 @@ function friendlyLoadError(raw: string): string {
   return msg || 'Could not load discovered folders'
 }
 
+/** Human-readable matchReason from matchFolderToExistingJobs / manual actions. */
+function formatMatchReason(reason: string | null | undefined): string {
+  if (!reason) return '—'
+  switch (reason) {
+    case 'exact_job_number':
+      return 'Exact job number'
+    case 'exact_job_name':
+      return 'Normalized job name'
+    case 'alias':
+      return 'Job alias'
+    case 'ambiguous_job_number':
+      return 'Ambiguous job number'
+    case 'ambiguous_job_name':
+      return 'Ambiguous job name'
+    case 'ambiguous_alias':
+      return 'Ambiguous alias'
+    case 'manual':
+    case 'user_match':
+      return 'Manual selection'
+    default:
+      return reason.replace(/_/g, ' ')
+  }
+}
+
 interface Props {
   workspaceId: string
   /** Global inbox selection — used as initial mailbox hint only. */
@@ -114,6 +138,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     foldersTotal: number
     errorMessage: string | null
   } | null>(null)
+  const loadSeqRef = useRef(0)
 
   const outlookConnections = useMemo(
     () => connections.filter(isOutlookConnection),
@@ -131,6 +156,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
 
   const loadFolders = useCallback(
     async (connectionIdForScope: string) => {
+      const seq = ++loadSeqRef.current
       setLoadingList(true)
       setError('')
       try {
@@ -138,14 +164,23 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           connectionId: connectionIdForScope,
           pageSize: 200,
         })
+        // Ignore stale responses from overlapping loads (Strict Mode / connection churn).
+        if (seq !== loadSeqRef.current) return
         setFolders(res.folders)
+        setError('')
       } catch (e) {
+        if (seq !== loadSeqRef.current) return
+        console.error('[Email Analysis] discovered-folders failed', {
+          workspaceId,
+          connectionId: connectionIdForScope,
+          message: e instanceof Error ? e.message : e,
+        })
         setFolders([])
         setError(
           friendlyLoadError(e instanceof Error ? e.message : 'Could not load discovered folders')
         )
       } finally {
-        setLoadingList(false)
+        if (seq === loadSeqRef.current) setLoadingList(false)
       }
     },
     [workspaceId]
@@ -290,9 +325,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   }
 
   const handleAnalyzeEmails = async (mode: 'selected' | 'all') => {
-    const verifiedIds = folders
-      .filter((f) => toMatchUi(f.status) === 'VERIFIED')
-      .map((f) => f.id)
+    const verifiedIds = eligibleVerified.map((f) => f.id)
     const folderIds =
       mode === 'all'
         ? verifiedIds
@@ -300,8 +333,8 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     if (folderIds.length === 0) {
       setError(
         mode === 'selected'
-          ? 'Select one or more VERIFIED folders to analyze'
-          : 'No VERIFIED folders available to analyze'
+          ? 'Select one or more eligible VERIFIED folders to analyze'
+          : 'No eligible VERIFIED folders for this mailbox'
       )
       return
     }
@@ -359,14 +392,34 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const filtered =
     filter === 'all' ? withUi : withUi.filter((f) => f.matchUi === filter)
 
+  const mailboxEmailLower = selectedConn?.email.toLowerCase() ?? ''
+  const isMailboxSafeFolder = (f: DiscoveredFolderItem) => {
+    if (f.missingFromProvider) return false
+    if (!f.matchedJobId || !f.providerFolderId) return false
+    if (f.inboxConnectionId && selectedConnectionId && f.inboxConnectionId === selectedConnectionId)
+      return true
+    // Deterministic legacy: same mailbox email, unscoped connection id
+    if (
+      f.inboxConnectionId == null &&
+      mailboxEmailLower &&
+      f.mailboxEmail.toLowerCase() === mailboxEmailLower
+    ) {
+      return true
+    }
+    return false
+  }
+
   const counts = {
     verified: withUi.filter((f) => f.matchUi === 'VERIFIED').length,
     suggested: withUi.filter((f) => f.matchUi === 'SUGGESTED').length,
     unmatched: withUi.filter((f) => f.matchUi === 'UNMATCHED').length,
   }
 
-  const verifiedSelectedCount = withUi.filter(
-    (f) => f.matchUi === 'VERIFIED' && selectedFolderIds.has(f.id)
+  const eligibleVerified = withUi.filter(
+    (f) => f.matchUi === 'VERIFIED' && isMailboxSafeFolder(f)
+  )
+  const verifiedSelectedCount = eligibleVerified.filter((f) =>
+    selectedFolderIds.has(f.id)
   ).length
 
   const scanDisabled =
@@ -374,16 +427,41 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const analyzeSelectedDisabled =
     analyzing || scanning || !selectedConnectionId || !mailboxReady || verifiedSelectedCount === 0
   const analyzeAllDisabled =
-    analyzing || scanning || !selectedConnectionId || !mailboxReady || counts.verified === 0
+    analyzing ||
+    scanning ||
+    !selectedConnectionId ||
+    !mailboxReady ||
+    eligibleVerified.length === 0
 
   return (
     <div>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Email Analysis</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
-        Scan Outlook <code>/Projects</code> folders and match them to existing Jobs. Only{' '}
-        <strong>VERIFIED</strong> folder↔Job mappings are eligible for later email analysis.
-        Folders alone are never treated as Jobs.
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 8px' }}>
+        Two separate operations: <strong>Scan Project Folders</strong> discovers Outlook{' '}
+        <code>/Projects</code> directory mappings only (no email import).{' '}
+        <strong>Analyze Emails</strong> later imports messages from VERIFIED folder↔Job mappings.
+        Folders are never Jobs — existing ForgeOps Jobs stay the source of truth.
       </p>
+      <ol
+        style={{
+          margin: '0 0 12px',
+          paddingLeft: 18,
+          fontSize: 12,
+          color: '#666',
+          lineHeight: 1.5,
+        }}
+      >
+        <li>
+          <strong>Scan Project Folders</strong> — enumerate /Projects folder names &amp; IDs, match to
+          existing Jobs
+        </li>
+        <li>
+          <strong>Review &amp; verify</strong> — accept suggestions or Match Job manually
+        </li>
+        <li>
+          <strong>Analyze Emails</strong> — import/reuse messages from verified folders only
+        </li>
+      </ol>
 
       {error && (
         <div
@@ -438,11 +516,11 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                   ? 'Select an Outlook mailbox first'
                   : mailboxNeedsAuth
                     ? 'Authorize Outlook / Reconnect required'
-                    : undefined
+                    : 'Directory discovery only — does not import emails'
               }
               onClick={() => void handleScan()}
             >
-              {scanning ? 'Scanning Projects…' : 'Analyze Project Folders'}
+              {scanning ? 'Scanning Projects…' : 'Scan Project Folders'}
             </button>
           )}
           {canEdit && (
@@ -469,8 +547,8 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                 title={
                   !selectedConnectionId
                     ? 'Select an Outlook mailbox first'
-                    : counts.verified === 0
-                      ? 'No VERIFIED folders for this mailbox'
+                    : eligibleVerified.length === 0
+                      ? 'No eligible VERIFIED folders for this mailbox'
                       : undefined
                 }
                 onClick={() => void handleAnalyzeEmails('all')}
@@ -490,41 +568,23 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
 
         {scanning && (
           <p style={{ margin: '10px 0 0', fontSize: 12, color: '#1565c0' }}>
-            Resolving /Projects and matching folders to Jobs…
+            Folder scan: resolving /Projects directory and matching folder names to Jobs (no email
+            import)…
           </p>
         )}
 
-        {(analyzing || analyzeProgress) && (
-          <div style={{ marginTop: 10, fontSize: 12, color: '#333' }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {analyzing
-                ? `Analyzing ${analyzeProgress?.currentFolderName ?? 'verified folders'}…`
-                : `Analyze ${analyzeProgress?.status === 'COMPLETED' ? 'complete' : analyzeProgress?.status}`}
-              {analyzeRunId && (
-                <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
-                  run {analyzeRunId.slice(0, 8)}…
-                </span>
-              )}
-            </div>
-            {analyzeProgress && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <span>
-                  Folders {analyzeProgress.foldersDone}/{analyzeProgress.foldersTotal}
-                </span>
-                <span>Processed: {analyzeProgress.processed}</span>
-                <span>New: {analyzeProgress.created}</span>
-                <span>Existing: {analyzeProgress.existing}</span>
-                <span>Assigned: {analyzeProgress.assigned}</span>
-                <span>Classify queued: {analyzeProgress.classifyQueued}</span>
-                <span>Conflicts: {analyzeProgress.conflicts}</span>
-                <span>Failed: {analyzeProgress.failed}</span>
-              </div>
-            )}
-          </div>
-        )}
-
         {scanSummary && (
-          <div style={{ marginTop: 10, fontSize: 12, color: '#333', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <div
+            style={{
+              marginTop: 10,
+              fontSize: 12,
+              color: '#333',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
+            <span style={{ fontWeight: 600, width: '100%' }}>Folder scan result</span>
             <span>
               Root: <strong>{scanSummary.projectsRoot.path}</strong>
             </span>
@@ -537,6 +597,35 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                 ({scanSummary.created} new · {scanSummary.updated} updated
                 {scanSummary.missingMarked ? ` · ${scanSummary.missingMarked} missing` : ''})
               </span>
+            )}
+          </div>
+        )}
+
+        {(analyzing || analyzeProgress) && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#333' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {analyzing
+                ? `Email analysis: ${analyzeProgress?.currentFolderName ?? 'verified folders'}…`
+                : `Email analysis ${analyzeProgress?.status === 'COMPLETED' ? 'complete' : analyzeProgress?.status}`}
+              {analyzeRunId && (
+                <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
+                  run {analyzeRunId.slice(0, 8)}…
+                </span>
+              )}
+            </div>
+            {analyzeProgress && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <span>
+                  Folders {analyzeProgress.foldersDone}/{analyzeProgress.foldersTotal}
+                </span>
+                <span>Emails processed: {analyzeProgress.processed}</span>
+                <span>Created: {analyzeProgress.created}</span>
+                <span>Reused: {analyzeProgress.existing}</span>
+                <span>Job assigned: {analyzeProgress.assigned}</span>
+                <span>Classify queued: {analyzeProgress.classifyQueued}</span>
+                <span>Conflicts: {analyzeProgress.conflicts}</span>
+                <span>Failed: {analyzeProgress.failed}</span>
+              </div>
             )}
           </div>
         )}
@@ -587,7 +676,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
             <div className="empty-state" style={{ padding: 24 }}>
               <h3>No project folders yet</h3>
               <p>
-                Click <strong>Analyze Project Folders</strong> to discover folders under /Projects for{' '}
+                Click <strong>Scan Project Folders</strong> to discover folder names/IDs under /Projects for{' '}
                 {selectedConn?.email}. Matching uses existing Jobs only.
               </p>
             </div>
@@ -633,14 +722,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                     return (
                       <tr key={f.id} style={{ borderBottom: '1px solid #f0f0f0', verticalAlign: 'top' }}>
                         <td style={{ padding: '8px 10px' }}>
-                          {f.matchUi === 'VERIFIED' && (
-                            <input
-                              type="checkbox"
-                              checked={selectedFolderIds.has(f.id)}
-                              onChange={() => toggleFolderSelected(f.id)}
-                              aria-label={`Select ${f.rawFolderName}`}
-                            />
-                          )}
+                      {f.matchUi === 'VERIFIED' && isMailboxSafeFolder(f) && (
+                        <input
+                          type="checkbox"
+                          checked={selectedFolderIds.has(f.id)}
+                          onChange={() => toggleFolderSelected(f.id)}
+                          aria-label={`Select ${f.rawFolderName}`}
+                        />
+                      )}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
                           <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{f.rawFolderName}</div>
@@ -650,7 +739,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                               Legacy row (no inboxConnectionId) — matched by mailbox email
                             </div>
                           )}
-                          {f.matchUi === 'VERIFIED' && canEdit && (
+                          {f.matchUi === 'VERIFIED' && canEdit && isMailboxSafeFolder(f) && (
                             <button
                               type="button"
                               className="btn btn-sm btn-outline"
@@ -660,6 +749,11 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                             >
                               Analyze Emails
                             </button>
+                          )}
+                          {f.matchUi === 'VERIFIED' && canEdit && !isMailboxSafeFolder(f) && (
+                            <div style={{ fontSize: 10, color: '#c62828', marginTop: 6 }}>
+                              Rescan required before analyze
+                            </div>
                           )}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
@@ -694,7 +788,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
                           )}
                         </td>
                         <td style={{ padding: '8px 10px', fontSize: 11, color: '#666' }}>
-                          {f.matchReason ?? '—'}
+                          {formatMatchReason(f.matchReason)}
                           {f.matchConfidence != null && (
                             <div style={{ fontSize: 10, color: '#999' }}>
                               {(Number(f.matchConfidence) * 100).toFixed(0)}%

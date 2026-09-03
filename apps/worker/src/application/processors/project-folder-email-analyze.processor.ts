@@ -228,6 +228,17 @@ export async function processProjectFolderEmailAnalyze(
           status: "APPROVED",
           matchedJobId: { not: null },
           missingFromProvider: false,
+          providerFolderId: { not: "" },
+          OR: [
+            { inboxConnectionId: connection.id },
+            {
+              inboxConnectionId: null,
+              mailboxEmail: {
+                equals: connection.email.toLowerCase(),
+                mode: "insensitive",
+              },
+            },
+          ],
         },
         include: {
           matchedJob: {
