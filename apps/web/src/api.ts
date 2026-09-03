@@ -465,6 +465,7 @@ export interface DiscoveredFolderItem {
   id: string;
   workspaceId: string;
   mailboxEmail: string;
+  inboxConnectionId?: string | null;
   provider: string;
   providerFolderId: string;
   parentProviderFolderId: string | null;
@@ -476,6 +477,9 @@ export interface DiscoveredFolderItem {
   matchedJobId: string | null;
   matchedJob: { id: string; name: string; jobNumber: string | null; status?: string } | null;
   status: 'DISCOVERED' | 'MATCHED' | 'APPROVED' | 'IGNORED' | 'ARCHIVED';
+  matchConfidence?: number | string | null;
+  matchReason?: string | null;
+  missingFromProvider?: boolean;
   childFolderCount: number;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -484,6 +488,19 @@ export interface DiscoveredFolderItem {
   ignoredAt: string | null;
   ignoredByUserId: string | null;
   createdAt: string;
+}
+
+export interface ProjectFolderScanSummary {
+  status?: string;
+  projectsRoot: { id: string; path: string; displayName: string };
+  totalUnderProjects: number;
+  candidates: number;
+  created: number;
+  updated: number;
+  missingMarked: number;
+  verified: number;
+  suggested: number;
+  unmatched: number;
 }
 
 export interface FolderSummaryMetrics {
@@ -1592,9 +1609,77 @@ export const api = {
     request<FolderDetailResponse>(`/workspaces/${workspaceId}/discovered-folders/${folderId}`),
 
   matchDiscoveredFolder: (workspaceId: string, folderId: string, jobId: string) =>
-    request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/match`, {
-      method: 'POST', body: JSON.stringify({ jobId })
+    request<{ status: string; matchStatus?: string; matchedJobId: string }>(
+      `/workspaces/${workspaceId}/discovered-folders/${folderId}/match`,
+      { method: 'POST', body: JSON.stringify({ jobId }) }
+    ),
+
+  unmatchDiscoveredFolder: (workspaceId: string, folderId: string) =>
+    request<{ status: string; matchStatus?: string; matchedJobId: null }>(
+      `/workspaces/${workspaceId}/discovered-folders/${folderId}/unmatch`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  scanProjectFolders: (workspaceId: string, connectionId: string) =>
+    request<ProjectFolderScanSummary>(`/workspaces/${workspaceId}/project-folders/scan`, {
+      method: 'POST',
+      body: JSON.stringify({ connectionId }),
     }),
+
+  analyzeProjectFolderEmails: (
+    workspaceId: string,
+    connectionId: string,
+    folderIds?: string[]
+  ) =>
+    request<{ status: string; runId: string }>(
+      `/workspaces/${workspaceId}/project-folders/analyze-emails`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          connectionId,
+          ...(folderIds && folderIds.length > 0 ? { folderIds } : {}),
+        }),
+      }
+    ),
+
+  getProjectFolderEmailAnalyzeRun: (workspaceId: string, runId: string) =>
+    request<{
+      run: {
+        id: string;
+        status: string;
+        progress: {
+          foldersTotal: number;
+          foldersDone: number;
+          currentFolderName: string | null;
+          processed: number;
+          created: number;
+          existing: number;
+          assigned: number;
+          classifyQueued: number;
+          classifySkipped: number;
+          attachmentQueued: number;
+          conflicts: number;
+          failed: number;
+          unavailable: number;
+        };
+        errorMessage: string | null;
+        startedAt: string | null;
+        completedAt: string | null;
+      };
+    }>(`/workspaces/${workspaceId}/project-folders/analyze-emails/${runId}`),
+
+  getVerifiedProjectFolders: (
+    workspaceId: string,
+    params?: { connectionId?: string; mailboxEmail?: string }
+  ) => {
+    const p = new URLSearchParams();
+    if (params?.connectionId) p.set('connectionId', params.connectionId);
+    if (params?.mailboxEmail) p.set('mailboxEmail', params.mailboxEmail);
+    const q = p.toString();
+    return request<{ folders: DiscoveredFolderItem[] }>(
+      `/workspaces/${workspaceId}/project-folders/verified${q ? `?${q}` : ''}`
+    );
+  },
 
   approveDiscoveredFolder: (workspaceId: string, folderId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/approve`, {

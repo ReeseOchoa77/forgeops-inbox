@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { JobMatchEvidence, JobMatchResult } from "@forgeops/shared";
+import { isProtectedJobAssignment } from "@forgeops/shared";
 
 export function isManualJobAssignment(existing: {
   jobAssignmentIsManual?: boolean | null;
@@ -41,7 +42,7 @@ export type JobMatchPersistenceFields = {
 
 /**
  * Build dual-persistence payloads from a JobMatcherService result.
- * Returns null when a manual assignment must be preserved (caller skips overwrite).
+ * Returns null when a protected assignment must be preserved (caller skips overwrite).
  */
 export function buildJobMatchPersistence(
   match: JobMatchResult,
@@ -51,7 +52,7 @@ export function buildJobMatchPersistence(
     jobAssignmentSource?: string | null;
   } | null
 ): JobMatchPersistenceFields | null {
-  if (existing && isManualJobAssignment(existing)) {
+  if (existing && isProtectedJobAssignment(existing)) {
     return null;
   }
 

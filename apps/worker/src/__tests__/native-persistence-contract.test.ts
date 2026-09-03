@@ -3,6 +3,8 @@ import {
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
   mapN8nPriorityToStored,
+  normalizeTaskDueAt,
+  resolveTaskSourceDate,
 } from "@forgeops/shared";
 
 /**
@@ -32,5 +34,24 @@ describe("native persistence mapping contract", () => {
     };
     expect(rule.classificationJobId).toBe("JobMatcherService");
     expect(rule.aiSelectedJobId).toContain("hint");
+  });
+
+  it("normalizes invalid dueDate once before create+update so classification can continue", () => {
+    // Mirrors persist-native-classification: one dueAt for both Prisma branches.
+    const rawDueDate = "ASAP"; // model sometimes returns relative phrases
+    const dueAt = normalizeTaskDueAt(rawDueDate, { emailMessageId: "msg-failing" });
+    const sourceDate = resolveTaskSourceDate({
+      receivedAt: new Date("2026-08-27T22:38:26.000Z"),
+    });
+
+    const update = { dueAt, sourceDate, title: "Submit proposal to Sam Kanne" };
+    const create = { dueAt, sourceDate, title: "Submit proposal to Sam Kanne" };
+
+    expect(dueAt).toBeNull();
+    expect(update.dueAt).toBe(create.dueAt);
+    expect(sourceDate.toISOString()).toBe("2026-08-27T22:38:26.000Z");
+    // Legacy bug: truthy string → Invalid Date → PrismaClientValidationError
+    const legacy = rawDueDate ? new Date(rawDueDate) : null;
+    expect(Number.isNaN(legacy!.getTime())).toBe(true);
   });
 });

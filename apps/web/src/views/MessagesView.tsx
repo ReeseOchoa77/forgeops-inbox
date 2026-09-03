@@ -9,6 +9,7 @@ import {
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import {
   JobAssignPicker,
+  JobFilterSelect,
   formatJobPrimaryLabel,
   formatJobTooltip,
 } from '../components/JobAssignPicker'
@@ -214,7 +215,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
-  const [jobs, setJobs] = useState<JobLookup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
   const [searchIn, setSearchIn] = useState<'all' | 'sender'>('all')
@@ -488,19 +488,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       performance.clearMarks('inboxComponentMount')
     } catch { /* ignore */ }
   }, [loading, messages.length])
-
-  useEffect(() => {
-    // Defer job lookup until the job filter is used (not on initial inbox paint)
-  }, [workspaceId])
-
-  const jobsLoadedRef = useRef(false)
-  const ensureJobsLoaded = useCallback(() => {
-    if (jobsLoadedRef.current) return
-    jobsLoadedRef.current = true
-    api.getJobsLookup(workspaceId, { showArchived: false })
-      .then(r => setJobs(r.jobs))
-      .catch(() => setJobs([]))
-  }, [workspaceId])
 
   // Opening a message from this list: mark read locally (detail also PATCHes the server).
   useEffect(() => {
@@ -1432,24 +1419,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
               <span style={{ color: '#ddd' }}>|</span>
 
-              {/* Job filter */}
-              <select
+              {/* Job filter — type-to-search like row assign picker */}
+              <JobFilterSelect
+                workspaceId={workspaceId}
                 value={jobFilter}
-                onFocus={() => ensureJobsLoaded()}
-                onChange={e => setJobFilter(e.target.value)}
-                style={{
-                  padding: '3px 8px', fontSize: 11, borderRadius: 6,
-                  border: '1px solid #ddd', background: '#fff', color: '#444', cursor: 'pointer'
-                }}
-              >
-                <option value="">All Jobs</option>
-                <option value="unassigned">Unassigned</option>
-                {jobs.map(j => (
-                  <option key={j.id} value={j.id}>
-                    {j.name}{j.jobNumber ? ` (#${j.jobNumber})` : ''}
-                  </option>
-                ))}
-              </select>
+                onChange={setJobFilter}
+              />
             </>
           )}
         </div>

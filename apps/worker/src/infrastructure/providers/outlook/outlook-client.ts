@@ -712,6 +712,117 @@ export class OutlookClient {
     };
   }
 
+  /**
+   * List one page of messages in an arbitrary mail folder (verified /Projects child).
+   * Callers loop with nextPageCursor until null.
+   */
+  async listMailFolderMessages(input: {
+    refreshToken: string;
+    folderId: string;
+    pageSize?: number;
+    pageCursor?: string | null;
+  }): Promise<{
+    items: OutlookMessageSnapshot[];
+    nextPageCursor: string | null;
+    accessToken: string;
+    refreshedRefreshToken: string | null;
+  }> {
+    if (!this.config.clientId || !this.config.clientSecret) {
+      throw new Error("Outlook client is not configured");
+    }
+
+    const tokenResult = await this.refreshAccessToken(input.refreshToken);
+    const pageSize = Math.min(Math.max(input.pageSize ?? 50, 1), 50);
+    const folderMap = await this.fetchFolderNames(tokenResult.accessToken);
+
+    const url: string =
+      input.pageCursor && input.pageCursor.startsWith("http")
+        ? input.pageCursor
+        : `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/${encodeURIComponent(input.folderId)}/messages` +
+          `?$select=${MESSAGE_SELECT_FIELDS}` +
+          `&$orderby=receivedDateTime desc` +
+          `&$top=${pageSize}`;
+
+    const response = await this.fetchWithThrottleRetry(url, {
+      Authorization: `Bearer ${tokenResult.accessToken}`,
+      Prefer: "odata.maxpagesize=" + String(pageSize),
+    });
+
+    if (response.status === 404) {
+      return {
+        items: [],
+        nextPageCursor: null,
+        accessToken: tokenResult.accessToken,
+        refreshedRefreshToken: tokenResult.refreshedRefreshToken,
+      };
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Outlook folder messages fetch failed (${response.status}): ${errorText.slice(0, 300)}`
+      );
+    }
+
+    const raw = await response.json();
+    const page = graphMessagesResponseSchema.parse(raw);
+    const nextPageCursor = page["@odata.nextLink"] ?? null;
+    const items: OutlookMessageSnapshot[] = [];
+    const hasAttachmentIds: string[] = [];
+    const seenMessageIds = new Set<string>();
+
+    for (const graphMsg of page.value) {
+      if (seenMessageIds.has(graphMsg.id)) continue;
+      seenMessageIds.add(graphMsg.id);
+      if (isRemovedGraphMessage(graphMsg)) continue;
+
+      let resolved: GraphMessage = graphMsg;
+      if (isIncompleteGraphMessage(graphMsg)) {
+        const hydrated = await this.fetchFullGraphMessage(
+          tokenResult.accessToken,
+          graphMsg.id
+        );
+        if (!hydrated || isRemovedGraphMessage(hydrated)) continue;
+        resolved = hydrated;
+      }
+
+      const normalized = normalizeGraphMessageFrom(resolved);
+      if (!graphMessageHasSender(normalized)) {
+        console.warn("outlook-folder-message-skipped-no-sender", {
+          messageId: normalized.id,
+          folderId: input.folderId,
+        });
+        continue;
+      }
+
+      const parsed = parseMessage(normalized, folderMap);
+      items.push(parsed);
+      if (
+        parsed.hasAttachments ||
+        /(?:src\s*=\s*(?:3D)?(["']?)cid:|url\(\s*(['"]?)cid:)/i.test(
+          parsed.bodyHtml ?? ""
+        )
+      ) {
+        hasAttachmentIds.push(normalized.id);
+      }
+    }
+
+    if (hasAttachmentIds.length > 0) {
+      await this.fetchAttachmentMetadata(
+        tokenResult.accessToken,
+        items,
+        hasAttachmentIds
+      );
+    }
+
+    return {
+      items,
+      nextPageCursor,
+      accessToken: tokenResult.accessToken,
+      refreshedRefreshToken: tokenResult.refreshedRefreshToken,
+    };
+  }
+
   private async refreshAccessToken(
     refreshToken: string
   ): Promise<{

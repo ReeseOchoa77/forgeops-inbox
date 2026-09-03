@@ -113,3 +113,35 @@ export interface AttachmentIngestResult {
   errorMessage?: string;
 }
 
+export interface ProjectFolderEmailAnalyzeJobPayload {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  initiatedBy?: string;
+}
+
+export interface ProjectFolderEmailAnalyzeProgress {
+  foldersTotal: number;
+  foldersDone: number;
+  currentFolderName: string | null;
+  processed: number;
+  created: number;
+  existing: number;
+  assigned: number;
+  classifyQueued: number;
+  classifySkipped: number;
+  attachmentQueued: number;
+  conflicts: number;
+  failed: number;
+  unavailable: number;
+}
+
+export interface ProjectFolderEmailAnalyzeJobResult {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  status: "COMPLETED" | "FAILED";
+  progress: ProjectFolderEmailAnalyzeProgress;
+  errorMessage?: string;
+}
+

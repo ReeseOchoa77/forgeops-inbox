@@ -147,6 +147,66 @@ export function resolveTaskSourceDate(message: {
 }
 
 /**
+ * Parse an optional date for Prisma. Never returns an Invalid Date object.
+ * Accepts Date | string | number; empty / malformed → null.
+ * YYYY-MM-DD strings become UTC midnight (matches n8n ingest).
+ */
+export function safeDateOrNull(value: unknown): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const d = new Date(`${trimmed}T00:00:00.000Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Task.dueAt persistence boundary: valid Date or null.
+ * Logs a compact warning when a non-empty raw value cannot be parsed.
+ * Does not invent dueAt from sourceDate / email receivedAt.
+ */
+export function normalizeTaskDueAt(
+  raw: unknown,
+  context?: { emailMessageId?: string }
+): Date | null {
+  if (raw == null) return null;
+  if (typeof raw === "string" && !raw.trim()) return null;
+
+  const date = safeDateOrNull(raw);
+  if (date) return date;
+
+  const rawDueAt =
+    typeof raw === "string"
+      ? raw.trim().slice(0, 80)
+      : raw instanceof Date
+        ? "Invalid Date"
+        : String(raw).slice(0, 80);
+
+  console.warn(
+    JSON.stringify({
+      event: "task-invalid-due-date",
+      ...(context?.emailMessageId
+        ? { emailMessageId: context.emailMessageId }
+        : {}),
+      rawDueAt,
+    })
+  );
+  return null;
+}
+
+/**
  * Cutoff for task bulk delete: delete where sourceDate < start of `beforeYmd` in `timeZone`.
  * Tasks on `beforeYmd` and later are kept.
  */

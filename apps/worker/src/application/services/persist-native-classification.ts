@@ -9,6 +9,7 @@ import {
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
+  normalizeTaskDueAt,
   resolveTaskSourceDate,
   type StoredPriority,
 } from "@forgeops/shared";
@@ -436,7 +437,10 @@ export async function persistNativeClassificationResult(input: {
         const sourceTaskKey = nativeTaskKey(task.title, i);
         incomingKeys.add(sourceTaskKey);
         const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;
-        const dueAt = task.dueDate ? new Date(task.dueDate) : null;
+        // One normalized value for both create + update — never pass Invalid Date to Prisma.
+        const dueAt = normalizeTaskDueAt(task.dueDate, {
+          emailMessageId: message.id,
+        });
         const sourceDate = resolveTaskSourceDate(message);
 
         await tx.task.upsert({

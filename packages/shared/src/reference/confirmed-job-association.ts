@@ -68,11 +68,15 @@ export function resolveConfirmedWorkspaceJob(input: {
 }
 
 export function confirmedJobAssociationDecisionEffect(
-  job: ConfirmedWorkspaceJob
+  job: ConfirmedWorkspaceJob,
+  opts?: { source?: string }
 ): string {
   const label = [job.jobNumber ? `#${job.jobNumber}` : null, job.name]
     .filter(Boolean)
     .join(" — ");
+  if (opts?.source === "verified_project_folder") {
+    return `Email originated from verified Job folder (${label || job.id}) → BUSINESS`;
+  }
   return `Confirmed job association (${label || job.id}) → BUSINESS`;
 }
 
@@ -93,7 +97,9 @@ export function applyConfirmedJobAssociationOverride(
   const decisionRule = forced
     ? CONFIRMED_JOB_ASSOCIATION_RULE
     : decision.decisionRule;
-  const decisionEffect = confirmedJobAssociationDecisionEffect(job);
+  const decisionEffect = confirmedJobAssociationDecisionEffect(job, {
+    source,
+  });
 
   const classificationDecision = {
     ...decision.classificationDecision,

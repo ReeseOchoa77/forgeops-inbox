@@ -38,7 +38,7 @@ STRICT RULES:
 TASK FIELDS:
 - title: short imperative summary of the action.
 - description: one or two sentences grounded in the email text.
-- dueDate: an explicit date/deadline stated in the email, otherwise null. Do not guess or normalize vague phrases into dates.
+- dueDate: ISO 8601 datetime (e.g. "2026-09-02T00:00:00.000Z") when an explicit calendar deadline is stated in the email; otherwise null. Never invent dates, never return relative phrases ("ASAP", "Friday", "end of week"), and never guess.
 - recommendedOwner: a person explicitly named as responsible in the email, otherwise null.
 - confidence: number 0..1 for how clearly the email supports this task.
 
@@ -57,7 +57,11 @@ export const taskExtractionJsonSchema = {
         properties: {
           title: { type: "string" },
           description: { type: "string" },
-          dueDate: { type: ["string", "null"] },
+          dueDate: {
+            type: ["string", "null"],
+            description:
+              "ISO 8601 datetime string when an explicit deadline is stated, otherwise null",
+          },
           recommendedOwner: { type: ["string", "null"] },
           confidence: {
             type: "number",

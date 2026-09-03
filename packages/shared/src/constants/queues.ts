@@ -5,6 +5,7 @@ export const QueueNames = {
   ATTACHMENT_INGEST: "attachment-ingest",
   MAILBOX_HISTORICAL_IMPORT: "mailbox-historical-import",
   MAILBOX_CLASSIFY: "mailbox-classify",
+  PROJECT_FOLDER_EMAIL_ANALYZE: "project-folder-email-analyze",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -20,5 +21,10 @@ export function buildAttachmentIngestJobId(emailMessageId: string): string {
 /** Deterministic job id for message-scoped native classification (retry-safe). */
 export function buildMailboxClassifyJobId(emailMessageId: string): string {
   return `mailbox-classify-${emailMessageId}`;
+}
+
+/** Deterministic job id for a project-folder email analyze run. */
+export function buildProjectFolderEmailAnalyzeJobId(runId: string): string {
+  return `project-folder-email-analyze-${runId}`;
 }
 

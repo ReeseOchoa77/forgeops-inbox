@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, resolveTaskSourceDate } from "@forgeops/shared";
+import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, normalizeTaskDueAt, resolveTaskSourceDate, safeDateOrNull } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -92,10 +92,8 @@ const n8nEmailResultSchema = z.object({
       description: z.string().max(2000).default(""),
       dueDate: z.string().nullable().optional().transform(val => {
         if (!val) return null;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return `${val}T00:00:00.000Z`;
-        const d = new Date(val);
-        if (Number.isNaN(d.getTime())) return null;
-        return d.toISOString();
+        const d = safeDateOrNull(val);
+        return d ? d.toISOString() : null;
       }),
       recommendedOwner: z.string().max(200).nullable().optional(),
       confidence: z.number().min(0).max(1)
@@ -565,7 +563,8 @@ async function upsertTasks(
     const taskKey = generateTaskKey(messageId, task.title, i);
     incomingKeys.add(taskKey);
     const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;
-    const dueAt = task.dueDate ? new Date(task.dueDate) : null;
+    // One normalized value for both create + update — never pass Invalid Date to Prisma.
+    const dueAt = normalizeTaskDueAt(task.dueDate, { emailMessageId: messageId });
 
     const upserted = await tx.task.upsert({
       where: {

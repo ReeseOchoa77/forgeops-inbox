@@ -193,7 +193,7 @@ export function WorkspaceView({
   const tabs: Array<{ id: WsTab; label: string }> = [
     { id: 'mailboxes', label: 'Monitored Mailboxes' },
     { id: 'team', label: 'Team Access' },
-    { id: 'folders', label: 'Job Folders' },
+    { id: 'folders', label: 'Email Analysis' },
   ]
 
   return (
@@ -215,7 +215,7 @@ export function WorkspaceView({
       </div>
 
       {wsTab === 'folders' && (
-        <FoldersView workspaceId={workspaceId} connectionId={connectionId} />
+        <FoldersView workspaceId={workspaceId} connectionId={connectionId} userRole={userRole} />
       )}
 
       {wsTab === 'team' && (

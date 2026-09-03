@@ -171,6 +171,7 @@ enum JobAssignmentSource {
   FOLDER_ALIAS
   JOB_NUMBER_MATCH
   IMPORT
+  VERIFIED_PROJECT_FOLDER
 }
 
 enum JobActivityAction {
@@ -229,6 +230,7 @@ model Workspace {
   classificationInstructions ClassificationInstruction[]
   discoveredFolders    DiscoveredFolder[]
   jobFolderRoots       JobFolderRoot[]
+  projectFolderEmailAnalyzeRuns ProjectFolderEmailAnalyzeRun[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
@@ -1191,6 +1193,7 @@ enum FolderStatus {
 model DiscoveredFolder {
   id                      String       @id @default(cuid())
   workspaceId             String
+  inboxConnectionId       String?
   provider                InboxProvider @default(OUTLOOK)
   mailboxEmail            String
   providerFolderId        String
@@ -1201,6 +1204,10 @@ model DiscoveredFolder {
   detectedJobNumber       String?
   detectedJobName         String?
   matchedJobId            String?
+  matchConfidence         Decimal?     @db.Decimal(5, 4)
+  matchReason             String?
+  /// True when missing from the latest native/n8n full scan (soft-absent from provider).
+  missingFromProvider     Boolean      @default(false)
   status                  FolderStatus @default(DISCOVERED)
   childFolderCount        Int          @default(0)
   firstSeenAt             DateTime     @default(now())
@@ -1217,6 +1224,7 @@ model DiscoveredFolder {
   @@unique([workspaceId, mailboxEmail, providerFolderId])
   @@index([workspaceId, status])
   @@index([workspaceId, normalizedFolderName])
+  @@index([workspaceId, inboxConnectionId])
   @@index([matchedJobId])
 }
 
@@ -1240,6 +1248,35 @@ model JobFolderRoot {
   @@unique([workspaceId, normalizedName])
   @@index([workspaceId, active])
   @@index([workspaceId, isActive])
+}
+
+enum ProjectFolderAnalyzeStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Progress + status for native "Analyze Emails" on VERIFIED project folders.
+model ProjectFolderEmailAnalyzeRun {
+  id                  String                      @id @default(cuid())
+  workspaceId         String
+  inboxConnectionId   String
+  status              ProjectFolderAnalyzeStatus  @default(PENDING)
+  /// string[] of DiscoveredFolder ids
+  folderIds           Json
+  /// Rolling progress counters / current folder (JSON object)
+  progress            Json                        @default("{}")
+  errorMessage        String?
+  initiatedByUserId   String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, inboxConnectionId, status])
 }
 
 enum SenderStatus {

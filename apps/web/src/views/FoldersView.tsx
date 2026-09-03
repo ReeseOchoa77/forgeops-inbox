@@ -1,198 +1,641 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  api,
+  type ConnectionSummary,
+  type DiscoveredFolderItem,
+  type JobLookup,
+  type ProjectFolderScanSummary,
+} from '../api'
+import { JobAssignPicker, formatJobPrimaryLabel, formatJobSecondaryLabel } from '../components/JobAssignPicker'
 
-const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
+type MatchUi = 'UNMATCHED' | 'SUGGESTED' | 'VERIFIED' | 'IGNORED' | 'ARCHIVED'
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
-  if (!res.ok) throw new Error(`Failed: ${res.status}`)
-  return res.json() as Promise<T>
+function toMatchUi(status: DiscoveredFolderItem['status']): MatchUi {
+  switch (status) {
+    case 'DISCOVERED':
+      return 'UNMATCHED'
+    case 'MATCHED':
+      return 'SUGGESTED'
+    case 'APPROVED':
+      return 'VERIFIED'
+    case 'IGNORED':
+      return 'IGNORED'
+    case 'ARCHIVED':
+      return 'ARCHIVED'
+  }
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error((err as { message?: string }).message ?? `${res.status}`) }
-  return res.json() as Promise<T>
+function matchBadgeStyle(status: MatchUi): { bg: string; color: string } {
+  switch (status) {
+    case 'VERIFIED':
+      return { bg: '#e6f4ea', color: '#2e7d32' }
+    case 'SUGGESTED':
+      return { bg: '#fff8e1', color: '#f57f17' }
+    case 'UNMATCHED':
+      return { bg: '#f5f5f5', color: '#666' }
+    case 'IGNORED':
+      return { bg: '#eeeeee', color: '#757575' }
+    case 'ARCHIVED':
+      return { bg: '#eceff1', color: '#546e7a' }
+  }
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error((err as { message?: string }).message ?? `${res.status}`) }
-  return res.json() as Promise<T>
-}
-
-interface DiscoveredFolder {
-  id: string
-  rawFolderName: string
-  normalizedFolderName: string
-  folderPath: string | null
-  detectedJobNumber: string | null
-  status: string
-  childFolderCount: number
-  lastSeenAt: string
-  matchedJob: { id: string; name: string; jobNumber: string | null } | null
-}
-
-interface JobFolderRoot {
-  id: string
-  rootName: string
-  active: boolean
+function formatWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString()
+  } catch {
+    return iso
+  }
 }
 
 interface Props {
   workspaceId: string
+  /** Global inbox selection — used as initial mailbox hint only. */
   connectionId: string
+  userRole?: string
 }
 
-export function FoldersView({ workspaceId, connectionId }: Props) {
-  const [folders, setFolders] = useState<DiscoveredFolder[]>([])
-  const [roots, setRoots] = useState<JobFolderRoot[]>([])
-  const [loading, setLoading] = useState(true)
-  const [discovering, setDiscovering] = useState(false)
+/**
+ * Workspace → Email Analysis: native /Projects folder discovery + Job matching.
+ * Scan is explicit — never runs on Workspace mount.
+ */
+export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: Props) {
+  const canEdit = ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER'].includes(userRole)
+  const canAdmin = userRole === 'OWNER' || userRole === 'ADMIN'
+
+  const [connections, setConnections] = useState<ConnectionSummary[]>([])
+  const [selectedConnectionId, setSelectedConnectionId] = useState(connectionId || '')
+  const [folders, setFolders] = useState<DiscoveredFolderItem[]>([])
+  const [loadingList, setLoadingList] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanSummary, setScanSummary] = useState<ProjectFolderScanSummary | null>(null)
   const [error, setError] = useState('')
-  const [newRoot, setNewRoot] = useState('')
-  const [filter, setFilter] = useState<'all' | 'DISCOVERED' | 'APPROVED' | 'IGNORED'>('all')
+  const [filter, setFilter] = useState<'all' | MatchUi>('all')
+  const [matchFolderId, setMatchFolderId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState('')
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set())
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeRunId, setAnalyzeRunId] = useState<string | null>(null)
+  const [analyzeProgress, setAnalyzeProgress] = useState<{
+    status: string
+    currentFolderName: string | null
+    processed: number
+    created: number
+    existing: number
+    assigned: number
+    classifyQueued: number
+    conflicts: number
+    failed: number
+    foldersDone: number
+    foldersTotal: number
+    errorMessage: string | null
+  } | null>(null)
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      const [f, r] = await Promise.all([
-        fetchJson<{ folders: DiscoveredFolder[] }>(`/workspaces/${workspaceId}/folders`),
-        fetchJson<{ roots: JobFolderRoot[] }>(`/workspaces/${workspaceId}/folders/roots`)
-      ])
-      setFolders(f.folders)
-      setRoots(r.roots)
-    } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setLoading(false) }
-  }
+  const outlookConnections = connections.filter(
+    (c) => c.provider === 'OUTLOOK' && c.status !== 'DISCONNECTED'
+  )
 
-  useEffect(() => { load() }, [workspaceId])
-
-  const handleDiscover = async () => {
-    setDiscovering(true)
+  const loadFolders = useCallback(async (mailboxEmail?: string) => {
+    setLoadingList(true)
     setError('')
     try {
-      const result = await postJson<{ discovered: number; updated: number }>(`/workspaces/${workspaceId}/folders/discover`, { connectionId })
-      setError(`Found ${result.discovered} new folders, updated ${result.updated}`)
-      load()
-    } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setDiscovering(false) }
-  }
+      const res = await api.getDiscoveredFolders(workspaceId, {
+        ...(mailboxEmail ? { mailboxEmail } : {}),
+        pageSize: 200,
+      })
+      setFolders(res.folders)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load folders')
+    } finally {
+      setLoadingList(false)
+    }
+  }, [workspaceId])
 
-  const handleAddRoot = async () => {
-    if (!newRoot.trim()) return
+  // Load connections when Email Analysis tab is shown — not a folder scan.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getConnections(workspaceId)
+      .then((r) => {
+        if (cancelled) return
+        setConnections(r.connections)
+        const outlook = r.connections.filter((c) => c.provider === 'OUTLOOK' && c.status !== 'DISCONNECTED')
+        const preferred =
+          outlook.find((c) => c.id === connectionId)?.id ??
+          outlook.find((c) => c.status === 'ACTIVE')?.id ??
+          outlook[0]?.id ??
+          ''
+        setSelectedConnectionId((prev) => prev || preferred)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, connectionId])
+
+  // Load persisted folders for selected mailbox (no Graph scan).
+  useEffect(() => {
+    const conn = connections.find((c) => c.id === selectedConnectionId)
+    if (!conn) {
+      setFolders([])
+      return
+    }
+    void loadFolders(conn.email)
+  }, [selectedConnectionId, connections, loadFolders])
+
+  const selectedConn = connections.find((c) => c.id === selectedConnectionId)
+
+  const handleScan = async () => {
+    if (!selectedConnectionId) {
+      setError('Select a connected Outlook mailbox first')
+      return
+    }
+    setScanning(true)
+    setError('')
+    setScanSummary(null)
     try {
-      await postJson(`/workspaces/${workspaceId}/folders/roots`, { rootName: newRoot.trim() })
-      setNewRoot('')
-      load()
-    } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
+      const summary = await api.scanProjectFolders(workspaceId, selectedConnectionId)
+      setScanSummary(summary)
+      await loadFolders(selectedConn?.email)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Scan failed')
+    } finally {
+      setScanning(false)
+    }
   }
 
-  const handleApprove = async (folderId: string) => {
-    await patchJson(`/workspaces/${workspaceId}/folders/${folderId}`, { status: 'APPROVED' })
-    load()
+  const pollAnalyzeRun = async (runId: string) => {
+    for (;;) {
+      const res = await api.getProjectFolderEmailAnalyzeRun(workspaceId, runId)
+      const p = res.run.progress
+      setAnalyzeProgress({
+        status: res.run.status,
+        currentFolderName: p.currentFolderName,
+        processed: p.processed,
+        created: p.created,
+        existing: p.existing,
+        assigned: p.assigned,
+        classifyQueued: p.classifyQueued,
+        conflicts: p.conflicts,
+        failed: p.failed,
+        foldersDone: p.foldersDone,
+        foldersTotal: p.foldersTotal,
+        errorMessage: res.run.errorMessage,
+      })
+      if (res.run.status === 'COMPLETED' || res.run.status === 'FAILED') {
+        setAnalyzing(false)
+        if (res.run.status === 'FAILED' && res.run.errorMessage) {
+          setError(res.run.errorMessage)
+        }
+        return
+      }
+      await new Promise((r) => setTimeout(r, 1500))
+    }
   }
 
-  const handleIgnore = async (folderId: string) => {
-    await patchJson(`/workspaces/${workspaceId}/folders/${folderId}`, { status: 'IGNORED' })
-    load()
+  const startAnalyzeForFolderIds = async (folderIds: string[]) => {
+    if (!selectedConnectionId) {
+      setError('Select a connected Outlook mailbox first')
+      return
+    }
+    if (folderIds.length === 0) {
+      setError('Select one or more VERIFIED folders to analyze')
+      return
+    }
+    setAnalyzing(true)
+    setError('')
+    setAnalyzeProgress(null)
+    try {
+      const { runId } = await api.analyzeProjectFolderEmails(
+        workspaceId,
+        selectedConnectionId,
+        folderIds
+      )
+      setAnalyzeRunId(runId)
+      await pollAnalyzeRun(runId)
+    } catch (e) {
+      setAnalyzing(false)
+      setError(e instanceof Error ? e.message : 'Analyze emails failed')
+    }
   }
 
-  const filteredFolders = filter === 'all' ? folders : folders.filter(f => f.status === filter)
+  const handleAnalyzeEmails = async (mode: 'selected' | 'all') => {
+    const verifiedIds = folders
+      .filter((f) => toMatchUi(f.status) === 'VERIFIED')
+      .map((f) => f.id)
+    const folderIds =
+      mode === 'all'
+        ? verifiedIds
+        : verifiedIds.filter((id) => selectedFolderIds.has(id))
+    if (folderIds.length === 0) {
+      setError(
+        mode === 'selected'
+          ? 'Select one or more VERIFIED folders to analyze'
+          : 'No VERIFIED folders available to analyze'
+      )
+      return
+    }
+    await startAnalyzeForFolderIds(folderIds)
+  }
 
-  if (loading) return <p style={{ color: '#888', fontSize: 13 }}>Loading...</p>
+  const toggleFolderSelected = (folderId: string) => {
+    setSelectedFolderIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
+      return next
+    })
+  }
+
+  const handleConfirm = async (folderId: string) => {
+    setBusyId(folderId)
+    try {
+      await api.approveDiscoveredFolder(workspaceId, folderId)
+      await loadFolders(selectedConn?.email)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Confirm failed')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const handleUnmatch = async (folderId: string) => {
+    if (!confirm('Unmatch this folder from its Job? The Job itself is not deleted.')) return
+    setBusyId(folderId)
+    try {
+      await api.unmatchDiscoveredFolder(workspaceId, folderId)
+      await loadFolders(selectedConn?.email)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unmatch failed')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const handleManualMatch = async (folderId: string, job: JobLookup) => {
+    setBusyId(folderId)
+    try {
+      await api.matchDiscoveredFolder(workspaceId, folderId, job.id)
+      setMatchFolderId(null)
+      await loadFolders(selectedConn?.email)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Match failed')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const withUi = folders.map((f) => ({ ...f, matchUi: toMatchUi(f.status) }))
+  const filtered =
+    filter === 'all' ? withUi : withUi.filter((f) => f.matchUi === filter)
+
+  const counts = {
+    verified: withUi.filter((f) => f.matchUi === 'VERIFIED').length,
+    suggested: withUi.filter((f) => f.matchUi === 'SUGGESTED').length,
+    unmatched: withUi.filter((f) => f.matchUi === 'UNMATCHED').length,
+  }
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Job Folder Discovery</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>Discover Outlook folders and map them to jobs for classification evidence.</p>
+      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Email Analysis</h2>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
+        Scan Outlook <code>/Projects</code> folders and match them to existing Jobs. Only{' '}
+        <strong>VERIFIED</strong> folder↔Job mappings are eligible for later email analysis.
+        Folders alone are never treated as Jobs.
+      </p>
 
       {error && (
-        <div style={{ padding: '8px 12px', marginBottom: 10, background: error.startsWith('Found') ? '#e6f4ea' : '#fce4ec', border: `1px solid ${error.startsWith('Found') ? '#a8d5a2' : '#e8a09a'}`, borderRadius: 4, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
+        <div
+          style={{
+            padding: '8px 12px',
+            marginBottom: 10,
+            background: '#fce4ec',
+            border: '1px solid #e8a09a',
+            borderRadius: 4,
+            fontSize: 13,
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
           <span>{error}</span>
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>&times;</button>
+          <button type="button" onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+            ×
+          </button>
         </div>
       )}
 
-      {/* Job roots config */}
-      <div className="card" style={{ marginBottom: 12 }}>
-        <h3 style={{ fontSize: 14, margin: '0 0 8px', fontWeight: 600 }}>Job Root Folders</h3>
-        <p style={{ fontSize: 12, color: '#888', margin: '0 0 8px' }}>Subfolders under these roots will be discovered as potential job aliases.</p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <input value={newRoot} onChange={e => setNewRoot(e.target.value)} placeholder="e.g. Jobs, Active Jobs, Projects"
-            style={{ padding: '5px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, flex: 1 }} />
-          <button className="btn btn-sm btn-primary" onClick={handleAddRoot}>Add Root</button>
+      <div className="card" style={{ marginBottom: 12, padding: 14 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#555', minWidth: 220, flex: 1 }}>
+            Connected mailbox
+            <select
+              value={selectedConnectionId}
+              onChange={(e) => {
+                setSelectedConnectionId(e.target.value)
+                setScanSummary(null)
+              }}
+              style={{ padding: '6px 8px', fontSize: 13, borderRadius: 6, border: '1px solid #ddd' }}
+            >
+              <option value="">Select Outlook mailbox…</option>
+              {outlookConnections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.email} ({c.status})
+                </option>
+              ))}
+            </select>
+          </label>
+          {canEdit && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={scanning || analyzing || !selectedConnectionId}
+              onClick={() => void handleScan()}
+            >
+              {scanning ? 'Scanning Projects…' : 'Analyze Project Folders'}
+            </button>
+          )}
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={analyzing || scanning || !selectedConnectionId}
+                onClick={() => void handleAnalyzeEmails('selected')}
+              >
+                Analyze Emails (selected)
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={analyzing || scanning || !selectedConnectionId}
+                onClick={() => void handleAnalyzeEmails('all')}
+              >
+                Analyze Emails (all verified)
+              </button>
+            </>
+          )}
         </div>
-        {roots.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {roots.map(r => (
-              <span key={r.id} style={{ padding: '3px 10px', background: '#e3f2fd', color: '#1565c0', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>{r.rootName}</span>
-            ))}
+
+        {scanning && (
+          <p style={{ margin: '10px 0 0', fontSize: 12, color: '#1565c0' }}>
+            Resolving /Projects and matching folders to Jobs…
+          </p>
+        )}
+
+        {(analyzing || analyzeProgress) && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#333' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {analyzing
+                ? `Analyzing ${analyzeProgress?.currentFolderName ?? 'verified folders'}…`
+                : `Analyze ${analyzeProgress?.status === 'COMPLETED' ? 'complete' : analyzeProgress?.status}`}
+              {analyzeRunId && (
+                <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
+                  run {analyzeRunId.slice(0, 8)}…
+                </span>
+              )}
+            </div>
+            {analyzeProgress && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <span>
+                  Folders {analyzeProgress.foldersDone}/{analyzeProgress.foldersTotal}
+                </span>
+                <span>Processed: {analyzeProgress.processed}</span>
+                <span>New: {analyzeProgress.created}</span>
+                <span>Existing: {analyzeProgress.existing}</span>
+                <span>Assigned: {analyzeProgress.assigned}</span>
+                <span>Classify queued: {analyzeProgress.classifyQueued}</span>
+                <span>Conflicts: {analyzeProgress.conflicts}</span>
+                <span>Failed: {analyzeProgress.failed}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {scanSummary && (
+          <div style={{ marginTop: 10, fontSize: 12, color: '#333', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+            <span>
+              Root: <strong>{scanSummary.projectsRoot.path}</strong>
+            </span>
+            <span>Found {scanSummary.candidates} folders</span>
+            <span>Verified {scanSummary.verified}</span>
+            <span>Suggested {scanSummary.suggested}</span>
+            <span>Unmatched {scanSummary.unmatched}</span>
+            {(scanSummary.created > 0 || scanSummary.updated > 0) && (
+              <span style={{ color: '#888' }}>
+                ({scanSummary.created} new · {scanSummary.updated} updated
+                {scanSummary.missingMarked ? ` · ${scanSummary.missingMarked} missing` : ''})
+              </span>
+            )}
           </div>
         )}
       </div>
 
-      {/* Discover button */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-        <button className="btn btn-primary" onClick={handleDiscover} disabled={discovering || !connectionId}>
-          {discovering ? 'Discovering...' : 'Discover Folders'}
-        </button>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {(['all', 'DISCOVERED', 'APPROVED', 'IGNORED'] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} style={{
-              padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-              border: filter === f ? '1px solid #1a1a2e' : '1px solid #ddd',
-              background: filter === f ? '#1a1a2e' : '#fff',
-              color: filter === f ? '#fff' : '#666', cursor: 'pointer'
-            }}>{f === 'all' ? `All (${folders.length})` : `${f} (${folders.filter(x => x.status === f).length})`}</button>
-          ))}
-        </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        {(
+          [
+            ['all', `All (${withUi.length})`],
+            ['VERIFIED', `Verified (${counts.verified})`],
+            ['SUGGESTED', `Suggested (${counts.suggested})`],
+            ['UNMATCHED', `Unmatched (${counts.unmatched})`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setFilter(id)}
+            style={{
+              padding: '3px 10px',
+              fontSize: 11,
+              fontWeight: 500,
+              borderRadius: 12,
+              border: filter === id ? '1px solid #1a1a2e' : '1px solid #ddd',
+              background: filter === id ? '#1a1a2e' : '#fff',
+              color: filter === id ? '#fff' : '#666',
+              cursor: 'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        {loadingList && <span style={{ fontSize: 12, color: '#999' }}>Refreshing…</span>}
       </div>
 
-      {/* Folder list */}
-      {filteredFolders.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="empty-state" style={{ padding: 24 }}>
-          <h3>No folders discovered yet</h3>
-          <p>Configure job root folders above, then click "Discover Folders" to scan your Outlook mailbox.</p>
+          <h3>No project folders yet</h3>
+          <p>
+            Select a connected Outlook mailbox and click <strong>Analyze Project Folders</strong> to
+            discover folders under /Projects. Matching uses existing Jobs only.
+          </p>
         </div>
       ) : (
-        <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 500 }}>
+        <div
+          style={{
+            border: '1px solid #e5e5e5',
+            borderRadius: 6,
+            background: '#fff',
+            overflow: 'auto',
+            maxHeight: 560,
+          }}
+        >
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0 }}>
-                <th style={{ padding: '7px 10px' }}>Folder Name</th>
-                <th style={{ padding: '7px 10px' }}>Path</th>
-                <th style={{ padding: '7px 10px' }}>Job #</th>
+              <tr
+                style={{
+                  background: '#fafafa',
+                  borderBottom: '1px solid #e5e5e5',
+                  textAlign: 'left',
+                  position: 'sticky',
+                  top: 0,
+                }}
+              >
+                <th style={{ padding: '7px 10px', width: 28 }} />
+                <th style={{ padding: '7px 10px' }}>Folder</th>
                 <th style={{ padding: '7px 10px' }}>Matched Job</th>
                 <th style={{ padding: '7px 10px' }}>Status</th>
+                <th style={{ padding: '7px 10px' }}>Reason</th>
+                <th style={{ padding: '7px 10px' }}>Last Seen</th>
                 <th style={{ padding: '7px 10px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredFolders.map(f => (
-                <tr key={f.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: '6px 10px', fontWeight: 500 }}>{f.rawFolderName}</td>
-                  <td style={{ padding: '6px 10px', color: '#888', fontSize: 11 }}>{f.folderPath ?? '—'}</td>
-                  <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{f.detectedJobNumber ?? '—'}</td>
-                  <td style={{ padding: '6px 10px', fontSize: 11 }}>{f.matchedJob?.name ?? '—'}</td>
-                  <td style={{ padding: '6px 10px' }}>
-                    <span style={{
-                      padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
-                      background: f.status === 'APPROVED' ? '#e6f4ea' : f.status === 'IGNORED' ? '#f0f0f0' : '#fff9c4',
-                      color: f.status === 'APPROVED' ? '#2e7d32' : f.status === 'IGNORED' ? '#888' : '#f57f17'
-                    }}>{f.status}</span>
-                  </td>
-                  <td style={{ padding: '6px 10px' }}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {f.status !== 'APPROVED' && (
-                        <button className="btn btn-sm btn-success" onClick={() => handleApprove(f.id)}>Approve</button>
+              {filtered.map((f) => {
+                const badge = matchBadgeStyle(f.matchUi)
+                const jobLabel = f.matchedJob
+                  ? `${formatJobPrimaryLabel(f.matchedJob, 40)}${
+                      f.matchedJob.jobNumber ? ` · #${f.matchedJob.jobNumber}` : ''
+                    }`
+                  : '—'
+                return (
+                  <tr key={f.id} style={{ borderBottom: '1px solid #f0f0f0', verticalAlign: 'top' }}>
+                    <td style={{ padding: '8px 10px' }}>
+                      {f.matchUi === 'VERIFIED' && (
+                        <input
+                          type="checkbox"
+                          checked={selectedFolderIds.has(f.id)}
+                          onChange={() => toggleFolderSelected(f.id)}
+                          aria-label={`Select ${f.rawFolderName}`}
+                        />
                       )}
-                      {f.status !== 'IGNORED' && (
-                        <button className="btn btn-sm btn-outline" onClick={() => handleIgnore(f.id)}>Ignore</button>
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{f.rawFolderName}</div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>{f.folderPath ?? '—'}</div>
+                      {f.matchUi === 'VERIFIED' && canEdit && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline"
+                          style={{ marginTop: 6 }}
+                          disabled={analyzing}
+                          onClick={() => void startAnalyzeForFolderIds([f.id])}
+                        >
+                          Analyze Emails
+                        </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {f.matchedJob ? (
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{jobLabel}</div>
+                          {formatJobSecondaryLabel(f.matchedJob) && (
+                            <div style={{ fontSize: 10, color: '#888' }}>
+                              {formatJobSecondaryLabel(f.matchedJob)}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#aaa' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          background: badge.bg,
+                          color: badge.color,
+                        }}
+                      >
+                        {f.matchUi}
+                      </span>
+                      {f.missingFromProvider && (
+                        <div style={{ fontSize: 10, color: '#c62828', marginTop: 4 }}>Missing in mailbox</div>
+                      )}
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 11, color: '#666' }}>
+                      {f.matchReason ?? '—'}
+                      {f.matchConfidence != null && (
+                        <div style={{ fontSize: 10, color: '#999' }}>
+                          {(Number(f.matchConfidence) * 100).toFixed(0)}%
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
+                      {formatWhen(f.lastSeenAt)}
+                    </td>
+                    <td style={{ padding: '8px 10px', position: 'relative' }}>
+                      {canAdmin && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                          {f.matchUi === 'SUGGESTED' && f.matchedJobId && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-success"
+                              disabled={busyId === f.id}
+                              onClick={() => void handleConfirm(f.id)}
+                            >
+                              Confirm
+                            </button>
+                          )}
+                          {f.matchUi !== 'VERIFIED' && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              disabled={busyId === f.id}
+                              onClick={() => setMatchFolderId(matchFolderId === f.id ? null : f.id)}
+                            >
+                              {f.matchedJobId ? 'Change Job' : 'Match Job'}
+                            </button>
+                          )}
+                          {f.matchUi === 'VERIFIED' && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              disabled={busyId === f.id}
+                              onClick={() => setMatchFolderId(matchFolderId === f.id ? null : f.id)}
+                            >
+                              Change Job
+                            </button>
+                          )}
+                          {f.matchedJobId && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              disabled={busyId === f.id}
+                              onClick={() => void handleUnmatch(f.id)}
+                            >
+                              Unmatch
+                            </button>
+                          )}
+                          {matchFolderId === f.id && (
+                            <div style={{ marginTop: 4, width: 280 }}>
+                              <JobAssignPicker
+                                workspaceId={workspaceId}
+                                selectedJobId={f.matchedJobId}
+                                variant="panel"
+                                onSelect={(job) => void handleManualMatch(f.id, job)}
+                                onClose={() => setMatchFolderId(null)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

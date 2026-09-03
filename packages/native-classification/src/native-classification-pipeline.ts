@@ -40,6 +40,11 @@ export interface NativeClassificationPipelineInput {
    * Applied after flags B/P so PERSONAL cannot skip job stages when a real job is attached.
    */
   confirmedJobAssociation?: ConfirmedWorkspaceJob | null | undefined;
+  /**
+   * Provenance for confirmed job → BUSINESS override.
+   * e.g. existing_message_job | verified_project_folder | job_matcher
+   */
+  confirmedJobAssociationSource?: string | null | undefined;
 }
 
 export type NativePriorityDecision = PriorityDecisionPayload & {
@@ -150,7 +155,7 @@ export async function runNativeClassificationPipeline(
     const overridden = applyConfirmedJobAssociationOverride(
       mailboxDecision,
       input.confirmedJobAssociation,
-      "existing_message_job"
+      input.confirmedJobAssociationSource?.trim() || "existing_message_job"
     );
     confirmedJobForcedBusiness = overridden.overridden;
     mailboxDecision = overridden;

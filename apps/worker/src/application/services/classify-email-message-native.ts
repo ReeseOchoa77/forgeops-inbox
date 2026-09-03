@@ -169,6 +169,7 @@ export async function classifyEmailMessageNative(
         bodyText: true,
         attachmentMetadata: true,
         jobId: true,
+        jobAssignmentSource: true,
         job: {
           select: {
             id: true,
@@ -228,7 +229,13 @@ export async function classifyEmailMessageNative(
         senderDomain,
         attachmentNames: attachmentNamesFromMetadata(message.attachmentMetadata),
         ...(confirmedJobAssociation
-          ? { confirmedJobAssociation }
+          ? {
+              confirmedJobAssociation,
+              confirmedJobAssociationSource:
+                message.jobAssignmentSource === "VERIFIED_PROJECT_FOLDER"
+                  ? "verified_project_folder"
+                  : "existing_message_job",
+            }
           : {}),
       },
       {

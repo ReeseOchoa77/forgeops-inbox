@@ -21,6 +21,8 @@ import {
   type MailboxClassifyJobResult,
   type MailboxHistoricalImportJobPayload,
   type MailboxHistoricalImportJobResult,
+  type ProjectFolderEmailAnalyzeJobPayload,
+  type ProjectFolderEmailAnalyzeJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -143,6 +145,12 @@ export const buildServer = async () => {
     MailboxClassifyJobPayload,
     MailboxClassifyJobResult
   >(QueueNames.MAILBOX_CLASSIFY, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const projectFolderEmailAnalyzeQueue = new Queue<
+    ProjectFolderEmailAnalyzeJobPayload,
+    ProjectFolderEmailAnalyzeJobResult
+  >(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -310,6 +318,7 @@ export const buildServer = async () => {
       attachmentIngestQueue,
       mailboxHistoricalImportQueue,
       mailboxClassifyQueue,
+      projectFolderEmailAnalyzeQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -439,6 +448,7 @@ export const buildServer = async () => {
     await inboxSyncQueue.close();
     await mailboxHistoricalImportQueue.close();
     await mailboxClassifyQueue.close();
+    await projectFolderEmailAnalyzeQueue.close();
     await attachmentIngestQueue.close();
     await redis.quit();
     await prisma.$disconnect();

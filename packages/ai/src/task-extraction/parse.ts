@@ -1,3 +1,4 @@
+import { safeDateOrNull } from "@forgeops/shared";
 import {
   isPlainObject,
   requireFiniteProbability,
@@ -63,8 +64,7 @@ export function parseTaskExtractionResult(raw: unknown): TaskExtractionResult {
       issues
     );
 
-    // dueDate / recommendedOwner: optional in schema required list, but if present must be string|null.
-    // Contract required only title/description/confidence; dueDate/recommendedOwner default to null when omitted.
+    // dueDate / recommendedOwner: optional; coerce unparseable dueDate → null (do not fail extraction).
     let dueDate: string | null = null;
     if ("dueDate" in item) {
       const parsed = requireNullableString(
@@ -72,7 +72,14 @@ export function parseTaskExtractionResult(raw: unknown): TaskExtractionResult {
         `tasks[${i}].dueDate`,
         issues
       );
-      if (parsed !== undefined) dueDate = parsed;
+      if (parsed !== undefined) {
+        if (parsed == null) {
+          dueDate = null;
+        } else {
+          const d = safeDateOrNull(parsed);
+          dueDate = d ? d.toISOString() : null;
+        }
+      }
     }
 
     let recommendedOwner: string | null = null;

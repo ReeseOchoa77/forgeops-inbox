@@ -67,6 +67,46 @@ describe("task extraction contract", () => {
     });
   });
 
+  it("coerces malformed dueDate strings to null without failing extraction", () => {
+    expect(
+      parseTaskExtractionResult({
+        tasks: [
+          {
+            title: "Submit proposal to Sam Kanne",
+            description: "Send the proposal",
+            dueDate: "ASAP",
+            recommendedOwner: null,
+            confidence: 0.9,
+          },
+        ],
+      })
+    ).toEqual({
+      tasks: [
+        {
+          title: "Submit proposal to Sam Kanne",
+          description: "Send the proposal",
+          dueDate: null,
+          recommendedOwner: null,
+          confidence: 0.9,
+        },
+      ],
+    });
+  });
+
+  it("normalizes valid dueDate to ISO and keeps it distinct from email timing", () => {
+    const result = parseTaskExtractionResult({
+      tasks: [
+        {
+          title: "Send by Tuesday",
+          description: "Deliver docs",
+          dueDate: "2026-09-02",
+          confidence: 0.85,
+        },
+      ],
+    });
+    expect(result.tasks[0]?.dueDate).toBe("2026-09-02T00:00:00.000Z");
+  });
+
   it("skips model call when containsActionRequest is false", async () => {
     const create = vi.fn();
     const client = {

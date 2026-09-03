@@ -1,10 +1,25 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { normalizeName } from "@forgeops/shared";
+import {
+  emptyProjectFolderEmailAnalyzeProgress,
+  folderStatusToMatchUi,
+  normalizeName,
+  type FolderStatusDb,
+  type ProjectFolderEmailAnalyzeProgress,
+} from "@forgeops/shared";
 
 import { getSessionFromRequest } from "../authentication.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
+import {
+  getVerifiedProjectFolders,
+  ProjectFolderScanError,
+  scanNativeProjectFolders,
+} from "../../../application/services/scan-project-folders.js";
+import {
+  enqueueProjectFolderEmailAnalyze,
+  ProjectFolderEmailAnalyzeError,
+} from "../../../application/services/enqueue-project-folder-email-analyze.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -374,6 +389,191 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
   });
 
   // =========================================================================
+  // NATIVE /Projects SCAN + VERIFIED FOLDERS (Email Analysis backbone)
+  // =========================================================================
+
+  app.post("/api/v1/workspaces/:workspaceId/project-folders/scan", async (request, reply) => {
+    const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+    if (!["OWNER", "ADMIN", "MANAGER", "MEMBER"].includes(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const body = z.object({ connectionId: z.string().min(1) }).parse(request.body);
+
+    try {
+      const summary = await scanNativeProjectFolders({
+        prisma: app.services.prisma,
+        workspaceId,
+        connectionId: body.connectionId,
+        decryptRefreshToken: (enc) => app.services.tokenCipher.decrypt(enc),
+        env: app.services.env,
+        actorUserId: auth.userId,
+      });
+
+      await app.services.auditEventLogger.log({
+        workspaceId,
+        actorUserId: auth.userId,
+        entityType: "FOLDER_DISCOVERY",
+        entityId: body.connectionId,
+        action: "project_folders.scanned",
+        metadata: {
+          projectsRootPath: summary.projectsRoot.path,
+          candidates: summary.candidates,
+          created: summary.created,
+          updated: summary.updated,
+          verified: summary.verified,
+          suggested: summary.suggested,
+          unmatched: summary.unmatched,
+          missingMarked: summary.missingMarked,
+        },
+        request,
+      });
+
+      return reply.send({ status: "ok", ...summary });
+    } catch (e) {
+      if (e instanceof ProjectFolderScanError) {
+        const status =
+          e.code === "CONNECTION_NOT_FOUND" || e.code === "NOT_OUTLOOK"
+            ? 404
+            : e.code === "NOT_AUTHORIZED"
+              ? 401
+              : e.code === "OUTLOOK_NOT_CONFIGURED"
+                ? 503
+                : e.code === "PROJECTS_NOT_FOUND" || e.code === "PROJECTS_AMBIGUOUS"
+                  ? 422
+                  : 502;
+        return reply.code(status).send({
+          message: e.message,
+          code: e.code,
+          ...(e.details && typeof e.details === "object" ? (e.details as object) : {}),
+        });
+      }
+      throw e;
+    }
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/project-folders/verified", async (request, reply) => {
+    const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+
+    const query = z
+      .object({
+        connectionId: z.string().optional(),
+        mailboxEmail: z.string().email().optional(),
+      })
+      .parse(request.query);
+
+    const folders = await getVerifiedProjectFolders(app.services.prisma, {
+      workspaceId,
+      ...(query.connectionId ? { inboxConnectionId: query.connectionId } : {}),
+      ...(query.mailboxEmail ? { mailboxEmail: query.mailboxEmail } : {}),
+    });
+
+    return reply.send({
+      folders: folders.map((f) => ({
+        ...f,
+        matchStatus: folderStatusToMatchUi(f.status as FolderStatusDb),
+        matchConfidence:
+          f.matchConfidence != null ? Number(f.matchConfidence) : null,
+      })),
+    });
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/project-folders/analyze-emails", async (request, reply) => {
+    const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+    if (!["OWNER", "ADMIN", "MANAGER", "MEMBER"].includes(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const body = z
+      .object({
+        connectionId: z.string().min(1),
+        folderIds: z.array(z.string().min(1)).max(200).optional(),
+      })
+      .parse(request.body);
+
+    try {
+      const { runId } = await enqueueProjectFolderEmailAnalyze({
+        prisma: app.services.prisma,
+        queue: app.services.projectFolderEmailAnalyzeQueue,
+        workspaceId,
+        connectionId: body.connectionId,
+        ...(body.folderIds ? { folderIds: body.folderIds } : {}),
+        initiatedByUserId: auth.userId,
+      });
+
+      await app.services.auditEventLogger.log({
+        workspaceId,
+        actorUserId: auth.userId,
+        entityType: "FOLDER_DISCOVERY",
+        entityId: body.connectionId,
+        action: "project_folders.analyze_emails_queued",
+        metadata: {
+          runId,
+          folderCount: body.folderIds?.length ?? "all_verified",
+        },
+        request,
+      });
+
+      return reply.code(202).send({ status: "queued", runId });
+    } catch (e) {
+      if (e instanceof ProjectFolderEmailAnalyzeError) {
+        const status =
+          e.code === "CONNECTION_NOT_FOUND" || e.code === "NOT_OUTLOOK"
+            ? 404
+            : e.code === "NOT_AUTHORIZED"
+              ? 401
+              : e.code === "NO_VERIFIED_FOLDERS" || e.code === "INVALID_REQUEST"
+                ? 422
+                : 502;
+        return reply.code(status).send({ message: e.message, code: e.code });
+      }
+      throw e;
+    }
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/project-folders/analyze-emails/:runId", async (request, reply) => {
+    const params = z
+      .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+      .parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+
+    const run = await app.services.prisma.projectFolderEmailAnalyzeRun.findFirst({
+      where: { id: params.runId, workspaceId: params.workspaceId },
+    });
+    if (!run) return reply.code(404).send({ message: "Analyze run not found" });
+
+    const progress =
+      run.progress && typeof run.progress === "object" && !Array.isArray(run.progress)
+        ? ({
+            ...emptyProjectFolderEmailAnalyzeProgress(),
+            ...(run.progress as object),
+          } as ProjectFolderEmailAnalyzeProgress)
+        : emptyProjectFolderEmailAnalyzeProgress();
+
+    return reply.send({
+      run: {
+        id: run.id,
+        workspaceId: run.workspaceId,
+        inboxConnectionId: run.inboxConnectionId,
+        status: run.status,
+        folderIds: run.folderIds,
+        progress,
+        errorMessage: run.errorMessage,
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
+        createdAt: run.createdAt,
+      },
+    });
+  });
+
+  // =========================================================================
   // 2C: DISCOVERED FOLDERS CRUD
   // =========================================================================
 
@@ -532,7 +732,17 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
 
     await app.services.prisma.discoveredFolder.update({
       where: { id: params.folderId },
-      data: { status: "MATCHED", matchedJobId: body.jobId }
+      data: {
+        status: "APPROVED",
+        matchedJobId: body.jobId,
+        matchConfidence: 1,
+        matchReason: "manual",
+        approvedAt: new Date(),
+        approvedByUserId: auth.userId,
+        ignoredAt: null,
+        ignoredByUserId: null,
+        missingFromProvider: false,
+      }
     });
 
     await app.services.auditEventLogger.log({
@@ -541,11 +751,68 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       entityType: "DISCOVERED_FOLDER",
       entityId: params.folderId,
       action: "discovered_folder.matched",
-      metadata: { folderName: folder.rawFolderName, jobId: body.jobId, jobName: job.name },
+      metadata: { folderName: folder.rawFolderName, jobId: body.jobId, jobName: job.name, verified: true },
       request
     });
 
-    return reply.send({ status: "MATCHED", matchedJobId: body.jobId });
+    return reply.send({
+      status: "APPROVED",
+      matchStatus: "VERIFIED",
+      matchedJobId: body.jobId,
+    });
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId/unmatch", async (request, reply) => {
+    const params = z.object({ workspaceId: z.string().min(1), folderId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+    if (!isAdminOrOwner(auth.role)) {
+      return reply.code(403).send({ message: "Admin permission required" });
+    }
+
+    const folder = await app.services.prisma.discoveredFolder.findFirst({
+      where: { id: params.folderId, workspaceId: params.workspaceId }
+    });
+    if (!folder) return reply.code(404).send({ message: "Folder not found" });
+
+    if (folder.matchedJobId) {
+      await app.services.prisma.entityAlias.deleteMany({
+        where: {
+          workspaceId: params.workspaceId,
+          entityType: "JOB",
+          jobId: folder.matchedJobId,
+          source: "OUTLOOK_FOLDER",
+          normalizedAlias: normalizeName(folder.rawFolderName),
+        }
+      });
+    }
+
+    await app.services.prisma.discoveredFolder.update({
+      where: { id: params.folderId },
+      data: {
+        status: "DISCOVERED",
+        matchedJobId: null,
+        matchConfidence: null,
+        matchReason: null,
+        approvedAt: null,
+        approvedByUserId: null,
+      }
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "DISCOVERED_FOLDER",
+      entityId: params.folderId,
+      action: "discovered_folder.unmatched",
+      metadata: {
+        folderName: folder.rawFolderName,
+        previousJobId: folder.matchedJobId,
+      },
+      request
+    });
+
+    return reply.send({ status: "DISCOVERED", matchStatus: "UNMATCHED", matchedJobId: null });
   });
 
   app.post("/api/v1/workspaces/:workspaceId/discovered-folders/:folderId/approve", async (request, reply) => {

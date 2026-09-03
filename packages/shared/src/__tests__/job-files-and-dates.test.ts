@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   classifyJobFileType,
   fileExtension,
@@ -7,7 +7,9 @@ import {
 import {
   addDaysYmd,
   inboxDateRangeBounds,
+  normalizeTaskDueAt,
   resolveTaskSourceDate,
+  safeDateOrNull,
   startOfMonthYmd,
   startOfWeekSundayYmd,
   taskBulkDeleteCutoff,
@@ -91,5 +93,77 @@ describe("date bounds", () => {
     expect(sourceDate >= todayBounds.sourceAfter && sourceDate < todayBounds.sourceBefore).toBe(
       false
     );
+  });
+});
+
+describe("safeDateOrNull / normalizeTaskDueAt", () => {
+  it("maps null/undefined/empty to null", () => {
+    expect(safeDateOrNull(null)).toBeNull();
+    expect(safeDateOrNull(undefined)).toBeNull();
+    expect(safeDateOrNull("")).toBeNull();
+    expect(safeDateOrNull("   ")).toBeNull();
+    expect(normalizeTaskDueAt(null)).toBeNull();
+    expect(normalizeTaskDueAt(undefined)).toBeNull();
+    expect(normalizeTaskDueAt("")).toBeNull();
+  });
+
+  it("maps malformed and Invalid Date to null", () => {
+    expect(safeDateOrNull("not-a-date")).toBeNull();
+    expect(safeDateOrNull("ASAP")).toBeNull();
+    expect(safeDateOrNull("Invalid Date")).toBeNull();
+    expect(safeDateOrNull(new Date("Invalid Date"))).toBeNull();
+    expect(normalizeTaskDueAt("Friday")).toBeNull();
+    expect(normalizeTaskDueAt("end of week")).toBeNull();
+  });
+
+  it("parses valid ISO and YYYY-MM-DD", () => {
+    const iso = safeDateOrNull("2026-09-02T00:00:00.000Z");
+    expect(iso?.toISOString()).toBe("2026-09-02T00:00:00.000Z");
+    const ymd = safeDateOrNull("2026-09-02");
+    expect(ymd?.toISOString()).toBe("2026-09-02T00:00:00.000Z");
+    const fromDate = normalizeTaskDueAt(new Date("2026-09-02T17:00:00.000Z"));
+    expect(fromDate?.toISOString()).toBe("2026-09-02T17:00:00.000Z");
+  });
+
+  it("keeps sourceDate independent of dueAt", () => {
+    const emailDate = new Date("2026-08-27T22:38:26.000Z");
+    const sourceDate = resolveTaskSourceDate({ receivedAt: emailDate });
+    const dueAt = normalizeTaskDueAt(null);
+    expect(sourceDate.toISOString()).toBe(emailDate.toISOString());
+    expect(dueAt).toBeNull();
+    // Explicit deadline stays distinct from email date
+    const due = normalizeTaskDueAt("2026-09-02T00:00:00.000Z");
+    expect(due?.toISOString()).toBe("2026-09-02T00:00:00.000Z");
+    expect(due?.getTime()).not.toBe(sourceDate.getTime());
+  });
+
+  it("logs compact warning for discarded raw due dates", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      normalizeTaskDueAt("ASAP", { emailMessageId: "msg-1" })
+    ).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(payload).toEqual({
+      event: "task-invalid-due-date",
+      emailMessageId: "msg-1",
+      rawDueAt: "ASAP",
+    });
+    warn.mockRestore();
+  });
+
+  it("builds a Prisma-safe upsert payload for create and update from one value", () => {
+    const dueAt = normalizeTaskDueAt("not-a-real-deadline");
+    const sourceDate = resolveTaskSourceDate({
+      receivedAt: new Date("2026-08-27T22:38:26.000Z"),
+    });
+    const update = { dueAt, sourceDate, title: "Submit proposal to Sam Kanne" };
+    const create = { dueAt, sourceDate, title: "Submit proposal to Sam Kanne" };
+    expect(update.dueAt).toBeNull();
+    expect(create.dueAt).toBeNull();
+    expect(update.sourceDate.toISOString()).toBe("2026-08-27T22:38:26.000Z");
+    // Would have been Invalid Date before the fix:
+    const legacy = "ASAP" ? new Date("ASAP") : null;
+    expect(Number.isNaN(legacy.getTime())).toBe(true);
   });
 });
