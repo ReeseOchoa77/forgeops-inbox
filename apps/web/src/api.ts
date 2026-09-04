@@ -1,4 +1,24 @@
-const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1';
+const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
+
+/** API error that preserves status/code/cause for SCHEMA_DRIFT diagnosis. */
+export class ApiRequestError extends Error {
+  readonly status: number
+  readonly code?: string
+  readonly causePayload?: unknown
+
+  constructor(input: {
+    message: string
+    status: number
+    code?: string
+    cause?: unknown
+  }) {
+    super(input.message)
+    this.name = 'ApiRequestError'
+    this.status = input.status
+    if (input.code !== undefined) this.code = input.code
+    if (input.cause !== undefined) this.causePayload = input.cause
+  }
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
@@ -15,8 +35,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(body.message ?? body.error ?? `Request failed: ${res.status}`);
+    const body = (await res.json().catch(() => ({ message: res.statusText }))) as {
+      message?: string
+      error?: string
+      code?: string
+      cause?: unknown
+    }
+    throw new ApiRequestError({
+      message: body.message ?? body.error ?? `Request failed: ${res.status}`,
+      status: res.status,
+      ...(body.code ? { code: body.code } : {}),
+      ...(body.cause !== undefined ? { cause: body.cause } : {}),
+    })
   }
   return res.json() as Promise<T>;
 }

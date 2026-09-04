@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
+  ApiRequestError,
   type ConnectionSummary,
   type DiscoveredFolderItem,
   type JobLookup,
@@ -174,6 +175,9 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           workspaceId,
           connectionId: connectionIdForScope,
           message: e instanceof Error ? e.message : e,
+          status: e instanceof ApiRequestError ? e.status : undefined,
+          code: e instanceof ApiRequestError ? e.code : undefined,
+          cause: e instanceof ApiRequestError ? e.causePayload : undefined,
         })
         setFolders([])
         setError(

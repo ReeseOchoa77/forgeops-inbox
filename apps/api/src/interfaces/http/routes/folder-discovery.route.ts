@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   emptyProjectFolderEmailAnalyzeProgress,
@@ -58,6 +59,9 @@ function prismaSchemaDriftMessage(error: unknown): string | null {
       : "";
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  // NOTE: code.startsWith("P20") is intentionally broad today and also matches
+  // non-schema codes (P2002 unique, P2003 FK, P2025 not found, P2034 tx, …).
+  // Keep classification unchanged until production cause is confirmed via `cause`.
   if (
     code.startsWith("P20") ||
     /column .* does not exist/i.test(message) ||
@@ -71,6 +75,95 @@ function prismaSchemaDriftMessage(error: unknown): string | null {
     return "Required database migration has not been applied";
   }
   return null;
+}
+
+/** Non-secret DB identity for diagnosing API↔Railway DB mismatches. */
+function safeDatabaseTarget(): {
+  host: string | null;
+  port: string | null;
+  database: string | null;
+  schema: string | null;
+} {
+  const raw = process.env.DATABASE_URL ?? process.env.DIRECT_URL ?? "";
+  try {
+    const u = new URL(raw);
+    const schema = u.searchParams.get("schema") ?? "public";
+    return {
+      host: u.hostname || null,
+      port: u.port || null,
+      database: u.pathname.replace(/^\//, "") || null,
+      schema,
+    };
+  } catch {
+    return { host: null, port: null, database: null, schema: null };
+  }
+}
+
+function deployIdentity(): {
+  railwayGitCommitSha: string | null;
+  railwayDeploymentId: string | null;
+  railwayServiceName: string | null;
+  nodeEnv: string | null;
+} {
+  return {
+    railwayGitCommitSha:
+      process.env.RAILWAY_GIT_COMMIT_SHA ??
+      process.env.RAILWAY_GIT_COMMIT ??
+      null,
+    railwayDeploymentId: process.env.RAILWAY_DEPLOYMENT_ID ?? null,
+    railwayServiceName: process.env.RAILWAY_SERVICE_NAME ?? null,
+    nodeEnv: process.env.NODE_ENV ?? null,
+  };
+}
+
+function discoveredFolderClientFieldSupport(): Record<string, boolean> {
+  // Runtime generated client enum — proves generate saw these schema fields.
+  const fields = Prisma.DiscoveredFolderScalarFieldEnum as Record<string, string>;
+  return {
+    inboxConnectionId: Boolean(fields.inboxConnectionId),
+    matchConfidence: Boolean(fields.matchConfidence),
+    matchReason: Boolean(fields.matchReason),
+    missingFromProvider: Boolean(fields.missingFromProvider),
+    mailboxEmail: Boolean(fields.mailboxEmail),
+    providerFolderId: Boolean(fields.providerFolderId),
+  };
+}
+
+/** Original Prisma/runtime exception details for SCHEMA_DRIFT diagnosis (no secrets). */
+function prismaErrorCause(error: unknown): {
+  name: string;
+  prismaCode: string | null;
+  message: string;
+  meta: unknown;
+  clientFields: Record<string, boolean>;
+  databaseTarget: ReturnType<typeof safeDatabaseTarget>;
+  deploy: ReturnType<typeof deployIdentity>;
+} {
+  const name =
+    error && typeof error === "object" && error.constructor
+      ? error.constructor.name
+      : typeof error;
+  const prismaCode =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code: unknown }).code)
+      : null;
+  const message =
+    error instanceof Error
+      ? error.message.slice(0, 800)
+      : String(error).slice(0, 800);
+  const meta =
+    error && typeof error === "object" && "meta" in error
+      ? (error as { meta: unknown }).meta
+      : null;
+  return {
+    name,
+    prismaCode,
+    message,
+    meta,
+    clientFields: discoveredFolderClientFieldSupport(),
+    databaseTarget: safeDatabaseTarget(),
+    deploy: deployIdentity(),
+  };
 }
 
 function toIso(value: unknown): string | null {
@@ -513,7 +606,11 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       const drift = prismaSchemaDriftMessage(e);
       if (drift) {
         request.log.error({ err: e, event: "project_folders_scan_schema_drift" });
-        return reply.code(503).send({ message: drift, code: "SCHEMA_DRIFT" });
+        return reply.code(503).send({
+          message: drift,
+          code: "SCHEMA_DRIFT",
+          cause: prismaErrorCause(e),
+        });
       }
       if (e instanceof ProjectFolderScanError) {
         const status =
@@ -821,29 +918,32 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       });
     } catch (e) {
       const drift = prismaSchemaDriftMessage(e);
+      const cause = prismaErrorCause(e);
       if (drift) {
         request.log.error({
           err: e,
           event: "discovered_folders_schema_drift",
           workspaceId,
           connectionId: (request.query as { connectionId?: string })?.connectionId,
+          cause,
         });
-        return reply.code(503).send({ message: drift, code: "SCHEMA_DRIFT" });
+        return reply.code(503).send({
+          message: drift,
+          code: "SCHEMA_DRIFT",
+          cause,
+        });
       }
       request.log.error({
         err: e,
         event: "discovered_folders_list_failed",
         workspaceId,
         connectionId: (request.query as { connectionId?: string })?.connectionId,
-        prismaCode:
-          e && typeof e === "object" && "code" in e
-            ? String((e as { code: unknown }).code)
-            : undefined,
-        errorMessage: e instanceof Error ? e.message : String(e),
+        cause,
       });
       return reply.code(500).send({
         message: "Could not load discovered folders",
         code: "DISCOVERED_FOLDERS_LIST_FAILED",
+        cause,
       });
     }
   });

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 
 export const registerHealthRoute = async (
   app: FastifyInstance
@@ -26,6 +27,30 @@ export const registerHealthRoute = async (
 
     const env = app.services.env;
 
+    let databaseTarget: {
+      host: string | null;
+      port: string | null;
+      database: string | null;
+      schema: string | null;
+    } = { host: null, port: null, database: null, schema: null };
+    try {
+      const raw = process.env.DATABASE_URL ?? process.env.DIRECT_URL ?? "";
+      const u = new URL(raw);
+      databaseTarget = {
+        host: u.hostname || null,
+        port: u.port || null,
+        database: u.pathname.replace(/^\//, "") || null,
+        schema: u.searchParams.get("schema") ?? "public",
+      };
+    } catch {
+      /* ignore */
+    }
+
+    const folderFields = Prisma.DiscoveredFolderScalarFieldEnum as Record<
+      string,
+      string
+    >;
+
     return {
       status,
       service: "forgeops-api",
@@ -38,6 +63,24 @@ export const registerHealthRoute = async (
           ? "configured"
           : "not_configured",
         inboxProviders
+      },
+      runtime: {
+        databaseTarget,
+        deploy: {
+          railwayGitCommitSha:
+            process.env.RAILWAY_GIT_COMMIT_SHA ??
+            process.env.RAILWAY_GIT_COMMIT ??
+            null,
+          railwayDeploymentId: process.env.RAILWAY_DEPLOYMENT_ID ?? null,
+          railwayServiceName: process.env.RAILWAY_SERVICE_NAME ?? null,
+          nodeEnv: process.env.NODE_ENV ?? null,
+        },
+        prismaClientFields: {
+          inboxConnectionId: Boolean(folderFields.inboxConnectionId),
+          matchConfidence: Boolean(folderFields.matchConfidence),
+          matchReason: Boolean(folderFields.matchReason),
+          missingFromProvider: Boolean(folderFields.missingFromProvider),
+        },
       },
       configDiagnostics: {
         google: {
