@@ -51,7 +51,14 @@ async function requireAuth(
   return { userId: session.userId, role: membership.role, workspaceRole: membership.workspaceRole };
 }
 
-/** Map common Prisma schema-drift errors to actionable API messages. */
+/**
+ * Map *true* Prisma schema-drift errors to an actionable API message.
+ *
+ * Do NOT treat every Prisma P20xx code as schema drift — that mislabels pool
+ * timeouts (P2024), unique/FK violations (P2002/P2003), not-found (P2025), etc.
+ * as migrations. Production DB + generated client already include Project Folder
+ * columns; only missing-table/column style failures are schema drift.
+ */
 function prismaSchemaDriftMessage(error: unknown): string | null {
   const code =
     error && typeof error === "object" && "code" in error
@@ -59,20 +66,32 @@ function prismaSchemaDriftMessage(error: unknown): string | null {
       : "";
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  // NOTE: code.startsWith("P20") is intentionally broad today and also matches
-  // non-schema codes (P2002 unique, P2003 FK, P2025 not found, P2034 tx, …).
-  // Keep classification unchanged until production cause is confirmed via `cause`.
+
+  // Prisma: table does not exist / column does not exist
+  if (code === "P2021" || code === "P2022") {
+    return "Required database migration has not been applied";
+  }
+
   if (
-    code.startsWith("P20") ||
     /column .* does not exist/i.test(message) ||
     /relation .* does not exist/i.test(message) ||
-    /invalid.*enum/i.test(message) ||
+    /table .* does not exist/i.test(message) ||
     /type .* does not exist/i.test(message) ||
     /does not exist in the current database/i.test(message) ||
-    /Unknown argument/i.test(message) ||
-    /Unknown field/i.test(message)
+    /invalid.*enum value/i.test(message)
   ) {
     return "Required database migration has not been applied";
+  }
+
+  return null;
+}
+
+/** Stale generated client vs newer source (not a DB migration issue). */
+function prismaClientDriftMessage(error: unknown): string | null {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (/Unknown argument/i.test(message) || /Unknown field/i.test(message)) {
+    return "API Prisma client is out of date — redeploy the API after prisma generate";
   }
   return null;
 }
@@ -612,6 +631,15 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           cause: prismaErrorCause(e),
         });
       }
+      const clientDrift = prismaClientDriftMessage(e);
+      if (clientDrift) {
+        request.log.error({ err: e, event: "project_folders_scan_client_drift" });
+        return reply.code(503).send({
+          message: clientDrift,
+          code: "PRISMA_CLIENT_DRIFT",
+          cause: prismaErrorCause(e),
+        });
+      }
       if (e instanceof ProjectFolderScanError) {
         const status =
           e.code === "CONNECTION_NOT_FOUND" || e.code === "NOT_OUTLOOK"
@@ -933,6 +961,21 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           cause,
         });
       }
+      const clientDrift = prismaClientDriftMessage(e);
+      if (clientDrift) {
+        request.log.error({
+          err: e,
+          event: "discovered_folders_client_drift",
+          workspaceId,
+          connectionId: (request.query as { connectionId?: string })?.connectionId,
+          cause,
+        });
+        return reply.code(503).send({
+          message: clientDrift,
+          code: "PRISMA_CLIENT_DRIFT",
+          cause,
+        });
+      }
       request.log.error({
         err: e,
         event: "discovered_folders_list_failed",
@@ -940,8 +983,17 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         connectionId: (request.query as { connectionId?: string })?.connectionId,
         cause,
       });
+      const detail =
+        cause.prismaCode || cause.message
+          ? `${cause.prismaCode ? `[${cause.prismaCode}] ` : ""}${cause.message}`.slice(
+              0,
+              400
+            )
+          : null;
       return reply.code(500).send({
-        message: "Could not load discovered folders",
+        message: detail
+          ? `Could not load discovered folders: ${detail}`
+          : "Could not load discovered folders",
         code: "DISCOVERED_FOLDERS_LIST_FAILED",
         cause,
       });

@@ -61,15 +61,28 @@ function isProjectFolderEligible(c: ConnectionSummary): boolean {
   )
 }
 
-function friendlyLoadError(raw: string): string {
+function friendlyLoadError(raw: string, cause?: unknown): string {
   const msg = raw.trim()
+  const causeObj =
+    cause && typeof cause === 'object'
+      ? (cause as { prismaCode?: string | null; message?: string })
+      : null
+  const causeSuffix =
+    causeObj && (causeObj.prismaCode || causeObj.message)
+      ? ` — ${causeObj.prismaCode ? `[${causeObj.prismaCode}] ` : ''}${(causeObj.message ?? '').slice(0, 240)}`
+      : ''
+
+  if (/API Prisma client is out of date/i.test(msg) || /PRISMA_CLIENT_DRIFT/i.test(msg)) {
+    return msg + causeSuffix
+  }
   if (/migration has not been applied/i.test(msg) || /SCHEMA_DRIFT/i.test(msg)) {
-    return 'Required database migration has not been applied'
+    // Keep migration wording only when the server still classified SCHEMA_DRIFT.
+    return 'Required database migration has not been applied' + causeSuffix
   }
   if (/Unexpected server error/i.test(msg)) {
-    return 'Could not load discovered folders'
+    return 'Could not load discovered folders' + causeSuffix
   }
-  return msg || 'Could not load discovered folders'
+  return (msg || 'Could not load discovered folders') + (causeSuffix && !msg.includes('[') ? causeSuffix : '')
 }
 
 /** Human-readable matchReason from matchFolderToExistingJobs / manual actions. */
@@ -181,7 +194,10 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
         })
         setFolders([])
         setError(
-          friendlyLoadError(e instanceof Error ? e.message : 'Could not load discovered folders')
+          friendlyLoadError(
+            e instanceof Error ? e.message : 'Could not load discovered folders',
+            e instanceof ApiRequestError ? e.causePayload : undefined
+          )
         )
       } finally {
         if (seq === loadSeqRef.current) setLoadingList(false)

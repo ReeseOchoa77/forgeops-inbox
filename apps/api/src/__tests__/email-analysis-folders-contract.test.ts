@@ -18,7 +18,9 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(src).toContain("serializeDiscoveredFolderRow");
     expect(src).toContain("DISCOVERED_FOLDERS_LIST_FAILED");
     expect(src).toContain("cause: prismaErrorCause");
-    expect(src).toContain("code.startsWith(\"P20\")");
+    expect(src).toContain('code === "P2021"');
+    expect(src).toContain('code === "P2022"');
+    expect(src).not.toContain('code.startsWith("P20")');
   });
 
   it("frontend FoldersView uses case-insensitive outlook + connectionId list param", () => {
