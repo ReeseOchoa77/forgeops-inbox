@@ -175,19 +175,36 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
       setLoadingList(true)
       setError('')
       try {
-        const [res, unmatchedJobs] = await Promise.all([
-          api.getDiscoveredFolders(workspaceId, {
-            connectionId: connectionIdForScope,
-            pageSize: 200,
-          }),
-          api.getJobsWithoutProjectFolder(workspaceId, connectionIdForScope, 200),
-        ])
+        const res = await api.getDiscoveredFolders(workspaceId, {
+          connectionId: connectionIdForScope,
+          pageSize: 200,
+        })
         // Ignore stale responses from overlapping loads (Strict Mode / connection churn).
         if (seq !== loadSeqRef.current) return
         setFolders(res.folders)
-        setJobsWithoutFolder(unmatchedJobs.jobs)
-        setJobsWithoutFolderTotal(unmatchedJobs.total)
         setError('')
+
+        // Best-effort secondary list — must not blank the folder table if this route
+        // is briefly unavailable during a rolling deploy.
+        try {
+          const unmatchedJobs = await api.getJobsWithoutProjectFolder(
+            workspaceId,
+            connectionIdForScope,
+            200
+          )
+          if (seq !== loadSeqRef.current) return
+          setJobsWithoutFolder(unmatchedJobs.jobs)
+          setJobsWithoutFolderTotal(unmatchedJobs.total)
+        } catch (jobsErr) {
+          if (seq !== loadSeqRef.current) return
+          console.warn('[Email Analysis] jobs-without-folder failed', {
+            workspaceId,
+            connectionId: connectionIdForScope,
+            message: jobsErr instanceof Error ? jobsErr.message : jobsErr,
+          })
+          setJobsWithoutFolder([])
+          setJobsWithoutFolderTotal(0)
+        }
       } catch (e) {
         if (seq !== loadSeqRef.current) return
         console.error('[Email Analysis] discovered-folders failed', {
