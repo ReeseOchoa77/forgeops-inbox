@@ -148,7 +148,27 @@ function discoveredFolderClientFieldSupport(): Record<string, boolean> {
   };
 }
 
-/** Original Prisma/runtime exception details for SCHEMA_DRIFT diagnosis (no secrets). */
+/** Ensure Prisma meta / nested values never blow up Fastify JSON serialization. */
+function jsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_key, v) => {
+        if (typeof v === "bigint") return v.toString();
+        if (v instanceof Date) return v.toISOString();
+        if (v === undefined) return null;
+        if (typeof v === "number" && !Number.isFinite(v)) return String(v);
+        if (v && typeof v === "object" && v.constructor?.name === "Decimal") {
+          return String(v);
+        }
+        return v;
+      })
+    );
+  } catch {
+    return String(value).slice(0, 500);
+  }
+}
+
+/** Original Prisma/runtime exception details for diagnosis (no secrets, JSON-safe). */
 function prismaErrorCause(error: unknown): {
   name: string;
   prismaCode: string | null;
@@ -170,7 +190,7 @@ function prismaErrorCause(error: unknown): {
     error instanceof Error
       ? error.message.slice(0, 800)
       : String(error).slice(0, 800);
-  const meta =
+  const rawMeta =
     error && typeof error === "object" && "meta" in error
       ? (error as { meta: unknown }).meta
       : null;
@@ -178,7 +198,7 @@ function prismaErrorCause(error: unknown): {
     name,
     prismaCode,
     message,
-    meta,
+    meta: jsonSafe(rawMeta),
     clientFields: discoveredFolderClientFieldSupport(),
     databaseTarget: safeDatabaseTarget(),
     deploy: deployIdentity(),
@@ -628,7 +648,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         return reply.code(503).send({
           message: drift,
           code: "SCHEMA_DRIFT",
-          cause: prismaErrorCause(e),
+          cause: jsonSafe(prismaErrorCause(e)),
         });
       }
       const clientDrift = prismaClientDriftMessage(e);
@@ -637,7 +657,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         return reply.code(503).send({
           message: clientDrift,
           code: "PRISMA_CLIENT_DRIFT",
-          cause: prismaErrorCause(e),
+          cause: jsonSafe(prismaErrorCause(e)),
         });
       }
       if (e instanceof ProjectFolderScanError) {
@@ -888,7 +908,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         };
       }
 
-      const [folders, total, metrics] = await Promise.all([
+      const [folders, total] = await Promise.all([
         app.services.prisma.discoveredFolder.findMany({
           where,
           orderBy: [{ status: "asc" }, { folderPath: "asc" }],
@@ -897,33 +917,66 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           take: query.pageSize,
         }),
         app.services.prisma.discoveredFolder.count({ where }),
-        app.services.prisma.discoveredFolder.groupBy({
-          by: ["status"],
-          where: summaryWhere,
-          _count: true,
-        }),
       ]);
 
-      const lastSynced = await app.services.prisma.discoveredFolder.findFirst({
-        where: summaryWhere,
-        orderBy: { lastSeenAt: "desc" },
-        select: { lastSeenAt: true },
-      });
+      // Summary aggregations are best-effort — must not fail the folder list itself.
+      let metrics: Array<{ status: string; _count: number | { _all?: number } }> = [];
+      let lastSyncAt: string | null = null;
+      let mailboxEmails: string[] = [];
+      try {
+        const [grouped, lastSynced, mailboxes] = await Promise.all([
+          app.services.prisma.discoveredFolder.groupBy({
+            by: ["status"],
+            where: summaryWhere,
+            _count: true,
+          }),
+          app.services.prisma.discoveredFolder.findFirst({
+            where: summaryWhere,
+            orderBy: { lastSeenAt: "desc" },
+            select: { lastSeenAt: true },
+          }),
+          app.services.prisma.discoveredFolder.groupBy({
+            by: ["mailboxEmail"],
+            where: summaryWhere,
+          }),
+        ]);
+        metrics = grouped;
+        lastSyncAt = lastSynced?.lastSeenAt
+          ? lastSynced.lastSeenAt.toISOString()
+          : null;
+        mailboxEmails = mailboxes.map((m) => m.mailboxEmail);
+      } catch (summaryErr) {
+        request.log.warn({
+          err: summaryErr,
+          event: "discovered_folders_summary_failed",
+          workspaceId,
+          connectionId: query.connectionId,
+          cause: prismaErrorCause(summaryErr),
+        });
+      }
 
-      const mailboxes = await app.services.prisma.discoveredFolder.groupBy({
-        by: ["mailboxEmail"],
-        where: summaryWhere,
-      });
+      const countOf = (m: { _count: number | { _all?: number } }) =>
+        typeof m._count === "number" ? m._count : Number(m._count?._all ?? 0);
 
       const summary = {
-        total: metrics.reduce((sum, m) => sum + m._count, 0),
-        discovered: metrics.find(m => m.status === "DISCOVERED")?._count ?? 0,
-        matched: metrics.find(m => m.status === "MATCHED")?._count ?? 0,
-        approved: metrics.find(m => m.status === "APPROVED")?._count ?? 0,
-        ignored: metrics.find(m => m.status === "IGNORED")?._count ?? 0,
-        archived: metrics.find(m => m.status === "ARCHIVED")?._count ?? 0,
-        lastSyncAt: lastSynced?.lastSeenAt ? lastSynced.lastSeenAt.toISOString() : null,
-        mailboxes: mailboxes.map(m => m.mailboxEmail),
+        total: 0,
+        discovered: countOf(
+          metrics.find((m) => m.status === "DISCOVERED") ?? { _count: 0 }
+        ),
+        matched: countOf(
+          metrics.find((m) => m.status === "MATCHED") ?? { _count: 0 }
+        ),
+        approved: countOf(
+          metrics.find((m) => m.status === "APPROVED") ?? { _count: 0 }
+        ),
+        ignored: countOf(
+          metrics.find((m) => m.status === "IGNORED") ?? { _count: 0 }
+        ),
+        archived: countOf(
+          metrics.find((m) => m.status === "ARCHIVED") ?? { _count: 0 }
+        ),
+        lastSyncAt,
+        mailboxes: mailboxEmails,
       };
       summary.total =
         summary.discovered +
@@ -931,6 +984,10 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         summary.approved +
         summary.ignored +
         summary.archived;
+      // If summary aggregations failed, fall back to pagination total.
+      if (summary.total === 0 && total > 0) {
+        summary.total = total;
+      }
 
       return reply.send({
         folders: folders.map((f) =>
@@ -947,6 +1004,22 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     } catch (e) {
       const drift = prismaSchemaDriftMessage(e);
       const cause = prismaErrorCause(e);
+      const sendSafe = (status: number, body: Record<string, unknown>) => {
+        try {
+          return reply.code(status).send(jsonSafe(body) as Record<string, unknown>);
+        } catch (sendErr) {
+          request.log.error({
+            err: sendErr,
+            event: "discovered_folders_error_serialize_failed",
+            workspaceId,
+            fallbackMessage: cause.message,
+          });
+          return reply.code(status).send({
+            message: cause.message.slice(0, 400) || "Could not load discovered folders",
+            code: "DISCOVERED_FOLDERS_LIST_FAILED",
+          });
+        }
+      };
       if (drift) {
         request.log.error({
           err: e,
@@ -955,7 +1028,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           connectionId: (request.query as { connectionId?: string })?.connectionId,
           cause,
         });
-        return reply.code(503).send({
+        return sendSafe(503, {
           message: drift,
           code: "SCHEMA_DRIFT",
           cause,
@@ -970,7 +1043,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           connectionId: (request.query as { connectionId?: string })?.connectionId,
           cause,
         });
-        return reply.code(503).send({
+        return sendSafe(503, {
           message: clientDrift,
           code: "PRISMA_CLIENT_DRIFT",
           cause,
@@ -990,7 +1063,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
               400
             )
           : null;
-      return reply.code(500).send({
+      return sendSafe(500, {
         message: detail
           ? `Could not load discovered folders: ${detail}`
           : "Could not load discovered folders",
