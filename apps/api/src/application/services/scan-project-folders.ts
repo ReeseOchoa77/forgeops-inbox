@@ -334,34 +334,38 @@ export async function scanNativeProjectFolders(input: {
         existing.status === "IGNORED" ||
         (existing.status === "MATCHED" && Boolean(existing.matchedJobId));
 
-      const updateData: Prisma.DiscoveredFolderUpdateInput = {
-        ...scalarFields,
+      // IMPORTANT: DiscoveredFolder.matchedJob uses composite FK
+      // (workspaceId, matchedJobId). Relation disconnect/connect would null
+      // workspaceId and trip P2011. Always update matchedJobId as a scalar.
+      const data: Prisma.DiscoveredFolderUncheckedUpdateInput = {
+        inboxConnectionId: connection.id,
+        mailboxEmail,
+        provider: "OUTLOOK",
+        parentProviderFolderId: folder.parentFolderId,
+        folderPath: folder.path,
+        rawFolderName: folder.displayName,
+        normalizedFolderName: normalizeName(folder.displayName),
+        detectedJobNumber: match.detectedJobNumber,
+        detectedJobName: match.detectedJobName,
+        childFolderCount: folder.childFolderCount,
+        lastSeenAt: now,
+        missingFromProvider: false,
       };
 
       if (!preserveMatch) {
-        updateData.matchedJob =
-          match.matchedJobId == null
-            ? { disconnect: true }
-            : {
-                connect: {
-                  workspaceId_id: {
-                    workspaceId: input.workspaceId,
-                    id: match.matchedJobId,
-                  },
-                },
-              };
-        updateData.status = match.status;
-        updateData.matchConfidence = toConfidence(match.confidence);
-        updateData.matchReason = match.reason;
+        data.matchedJobId = match.matchedJobId;
+        data.status = match.status;
+        data.matchConfidence = toConfidence(match.confidence);
+        data.matchReason = match.reason;
         if (match.status === "APPROVED") {
-          updateData.approvedAt = now;
-          updateData.approvedByUserId = input.actorUserId ?? null;
+          data.approvedAt = now;
+          data.approvedByUserId = input.actorUserId ?? null;
         }
       }
 
       await input.prisma.discoveredFolder.update({
         where: { id: existing.id },
-        data: updateData,
+        data,
       });
 
       const effectiveJobId = preserveMatch
