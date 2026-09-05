@@ -63,6 +63,17 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(folders).not.toMatch(/\/messages/i);
   });
 
+  it("scan upgrades legacy NULL inboxConnectionId rows by providerFolderId", () => {
+    const scan = readFileSync(
+      join(here, "../application/services/scan-project-folders.ts"),
+      "utf8"
+    );
+    expect(scan).toContain("mailboxEmail = connection.email.toLowerCase()");
+    expect(scan).toContain("findFirst");
+    expect(scan).toContain("inboxConnectionId: null");
+    expect(scan).toContain('mode: "insensitive"');
+  });
+
   it("scan updates matchedJobId as a scalar (never relation disconnect)", () => {
     const scan = readFileSync(
       join(here, "../application/services/scan-project-folders.ts"),
