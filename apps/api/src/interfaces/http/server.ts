@@ -340,7 +340,7 @@ export const buildServer = async () => {
     removeScheduledSync
   });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
       return reply.status(400).send({
         message: "Invalid request payload",
@@ -348,10 +348,30 @@ export const buildServer = async () => {
       });
     }
 
-    app.log.error(error);
+    app.log.error({
+      err: error,
+      event: "unhandled_http_error",
+      url: request.url,
+      method: request.method,
+    });
 
+    const detail =
+      error instanceof Error
+        ? error.message.replace(/\s+/g, " ").trim().slice(0, 400)
+        : String(error).slice(0, 400);
+
+    // Keep a stable prefix for clients, but always include the underlying detail
+    // so Email Analysis / ops can see the real failure without Railway log access.
     return reply.status(500).send({
-      message: "Unexpected server error"
+      message: detail
+        ? `Unexpected server error: ${detail}`
+        : "Unexpected server error",
+      code: "UNHANDLED",
+      name:
+        error && typeof error === "object" && "constructor" in error
+          ? (error as { constructor?: { name?: string } }).constructor?.name ??
+            null
+          : null,
     });
   });
 

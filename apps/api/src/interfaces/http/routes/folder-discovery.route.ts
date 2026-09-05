@@ -828,23 +828,28 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
   // =========================================================================
 
   app.get("/api/v1/workspaces/:workspaceId/discovered-folders", async (request, reply) => {
-    const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
-    const auth = await requireAuth(app, request, reply, workspaceId);
-    if (!auth) return;
-
-    const query = z.object({
-      status: z.enum(["DISCOVERED", "APPROVED", "IGNORED", "MATCHED", "ARCHIVED"]).optional(),
-      mailboxEmail: z.string().optional(),
-      /** Prefer this over mailboxEmail — scopes to InboxConnection + recoverable legacy rows. */
-      connectionId: z.string().min(1).optional(),
-      search: z.string().optional(),
-      hasMatch: z.enum(["true", "false"]).optional().transform(v => v === "true" ? true : v === "false" ? false : undefined),
-      root: z.string().optional(),
-      page: z.coerce.number().int().min(1).default(1),
-      pageSize: z.coerce.number().int().min(1).max(200).default(50),
-    }).parse(request.query);
-
+    let stage = "parse_params";
     try {
+      const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+
+      stage = "auth";
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      stage = "parse_query";
+      const query = z.object({
+        status: z.enum(["DISCOVERED", "APPROVED", "IGNORED", "MATCHED", "ARCHIVED"]).optional(),
+        mailboxEmail: z.string().optional(),
+        /** Prefer this over mailboxEmail — scopes to InboxConnection + recoverable legacy rows. */
+        connectionId: z.string().min(1).optional(),
+        search: z.string().optional(),
+        hasMatch: z.enum(["true", "false"]).optional().transform(v => v === "true" ? true : v === "false" ? false : undefined),
+        root: z.string().optional(),
+        page: z.coerce.number().int().min(1).default(1),
+        pageSize: z.coerce.number().int().min(1).max(200).default(50),
+      }).parse(request.query);
+
+      stage = "build_where";
       const where: Record<string, unknown> = { workspaceId };
       if (query.status) where.status = query.status;
       if (query.hasMatch === true) where.matchedJobId = { not: null };
@@ -855,6 +860,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
 
       let scopeMailboxEmail: string | null = null;
       if (query.connectionId) {
+        stage = "scope_connection";
         const conn = await app.services.prisma.inboxConnection.findFirst({
           where: { id: query.connectionId, workspaceId },
           select: { id: true, email: true },
@@ -908,21 +914,23 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         };
       }
 
-      const [folders, total] = await Promise.all([
-        app.services.prisma.discoveredFolder.findMany({
-          where,
-          orderBy: [{ status: "asc" }, { folderPath: "asc" }],
-          include: { matchedJob: { select: { id: true, name: true, jobNumber: true } } },
-          skip: (query.page - 1) * query.pageSize,
-          take: query.pageSize,
-        }),
-        app.services.prisma.discoveredFolder.count({ where }),
-      ]);
+      stage = "find_many";
+      const folders = await app.services.prisma.discoveredFolder.findMany({
+        where,
+        orderBy: [{ status: "asc" }, { folderPath: "asc" }],
+        include: { matchedJob: { select: { id: true, name: true, jobNumber: true } } },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      });
+
+      stage = "count";
+      const total = await app.services.prisma.discoveredFolder.count({ where });
 
       // Summary aggregations are best-effort — must not fail the folder list itself.
       let metrics: Array<{ status: string; _count: number | { _all?: number } }> = [];
       let lastSyncAt: string | null = null;
       let mailboxEmails: string[] = [];
+      stage = "summary";
       try {
         const [grouped, lastSynced, mailboxes] = await Promise.all([
           app.services.prisma.discoveredFolder.groupBy({
@@ -989,7 +997,8 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         summary.total = total;
       }
 
-      return reply.send({
+      stage = "serialize";
+      const payload = {
         folders: folders.map((f) =>
           serializeDiscoveredFolderRow(f as unknown as Record<string, unknown>)
         ),
@@ -1000,10 +1009,19 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           totalPages: Math.ceil(total / query.pageSize),
         },
         summary,
-      });
+      };
+
+      stage = "send";
+      return reply.send(payload);
     } catch (e) {
+      // Auth already sent a response.
+      if (reply.sent) return;
+
       const drift = prismaSchemaDriftMessage(e);
-      const cause = prismaErrorCause(e);
+      const cause = {
+        ...prismaErrorCause(e),
+        stage,
+      };
       const sendSafe = (status: number, body: Record<string, unknown>) => {
         try {
           return reply.code(status).send(jsonSafe(body) as Record<string, unknown>);
@@ -1011,12 +1029,13 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           request.log.error({
             err: sendErr,
             event: "discovered_folders_error_serialize_failed",
-            workspaceId,
+            stage,
             fallbackMessage: cause.message,
           });
           return reply.code(status).send({
-            message: cause.message.slice(0, 400) || "Could not load discovered folders",
+            message: `Discovered folders failed at ${stage}: ${cause.message.slice(0, 300)}`,
             code: "DISCOVERED_FOLDERS_LIST_FAILED",
+            stage,
           });
         }
       };
@@ -1024,13 +1043,13 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         request.log.error({
           err: e,
           event: "discovered_folders_schema_drift",
-          workspaceId,
-          connectionId: (request.query as { connectionId?: string })?.connectionId,
+          stage,
           cause,
         });
         return sendSafe(503, {
           message: drift,
           code: "SCHEMA_DRIFT",
+          stage,
           cause,
         });
       }
@@ -1039,21 +1058,20 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         request.log.error({
           err: e,
           event: "discovered_folders_client_drift",
-          workspaceId,
-          connectionId: (request.query as { connectionId?: string })?.connectionId,
+          stage,
           cause,
         });
         return sendSafe(503, {
           message: clientDrift,
           code: "PRISMA_CLIENT_DRIFT",
+          stage,
           cause,
         });
       }
       request.log.error({
         err: e,
         event: "discovered_folders_list_failed",
-        workspaceId,
-        connectionId: (request.query as { connectionId?: string })?.connectionId,
+        stage,
         cause,
       });
       const detail =
@@ -1065,9 +1083,10 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
           : null;
       return sendSafe(500, {
         message: detail
-          ? `Could not load discovered folders: ${detail}`
-          : "Could not load discovered folders",
+          ? `Could not load discovered folders at ${stage}: ${detail}`
+          : `Could not load discovered folders at ${stage}`,
         code: "DISCOVERED_FOLDERS_LIST_FAILED",
+        stage,
         cause,
       });
     }

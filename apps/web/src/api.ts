@@ -5,18 +5,24 @@ export class ApiRequestError extends Error {
   readonly status: number
   readonly code?: string
   readonly causePayload?: unknown
+  readonly stage?: string
+  readonly errorName?: string
 
   constructor(input: {
     message: string
     status: number
     code?: string
     cause?: unknown
+    stage?: string
+    errorName?: string
   }) {
     super(input.message)
     this.name = 'ApiRequestError'
     this.status = input.status
     if (input.code !== undefined) this.code = input.code
     if (input.cause !== undefined) this.causePayload = input.cause
+    if (input.stage !== undefined) this.stage = input.stage
+    if (input.errorName !== undefined) this.errorName = input.errorName
   }
 }
 
@@ -40,12 +46,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       error?: string
       code?: string
       cause?: unknown
+      stage?: string
+      name?: string
     }
     throw new ApiRequestError({
       message: body.message ?? body.error ?? `Request failed: ${res.status}`,
       status: res.status,
       ...(body.code ? { code: body.code } : {}),
       ...(body.cause !== undefined ? { cause: body.cause } : {}),
+      ...(body.stage ? { stage: body.stage } : {}),
+      ...(body.name ? { errorName: body.name } : {}),
     })
   }
   return res.json() as Promise<T>;

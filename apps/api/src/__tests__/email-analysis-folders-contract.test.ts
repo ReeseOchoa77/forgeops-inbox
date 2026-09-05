@@ -20,6 +20,7 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(src).toContain("cause: prismaErrorCause");
     expect(src).toContain('code === "P2021"');
     expect(src).toContain('code === "P2022"');
+    expect(src).toContain('stage = "find_many"');
     expect(src).not.toContain('code.startsWith("P20")');
   });
 

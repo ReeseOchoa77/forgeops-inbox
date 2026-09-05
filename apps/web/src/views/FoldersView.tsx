@@ -65,24 +65,23 @@ function friendlyLoadError(raw: string, cause?: unknown): string {
   const msg = raw.trim()
   const causeObj =
     cause && typeof cause === 'object'
-      ? (cause as { prismaCode?: string | null; message?: string })
+      ? (cause as {
+          prismaCode?: string | null
+          message?: string
+          stage?: string
+          name?: string
+        })
       : null
-  const causeSuffix =
-    causeObj && (causeObj.prismaCode || causeObj.message)
-      ? ` — ${causeObj.prismaCode ? `[${causeObj.prismaCode}] ` : ''}${(causeObj.message ?? '').slice(0, 240)}`
-      : ''
+  const parts: string[] = []
+  if (causeObj?.stage) parts.push(`stage=${causeObj.stage}`)
+  if (causeObj?.prismaCode) parts.push(`[${causeObj.prismaCode}]`)
+  if (causeObj?.message) parts.push(causeObj.message.slice(0, 240))
+  else if (causeObj?.name) parts.push(causeObj.name)
+  const causeSuffix = parts.length ? ` — ${parts.join(' ')}` : ''
 
-  if (/API Prisma client is out of date/i.test(msg) || /PRISMA_CLIENT_DRIFT/i.test(msg)) {
-    return msg + causeSuffix
-  }
-  if (/migration has not been applied/i.test(msg) || /SCHEMA_DRIFT/i.test(msg)) {
-    // Keep migration wording only when the server still classified SCHEMA_DRIFT.
-    return 'Required database migration has not been applied' + causeSuffix
-  }
-  if (/Unexpected server error/i.test(msg)) {
-    return 'Could not load discovered folders' + causeSuffix
-  }
-  return (msg || 'Could not load discovered folders') + (causeSuffix && !msg.includes('[') ? causeSuffix : '')
+  // Prefer the server's full message (now includes Unexpected detail / stage).
+  if (msg) return msg + (causeSuffix && !msg.includes('stage=') && !msg.includes('[P') ? causeSuffix : '')
+  return 'Could not load discovered folders' + causeSuffix
 }
 
 /** Human-readable matchReason from matchFolderToExistingJobs / manual actions. */
@@ -190,13 +189,24 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           message: e instanceof Error ? e.message : e,
           status: e instanceof ApiRequestError ? e.status : undefined,
           code: e instanceof ApiRequestError ? e.code : undefined,
+          stage: e instanceof ApiRequestError ? e.stage : undefined,
           cause: e instanceof ApiRequestError ? e.causePayload : undefined,
         })
         setFolders([])
+        const causeForUi =
+          e instanceof ApiRequestError
+            ? {
+                ...(typeof e.causePayload === 'object' && e.causePayload
+                  ? (e.causePayload as object)
+                  : {}),
+                ...(e.stage ? { stage: e.stage } : {}),
+                ...(e.errorName ? { name: e.errorName } : {}),
+              }
+            : undefined
         setError(
           friendlyLoadError(
             e instanceof Error ? e.message : 'Could not load discovered folders',
-            e instanceof ApiRequestError ? e.causePayload : undefined
+            causeForUi
           )
         )
       } finally {
