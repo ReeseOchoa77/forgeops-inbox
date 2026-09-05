@@ -1,12 +1,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
-import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
+import { buildInboxMessageListFilters, type InboxBusinessTypeGroup } from '../inbox-message-list-filters'
 import {
   getCachedInboxList,
   setCachedInboxList,
   INBOX_DEFAULT_LIST_FILTER_KEY,
 } from '../inbox-list-cache'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
+import { InboxExcludeFilter } from '../components/InboxExcludeFilter'
+import { AttachmentActionMenu } from '../components/AttachmentActionMenu'
 import {
   JobAssignPicker,
   JobFilterSelect,
@@ -126,18 +128,25 @@ function InboxAttachmentsButton({
                 </div>
               </div>
               {att.uploadStatus === 'UPLOADED' ? (
-                <a
-                  href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  style={{
-                    fontSize: 11, color: '#1565c0', textDecoration: 'none', fontWeight: 600,
-                    padding: '3px 8px', border: '1px solid #90caf9', borderRadius: 4, flexShrink: 0,
-                  }}
-                >
-                  Download
-                </a>
+                <>
+                  <a
+                    href={api.getStoredAttachmentDownloadUrl(workspaceId, att.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      fontSize: 11, color: '#1565c0', textDecoration: 'none', fontWeight: 600,
+                      padding: '3px 8px', border: '1px solid #90caf9', borderRadius: 4, flexShrink: 0,
+                    }}
+                  >
+                    Download
+                  </a>
+                  <AttachmentActionMenu
+                    workspaceId={workspaceId}
+                    attachment={att}
+                    sourceEmailMessageId={messageId}
+                  />
+                </>
               ) : (
                 <span style={{ fontSize: 10, color: '#bbb', flexShrink: 0 }}>Unavailable</span>
               )}
@@ -215,6 +224,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
+  const [excludeBusinessTypeGroups, setExcludeBusinessTypeGroups] = useState<InboxBusinessTypeGroup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
   const [searchIn, setSearchIn] = useState<'all' | 'sender' | 'id'>('all')
@@ -351,8 +361,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       jobFilter,
       activeSearch,
       searchIn,
+      excludeBusinessTypeGroups,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     if (key === 'sent') {
@@ -516,6 +527,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     setJobFilter('')
+    setExcludeBusinessTypeGroups([])
     setMassDeleteMode(false)
 
     const cached = getCachedInboxList(workspaceId, connectionId)
@@ -548,7 +560,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setTotalCount(null)
     // Soft refresh: keep prior rows visible until the new page arrives.
     loadPage(1, filters, false, { soft: true })
-  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -1434,6 +1446,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 workspaceId={workspaceId}
                 value={jobFilter}
                 onChange={setJobFilter}
+              />
+
+              <span style={{ color: '#ddd' }}>|</span>
+
+              <InboxExcludeFilter
+                value={excludeBusinessTypeGroups}
+                onChange={setExcludeBusinessTypeGroups}
               />
             </>
           )}

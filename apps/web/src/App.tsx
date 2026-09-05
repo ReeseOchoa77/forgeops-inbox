@@ -942,7 +942,7 @@ export default function App() {
           padding: isPhone ? 0 : 24
         }}>
           <div style={{
-            width: isPhone ? '100%' : 'min(860px, 94vw)', maxHeight: isPhone ? '100vh' : '90vh',
+            width: isPhone ? '100%' : 'min(920px, 96vw)', maxHeight: isPhone ? '100vh' : '90vh',
             height: isPhone ? '100%' : undefined,
             background: '#fff', borderRadius: isPhone ? 0 : 12,
             boxShadow: '0 16px 48px rgba(0,0,0,0.22)', display: 'flex', flexDirection: 'column', overflow: 'hidden'

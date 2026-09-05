@@ -17,6 +17,27 @@ export type InboxListTab =
   | "PERSONAL"
   | "TRASH";
 
+/** Canonical Business type groups (same as Inbox tabs / API businessTypeGroup). */
+export const INBOX_BUSINESS_TYPE_GROUPS = [
+  "BIDS_ESTIMATING",
+  "PROJECTS",
+  "PURCHASING",
+  "ACCOUNTING",
+  "INTERNAL",
+  "OTHER",
+] as const;
+
+export type InboxBusinessTypeGroup = (typeof INBOX_BUSINESS_TYPE_GROUPS)[number];
+
+export const INBOX_BUSINESS_TYPE_GROUP_LABELS: Record<InboxBusinessTypeGroup, string> = {
+  BIDS_ESTIMATING: "Bids & Estimating",
+  PROJECTS: "Projects",
+  PURCHASING: "Purchasing",
+  ACCOUNTING: "Accounting",
+  INTERNAL: "Internal",
+  OTHER: "Other",
+};
+
 export type InboxReadFilter = "" | "unread" | "read" | "sent";
 
 export type InboxDateRangeFilter = "" | "TODAY" | "WEEK" | "MONTH";
@@ -24,6 +45,8 @@ export type InboxDateRangeFilter = "" | "TODAY" | "WEEK" | "MONTH";
 export type InboxMessageListFilters = {
   businessCategory?: "BUSINESS" | "NON_BUSINESS";
   businessTypeGroup?: string;
+  /** Hide selected Business type groups (server-side Exclude filter). */
+  excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
   jobId?: string;
   category?: "trash";
   sentOnly?: true;
@@ -43,6 +66,8 @@ export function buildInboxMessageListFilters(input: {
   jobFilter?: string;
   activeSearch?: string;
   searchIn?: "all" | "sender" | "id";
+  /** Applied only on Business tabs (not Personal / Unclassified / Trash / Sent). */
+  excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
 
@@ -80,6 +105,9 @@ export function buildInboxMessageListFilters(input: {
       f.businessTypeGroup = input.inboxTab;
     }
     if (input.jobFilter) f.jobId = input.jobFilter;
+    if (input.excludeBusinessTypeGroups && input.excludeBusinessTypeGroups.length > 0) {
+      f.excludeBusinessTypeGroups = [...input.excludeBusinessTypeGroups];
+    }
   }
 
   // Server-side unread (API has unreadOnly; no readOnly yet — Read stays client-side).

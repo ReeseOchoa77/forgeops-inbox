@@ -111,9 +111,14 @@ export async function resolveExistingOutboundAttachments(input: {
   prisma: PrismaClient;
   storage: AttachmentStorage;
   workspaceId: string;
-  inboxConnectionId: string;
-  originalMessageId: string;
   attachmentIds: string[];
+  /**
+   * When set with originalMessageId, restrict to the same conversation thread
+   * (legacy Forward behavior). When omitted, any UPLOADED non-inline attachment
+   * in the workspace may be reused (Copy → Compose / Reply / Forward paste).
+   */
+  inboxConnectionId?: string;
+  originalMessageId?: string;
 }): Promise<OutboundAttachment[]> {
   if (input.attachmentIds.length === 0) return [];
 
@@ -149,36 +154,38 @@ export async function resolveExistingOutboundAttachments(input: {
     );
   }
 
-  const original = await input.prisma.emailMessage.findFirst({
-    where: {
-      workspaceId: input.workspaceId,
-      inboxConnectionId: input.inboxConnectionId,
-      OR: [
-        { id: input.originalMessageId },
-        { gmailMessageId: input.originalMessageId },
-      ],
-    },
-    select: { id: true, threadId: true },
-  });
-  if (!original) {
-    throw Object.assign(new Error("Original message not found"), {
-      statusCode: 404,
+  let threadMessageIds: Set<string> | null = null;
+  if (input.originalMessageId && input.inboxConnectionId) {
+    const original = await input.prisma.emailMessage.findFirst({
+      where: {
+        workspaceId: input.workspaceId,
+        inboxConnectionId: input.inboxConnectionId,
+        OR: [
+          { id: input.originalMessageId },
+          { gmailMessageId: input.originalMessageId },
+        ],
+      },
+      select: { id: true, threadId: true },
     });
-  }
+    if (!original) {
+      throw Object.assign(new Error("Original message not found"), {
+        statusCode: 404,
+      });
+    }
 
-  // Allow attachments from the same thread (forward of latest may reference sibling msgs)
-  const threadMessageIds = new Set(
-    (
-      await input.prisma.emailMessage.findMany({
-        where: {
-          workspaceId: input.workspaceId,
-          inboxConnectionId: input.inboxConnectionId,
-          threadId: original.threadId,
-        },
-        select: { id: true },
-      })
-    ).map((m) => m.id)
-  );
+    threadMessageIds = new Set(
+      (
+        await input.prisma.emailMessage.findMany({
+          where: {
+            workspaceId: input.workspaceId,
+            inboxConnectionId: input.inboxConnectionId,
+            threadId: original.threadId,
+          },
+          select: { id: true },
+        })
+      ).map((m) => m.id)
+    );
+  }
 
   const out: OutboundAttachment[] = [];
   for (const row of rows) {
@@ -187,12 +194,7 @@ export async function resolveExistingOutboundAttachments(input: {
         statusCode: 403,
       });
     }
-    if (row.emailMessage.inboxConnectionId !== input.inboxConnectionId) {
-      throw Object.assign(new Error("Attachment mailbox mismatch"), {
-        statusCode: 403,
-      });
-    }
-    if (!threadMessageIds.has(row.emailMessageId)) {
+    if (threadMessageIds && !threadMessageIds.has(row.emailMessageId)) {
       throw Object.assign(
         new Error("Attachment does not belong to this conversation"),
         { statusCode: 403 }
@@ -204,10 +206,20 @@ export async function resolveExistingOutboundAttachments(input: {
         { statusCode: 409 }
       );
     }
-    const data = await readStoredAttachmentBytes({
-      storage: input.storage,
-      storageKey: row.storageKey,
-    });
+    let data: Buffer;
+    try {
+      data = await readStoredAttachmentBytes({
+        storage: input.storage,
+        storageKey: row.storageKey,
+      });
+    } catch {
+      throw Object.assign(
+        new Error(
+          `Attachment "${row.filename}" is not available in storage. Re-sync or download it first.`
+        ),
+        { statusCode: 409 }
+      );
+    }
     out.push({
       filename: sanitizeOutboundFilename(row.filename),
       mimeType: row.mimeType || "application/octet-stream",

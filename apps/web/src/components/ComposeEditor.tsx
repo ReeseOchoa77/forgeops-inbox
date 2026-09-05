@@ -3,8 +3,15 @@ import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback, type ClipboardEvent } from 'react'
 import { RecipientField } from './RecipientField'
+import {
+  disarmAttachmentClipboardPaste,
+  getCopiedAttachments,
+  isAttachmentClipboardPasteArmed,
+  subscribeAttachmentClipboard,
+  type CopiedAttachmentRef,
+} from '../attachment-clipboard'
 
 export interface SendableMailboxOption {
   id: string
@@ -113,16 +120,70 @@ export function ComposeEditor({
   const [showBcc, setShowBcc] = useState((initialBcc?.length ?? 0) > 0)
   const [subject, setSubject] = useState(initialSubject ?? '')
   const [files, setFiles] = useState<File[]>([])
+  const [pastedExisting, setPastedExisting] = useState<ComposeExistingAttachment[]>([])
   const [includedExistingIds, setIncludedExistingIds] = useState<Set<string>>(
     () => new Set(existingAttachments.map((a) => a.id))
   )
+  const [clipboardCount, setClipboardCount] = useState(() => getCopiedAttachments(workspaceId).length)
   const [localError, setLocalError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingLock = useRef(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    setIncludedExistingIds(new Set(existingAttachments.map((a) => a.id)))
+    setIncludedExistingIds((prev) => {
+      const next = new Set(prev)
+      for (const a of existingAttachments) next.add(a.id)
+      return next
+    })
   }, [existingAttachments])
+
+  useEffect(() => {
+    const sync = () => setClipboardCount(getCopiedAttachments(workspaceId).length)
+    sync()
+    return subscribeAttachmentClipboard(sync)
+  }, [workspaceId])
+
+  const applyCopiedRefs = useCallback((refs: CopiedAttachmentRef[]) => {
+    if (refs.length === 0) return 0
+    let added = 0
+    setPastedExisting((prev) => {
+      const byId = new Map(prev.map((a) => [a.id, a]))
+      for (const ref of refs) {
+        if (byId.has(ref.attachmentId)) continue
+        if (existingAttachments.some((a) => a.id === ref.attachmentId)) continue
+        byId.set(ref.attachmentId, {
+          id: ref.attachmentId,
+          filename: ref.filename,
+          sizeBytes: ref.sizeBytes,
+          mimeType: ref.mimeType,
+        })
+        added += 1
+      }
+      return [...byId.values()]
+    })
+    setIncludedExistingIds((prev) => {
+      const next = new Set(prev)
+      for (const ref of refs) next.add(ref.attachmentId)
+      return next
+    })
+    setLocalError('')
+    return added
+  }, [existingAttachments])
+
+  const pasteFromClipboard = useCallback(() => {
+    const refs = getCopiedAttachments(workspaceId)
+    if (refs.length === 0) {
+      setLocalError('No copied attachment. Use Copy on an email attachment first.')
+      return
+    }
+    applyCopiedRefs(refs)
+  }, [workspaceId, applyCopiedRefs])
+
+  const applyCopiedRefsRef = useRef(applyCopiedRefs)
+  applyCopiedRefsRef.current = applyCopiedRefs
+  const workspaceIdRef = useRef(workspaceId)
+  workspaceIdRef.current = workspaceId
 
   useEffect(() => {
     if (fixedConnectionId) {
@@ -150,8 +211,19 @@ export function ComposeEditor({
     content: '',
     editorProps: {
       attributes: {
-        style: 'min-height: 160px; outline: none; padding: 12px; font-size: 14px; line-height: 1.6;'
-      }
+        // Shared compose/reply/forward body floor — was 160px (too cramped).
+        style: 'min-height: min(300px, 42vh); outline: none; padding: 12px; font-size: 14px; line-height: 1.6;'
+      },
+      handleDOMEvents: {
+        paste: () => {
+          if (!isAttachmentClipboardPasteArmed()) return false
+          const refs = getCopiedAttachments(workspaceIdRef.current)
+          if (refs.length === 0) return false
+          applyCopiedRefsRef.current(refs)
+          disarmAttachmentClipboardPaste()
+          return false
+        },
+      },
     }
   })
 
@@ -231,8 +303,28 @@ export function ComposeEditor({
 
   if (!editor) return null
 
+  const allExistingForUi = [
+    ...existingAttachments,
+    ...pastedExisting.filter((p) => !existingAttachments.some((e) => e.id === p.id)),
+  ]
+
+  const handleComposerPaste = (e: ClipboardEvent) => {
+    // Only attach ForgeOps-copied files when paste is armed (set by Copy).
+    // Never preventDefault — normal text paste must keep working.
+    if (!isAttachmentClipboardPasteArmed()) return
+    const refs = getCopiedAttachments(workspaceId)
+    if (refs.length === 0) return
+    applyCopiedRefs(refs)
+    disarmAttachmentClipboardPaste()
+    void e
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0 }}>
+    <div
+      ref={rootRef}
+      style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0 }}
+      onPaste={handleComposerPaste}
+    >
       {!hideFrom && (
         <div style={{ marginBottom: 10 }}>
           <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>From</label>
@@ -333,6 +425,19 @@ export function ComposeEditor({
         <div style={{ width: 1, background: '#ddd', margin: '0 4px' }} />
         <button type="button" style={btnStyle(editor.isActive('link'))} onClick={addLink} title="Insert link">{'\u{1F517}'} Link</button>
         <button type="button" style={btnStyle(false)} onClick={() => fileInputRef.current?.click()} title="Attach file" disabled={noMailbox || sending}>{'📎'} Attach</button>
+        {clipboardCount > 0 && (
+          <button
+            type="button"
+            style={btnStyle(false)}
+            onClick={pasteFromClipboard}
+            title="Paste attachment(s) copied from an email"
+            disabled={noMailbox || sending}
+          >
+            {clipboardCount === 1
+              ? 'Paste copied attachment'
+              : `Paste ${clipboardCount} copied attachments`}
+          </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -347,7 +452,17 @@ export function ComposeEditor({
       </div>
 
       <div
-        style={{ border: '1px solid #ddd', borderRadius: '0 0 6px 6px', background: '#fff', marginBottom: 8 }}
+        style={{
+          border: '1px solid #ddd',
+          borderRadius: '0 0 6px 6px',
+          background: '#fff',
+          marginBottom: 8,
+          // Grow with content; scroll only when the drafting area gets very tall.
+          maxHeight: 'min(55vh, 520px)',
+          overflowY: 'auto',
+          resize: 'vertical',
+          minHeight: 'min(300px, 42vh)',
+        }}
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
         onDrop={(e) => {
           e.preventDefault()
@@ -358,14 +473,15 @@ export function ComposeEditor({
         <EditorContent editor={editor} />
       </div>
 
-      {existingAttachments.length > 0 && (
+      {allExistingForUi.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 6 }}>
-            Original attachments
+            Attachments
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {existingAttachments.map((att) => {
+            {allExistingForUi.map((att) => {
               const included = includedExistingIds.has(att.id)
+              const fromForward = existingAttachments.some((e) => e.id === att.id)
               return (
                 <div
                   key={att.id}
@@ -380,19 +496,31 @@ export function ComposeEditor({
                 >
                   📎 {att.filename}
                   <span style={{ color: '#999' }}>({formatBytes(att.sizeBytes)})</span>
+                  {!fromForward && (
+                    <span style={{ color: '#888', fontSize: 10 }}>Copied</span>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
-                      setIncludedExistingIds((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(att.id)) next.delete(att.id)
-                        else next.add(att.id)
-                        return next
-                      })
+                      if (fromForward) {
+                        setIncludedExistingIds((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(att.id)) next.delete(att.id)
+                          else next.add(att.id)
+                          return next
+                        })
+                      } else {
+                        setPastedExisting((prev) => prev.filter((p) => p.id !== att.id))
+                        setIncludedExistingIds((prev) => {
+                          const next = new Set(prev)
+                          next.delete(att.id)
+                          return next
+                        })
+                      }
                     }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#5c6bc0', padding: 0 }}
                   >
-                    {included ? 'Remove' : 'Include'}
+                    {fromForward ? (included ? 'Remove' : 'Include') : 'Remove'}
                   </button>
                 </div>
               )

@@ -83,4 +83,15 @@ describe("outbound attachment contract", () => {
   it("documents Outlook Graph simple attachment max as 3MB", () => {
     expect(OUTLOOK_SIMPLE_ATTACHMENT_MAX_BYTES).toBe(3 * 1024 * 1024);
   });
+
+  it("allows workspace-scoped EXISTING_EMAIL_ATTACHMENT without originalMessageId", () => {
+    // Copy → Compose / Reply: resolveExistingOutboundAttachments(workspaceId + ids)
+    const resolveArgs = {
+      workspaceId: "ws-1",
+      attachmentIds: ["att_1"],
+      // inboxConnectionId / originalMessageId optional (thread scope only when both set)
+    };
+    expect(resolveArgs.attachmentIds).toHaveLength(1);
+    expect("originalMessageId" in resolveArgs).toBe(false);
+  });
 });

@@ -115,12 +115,35 @@ const businessTypeKeysByGroup: Record<string, string[]> = {
   OTHER: ["OTHER_BUSINESS"]
 };
 
+/** CSV or repeated query values → unique valid business type groups. */
+const excludeBusinessTypeGroupsQuerySchema = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((raw): Array<(typeof businessTypeGroupValues)[number]> | undefined => {
+    if (raw == null) return undefined;
+    const parts = (Array.isArray(raw) ? raw : [raw])
+      .flatMap((s) => s.split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const allowed = new Set<string>(businessTypeGroupValues);
+    const out: Array<(typeof businessTypeGroupValues)[number]> = [];
+    const seen = new Set<string>();
+    for (const p of parts) {
+      if (!allowed.has(p) || seen.has(p)) continue;
+      seen.add(p);
+      out.push(p as (typeof businessTypeGroupValues)[number]);
+    }
+    return out.length > 0 ? out : undefined;
+  });
+
 const messagesListQuerySchema = paginationQuerySchema.extend({
   businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
   category: z.enum(messageCategoryValues).optional(),
   businessTypeGroup: z.enum(businessTypeGroupValues).optional(),
   businessTypeKey: z.string().max(50).optional(),
+  /** Hide Business messages whose classification falls in these groups (Inbox Exclude filter). */
+  excludeBusinessTypeGroups: excludeBusinessTypeGroupsQuerySchema,
   jobId: z.string().min(1).optional(),
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
@@ -860,6 +883,8 @@ export const buildMessagesWhere = (input: {
   category?: (typeof messageCategoryValues)[number];
   businessTypeGroup?: (typeof businessTypeGroupValues)[number];
   businessTypeKey?: string;
+  /** Exclude messages classified into any of these Business type groups. */
+  excludeBusinessTypeGroups?: Array<(typeof businessTypeGroupValues)[number]>;
   jobId?: string;
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
@@ -1020,6 +1045,23 @@ export const buildMessagesWhere = (input: {
         classifications: {
           some: {
             businessTypeKey: { in: keys }
+          }
+        }
+      });
+    }
+  }
+
+  // Inbox "Exclude" filter — hide selected Business type groups (server-side, before pagination).
+  // Unclassified (no Classification row) is unaffected: Business views already require a classification.
+  if (input.excludeBusinessTypeGroups && input.excludeBusinessTypeGroups.length > 0) {
+    const excludedKeys = input.excludeBusinessTypeGroups.flatMap(
+      (g) => businessTypeKeysByGroup[g] ?? []
+    );
+    if (excludedKeys.length > 0) {
+      andConditions.push({
+        classifications: {
+          none: {
+            businessTypeKey: { in: excludedKeys }
           }
         }
       });
@@ -1618,6 +1660,9 @@ export const registerInboxReadRoutes = async (
         ...(query.category ? { category: query.category } : {}),
         ...(query.businessTypeGroup ? { businessTypeGroup: query.businessTypeGroup } : {}),
         ...(query.businessTypeKey ? { businessTypeKey: query.businessTypeKey } : {}),
+        ...(query.excludeBusinessTypeGroups?.length
+          ? { excludeBusinessTypeGroups: query.excludeBusinessTypeGroups }
+          : {}),
         ...(query.jobId ? { jobId: query.jobId } : {}),
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,

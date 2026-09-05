@@ -251,6 +251,92 @@ describe("buildMessagesWhere — Unclassified tab", () => {
   });
 });
 
+describe("buildMessagesWhere — Exclude business type groups", () => {
+  it("adds classifications.none with notIn keys for excluded groups", () => {
+    const where = baseWhere({
+      businessCategory: "BUSINESS",
+      excludeBusinessTypeGroups: ["BIDS_ESTIMATING", "OTHER"],
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const excludeCond = and.find(
+      (c) =>
+        c &&
+        "classifications" in c &&
+        (c as { classifications: { none?: { businessTypeKey?: unknown } } })
+          .classifications?.none &&
+        "businessTypeKey" in
+          ((c as { classifications: { none: object } }).classifications.none as object)
+    ) as
+      | {
+          classifications: {
+            none: { businessTypeKey: { in: string[] } };
+          };
+        }
+      | undefined;
+    expect(excludeCond?.classifications.none.businessTypeKey.in).toEqual(
+      expect.arrayContaining([
+        "BID_OPPORTUNITY",
+        "BID_UPDATE",
+        "ESTIMATE_QUOTE",
+        "OTHER_BUSINESS",
+      ])
+    );
+    expect(excludeCond?.classifications.none.businessTypeKey.in).toHaveLength(4);
+  });
+
+  it("composes with include group + unread + job", () => {
+    const where = baseWhere({
+      businessCategory: "BUSINESS",
+      businessTypeGroup: "PROJECTS",
+      excludeBusinessTypeGroups: ["BIDS_ESTIMATING"],
+      unreadOnly: true,
+      jobId: "job-1",
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "isRead" in c && c.isRead === false)).toBe(true);
+    expect(and.some((c) => c && "jobId" in c && c.jobId === "job-1")).toBe(true);
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "classifications" in c &&
+          (c as { classifications: { some?: { businessTypeKey?: { in?: string[] } } } })
+            .classifications?.some?.businessTypeKey?.in?.includes("PROJECT_COORDINATION")
+      )
+    ).toBe(true);
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "classifications" in c &&
+          (c as { classifications: { none?: { businessTypeKey?: { in?: string[] } } } })
+            .classifications?.none?.businessTypeKey?.in?.includes("BID_OPPORTUNITY")
+      )
+    ).toBe(true);
+  });
+
+  it("omits exclude predicate when list is empty", () => {
+    const where = baseWhere({
+      businessCategory: "BUSINESS",
+      excludeBusinessTypeGroups: [],
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const excludeCond = and.find(
+      (c) =>
+        c &&
+        "classifications" in c &&
+        (c as { classifications: { none?: { businessTypeKey?: unknown } } })
+          .classifications?.none &&
+        typeof (c as { classifications: { none: unknown } }).classifications.none ===
+          "object" &&
+        (c as { classifications: { none: object } }).classifications.none !== null &&
+        "businessTypeKey" in
+          ((c as { classifications: { none: object } }).classifications.none as object)
+    );
+    expect(excludeCond).toBeUndefined();
+  });
+});
+
 describe("buildMessagesWhere — Email ID lookup", () => {
   it("matches EmailMessage id or provider gmailMessageId and skips tab filters", () => {
     const where = baseWhere({

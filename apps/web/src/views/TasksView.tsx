@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type CSSProperties } from 'react'
 import { api, type TaskListItem } from '../api'
 import { PriorityBadge, StatusBadge } from '../components/Badges'
 import {
@@ -37,6 +37,23 @@ function formatDate(iso: string | null | undefined): string {
 function isOverdue(dueAt: string | null, status: string): boolean {
   if (!dueAt || status === 'DONE' || status === 'CANCELLED') return false
   return new Date(dueAt) < new Date()
+}
+
+/** Compact Tasks filter chip — scoped here so other ForgeOps buttons stay unchanged. */
+function taskFilterChipStyle(active: boolean): CSSProperties {
+  return {
+    padding: '6px 12px',
+    minHeight: 34,
+    fontSize: 13,
+    fontWeight: 500,
+    lineHeight: 1.2,
+    borderRadius: 14,
+    border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+    background: active ? '#1a1a2e' : '#fff',
+    color: active ? '#fff' : '#555',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
 }
 
 export function TasksView({ workspaceId, connectionId, connections, onSelectMessage, userRole }: Props) {
@@ -306,9 +323,9 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12 }}>
           <div>
-            <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Tasks</h2>
+            <h2 style={{ fontSize: 18, margin: '0 0 2px' }}>Tasks</h2>
             <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
               {filteredTasks.length} {filter === 'all' ? 'tasks' : filter.replace('_', ' ') + ' tasks'}{filter !== 'all' ? ` of ${totalCount}` : ''}
               {refreshing ? ' · Updating…' : ''}
@@ -416,37 +433,64 @@ export function TasksView({ workspaceId, connectionId, connections, onSelectMess
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-          {([['', 'All dates'], ['TODAY', 'Today'], ['WEEK', 'This week'], ['MONTH', 'This month']] as const).map(
-            ([key, label]) => (
-              <button
-                key={key || 'all-dates'}
-                type="button"
-                onClick={() => setDateRange(key)}
-                style={{
-                  padding: '5px 12px', fontSize: 12, fontWeight: 500, borderRadius: 12,
-                  border: dateRange === key ? '1px solid #1a1a2e' : '1px solid #ddd',
-                  background: dateRange === key ? '#1a1a2e' : '#fff',
-                  color: dateRange === key ? '#fff' : '#666',
-                  cursor: 'pointer', minHeight: 32,
-                }}
-              >
-                {label}
-              </button>
-            )
-          )}
-        </div>
+        {/* Compact date + status filter toolbar (presentation only — semantics unchanged). */}
+        <div
+          role="toolbar"
+          aria-label="Task filters"
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 10,
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+            {([['', 'All dates'], ['TODAY', 'Today'], ['WEEK', 'This week'], ['MONTH', 'This month']] as const).map(
+              ([key, label]) => {
+                const active = dateRange === key
+                return (
+                  <button
+                    key={key || 'all-dates'}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setDateRange(key)}
+                    style={taskFilterChipStyle(active)}
+                  >
+                    {label}
+                  </button>
+                )
+              }
+            )}
+          </div>
 
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-          {FILTERS.map(f => (
-            <button key={f.key} onClick={() => setFilter(f.key)} style={{
-              padding: '6px 14px', fontSize: 12, fontWeight: 500, borderRadius: 12,
-              border: filter === f.key ? '1px solid #1a1a2e' : '1px solid #ddd',
-              background: filter === f.key ? '#1a1a2e' : '#fff',
-              color: filter === f.key ? '#fff' : '#666',
-              cursor: 'pointer', minHeight: 36,
-            }}>{f.label}</button>
-          ))}
+          <span
+            aria-hidden="true"
+            style={{
+              width: 1,
+              alignSelf: 'stretch',
+              minHeight: 22,
+              background: '#ddd',
+              flexShrink: 0,
+            }}
+          />
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+            {FILTERS.map((f) => {
+              const active = filter === f.key
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setFilter(f.key)}
+                  style={taskFilterChipStyle(active)}
+                >
+                  {f.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
 

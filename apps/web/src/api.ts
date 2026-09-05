@@ -897,6 +897,7 @@ export const api = {
     category?: 'important' | 'spam' | 'trash';
     businessTypeGroup?: string;
     businessTypeKey?: string;
+    excludeBusinessTypeGroups?: string[];
     jobId?: string;
     reclassifiedOnly?: boolean;
     sentOnly?: boolean;
@@ -915,6 +916,9 @@ export const api = {
     if (filters?.category) params.set('category', filters.category);
     if (filters?.businessTypeGroup) params.set('businessTypeGroup', filters.businessTypeGroup);
     if (filters?.businessTypeKey) params.set('businessTypeKey', filters.businessTypeKey);
+    if (filters?.excludeBusinessTypeGroups?.length) {
+      params.set('excludeBusinessTypeGroups', filters.excludeBusinessTypeGroups.join(','));
+    }
     if (filters?.jobId) params.set('jobId', filters.jobId);
     if (filters?.reclassifiedOnly) params.set('reclassifiedOnly', 'true');
     if (filters?.sentOnly) params.set('sentOnly', 'true');

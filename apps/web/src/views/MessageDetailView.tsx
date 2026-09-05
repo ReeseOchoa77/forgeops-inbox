@@ -8,6 +8,10 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
+import {
+  AttachmentActionMenu,
+  CopyAllAttachmentsButton,
+} from '../components/AttachmentActionMenu'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import {
   getCachedThread,
@@ -562,8 +566,14 @@ function SelectedAttachmentsPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const [threadExtra, setThreadExtra] = useState<StoredAttachment[] | null>(null)
+  const [threadExtra, setThreadExtra] = useState<Array<StoredAttachment & { sourceEmailMessageId: string }> | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
+  const [copyNotice, setCopyNotice] = useState<string | null>(null)
+
+  const flashCopy = (msg: string) => {
+    setCopyNotice(msg)
+    window.setTimeout(() => setCopyNotice(null), 2200)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -594,12 +604,12 @@ function SelectedAttachmentsPanel({
     Promise.all(
       threadOtherIds.map(id =>
         api.getEmailAttachments(workspaceId, id)
-          .then(r => r.attachments)
-          .catch(() => [] as StoredAttachment[])
+          .then(r => r.attachments.map(a => ({ ...a, sourceEmailMessageId: id })))
+          .catch(() => [] as Array<StoredAttachment & { sourceEmailMessageId: string }>)
       )
     )
       .then(lists => {
-        const byId = new Map<string, StoredAttachment>()
+        const byId = new Map<string, StoredAttachment & { sourceEmailMessageId: string }>()
         for (const list of lists) for (const a of list) byId.set(a.id, a)
         setThreadExtra([...byId.values()])
       })
@@ -621,8 +631,19 @@ function SelectedAttachmentsPanel({
 
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6 }}>
-        Selected message{downloadable.length ? ` · ${downloadable.length}` : ''}
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>Selected message{downloadable.length ? ` · ${downloadable.length}` : ''}</span>
+        {downloadable.length > 0 && (
+          <CopyAllAttachmentsButton
+            workspaceId={workspaceId}
+            sourceEmailMessageId={emailId}
+            attachments={downloadable}
+            onCopied={(n) => flashCopy(`Copied ${n} attachments`)}
+          />
+        )}
+        {copyNotice && (
+          <span style={{ fontWeight: 500, color: '#1565c0' }}>{copyNotice}</span>
+        )}
       </div>
       {downloadable.length === 0 ? (
         <div style={{ fontSize: 11, color: '#999', marginBottom: 6 }}>No downloadable attachments</div>
@@ -658,6 +679,12 @@ function SelectedAttachmentsPanel({
                   ↓
                 </a>
               )}
+              <AttachmentActionMenu
+                workspaceId={workspaceId}
+                attachment={att}
+                sourceEmailMessageId={emailId}
+                onCopied={(name) => flashCopy(`Copied ${name}`)}
+              />
             </div>
           ))}
         </div>
@@ -711,6 +738,12 @@ function SelectedAttachmentsPanel({
                         ↓
                       </a>
                     )}
+                    <AttachmentActionMenu
+                      workspaceId={workspaceId}
+                      attachment={att}
+                      sourceEmailMessageId={att.sourceEmailMessageId}
+                      onCopied={(name) => flashCopy(`Copied ${name}`)}
+                    />
                   </div>
                 ))}
               </div>
@@ -1029,7 +1062,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         bodyFormat: 'html',
         files: payload.files,
         existingAttachmentIds:
-          composeMode === 'forward' ? payload.existingAttachmentIds : [],
+          payload.existingAttachmentIds ?? [],
       })
       setSendResult({ type: 'success', message: composeMode === 'reply' ? 'Reply sent' : 'Message forwarded' })
       setComposeMode(null)

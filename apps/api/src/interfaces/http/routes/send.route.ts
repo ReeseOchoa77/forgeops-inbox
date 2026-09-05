@@ -571,12 +571,8 @@ export const registerSendRoutes = async (
         body = sendBodySchema.parse(request.body);
       }
 
-      // Reply never inherits prior attachments; only explicit uploads.
-      if (body.action === "reply" && body.existingAttachmentIds.length > 0) {
-        return reply.code(400).send({
-          message: "Reply cannot include original message attachments by ID",
-        });
-      }
+      // Reply may include explicitly pasted/copied stored attachments (IDs only).
+      // Automatic inheritance of the original message's attachments is still not done.
 
       const maxUploadBytes =
         connection.provider === "OUTLOOK"
@@ -635,18 +631,13 @@ export const registerSendRoutes = async (
       }
 
       if (body.existingAttachmentIds.length > 0) {
-        if (!originalMessage) {
-          return reply.code(400).send({
-            message: "originalMessageId is required when forwarding existing attachments",
-          });
-        }
         try {
+          // Reuse stored EmailAttachment bytes server-side (no browser re-upload).
+          // Auth: workspace membership (route) + UPLOADED non-inline row in this workspace.
           const existing = await resolveExistingOutboundAttachments({
             prisma: app.services.prisma,
             storage: app.services.attachmentStorage,
             workspaceId: params.workspaceId,
-            inboxConnectionId: params.connectionId,
-            originalMessageId: originalMessage.id,
             attachmentIds: body.existingAttachmentIds,
           });
           for (const att of existing) {

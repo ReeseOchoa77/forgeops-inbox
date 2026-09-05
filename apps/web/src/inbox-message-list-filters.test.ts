@@ -168,4 +168,56 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       timezone: "UTC",
     });
   });
+
+  it("Exclude groups apply on Business, not Personal/Unclassified/Sent", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        excludeBusinessTypeGroups: ["BIDS_ESTIMATING", "OTHER"],
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      excludeBusinessTypeGroups: ["BIDS_ESTIMATING", "OTHER"],
+    });
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "PROJECTS",
+        readFilter: "unread",
+        jobFilter: "job-1",
+        excludeBusinessTypeGroups: ["OTHER"],
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      businessTypeGroup: "PROJECTS",
+      jobId: "job-1",
+      unreadOnly: true,
+      excludeBusinessTypeGroups: ["OTHER"],
+    });
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "PERSONAL",
+        readFilter: "",
+        excludeBusinessTypeGroups: ["BIDS_ESTIMATING"],
+      }).excludeBusinessTypeGroups
+    ).toBeUndefined();
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "",
+        excludeBusinessTypeGroups: ["OTHER"],
+      }).excludeBusinessTypeGroups
+    ).toBeUndefined();
+
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        excludeBusinessTypeGroups: ["OTHER"],
+      })
+    ).toEqual({ sentOnly: true });
+  });
 });
