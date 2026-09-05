@@ -95,10 +95,13 @@ describe("Email Analysis discovered-folders contract", () => {
       "utf8"
     );
     expect(route).toContain("/project-folders/jobs-without-folder");
+    expect(route).toContain("jobsTotal");
     expect(route).toContain('status: { in: ["MATCHED", "APPROVED"] }');
     expect(api).toContain("getJobsWithoutProjectFolder");
+    expect(api).toContain("jobsTotal");
     expect(view).toContain("JOBS_WITHOUT_FOLDER");
     expect(view).toContain("Jobs without folder");
+    expect(view).toContain("jobsTotal");
   });
 
   it("FoldersView labels Scan Project Folders separately from Analyze Emails", () => {

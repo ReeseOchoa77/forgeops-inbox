@@ -1857,7 +1857,7 @@ export const api = {
       connectionId,
       pageSize: String(pageSize),
     });
-    return request<{ total: number; jobs: JobLookup[] }>(
+    return request<{ total: number; jobsTotal?: number; jobs: JobLookup[] }>(
       `/workspaces/${workspaceId}/project-folders/jobs-without-folder?${p.toString()}`
     );
   },

@@ -786,8 +786,11 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
       ...(matchedJobIds.length > 0 ? { id: { notIn: matchedJobIds } } : {}),
     };
 
-    const [total, jobs] = await Promise.all([
+    const [total, jobsTotal, jobs] = await Promise.all([
       app.services.prisma.job.count({ where: jobWhere }),
+      app.services.prisma.job.count({
+        where: { workspaceId, archivedAt: null },
+      }),
       app.services.prisma.job.findMany({
         where: jobWhere,
         orderBy: [{ jobNumber: "asc" }, { name: "asc" }],
@@ -804,6 +807,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
 
     return reply.send({
       total,
+      jobsTotal,
       jobs: jobs.map((j) => ({
         id: j.id,
         jobNumber: j.jobNumber,

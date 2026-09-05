@@ -128,6 +128,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const [folders, setFolders] = useState<DiscoveredFolderItem[]>([])
   const [jobsWithoutFolder, setJobsWithoutFolder] = useState<JobLookup[]>([])
   const [jobsWithoutFolderTotal, setJobsWithoutFolderTotal] = useState(0)
+  const [jobsTotal, setJobsTotal] = useState(0)
   const [loadingList, setLoadingList] = useState(false)
   const [connectionsLoaded, setConnectionsLoaded] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -195,6 +196,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           if (seq !== loadSeqRef.current) return
           setJobsWithoutFolder(unmatchedJobs.jobs)
           setJobsWithoutFolderTotal(unmatchedJobs.total)
+          setJobsTotal(unmatchedJobs.jobsTotal ?? 0)
         } catch (jobsErr) {
           if (seq !== loadSeqRef.current) return
           console.warn('[Email Analysis] jobs-without-folder failed', {
@@ -204,6 +206,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           })
           setJobsWithoutFolder([])
           setJobsWithoutFolderTotal(0)
+          setJobsTotal(0)
         }
       } catch (e) {
         if (seq !== loadSeqRef.current) return
@@ -219,6 +222,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
         setFolders([])
         setJobsWithoutFolder([])
         setJobsWithoutFolderTotal(0)
+        setJobsTotal(0)
         const causeForUi =
           e instanceof ApiRequestError
             ? {
@@ -282,12 +286,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
       setFolders([])
       setJobsWithoutFolder([])
       setJobsWithoutFolderTotal(0)
+      setJobsTotal(0)
       return
     }
     if (!outlookConnections.some((c) => c.id === selectedConnectionId)) {
       setFolders([])
       setJobsWithoutFolder([])
       setJobsWithoutFolderTotal(0)
+      setJobsTotal(0)
       return
     }
     void loadFolders(selectedConnectionId)
@@ -497,7 +503,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Email Analysis</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>
+        Email Analysis
+        {jobsTotal > 0 ? (
+          <span style={{ marginLeft: 8, fontSize: 14, fontWeight: 600, color: '#555' }}>
+            · {jobsTotal} job{jobsTotal !== 1 ? 's' : ''}
+          </span>
+        ) : null}
+      </h2>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 8px' }}>
         Two separate operations: <strong>Scan Project Folders</strong> discovers Outlook{' '}
         <code>/Projects</code> directory mappings only (no email import).{' '}

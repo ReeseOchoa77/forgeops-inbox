@@ -88,6 +88,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [showArchived, setShowArchived] = useState(false)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [workspaceJobsTotal, setWorkspaceJobsTotal] = useState<number | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [sortBy, setSortBy] = useState('createdAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -117,6 +118,18 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     if (!filtersExpanded && !showCreateModal) return
     api.getCustomers(workspaceId).then(r => setCustomers(r.customers)).catch(() => {})
   }, [workspaceId, filtersExpanded, showCreateModal])
+
+  const refreshWorkspaceJobsTotal = useCallback(() => {
+    void api
+      .getJobs(workspaceId, { page: 1, pageSize: 1 })
+      .then((res) => setWorkspaceJobsTotal(res.pagination.totalCount))
+      .catch(() => {})
+  }, [workspaceId])
+
+  useEffect(() => {
+    setWorkspaceJobsTotal(null)
+    refreshWorkspaceJobsTotal()
+  }, [workspaceId, refreshWorkspaceJobsTotal])
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 300)
@@ -275,6 +288,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       setForm(EMPTY_FORM)
       invalidateJobsListCache(workspaceId)
       void loadJobs({ page: 1, append: false })
+      refreshWorkspaceJobsTotal()
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create job')
     } finally {
@@ -566,7 +580,13 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         gap: isPhone ? 12 : undefined
       }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>
-          Jobs{refreshing ? <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#999' }}>Updating…</span> : null}
+          Jobs
+          {workspaceJobsTotal != null ? (
+            <span style={{ marginLeft: 8, fontSize: 15, fontWeight: 600, color: '#555' }}>
+              ({workspaceJobsTotal})
+            </span>
+          ) : null}
+          {refreshing ? <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#999' }}>Updating…</span> : null}
         </h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {canImport && (
@@ -755,6 +775,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           onImported={() => {
             invalidateJobsListCache(workspaceId)
             void loadJobs({ page: 1, append: false })
+            refreshWorkspaceJobsTotal()
           }}
         />
       )}
