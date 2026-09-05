@@ -126,12 +126,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [selectedConnectionId, setSelectedConnectionId] = useState('')
   const [folders, setFolders] = useState<DiscoveredFolderItem[]>([])
+  const [jobsWithoutFolder, setJobsWithoutFolder] = useState<JobLookup[]>([])
+  const [jobsWithoutFolderTotal, setJobsWithoutFolderTotal] = useState(0)
   const [loadingList, setLoadingList] = useState(false)
   const [connectionsLoaded, setConnectionsLoaded] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanSummary, setScanSummary] = useState<ProjectFolderScanSummary | null>(null)
   const [error, setError] = useState('')
-  const [filter, setFilter] = useState<'all' | MatchUi>('all')
+  const [filter, setFilter] = useState<'all' | MatchUi | 'JOBS_WITHOUT_FOLDER'>('all')
   const [matchFolderId, setMatchFolderId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState('')
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set())
@@ -173,13 +175,18 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
       setLoadingList(true)
       setError('')
       try {
-        const res = await api.getDiscoveredFolders(workspaceId, {
-          connectionId: connectionIdForScope,
-          pageSize: 200,
-        })
+        const [res, unmatchedJobs] = await Promise.all([
+          api.getDiscoveredFolders(workspaceId, {
+            connectionId: connectionIdForScope,
+            pageSize: 200,
+          }),
+          api.getJobsWithoutProjectFolder(workspaceId, connectionIdForScope, 200),
+        ])
         // Ignore stale responses from overlapping loads (Strict Mode / connection churn).
         if (seq !== loadSeqRef.current) return
         setFolders(res.folders)
+        setJobsWithoutFolder(unmatchedJobs.jobs)
+        setJobsWithoutFolderTotal(unmatchedJobs.total)
         setError('')
       } catch (e) {
         if (seq !== loadSeqRef.current) return
@@ -193,6 +200,8 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           cause: e instanceof ApiRequestError ? e.causePayload : undefined,
         })
         setFolders([])
+        setJobsWithoutFolder([])
+        setJobsWithoutFolderTotal(0)
         const causeForUi =
           e instanceof ApiRequestError
             ? {
@@ -254,10 +263,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     setScanSummary(null)
     if (!selectedConnectionId) {
       setFolders([])
+      setJobsWithoutFolder([])
+      setJobsWithoutFolderTotal(0)
       return
     }
     if (!outlookConnections.some((c) => c.id === selectedConnectionId)) {
       setFolders([])
+      setJobsWithoutFolder([])
+      setJobsWithoutFolderTotal(0)
       return
     }
     void loadFolders(selectedConnectionId)
@@ -420,7 +433,9 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
 
   const withUi = folders.map((f) => ({ ...f, matchUi: toMatchUi(f.status) }))
   const filtered =
-    filter === 'all' ? withUi : withUi.filter((f) => f.matchUi === filter)
+    filter === 'all' || filter === 'JOBS_WITHOUT_FOLDER'
+      ? withUi
+      : withUi.filter((f) => f.matchUi === filter)
 
   const mailboxEmailLower = selectedConn?.email.toLowerCase() ?? ''
   const isMailboxSafeFolder = (f: DiscoveredFolderItem) => {
@@ -675,10 +690,14 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
           <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             {(
               [
-                ['all', `All (${withUi.length})`],
+                ['all', `All folders (${withUi.length})`],
                 ['VERIFIED', `Verified (${counts.verified})`],
                 ['SUGGESTED', `Suggested (${counts.suggested})`],
-                ['UNMATCHED', `Unmatched (${counts.unmatched})`],
+                ['UNMATCHED', `Unmatched folders (${counts.unmatched})`],
+                [
+                  'JOBS_WITHOUT_FOLDER',
+                  `Jobs without folder (${jobsWithoutFolderTotal})`,
+                ],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -702,7 +721,78 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
             {loadingList && <span style={{ fontSize: 12, color: '#999' }}>Refreshing…</span>}
           </div>
 
-          {filtered.length === 0 && !loadingList ? (
+          {filter === 'JOBS_WITHOUT_FOLDER' ? (
+            jobsWithoutFolder.length === 0 && !loadingList ? (
+              <div className="empty-state" style={{ padding: 24 }}>
+                <h3>All active Jobs have a folder mapping</h3>
+                <p>
+                  Every non-archived Job is linked to at least one SUGGESTED or VERIFIED project
+                  folder for {selectedConn?.email}.
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: '1px solid #e5e5e5',
+                  borderRadius: 6,
+                  background: '#fff',
+                  overflow: 'auto',
+                  maxHeight: 560,
+                }}
+              >
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    color: '#666',
+                    borderBottom: '1px solid #eee',
+                    background: '#fafafa',
+                  }}
+                >
+                  Active Jobs with no SUGGESTED/VERIFIED Outlook project folder for this mailbox.
+                  {jobsWithoutFolderTotal > jobsWithoutFolder.length
+                    ? ` Showing ${jobsWithoutFolder.length} of ${jobsWithoutFolderTotal}.`
+                    : null}{' '}
+                  Use <strong>Match Job</strong> on an unmatched folder row, or rescan after adding
+                  folders in Outlook.
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr
+                      style={{
+                        background: '#fafafa',
+                        borderBottom: '1px solid #e5e5e5',
+                        textAlign: 'left',
+                        position: 'sticky',
+                        top: 0,
+                      }}
+                    >
+                      <th style={{ padding: '7px 10px' }}>Job #</th>
+                      <th style={{ padding: '7px 10px' }}>Job name</th>
+                      <th style={{ padding: '7px 10px' }}>Customer</th>
+                      <th style={{ padding: '7px 10px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobsWithoutFolder.map((job) => (
+                      <tr key={job.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '8px 10px', color: '#555', whiteSpace: 'nowrap' }}>
+                          {job.jobNumber ? `#${job.jobNumber}` : '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontWeight: 600, color: '#1a1a2e' }}>
+                          {job.name}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: '#666' }}>
+                          {job.customerName ?? '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: '#888' }}>{job.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : filtered.length === 0 && !loadingList ? (
             <div className="empty-state" style={{ padding: 24 }}>
               <h3>No project folders yet</h3>
               <p>

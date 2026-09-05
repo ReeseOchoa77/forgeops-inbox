@@ -1847,6 +1847,21 @@ export const api = {
     );
   },
 
+  /** Active Jobs with no SUGGESTED/VERIFIED DiscoveredFolder for this mailbox. */
+  getJobsWithoutProjectFolder: (
+    workspaceId: string,
+    connectionId: string,
+    pageSize = 200
+  ) => {
+    const p = new URLSearchParams({
+      connectionId,
+      pageSize: String(pageSize),
+    });
+    return request<{ total: number; jobs: JobLookup[] }>(
+      `/workspaces/${workspaceId}/project-folders/jobs-without-folder?${p.toString()}`
+    );
+  },
+
   approveDiscoveredFolder: (workspaceId: string, folderId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/discovered-folders/${folderId}/approve`, {
       method: 'POST', body: JSON.stringify({})

@@ -21,6 +21,7 @@ const EMAIL_ANALYSIS_CONTRACT = {
   hideFoldersWithoutMailbox: true,
   autoSelectSingleOutlookMailbox: true,
   listPathUsesConnectionId: '/discovered-folders?connectionId=',
+  jobsWithoutFolderPath: '/project-folders/jobs-without-folder',
   scanPath: '/project-folders/scan',
   analyzePath: '/project-folders/analyze-emails',
   /** Retired top-level nav page key — App redirects to Workspace → Email Analysis. */
@@ -48,6 +49,7 @@ describe('Workspace Email Analysis UX contracts', () => {
     expect(EMAIL_ANALYSIS_CONTRACT.analyzeSelectedLabel).toContain('Emails')
     expect(EMAIL_ANALYSIS_CONTRACT.scanPath).toBe('/project-folders/scan')
     expect(EMAIL_ANALYSIS_CONTRACT.analyzePath).toBe('/project-folders/analyze-emails')
+    expect(EMAIL_ANALYSIS_CONTRACT.jobsWithoutFolderPath).toContain('jobs-without-folder')
   })
 
   it('requires mailbox-scoped folder loads and case-insensitive Outlook filter', () => {

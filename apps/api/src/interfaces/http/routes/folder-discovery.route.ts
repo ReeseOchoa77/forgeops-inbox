@@ -732,6 +732,88 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     });
   });
 
+  /**
+   * Active Jobs that have no DiscoveredFolder mapping for the selected mailbox
+   * (connection-scoped + legacy NULL inboxConnectionId rows for that mailbox email).
+   */
+  app.get("/api/v1/workspaces/:workspaceId/project-folders/jobs-without-folder", async (request, reply) => {
+    const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+
+    const query = z
+      .object({
+        connectionId: z.string().min(1),
+        pageSize: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query);
+
+    const conn = await app.services.prisma.inboxConnection.findFirst({
+      where: { id: query.connectionId, workspaceId },
+      select: { id: true, email: true },
+    });
+    if (!conn) {
+      return reply.code(404).send({ message: "Mailbox connection not found in this workspace" });
+    }
+    const mailboxEmail = conn.email.toLowerCase();
+
+    const matchedFolders = await app.services.prisma.discoveredFolder.findMany({
+      where: {
+        workspaceId,
+        matchedJobId: { not: null },
+        status: { in: ["MATCHED", "APPROVED"] },
+        OR: [
+          { inboxConnectionId: conn.id },
+          {
+            inboxConnectionId: null,
+            mailboxEmail: { equals: mailboxEmail, mode: "insensitive" },
+          },
+        ],
+      },
+      select: { matchedJobId: true },
+    });
+    const matchedJobIds = [
+      ...new Set(
+        matchedFolders
+          .map((f) => f.matchedJobId)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+
+    const jobWhere = {
+      workspaceId,
+      archivedAt: null,
+      ...(matchedJobIds.length > 0 ? { id: { notIn: matchedJobIds } } : {}),
+    };
+
+    const [total, jobs] = await Promise.all([
+      app.services.prisma.job.count({ where: jobWhere }),
+      app.services.prisma.job.findMany({
+        where: jobWhere,
+        orderBy: [{ jobNumber: "asc" }, { name: "asc" }],
+        take: query.pageSize,
+        select: {
+          id: true,
+          jobNumber: true,
+          name: true,
+          status: true,
+          customer: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    return reply.send({
+      total,
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        jobNumber: j.jobNumber,
+        name: j.name,
+        status: j.status,
+        customerName: j.customer?.name ?? null,
+      })),
+    });
+  });
+
   app.post("/api/v1/workspaces/:workspaceId/project-folders/analyze-emails", async (request, reply) => {
     const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);

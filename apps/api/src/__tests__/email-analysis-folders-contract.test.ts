@@ -84,6 +84,23 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(scan).not.toMatch(/matchedJob:\s*\{[\s\S]*disconnect:\s*true/);
   });
 
+  it("exposes jobs-without-folder for Email Analysis coverage", () => {
+    const route = readFileSync(
+      join(here, "../interfaces/http/routes/folder-discovery.route.ts"),
+      "utf8"
+    );
+    const api = readFileSync(join(here, "../../../web/src/api.ts"), "utf8");
+    const view = readFileSync(
+      join(here, "../../../web/src/views/FoldersView.tsx"),
+      "utf8"
+    );
+    expect(route).toContain("/project-folders/jobs-without-folder");
+    expect(route).toContain('status: { in: ["MATCHED", "APPROVED"] }');
+    expect(api).toContain("getJobsWithoutProjectFolder");
+    expect(view).toContain("JOBS_WITHOUT_FOLDER");
+    expect(view).toContain("Jobs without folder");
+  });
+
   it("FoldersView labels Scan Project Folders separately from Analyze Emails", () => {
     const view = readFileSync(
       join(here, "../../../web/src/views/FoldersView.tsx"),
