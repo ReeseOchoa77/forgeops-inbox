@@ -31,11 +31,11 @@ type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'cal
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
 const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: string; adminOnly?: boolean; minRole?: UserRole }> = [
-  { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA' },
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'calendar', label: 'Calendar', icon: '\uD83D\uDCC5' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
+  { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA', section: 'Manage' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },

@@ -19,6 +19,9 @@ import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 import { prefetchThread } from '../message-thread-cache'
 
+/** Inbox list prompt. Off until suggested responses are ready to show again. */
+const SHOW_INBOX_SUGGESTED_RESPONSE = false
+
 function formatAttachmentSize(bytes: number | null | undefined): string {
   if (!bytes) return ''
   if (bytes < 1024) return `${bytes} B`
@@ -914,7 +917,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </div>
 
-        {showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
+        {SHOW_INBOX_SUGGESTED_RESPONSE && showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
           if (status === 'sent') return (
             <div style={{ marginTop: 6, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>
           )
@@ -1030,7 +1033,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           )}
         </div>
         {m.snippet && <div style={{ fontSize: 11, color: '#bbb', marginTop: 1 }}>{m.snippet.slice(0, 60)}</div>}
-        {showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
+        {SHOW_INBOX_SUGGESTED_RESPONSE && showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
           const status = autoResponseStatus[m.id] ?? 'idle'
           if (status === 'sent') return (
             <div style={{ marginTop: 4, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>Sent ✓</div>

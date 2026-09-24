@@ -3,10 +3,10 @@ import { isReferenceDataTab } from './views/ReferenceDataView'
 
 /** Mirrors App.tsx NAV_ITEMS section assignment (nav IA only). */
 const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> = [
-  { page: 'dashboard' },
   { page: 'inbox' },
   { page: 'tasks' },
   { page: 'jobs' },
+  { page: 'dashboard', section: 'Manage' },
   { page: 'reference', section: 'Manage' },
   { page: 'workspace' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
@@ -32,7 +32,7 @@ describe('job discovery navigation consolidation', () => {
     expect(NAV_SECTIONS.map((i) => i.page)).not.toContain('outlook-folders')
     expect(NAV_SECTIONS.map((i) => i.page)).toContain('workspace')
     const managePages = NAV_SECTIONS.filter((i) => i.section === 'Manage').map((i) => i.page)
-    expect(managePages).toEqual(['reference'])
+    expect(managePages).toEqual(['dashboard', 'reference'])
   })
 })
 
