@@ -10,6 +10,7 @@ const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> 
   { page: 'reference', section: 'Manage' },
   { page: 'workspace' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
+  { page: 'worker-jobs', section: 'System' },
   { page: 'admin', section: 'System' },
 ]
 
@@ -41,6 +42,6 @@ describe('email review navigation consolidation', () => {
     expect(review?.section).toBe('System')
     expect(review?.minRole).toBe('ADMIN')
     const systemPages = NAV_SECTIONS.filter((i) => i.section === 'System').map((i) => i.page)
-    expect(systemPages).toEqual(['review', 'admin'])
+    expect(systemPages).toEqual(['review', 'worker-jobs', 'admin'])
   })
 })

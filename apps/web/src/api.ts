@@ -1436,6 +1436,47 @@ export const api = {
   adminGetWorkspaces: () =>
     request<{ workspaces: AdminWorkspace[] }>('/admin/workspaces'),
 
+  listWorkerJobs: (query: {
+    status?: string
+    queue?: string
+    q?: string
+    workspaceId?: string
+    page?: number
+  }) => {
+    const params = new URLSearchParams()
+    if (query.status) params.set('status', query.status)
+    if (query.queue) params.set('queue', query.queue)
+    if (query.q) params.set('q', query.q)
+    if (query.workspaceId) params.set('workspaceId', query.workspaceId)
+    if (query.page) params.set('page', String(query.page))
+    const qs = params.toString()
+    return request<WorkerJobsList>(`/system/worker-jobs${qs ? `?${qs}` : ''}`)
+  },
+
+  getWorkerJob: (queue: string, jobId: string) =>
+    request<WorkerJobDetail>(`/system/worker-jobs/${encodeURIComponent(queue)}/${encodeURIComponent(jobId)}`),
+
+  retryWorkerJob: (queue: string, jobId: string) =>
+    request(`/system/worker-jobs/${encodeURIComponent(queue)}/${encodeURIComponent(jobId)}/retry`, { method: 'POST' }),
+
+  cancelWorkerJob: (queue: string, jobId: string) =>
+    request(`/system/worker-jobs/${encodeURIComponent(queue)}/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+
+  removeWorkerJob: (queue: string, jobId: string) =>
+    request(`/system/worker-jobs/${encodeURIComponent(queue)}/${encodeURIComponent(jobId)}`, { method: 'DELETE' }),
+
+  pauseWorkerQueue: (queue: string) =>
+    request<{ message?: string }>(`/system/worker-queues/${encodeURIComponent(queue)}/pause`, { method: 'POST' }),
+
+  resumeWorkerQueue: (queue: string) =>
+    request(`/system/worker-queues/${encodeURIComponent(queue)}/resume`, { method: 'POST' }),
+
+  disableWorkerSchedule: (queue: string, connectionId: string) =>
+    request(`/system/worker-queues/${encodeURIComponent(queue)}/schedules/disable`, {
+      method: 'POST',
+      body: JSON.stringify({ connectionId }),
+    }),
+
   adminCreateWorkspace: (name: string, slug: string) =>
     request<{ workspace: { id: string; name: string; slug: string } }>('/admin/workspaces', {
       method: 'POST', body: JSON.stringify({ name, slug })
@@ -1996,6 +2037,87 @@ export interface AdminWorkspace {
   timezone: string;
   createdAt: string;
   counts: { members: number; connections: number; messages: number };
+}
+
+export interface WorkerJobCapabilities {
+  pause: boolean
+  resume: boolean
+  cancel: boolean
+  retry: boolean
+  remove: boolean
+  revert: boolean
+}
+
+export interface WorkerJobProgress {
+  current: number
+  total: number | null
+  percent: number | null
+  unit: string
+  stage?: string
+}
+
+export interface WorkerJobRow {
+  queue: string
+  jobId: string
+  jobName: string
+  displayName: string
+  displayState: string
+  queueState: string | null
+  runState: string | null
+  workspaceId: string | null
+  resourceLabel: string
+  resourceKind: string
+  resourceId: string | null
+  inboxConnectionId: string | null
+  queuedAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  durationMs: number | null
+  attemptsMade: number
+  maxAttempts: number | null
+  progress: WorkerJobProgress | null
+  origin: string
+  attention: 'LONG_RUNNING' | 'INCONSISTENT' | null
+  failedReason: string | null
+  capabilities: WorkerJobCapabilities
+  revertReason: string
+}
+
+export interface WorkerJobsList {
+  summary: {
+    active: number
+    queued: number
+    delayed: number
+    failed: number
+    paused: number
+    completed: number
+  }
+  queues: Array<{
+    name: string
+    displayName: string
+    paused: boolean
+    counts: WorkerJobsList['summary']
+  }>
+  schedules: Array<{
+    queue: string
+    id: string | null
+    pattern: string | null
+    next: number | null
+    connectionId: string | null
+    canDisable: boolean
+  }>
+  jobs: WorkerJobRow[]
+  page: number
+  pageSize: number
+  total: number
+  truncated: boolean
+}
+
+export interface WorkerJobDetail {
+  job: WorkerJobRow
+  payload: unknown
+  stack: string[]
+  queuePaused: boolean
 }
 
 export interface AdminMailbox {

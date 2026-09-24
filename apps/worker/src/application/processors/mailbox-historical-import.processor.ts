@@ -228,7 +228,17 @@ export async function processMailboxHistoricalImport(
     const listenSent = connection.listenSent === true;
 
     // Page until provider exhausted (since-date) or hardCap reached (by-count).
+    let stopBecauseCancelled = false;
     while (true) {
+      const cancelCheck = await deps.prisma.mailboxHistoricalImport.findUnique({
+        where: { id: payload.importId },
+        select: { status: true },
+      });
+      if (cancelCheck?.status === "CANCELLED") {
+        stopBecauseCancelled = true;
+        break;
+      }
+
       const alreadyProcessed = processedProviderMessageIds.length;
       if (hardCap != null && alreadyProcessed >= hardCap) break;
 
@@ -450,6 +460,35 @@ export async function processMailboxHistoricalImport(
         if (classified >= createdMessageIds.length) break;
         await sleep(CLASSIFY_POLL_MS);
       }
+    }
+
+    if (stopBecauseCancelled) {
+      const processedCount = processedProviderMessageIds.length;
+      await deps.prisma.mailboxHistoricalImport.update({
+        where: { id: payload.importId },
+        data: {
+          status: "CANCELLED",
+          processedCount,
+          importedCount,
+          duplicateCount,
+          failedCount,
+          processedProviderMessageIds,
+          completedAt: new Date(),
+        },
+      });
+      return {
+        workspaceId: payload.workspaceId,
+        inboxConnectionId: connection.id,
+        importId: payload.importId,
+        processedCount,
+        importedCount,
+        duplicateCount,
+        failedCount,
+        businessCount: 0,
+        personalCount: 0,
+        status: "FAILED",
+        errorMessage: "Cancelled",
+      };
     }
 
     const { businessCount, personalCount } = await recountCategoryCounts(

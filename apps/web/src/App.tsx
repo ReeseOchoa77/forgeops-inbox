@@ -11,6 +11,7 @@ import { MessageDetailView } from './views/MessageDetailView'
 import { ReviewQueueView } from './views/ReviewQueueView'
 import { SettingsView } from './views/SettingsView'
 import { PlatformAdminView } from './views/PlatformAdminView'
+import { WorkerJobsView } from './views/WorkerJobsView'
 import { TasksView } from './views/TasksView'
 import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
@@ -25,7 +26,7 @@ import {
 } from './mailbox-selection'
 import { prefetchInboxList } from './inbox-list-cache'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -38,6 +39,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
+  { page: 'worker-jobs', label: 'Worker Jobs', icon: '\u2699', section: 'System', adminOnly: true },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
 
@@ -57,6 +59,7 @@ const PAGE_TITLES: Record<Page, string> = {
   workspace: 'Workspace',
   settings: 'Settings',
   admin: 'Platform Admin',
+  'worker-jobs': 'Worker Jobs',
 }
 
 const ROLE_HIERARCHY: Record<UserRole, number> = { VIEWER: 0, MEMBER: 1, MANAGER: 2, ADMIN: 3, OWNER: 4 }
@@ -929,6 +932,17 @@ export default function App() {
           {page === 'admin' && isPlatformAdmin && currentRole === 'OWNER' && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <PlatformAdminView />
+            </div>
+          )}
+          {page === 'worker-jobs' && isPlatformAdmin && currentRole === 'OWNER' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <WorkerJobsView
+                currentWorkspaceId={workspaceId}
+                onOpenMailbox={(_workspaceId, connectionId) => {
+                  setConnectionId(connectionId)
+                  setPage('workspace')
+                }}
+              />
             </div>
           )}
         </div>

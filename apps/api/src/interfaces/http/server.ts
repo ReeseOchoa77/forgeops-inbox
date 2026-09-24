@@ -68,6 +68,7 @@ import { registerDocumentImportRoutes } from "./routes/document-import.route.js"
 import { registerClassificationEngineRoutes } from "./routes/classification-engine.route.js";
 import { registerRetryClassificationRoutes } from "./routes/retry-classification.route.js";
 import { registerMailboxReclassifyRoutes } from "./routes/mailbox-reclassify.route.js";
+import { registerWorkerJobRoutes } from "./routes/worker-jobs.route.js";
 import { registerFolderDiscoveryRoutes } from "./routes/folder-discovery.route.js";
 import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js";
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
@@ -413,6 +414,7 @@ export const buildServer = async () => {
   await registerClassificationEngineRoutes(app);
   await registerRetryClassificationRoutes(app);
   registerMailboxReclassifyRoutes(app);
+  registerWorkerJobRoutes(app);
   app.log.info({
     event: "mailbox_reclassify_routes_registered",
     routes: [
