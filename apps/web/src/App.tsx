@@ -78,7 +78,8 @@ export default function App() {
   const [connectionId, setConnectionId] = useState('')
   const [messageConnectionId, setMessageConnectionId] = useState('')
   const [pinningMailbox, setPinningMailbox] = useState(false)
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>('inbox')
+  const [connectionsReady, setConnectionsReady] = useState(false)
   const [selectedMessageId, setSelectedMessageId] = useState('')
   const [error, setError] = useState('')
   const [accessDenied, setAccessDenied] = useState(false)
@@ -217,6 +218,7 @@ export default function App() {
 
   const loadConnections = useCallback(() => {
     if (!workspaceId || !session) return
+    setConnectionsReady(false)
     api.getConnections(workspaceId)
       .then(r => {
         setConnections(r.connections)
@@ -232,6 +234,7 @@ export default function App() {
         })
       })
       .catch(e => setError(e.message))
+      .finally(() => setConnectionsReady(true))
   }, [workspaceId, session])
 
   useEffect(() => { loadConnections() }, [loadConnections])
@@ -523,7 +526,7 @@ export default function App() {
       })
     : connectionId
   const detailConnectionId = messageConnectionId || concreteConnectionId
-  const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connections.length === 0
+  const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connectionsReady && connections.length === 0
   const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
   const showAllMailboxesOption = page === 'inbox' || (page === 'message-detail' && messageBackPage === 'inbox')
   const isPinnedSelected =
