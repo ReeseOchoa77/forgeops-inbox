@@ -92,6 +92,7 @@ export interface ClassificationCandidatesSourceData {
     jobNumber: string | null;
     customerId: string | null;
     externalRef: string | null;
+    description: string | null;
   }>;
   businessTypes: Array<{
     systemKey: string;
@@ -362,6 +363,7 @@ export function assembleClassificationCandidates(
       normalizedName: j.normalizedName,
       customerId: j.customerId,
       externalRef: j.externalRef,
+      description: j.description,
     })),
     aliases: jobAliasRecords,
     limit: 10,
@@ -531,6 +533,7 @@ export class ClassificationCandidatesService {
           jobNumber: true,
           customerId: true,
           externalRef: true,
+          description: true,
         },
       }),
       this.prisma.businessType.findMany({

@@ -37,6 +37,7 @@ You perform ENTITY SELECTION for an inbound BUSINESS email at a structural-steel
 
 HARD RULES (anti-fabrication):
 - You may select ONLY an id that appears verbatim in the provided Customer Candidates, Vendor Candidates, or Job Candidates lists. Copy the id value exactly.
+- When choosing a job, compare BOTH the email subject (title) and the email body against the job name, job number, aliases, and any alternate names listed in the job description.
 - NEVER invent or guess customer IDs, vendor IDs, job IDs, job numbers, or contacts.
 - Return null for any selection where the evidence is insufficient or no candidate clearly matches.
 - If Candidate Lookup Failed is true, you MUST return null for selectedCustomerId, selectedVendorId, and selectedJobId, entityMatchConfidence 0, and an empty matchEvidence array.

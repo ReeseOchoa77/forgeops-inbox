@@ -16,7 +16,7 @@ interface Props {
   breakpoint?: Breakpoint
 }
 
-const STATUSES = ['ALL', 'LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE', 'ARCHIVED'] as const
+const STATUSES = ['ALL', 'BIDDING', 'ACTIVE', 'ON_HOLD', 'COMPLETE', 'ARCHIVED'] as const
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   LEAD: { bg: '#e9ecef', color: '#495057' },
@@ -707,7 +707,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
                     <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Status</label>
                     <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
                       style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}>
-                      {['LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE'].map(s => (
+                      {['BIDDING', 'ACTIVE', 'ON_HOLD', 'COMPLETE'].map(s => (
                         <option key={s} value={s}>{s.replace('_', ' ')}</option>
                       ))}
                     </select>
@@ -730,8 +730,11 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Description</label>
                   <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2}
-                    placeholder="Brief description of the job..."
+                    placeholder="Also known as: Nova Academy, NOVA"
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }} />
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4, lineHeight: 1.4 }}>
+                    Matching checks the email subject and body against the job name and alternate names listed here.
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
                   <div>

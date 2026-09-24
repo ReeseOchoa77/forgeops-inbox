@@ -206,7 +206,7 @@ export function JobAssignPicker({
 
 /**
  * Inbox toolbar job filter — searchable like JobAssignPicker.
- * Values: "" (all), "unassigned", or a job id.
+ * Values: "" (all), "assigned" (any job), "unassigned", or a job id.
  */
 export function JobFilterSelect({
   workspaceId,
@@ -257,7 +257,7 @@ export function JobFilterSelect({
         .then((r) => {
           if (seq !== seqRef.current) return
           setJobs(r.jobs)
-          if (value && value !== 'unassigned') {
+          if (value && value !== 'unassigned' && value !== 'assigned') {
             const hit = r.jobs.find((j) => j.id === value)
             if (hit) setSelectedJob(hit)
           }
@@ -273,17 +273,19 @@ export function JobFilterSelect({
   }, [workspaceId, query, open, value])
 
   useEffect(() => {
-    if (!value || value === 'unassigned') setSelectedJob(null)
+    if (!value || value === 'unassigned' || value === 'assigned') setSelectedJob(null)
   }, [value])
 
   const buttonLabel =
     value === ''
       ? 'All Jobs'
-      : value === 'unassigned'
-        ? 'Unassigned'
-        : selectedJob
-          ? `${selectedJob.name}${selectedJob.jobNumber ? ` (#${selectedJob.jobNumber})` : ''}`
-          : 'Job…'
+      : value === 'assigned'
+        ? 'Any job'
+        : value === 'unassigned'
+          ? 'Unassigned'
+          : selectedJob
+            ? `${selectedJob.name}${selectedJob.jobNumber ? ` (#${selectedJob.jobNumber})` : ''}`
+            : 'Job…'
 
   const pick = (next: string, job?: JobLookup | null) => {
     onChange(next)
@@ -363,6 +365,11 @@ export function JobFilterSelect({
                   label="All Jobs"
                   active={value === ''}
                   onClick={() => pick('')}
+                />
+                <JobFilterRow
+                  label="Any job"
+                  active={value === 'assigned'}
+                  onClick={() => pick('assigned')}
                 />
                 <JobFilterRow
                   label="Unassigned"

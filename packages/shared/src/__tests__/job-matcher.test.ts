@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   JOB_MATCHER_VERSION,
   JobMatcherService,
+  extractJobDescriptionNames,
   matchJobsDeterministic,
   type JobAliasForMatch,
   type JobMatchDataLoader,
@@ -207,6 +208,46 @@ describe("matchJobsDeterministic", () => {
     });
     expect(result.selectedJobId).toBe("job-a");
     expect(result.assignmentSource).toBe("JOB_NUMBER_MATCH");
+  });
+
+  it("matches an alternate name from the job description in the subject", () => {
+    const result = matchJobsDeterministic({
+      subject: "Drawings for Nova Academy",
+      cleanBody: "See attached.",
+      jobs: [
+        {
+          ...jobB,
+          description: "Classroom addition\nAlso known as: Nova Academy, NOVA",
+        },
+      ],
+      aliases: [],
+    });
+    expect(result.selectedJobId).toBe("job-b");
+    expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_DESCRIPTION")).toBe(true);
+  });
+
+  it("matches an alternate name from the job description in the body", () => {
+    const result = matchJobsDeterministic({
+      subject: "Updated drawings",
+      cleanBody: "These are for the Nova Academy package.",
+      jobs: [
+        {
+          ...jobB,
+          description: "Also known as: Nova Academy",
+        },
+      ],
+      aliases: [],
+    });
+    expect(result.evidence.some((e) => e.type === "CONTENT_JOB_DESCRIPTION")).toBe(true);
+    expect(result.selectedJobId).toBe("job-b");
+  });
+
+  it("extracts labeled and short description names", () => {
+    expect(
+      extractJobDescriptionNames(
+        "Classroom addition\nAlso known as: Nova Academy, NOVA"
+      )
+    ).toEqual(["Classroom addition", "Nova Academy", "NOVA"]);
   });
 });
 

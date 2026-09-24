@@ -29,6 +29,7 @@ export function createPrismaJobMatchLoader(
           normalizedName: true,
           customerId: true,
           externalRef: true,
+          description: true,
         },
       });
       return jobs;

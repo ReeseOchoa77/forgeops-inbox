@@ -156,6 +156,7 @@ describe("assembleClassificationCandidates (n8n response parity)", () => {
       jobNumber: `J-${1000 + i}`,
       customerId: null,
       externalRef: null,
+      description: null,
     }));
 
     const result = assembleClassificationCandidates(
@@ -193,6 +194,7 @@ describe("assembleClassificationCandidates (n8n response parity)", () => {
             jobNumber: "42",
             customerId: null,
             externalRef: null,
+            description: null,
           },
         ],
         approvedFolders: [

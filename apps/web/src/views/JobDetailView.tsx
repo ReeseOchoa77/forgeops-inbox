@@ -84,7 +84,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   ARCHIVED: { bg: '#e9ecef', color: '#6b7280' },
 }
 
-const STATUSES = ['LEAD', 'BIDDING', 'AWARDED', 'ACTIVE', 'ON_HOLD', 'COMPLETE']
+const STATUSES = ['BIDDING', 'ACTIVE', 'ON_HOLD', 'COMPLETE']
 
 function StatusBadge({ status }: { status: string }) {
   const style = STATUS_COLORS[status] ?? { bg: '#f3f4f6', color: '#374151' }
@@ -1325,7 +1325,7 @@ export function JobDetailView({
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Status</label>
                   <select value={editStatus} onChange={e => setEditStatus(e.target.value)} disabled={!canEdit}
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
-                    {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                    { (STATUSES.includes(editStatus) ? STATUSES : [editStatus, ...STATUSES]).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>) }
                   </select>
                 </div>
               </div>
@@ -1345,6 +1345,9 @@ export function JobDetailView({
                 <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Description</label>
                 <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} disabled={!canEdit} rows={3}
                   style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical' }} />
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4, lineHeight: 1.4 }}>
+                  Used to match emails to this job. Matching checks the email subject and body against the job name and any alternate names listed here. Example: Also known as: Nova Academy, NOVA
+                </div>
               </div>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Notes</label>

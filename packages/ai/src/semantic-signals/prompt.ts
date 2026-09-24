@@ -165,11 +165,12 @@ Consider:
 - project name
 - job name
 - approved job aliases
+- alternate names listed in the job description
 - job candidates
 - construction site/project references
 - clear project-specific language
 
-Use Job Candidates and Approved Job Aliases as supporting evidence.
+Use Job Candidates and Approved Job Aliases as supporting evidence. Check both the email subject and the email body.
 
 Examples of strong job evidence:
 

@@ -337,6 +337,22 @@ describe("buildMessagesWhere — Exclude business type groups", () => {
   });
 });
 
+describe("buildMessagesWhere — job assignment", () => {
+  it("assigned keeps only messages with a jobId", () => {
+    const where = baseWhere({ businessCategory: "BUSINESS", jobId: "assigned" });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and).toEqual(
+      expect.arrayContaining([{ jobId: { not: null } }])
+    );
+  });
+
+  it("unassigned keeps only messages with no job", () => {
+    const where = baseWhere({ jobId: "unassigned" });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and).toEqual(expect.arrayContaining([{ jobId: null }]));
+  });
+});
+
 describe("buildMessagesWhere — Email ID lookup", () => {
   it("matches EmailMessage id or provider gmailMessageId and skips tab filters", () => {
     const where = baseWhere({

@@ -6,9 +6,11 @@ export type JobMatchEvidenceType =
   | "SUBJECT_JOB_NUMBER"
   | "SUBJECT_JOB_NAME"
   | "SUBJECT_JOB_ALIAS"
+  | "SUBJECT_JOB_DESCRIPTION"
   | "CONTENT_JOB_NUMBER"
   | "CONTENT_JOB_NAME"
   | "CONTENT_JOB_ALIAS"
+  | "CONTENT_JOB_DESCRIPTION"
   | "SENDER_CUSTOMER_LINK"
   | "THREAD_JOB_HINT"
   | "N8N_COMPAT_HINT";
@@ -46,6 +48,8 @@ export type JobRecordForMatch = {
   normalizedName: string;
   customerId: string | null;
   externalRef: string | null;
+  /** Free text. Short lines and "Also known as:" lists are alternate names. */
+  description?: string | null;
 };
 
 export type JobAliasForMatch = {
@@ -132,6 +136,41 @@ function textHasNameToken(text: string, normalizedName: string): boolean {
   return nameTokens.every((t) => hay.includes(t));
 }
 
+const DESCRIPTION_LABEL =
+  /^(?:also\s+known\s+as|a\.?k\.?a\.?|aka|alternate\s+names?|aliases|also\s+called)\s*[:\-]\s*(.*)$/i;
+
+/**
+ * Names listed in a job description. Labeled lines ("Also known as: Nova, NOVA")
+ * and other short lines are alternate names. Long prose is ignored.
+ */
+export function extractJobDescriptionNames(
+  description: string | null | undefined
+): string[] {
+  if (!description?.trim()) return [];
+  const names: string[] = [];
+  for (const rawLine of description.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const labeled = line.match(DESCRIPTION_LABEL);
+    const source = labeled ? (labeled[1] ?? "").trim() : line;
+    if (!source) continue;
+    if (!labeled && source.length > 80) continue;
+    for (const part of source.split(/\s*(?:,|;|\/|\bor\b)\s*/i)) {
+      const name = part.trim().replace(/^["']|["']$/g, "");
+      if (name.length < 3 || name.length > 80) continue;
+      if (name.split(/\s+/).length > 12) continue;
+      names.push(name);
+    }
+  }
+  const seen = new Set<string>();
+  return names.filter((name) => {
+    const key = normalizeName(name);
+    if (!key || key.length < 3 || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function stripQuotedHistory(body: string): string {
   // Prefer current content: drop common quoted reply blocks for matching
   const lines = body.split(/\r?\n/);
@@ -186,6 +225,12 @@ export function scoreJobAgainstEmail(input: {
       pushEvidence(evidence, "SUBJECT_JOB_ALIAS", alias.alias, 0.9);
     }
   }
+  for (const alt of extractJobDescriptionNames(job.description)) {
+    if (textHasNameToken(subject, normalizeName(alt))) {
+      subjectScore = Math.max(subjectScore, 0.9);
+      pushEvidence(evidence, "SUBJECT_JOB_DESCRIPTION", alt, 0.9);
+    }
+  }
 
   if (job.jobNumber && textHasJobNumber(body, job.jobNumber)) {
     contentScore = Math.max(contentScore, 0.82);
@@ -199,6 +244,12 @@ export function scoreJobAgainstEmail(input: {
     if (textHasNameToken(body, alias.normalizedAlias)) {
       contentScore = Math.max(contentScore, 0.72);
       pushEvidence(evidence, "CONTENT_JOB_ALIAS", alias.alias, 0.72);
+    }
+  }
+  for (const alt of extractJobDescriptionNames(job.description)) {
+    if (textHasNameToken(body, normalizeName(alt))) {
+      contentScore = Math.max(contentScore, 0.72);
+      pushEvidence(evidence, "CONTENT_JOB_DESCRIPTION", alt, 0.72);
     }
   }
 
@@ -233,7 +284,9 @@ export function scoreJobAgainstEmail(input: {
           ? Math.max(score, 0.91)
           : subjectScore >= 0.88
             ? Math.max(score, 0.88)
-            : score;
+            : contentScore >= 0.7
+              ? Math.max(score, 0.9)
+              : score;
 
   return {
     jobId: job.id,

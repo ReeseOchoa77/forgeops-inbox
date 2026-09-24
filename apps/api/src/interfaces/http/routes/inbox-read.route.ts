@@ -975,6 +975,9 @@ export const buildMessagesWhere = (input: {
   if (input.jobId) {
     if (input.jobId === "unassigned") {
       andConditions.push({ jobId: null });
+    } else if (input.jobId === "assigned") {
+      // Any job: hide emails that are not matched to a Job.
+      andConditions.push({ jobId: { not: null } });
     } else {
       andConditions.push({ jobId: input.jobId });
     }

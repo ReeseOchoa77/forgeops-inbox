@@ -77,6 +77,19 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     });
   });
 
+  it("Any job filter sends jobId=assigned", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        jobFilter: "assigned",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      jobId: "assigned",
+    });
+  });
+
   it("Business subtype + job only apply when not Sent", () => {
     expect(
       buildInboxMessageListFilters({
