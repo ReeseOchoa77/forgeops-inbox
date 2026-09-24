@@ -226,6 +226,7 @@ export interface MessageSummary {
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
   job?: MessageJobSummary | null;
+  suggestedJob?: MessageJobSummary | null;
   jobAssignmentSource?: string | null;
   jobAssignmentIsManual?: boolean;
   jobMatchConfidence?: number | null;
@@ -274,6 +275,7 @@ export interface ThreadMessage {
   jobAssignmentIsManual?: boolean;
   jobMatchConfidence?: number | null;
   job?: { id: string; jobNumber: string; name: string; status: string } | null;
+  suggestedJob?: MessageJobSummary | null;
   classification: Classification | null;
   taskCandidate: TaskSummary | null;
 }

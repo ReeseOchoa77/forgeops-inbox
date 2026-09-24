@@ -74,7 +74,7 @@ describe("persist-job-match", () => {
     expect(emailUpdate).toHaveBeenCalledWith({
       where: { id: "msg-1" },
       data: expect.objectContaining({
-        jobId: "job-new",
+        jobId: null,
         jobAssignmentSource: "JOB_NUMBER_MATCH",
         jobMatchConfidence: expect.any(Number),
       }),
@@ -82,7 +82,8 @@ describe("persist-job-match", () => {
 
     const clsJobId = classificationUpdate.mock.calls[0]![0].data.jobId;
     const msgJobId = emailUpdate.mock.calls[0]![0].data.jobId;
-    expect(clsJobId).toBe(msgJobId);
+    expect(clsJobId).toBe("job-new");
+    expect(msgJobId).toBeNull();
   });
 
   it("clears stale auto job when no match", async () => {
@@ -100,5 +101,15 @@ describe("persist-job-match", () => {
     });
     expect(fields?.emailMessage.jobId).toBeNull();
     expect(fields?.classification.jobId).toBeNull();
+  });
+
+  it("keeps an existing job assignment when the matcher only suggests a job", () => {
+    const fields = buildJobMatchPersistence(strongMatch, {
+      jobId: "job-already",
+      jobAssignmentIsManual: false,
+      jobAssignmentSource: "IMPORT",
+    });
+    expect(fields?.classification.jobId).toBe("job-new");
+    expect(fields?.emailMessage.jobId).toBe("job-already");
   });
 });

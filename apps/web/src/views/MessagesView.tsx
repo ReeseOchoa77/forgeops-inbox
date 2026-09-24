@@ -264,6 +264,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   name: job.name,
                   status: job.status,
                 },
+                suggestedJob: null,
               }
             : m
         )
@@ -908,6 +909,23 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               }} title={formatJobTooltip(m.job)}>
                 {formatJobPrimaryLabel(m.job, 22)}
               </span>
+            ) : m.suggestedJob ? (
+              <button
+                type="button"
+                disabled={jobAssigning}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void handleAssignJob(m.id, m.suggestedJob!)
+                }}
+                title={`Click to confirm this email belongs on ${m.suggestedJob.name}`}
+                style={{
+                  fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                  background: '#fff8e1', color: '#8a5a00', whiteSpace: 'nowrap',
+                  border: '1px solid #f5d77a', cursor: jobAssigning ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Confirm {formatJobPrimaryLabel(m.suggestedJob, 18)}
+              </button>
             ) : (
               <span style={{
                 fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
@@ -1080,18 +1098,33 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             onClick={(e) => {
               e.stopPropagation()
               if (isViewer) return
+              if (!m.job && m.suggestedJob) {
+                void handleAssignJob(m.id, m.suggestedJob)
+                return
+              }
               setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)
             }}
             style={{
-              fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
-              background: m.job ? '#e0f2f1' : '#f0f0f0',
-              color: m.job ? '#00695c' : '#999',
+              fontSize: 10, fontWeight: m.job || m.suggestedJob ? 600 : 500, padding: '1px 7px', borderRadius: 10,
+              background: m.job ? '#e0f2f1' : m.suggestedJob ? '#fff8e1' : '#f0f0f0',
+              color: m.job ? '#00695c' : m.suggestedJob ? '#8a5a00' : '#999',
+              border: m.suggestedJob && !m.job ? '1px solid #f5d77a' : 'none',
               whiteSpace: 'nowrap', cursor: isViewer ? 'default' : 'pointer',
-              maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block',
+              maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block',
             }}
-            title={m.job ? formatJobTooltip(m.job) : 'Click to assign a job'}
+            title={
+              m.job
+                ? formatJobTooltip(m.job)
+                : m.suggestedJob
+                  ? `Click to confirm this email belongs on ${m.suggestedJob.name}`
+                  : 'Click to assign a job'
+            }
           >
-            {m.job ? formatJobPrimaryLabel(m.job, 24) : 'Unassigned'}
+            {m.job
+              ? formatJobPrimaryLabel(m.job, 24)
+              : m.suggestedJob
+                ? `Confirm ${formatJobPrimaryLabel(m.suggestedJob, 18)}`
+                : 'Unassigned'}
           </span>
           {jobPickerOpen === m.id && (
             <JobAssignPicker

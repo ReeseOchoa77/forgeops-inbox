@@ -177,6 +177,22 @@ const jobSummarySchema = z.object({
   status: z.string()
 });
 
+function suggestedJobSummary(
+  assignedJob: { id: string } | null | undefined,
+  classificationJob:
+    | { id: string; jobNumber: string | null; name: string; status: string }
+    | null
+    | undefined
+) {
+  if (assignedJob || !classificationJob) return null;
+  return {
+    id: classificationJob.id,
+    jobNumber: classificationJob.jobNumber,
+    name: classificationJob.name,
+    status: classificationJob.status
+  };
+}
+
 const tasksListQuerySchema = paginationQuerySchema.extend({
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
@@ -309,6 +325,8 @@ const messageSummarySchema = z.object({
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable(),
   job: jobSummarySchema.nullable().optional(),
+  /** Matcher suggestion. Not an assignment until the user confirms it. */
+  suggestedJob: jobSummarySchema.nullable().optional(),
   jobAssignmentSource: z.string().nullable().optional(),
   jobAssignmentIsManual: z.boolean().optional(),
   jobMatchConfidence: z.number().nullable().optional(),
@@ -734,6 +752,12 @@ const serializeInboxListMessage = (message: {
     emailType: EmailType;
     priority: string | null;
     businessTypeKey: string | null;
+    job?: {
+      id: string;
+      jobNumber: string | null;
+      name: string;
+      status: string;
+    } | null;
   }>;
   job?: {
     id: string;
@@ -790,6 +814,7 @@ const serializeInboxListMessage = (message: {
       : null,
     taskCandidate: null,
     job: serializeJobSummary(message.job),
+    suggestedJob: suggestedJobSummary(message.job, message.classifications[0]?.job),
     jobAssignmentSource: null,
     jobAssignmentIsManual: false,
     jobMatchConfidence: null,
@@ -1753,7 +1778,15 @@ export const registerInboxReadRoutes = async (
               id: true,
               emailType: true,
               priority: true,
-              businessTypeKey: true
+              businessTypeKey: true,
+              job: {
+                select: {
+                  id: true,
+                  jobNumber: true,
+                  name: true,
+                  status: true
+                }
+              }
             }
           }
         }
@@ -2176,7 +2209,15 @@ export const registerInboxReadRoutes = async (
               containsActionRequest: true,
               businessTypeKey: true,
               businessTypeConfidence: true,
-              deadline: true
+              deadline: true,
+              job: {
+                select: {
+                  id: true,
+                  jobNumber: true,
+                  name: true,
+                  status: true
+                }
+              }
             }
           },
           tasks: {
@@ -2240,6 +2281,7 @@ export const registerInboxReadRoutes = async (
           jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
           jobMatchConfidence: m.jobMatchConfidence,
           job: m.job ? { id: m.job.id, jobNumber: m.job.jobNumber, name: m.job.name, status: m.job.status } : null,
+          suggestedJob: suggestedJobSummary(m.job, m.classifications[0]?.job),
           classification: serializeClassification(m.classifications[0] ?? null),
           taskCandidate: serializeTask(m.tasks[0] ?? null)
         }))
@@ -2328,7 +2370,8 @@ export const registerInboxReadRoutes = async (
               id: true, businessCategory: true, emailType: true, priority: true,
               itemStatus: true, summary: true, confidence: true, requiresReview: true,
               reviewQueue: true, reviewStatus: true, containsActionRequest: true,
-              businessTypeKey: true, businessTypeConfidence: true, deadline: true
+              businessTypeKey: true, businessTypeConfidence: true, deadline: true,
+              job: { select: { id: true, jobNumber: true, name: true, status: true } }
             }
           },
           tasks: {
@@ -2399,6 +2442,7 @@ export const registerInboxReadRoutes = async (
             jobAssignmentIsManual: m.jobAssignmentIsManual ?? false,
             jobMatchConfidence: m.jobMatchConfidence,
             job: m.job ? { id: m.job.id, jobNumber: m.job.jobNumber, name: m.job.name, status: m.job.status } : null,
+            suggestedJob: suggestedJobSummary(m.job, m.classifications[0]?.job),
             classification: serializeClassification(m.classifications[0] ?? null),
             taskCandidate: serializeTask(m.tasks[0] ?? null)
           };

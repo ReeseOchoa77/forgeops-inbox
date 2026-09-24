@@ -76,7 +76,9 @@ export function buildJobMatchPersistence(
       matchEvidence: evidenceJson,
     },
     emailMessage: {
-      jobId: match.selectedJobId,
+      // A new auto match is only a suggestion (Classification.jobId).
+      // Leave an assignment that is already on the email in place.
+      jobId: match.selectedJobId ? (existing?.jobId ?? null) : null,
       jobMatchConfidence: emailConfidence,
       jobMatchEvidence: evidenceJson,
       jobAssignmentSource: match.assignmentSource,
