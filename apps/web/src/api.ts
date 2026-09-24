@@ -1852,10 +1852,34 @@ export const api = {
           unavailable: number;
         };
         errorMessage: string | null;
-        startedAt: string | null;
-        completedAt: string | null;
       };
     }>(`/workspaces/${workspaceId}/project-folders/analyze-emails/${runId}`),
+
+  getLatestProjectFolderEmailAnalyzeRun: (workspaceId: string, connectionId: string) =>
+    request<{
+      run: {
+        id: string;
+        status: string;
+        progress: {
+          foldersTotal: number;
+          foldersDone: number;
+          currentFolderName: string | null;
+          processed: number;
+          created: number;
+          existing: number;
+          assigned: number;
+          classifyQueued: number;
+          classifySkipped: number;
+          attachmentQueued: number;
+          conflicts: number;
+          failed: number;
+          unavailable: number;
+        };
+        errorMessage: string | null;
+      } | null;
+    }>(
+      `/workspaces/${workspaceId}/project-folders/analyze-emails/latest?connectionId=${encodeURIComponent(connectionId)}`
+    ),
 
   getVerifiedProjectFolders: (
     workspaceId: string,

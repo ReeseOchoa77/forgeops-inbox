@@ -24,6 +24,8 @@ const EMAIL_ANALYSIS_CONTRACT = {
   jobsWithoutFolderPath: '/project-folders/jobs-without-folder',
   scanPath: '/project-folders/scan',
   analyzePath: '/project-folders/analyze-emails',
+  latestAnalyzePath: '/project-folders/analyze-emails/latest',
+  restoresAnalyzeProgressOnReturn: true,
   /** Retired top-level nav page key — App redirects to Workspace → Email Analysis. */
   legacyJobDiscoveryPage: 'outlook-folders',
   retiredJobDiscoveryNavLabel: 'Job Discovery',
@@ -49,6 +51,9 @@ describe('Workspace Email Analysis UX contracts', () => {
     expect(EMAIL_ANALYSIS_CONTRACT.analyzeSelectedLabel).toContain('Emails')
     expect(EMAIL_ANALYSIS_CONTRACT.scanPath).toBe('/project-folders/scan')
     expect(EMAIL_ANALYSIS_CONTRACT.analyzePath).toBe('/project-folders/analyze-emails')
+    expect(EMAIL_ANALYSIS_CONTRACT.latestAnalyzePath).toContain('analyze-emails/latest')
+    expect(EMAIL_ANALYSIS_CONTRACT.restoresAnalyzeProgressOnReturn).toBe(true)
+    expect(EMAIL_ANALYSIS_CONTRACT.autoAnalyzeEmailsOnMount).toBe(false)
     expect(EMAIL_ANALYSIS_CONTRACT.jobsWithoutFolderPath).toContain('jobs-without-folder')
   })
 

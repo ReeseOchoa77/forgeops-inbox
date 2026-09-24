@@ -7,6 +7,12 @@ import {
   type JobLookup,
   type ProjectFolderScanSummary,
 } from '../api'
+import {
+  isAnalyzeRunInProgress,
+  readRememberedAnalyzeRun,
+  rememberAnalyzeRun,
+  type AnalyzeRunProgressView,
+} from '../analyze-run-memory'
 import { JobAssignPicker, formatJobPrimaryLabel, formatJobSecondaryLabel } from '../components/JobAssignPicker'
 
 type MatchUi = 'UNMATCHED' | 'SUGGESTED' | 'VERIFIED' | 'IGNORED' | 'ARCHIVED'
@@ -140,21 +146,9 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set())
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeRunId, setAnalyzeRunId] = useState<string | null>(null)
-  const [analyzeProgress, setAnalyzeProgress] = useState<{
-    status: string
-    currentFolderName: string | null
-    processed: number
-    created: number
-    existing: number
-    assigned: number
-    classifyQueued: number
-    conflicts: number
-    failed: number
-    foldersDone: number
-    foldersTotal: number
-    errorMessage: string | null
-  } | null>(null)
+  const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeRunProgressView | null>(null)
   const loadSeqRef = useRef(0)
+  const pollGenRef = useRef(0)
 
   const outlookConnections = useMemo(
     () => connections.filter(isOutlookConnection),
@@ -329,34 +323,86 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     }
   }
 
-  const pollAnalyzeRun = async (runId: string) => {
-    for (;;) {
-      const res = await api.getProjectFolderEmailAnalyzeRun(workspaceId, runId)
-      const p = res.run.progress
-      setAnalyzeProgress({
-        status: res.run.status,
-        currentFolderName: p.currentFolderName,
-        processed: p.processed,
-        created: p.created,
-        existing: p.existing,
-        assigned: p.assigned,
-        classifyQueued: p.classifyQueued,
-        conflicts: p.conflicts,
-        failed: p.failed,
-        foldersDone: p.foldersDone,
-        foldersTotal: p.foldersTotal,
-        errorMessage: res.run.errorMessage,
-      })
-      if (res.run.status === 'COMPLETED' || res.run.status === 'FAILED') {
-        setAnalyzing(false)
-        if (res.run.status === 'FAILED' && res.run.errorMessage) {
-          setError(res.run.errorMessage)
-        }
-        return
+  const applyAnalyzeRun = useCallback((
+    connectionIdForRun: string,
+    run: {
+      id: string
+      status: string
+      errorMessage: string | null
+      progress: {
+        currentFolderName: string | null
+        processed: number
+        created: number
+        existing: number
+        assigned: number
+        classifyQueued: number
+        conflicts: number
+        failed: number
+        foldersDone: number
+        foldersTotal: number
       }
+    }
+  ) => {
+    const progress: AnalyzeRunProgressView = {
+      status: run.status,
+      currentFolderName: run.progress.currentFolderName,
+      processed: run.progress.processed,
+      created: run.progress.created,
+      existing: run.progress.existing,
+      assigned: run.progress.assigned,
+      classifyQueued: run.progress.classifyQueued,
+      conflicts: run.progress.conflicts,
+      failed: run.progress.failed,
+      foldersDone: run.progress.foldersDone,
+      foldersTotal: run.progress.foldersTotal,
+      errorMessage: run.errorMessage,
+    }
+    setAnalyzeRunId(run.id)
+    setAnalyzeProgress(progress)
+    setAnalyzing(isAnalyzeRunInProgress(run.status))
+    rememberAnalyzeRun(workspaceId, connectionIdForRun, { runId: run.id, progress })
+    if (run.status === 'FAILED' && run.errorMessage) setError(run.errorMessage)
+  }, [workspaceId])
+
+  const pollAnalyzeRun = useCallback(async (runId: string, connectionIdForRun: string, gen: number) => {
+    for (;;) {
+      if (gen !== pollGenRef.current) return
+      const res = await api.getProjectFolderEmailAnalyzeRun(workspaceId, runId)
+      if (gen !== pollGenRef.current) return
+      applyAnalyzeRun(connectionIdForRun, res.run)
+      if (!isAnalyzeRunInProgress(res.run.status)) return
       await new Promise((r) => setTimeout(r, 1500))
     }
-  }
+  }, [applyAnalyzeRun, workspaceId])
+
+  useEffect(() => {
+    if (!selectedConnectionId) return
+    const remembered = readRememberedAnalyzeRun(workspaceId, selectedConnectionId)
+    if (remembered) {
+      setAnalyzeRunId(remembered.runId)
+      setAnalyzeProgress(remembered.progress)
+      setAnalyzing(isAnalyzeRunInProgress(remembered.progress.status))
+    } else {
+      setAnalyzeRunId(null)
+      setAnalyzeProgress(null)
+      setAnalyzing(false)
+    }
+    const gen = ++pollGenRef.current
+    let cancelled = false
+    void api.getLatestProjectFolderEmailAnalyzeRun(workspaceId, selectedConnectionId)
+      .then(async (res) => {
+        if (cancelled || gen !== pollGenRef.current || !res.run) return
+        applyAnalyzeRun(selectedConnectionId, res.run)
+        if (isAnalyzeRunInProgress(res.run.status)) {
+          await pollAnalyzeRun(res.run.id, selectedConnectionId, gen)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      pollGenRef.current += 1
+    }
+  }, [applyAnalyzeRun, pollAnalyzeRun, selectedConnectionId, workspaceId])
 
   const startAnalyzeForFolderIds = async (folderIds: string[]) => {
     if (!selectedConnectionId || !selectedConn) {
@@ -374,6 +420,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     setAnalyzing(true)
     setError('')
     setAnalyzeProgress(null)
+    const gen = ++pollGenRef.current
     try {
       const { runId } = await api.analyzeProjectFolderEmails(
         workspaceId,
@@ -381,7 +428,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
         folderIds
       )
       setAnalyzeRunId(runId)
-      await pollAnalyzeRun(runId)
+      await pollAnalyzeRun(runId, selectedConnectionId, gen)
     } catch (e) {
       setAnalyzing(false)
       const msg = e instanceof Error ? e.message : 'Analyze emails failed'

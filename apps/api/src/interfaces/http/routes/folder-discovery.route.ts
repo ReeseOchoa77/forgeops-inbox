@@ -873,6 +873,56 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     }
   });
 
+  function serializeAnalyzeRun(run: {
+    id: string;
+    workspaceId: string;
+    inboxConnectionId: string;
+    status: string;
+    folderIds: unknown;
+    progress: unknown;
+    errorMessage: string | null;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    createdAt: Date;
+  }) {
+    const progress =
+      run.progress && typeof run.progress === "object" && !Array.isArray(run.progress)
+        ? ({
+            ...emptyProjectFolderEmailAnalyzeProgress(),
+            ...(run.progress as object),
+          } as ProjectFolderEmailAnalyzeProgress)
+        : emptyProjectFolderEmailAnalyzeProgress();
+    return {
+      id: run.id,
+      workspaceId: run.workspaceId,
+      inboxConnectionId: run.inboxConnectionId,
+      status: run.status,
+      folderIds: run.folderIds,
+      progress,
+      errorMessage: run.errorMessage,
+      startedAt: run.startedAt,
+      completedAt: run.completedAt,
+      createdAt: run.createdAt,
+    };
+  }
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/project-folders/analyze-emails/latest",
+    async (request, reply) => {
+      const { workspaceId } = z.object({ workspaceId: z.string().min(1) }).parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      const query = z
+        .object({ connectionId: z.string().min(1) })
+        .parse(request.query);
+      const run = await app.services.prisma.projectFolderEmailAnalyzeRun.findFirst({
+        where: { workspaceId, inboxConnectionId: query.connectionId },
+        orderBy: { createdAt: "desc" },
+      });
+      return reply.send({ run: run ? serializeAnalyzeRun(run) : null });
+    }
+  );
+
   app.get("/api/v1/workspaces/:workspaceId/project-folders/analyze-emails/:runId", async (request, reply) => {
     const params = z
       .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
@@ -885,28 +935,7 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     });
     if (!run) return reply.code(404).send({ message: "Analyze run not found" });
 
-    const progress =
-      run.progress && typeof run.progress === "object" && !Array.isArray(run.progress)
-        ? ({
-            ...emptyProjectFolderEmailAnalyzeProgress(),
-            ...(run.progress as object),
-          } as ProjectFolderEmailAnalyzeProgress)
-        : emptyProjectFolderEmailAnalyzeProgress();
-
-    return reply.send({
-      run: {
-        id: run.id,
-        workspaceId: run.workspaceId,
-        inboxConnectionId: run.inboxConnectionId,
-        status: run.status,
-        folderIds: run.folderIds,
-        progress,
-        errorMessage: run.errorMessage,
-        startedAt: run.startedAt,
-        completedAt: run.completedAt,
-        createdAt: run.createdAt,
-      },
-    });
+    return reply.send({ run: serializeAnalyzeRun(run) });
   });
 
   // =========================================================================
