@@ -17,6 +17,7 @@ import {
   getCachedJobDetail,
   invalidateJobDetailCache,
   jobDetailShellFromSummary,
+  mergeJobDetailAfterUpdate,
   setCachedJobDetail,
 } from '../job-detail-cache'
 
@@ -361,8 +362,12 @@ export function JobDetailView({
         startDate: editStartDate || null,
         targetCompletionDate: editTargetDate || null,
       })
-      setJob(res.job)
-      setCachedJobDetail(workspaceId, jobId, res.job)
+      setJob((prev) => {
+        if (!prev) return prev
+        const next = mergeJobDetailAfterUpdate(prev, res.job)
+        setCachedJobDetail(workspaceId, jobId, next)
+        return next
+      })
     } catch { /* ignore */ } finally {
       setSaving(false)
     }
@@ -521,6 +526,8 @@ export function JobDetailView({
       )
     : emails
 
+  const members = job.members ?? []
+  const aliases = job.aliases ?? []
   const openTasks = tasks.filter(t => t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'BLOCKED')
   const completedTasks = tasks.filter(t => t.status === 'DONE')
   const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
@@ -591,11 +598,11 @@ export function JobDetailView({
             </Card>
 
             <Card title="Team">
-              {job.members.length === 0 ? (
+              {members.length === 0 ? (
                 <div style={{ color: '#888', fontSize: 13 }}>No members assigned</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {job.members.map(m => (
+                  {members.map(m => (
                     <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{
                         width: 28, height: 28, borderRadius: '50%', background: '#e0e7ff',
@@ -615,10 +622,10 @@ export function JobDetailView({
             </Card>
           </div>
 
-          {job.aliases.length > 0 && (
+          {aliases.length > 0 && (
             <Card title="Email Aliases" style={{ marginTop: 16 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {job.aliases.map(a => (
+                {aliases.map(a => (
                   <span key={a.id} style={{ padding: '4px 10px', background: '#f3f4f6', borderRadius: 12, fontSize: 12 }}>
                     {a.alias}
                   </span>
@@ -1357,8 +1364,8 @@ export function JobDetailView({
 
           {/* Aliases */}
           <Card title="Email Aliases" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: job.aliases.length > 0 ? 12 : 0 }}>
-              {job.aliases.map(a => (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: aliases.length > 0 ? 12 : 0 }}>
+              {aliases.map(a => (
                 <span key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#f3f4f6', borderRadius: 12, fontSize: 12 }}>
                   {a.alias}
                   {canEdit && (
@@ -1382,11 +1389,11 @@ export function JobDetailView({
 
           {/* Members */}
           <Card title="Members" style={{ marginBottom: 16 }}>
-            {job.members.length === 0 ? (
+            {members.length === 0 ? (
               <div style={{ color: '#888', fontSize: 13 }}>No members assigned.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {job.members.map(m => (
+                {members.map(m => (
                   <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{

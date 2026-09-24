@@ -58,6 +58,37 @@ export function clearJobDetailCacheForTests(): void {
   cache.clear()
 }
 
+/**
+ * PUT /jobs/:id returns a Prisma job (scalars + nested customer), not the GET detail
+ * shape. Overlay those fields onto the loaded detail so members/aliases/counts stay.
+ */
+export function mergeJobDetailAfterUpdate(
+  prev: JobDetail,
+  updated: Partial<JobDetail> & { customer?: { name?: string | null } | null }
+): JobDetail {
+  return {
+    ...prev,
+    name: updated.name ?? prev.name,
+    jobNumber: updated.jobNumber !== undefined ? updated.jobNumber : prev.jobNumber,
+    status: updated.status ?? prev.status,
+    description: updated.description !== undefined ? updated.description : prev.description,
+    notes: updated.notes !== undefined ? updated.notes : prev.notes,
+    startDate: updated.startDate !== undefined ? updated.startDate : prev.startDate,
+    targetCompletionDate:
+      updated.targetCompletionDate !== undefined
+        ? updated.targetCompletionDate
+        : prev.targetCompletionDate,
+    customerId: updated.customerId !== undefined ? updated.customerId : prev.customerId,
+    customerName: updated.customerName ?? updated.customer?.name ?? prev.customerName,
+    archivedAt: updated.archivedAt !== undefined ? updated.archivedAt : prev.archivedAt,
+    members: Array.isArray(updated.members) ? updated.members : prev.members ?? [],
+    aliases: Array.isArray(updated.aliases) ? updated.aliases : prev.aliases ?? [],
+    assignedMembers: Array.isArray(updated.assignedMembers)
+      ? updated.assignedMembers
+      : prev.assignedMembers ?? [],
+  }
+}
+
 /** Build a minimal JobDetail shell from a list row for instant paint. */
 export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
   return {

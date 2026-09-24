@@ -4,6 +4,7 @@ import {
   clearJobDetailCacheForTests,
   getCachedJobDetail,
   jobDetailShellFromSummary,
+  mergeJobDetailAfterUpdate,
   setCachedJobDetail,
 } from './job-detail-cache'
 
@@ -41,6 +42,24 @@ describe('job detail cache', () => {
     expect(shell.members).toHaveLength(1)
     expect(shell.aliases).toEqual([])
     expect(shell.attachmentCount).toBe(0)
+  })
+
+  it('keeps members and aliases when merging a scalar PUT payload', () => {
+    const prev = jobDetailShellFromSummary(summary)
+    const next = mergeJobDetailAfterUpdate(prev, {
+      name: 'Renamed',
+      jobNumber: '2218',
+      status: 'ON_HOLD',
+      description: 'Updated',
+      notes: 'note',
+      customer: { name: 'Acme' },
+    } as Partial<typeof prev> & { customer?: { name?: string | null } | null })
+    expect(next.name).toBe('Renamed')
+    expect(next.jobNumber).toBe('2218')
+    expect(next.customerName).toBe('Acme')
+    expect(next.members).toHaveLength(1)
+    expect(next.aliases).toEqual([])
+    expect(next.emailCount).toBe(3)
   })
 
   it('stores and returns detail within TTL', () => {
