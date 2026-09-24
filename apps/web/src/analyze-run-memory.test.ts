@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import {
   clearRememberedAnalyzeRunsForTests,
+  displayedAnalyzeEmailCounts,
   isAnalyzeRunInProgress,
   readRememberedAnalyzeRun,
   rememberAnalyzeRun,
@@ -14,8 +15,10 @@ const progress = {
   existing: 8,
   assigned: 10,
   classifyQueued: 4,
+  classifySkipped: 8,
   conflicts: 0,
   failed: 0,
+  unavailable: 0,
   foldersDone: 1,
   foldersTotal: 6,
   errorMessage: null,
@@ -35,5 +38,11 @@ describe('email analysis progress memory', () => {
     expect(isAnalyzeRunInProgress('RUNNING')).toBe(true)
     expect(isAnalyzeRunInProgress('COMPLETED')).toBe(false)
     expect(isAnalyzeRunInProgress('FAILED')).toBe(false)
+  })
+
+  it('shows 200 examined when a saved run double-counted 100 existing emails', () => {
+    expect(
+      displayedAnalyzeEmailCounts({ processed: 300, created: 100, existing: 100 }).processed
+    ).toBe(200)
   })
 })

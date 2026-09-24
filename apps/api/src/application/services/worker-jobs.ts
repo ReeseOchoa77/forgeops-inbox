@@ -5,6 +5,7 @@ import {
   capabilitiesForJob,
   connectionIdFromScheduledSyncJobId,
   displayStateForBull,
+  displayedProjectFolderAnalyzeProgress,
   historicalImportJobId,
   buildMailboxReclassifyJobId,
   buildProjectFolderEmailAnalyzeJobId,
@@ -344,8 +345,22 @@ async function loadRuns(
       const progress = asRecord(row.progress);
       const foldersDone = typeof progress.foldersDone === "number" ? progress.foldersDone : 0;
       const foldersTotal = typeof progress.foldersTotal === "number" ? progress.foldersTotal : 0;
-      const processed = typeof progress.processed === "number" ? progress.processed : 0;
+      const created = typeof progress.created === "number" ? progress.created : 0;
+      const existing = typeof progress.existing === "number" ? progress.existing : 0;
+      const rawProcessed = typeof progress.processed === "number" ? progress.processed : 0;
+      const shown = displayedProjectFolderAnalyzeProgress({
+        processed: rawProcessed,
+        created,
+        existing,
+      });
       const folderName = typeof progress.currentFolderName === "string" ? progress.currentFolderName : null;
+      const stageParts = [
+        folderName ? `Processing ${folderName}` : null,
+        `${foldersDone}/${foldersTotal} folders completed`,
+        `${shown.processed} examined`,
+        `${shown.created} new`,
+        `${shown.existing} existing`,
+      ].filter((part): part is string => Boolean(part));
       map.set(row.id, {
         status: row.status,
         errorMessage: row.errorMessage,
@@ -353,7 +368,7 @@ async function loadRuns(
           foldersDone,
           foldersTotal > 0 ? foldersTotal : null,
           "folders",
-          folderName ? `${folderName} · ${processed} messages` : `${processed} messages`
+          stageParts.join(" · ")
         ),
       });
     }

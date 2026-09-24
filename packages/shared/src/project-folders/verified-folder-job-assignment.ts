@@ -80,3 +80,44 @@ export function emptyProjectFolderEmailAnalyzeProgress(): import("../types/jobs.
     unavailable: 0,
   };
 }
+
+/**
+ * Count each provider message once.
+ * Import reports an existing row in both updatedMessageIds and duplicateMessageIds.
+ * Adding those lengths together counts the same email twice.
+ * A message created and then seen again in the same page counts as created.
+ */
+export function addProjectFolderMessageOutcomes(
+  progress: import("../types/jobs.js").ProjectFolderEmailAnalyzeProgress,
+  input: {
+    createdMessageIds?: string[] | null | undefined;
+    updatedMessageIds?: string[] | null | undefined;
+    duplicateMessageIds?: string[] | null | undefined;
+  }
+): void {
+  const created = new Set(input.createdMessageIds ?? []);
+  const existing = new Set([
+    ...(input.updatedMessageIds ?? []),
+    ...(input.duplicateMessageIds ?? []),
+  ]);
+  for (const id of created) existing.delete(id);
+  progress.created += created.size;
+  progress.existing += existing.size;
+  progress.processed += created.size + existing.size;
+}
+
+/**
+ * Runs saved before the double-count fix stored
+ * processed = created + existing + existing.
+ * Show the unique total for that exact shape.
+ */
+export function displayedProjectFolderAnalyzeProgress<
+  T extends { processed: number; created: number; existing: number },
+>(progress: T): T {
+  const unique = progress.created + progress.existing;
+  const doubled = progress.created + progress.existing * 2;
+  if (progress.existing > 0 && progress.processed === doubled) {
+    return { ...progress, processed: unique };
+  }
+  return progress;
+}

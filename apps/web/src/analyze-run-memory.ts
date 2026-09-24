@@ -6,8 +6,10 @@ export type AnalyzeRunProgressView = {
   existing: number
   assigned: number
   classifyQueued: number
+  classifySkipped: number
   conflicts: number
   failed: number
+  unavailable: number
   foldersDone: number
   foldersTotal: number
   errorMessage: string | null
@@ -26,6 +28,18 @@ export function analyzeRunMemoryKey(workspaceId: string, connectionId: string): 
 
 export function isAnalyzeRunInProgress(status: string): boolean {
   return status === 'PENDING' || status === 'RUNNING'
+}
+
+/** Matches displayedProjectFolderAnalyzeProgress in shared. */
+export function displayedAnalyzeEmailCounts<T extends { processed: number; created: number; existing: number }>(
+  progress: T
+): T {
+  const unique = progress.created + progress.existing
+  const doubled = progress.created + progress.existing * 2
+  if (progress.existing > 0 && progress.processed === doubled) {
+    return { ...progress, processed: unique }
+  }
+  return progress
 }
 
 export function rememberAnalyzeRun(

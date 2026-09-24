@@ -8,6 +8,7 @@ import {
   type ProjectFolderScanSummary,
 } from '../api'
 import {
+  displayedAnalyzeEmailCounts,
   isAnalyzeRunInProgress,
   readRememberedAnalyzeRun,
   rememberAnalyzeRun,
@@ -336,23 +337,28 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
         existing: number
         assigned: number
         classifyQueued: number
+        classifySkipped?: number
         conflicts: number
         failed: number
+        unavailable?: number
         foldersDone: number
         foldersTotal: number
       }
     }
   ) => {
+    const counts = displayedAnalyzeEmailCounts(run.progress)
     const progress: AnalyzeRunProgressView = {
       status: run.status,
       currentFolderName: run.progress.currentFolderName,
-      processed: run.progress.processed,
-      created: run.progress.created,
-      existing: run.progress.existing,
+      processed: counts.processed,
+      created: counts.created,
+      existing: counts.existing,
       assigned: run.progress.assigned,
       classifyQueued: run.progress.classifyQueued,
+      classifySkipped: run.progress.classifySkipped ?? 0,
       conflicts: run.progress.conflicts,
       failed: run.progress.failed,
+      unavailable: run.progress.unavailable ?? 0,
       foldersDone: run.progress.foldersDone,
       foldersTotal: run.progress.foldersTotal,
       errorMessage: run.errorMessage,
@@ -737,16 +743,41 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
             </div>
             {analyzeProgress && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <span>
-                  Folders {analyzeProgress.foldersDone}/{analyzeProgress.foldersTotal}
+                <span title="A folder is completed after every message page in that folder has been handled.">
+                  Folders completed: {analyzeProgress.foldersDone} / {analyzeProgress.foldersTotal}
                 </span>
-                <span>Emails processed: {analyzeProgress.processed}</span>
-                <span>Created: {analyzeProgress.created}</span>
-                <span>Reused: {analyzeProgress.existing}</span>
-                <span>Job assigned: {analyzeProgress.assigned}</span>
-                <span>Classify queued: {analyzeProgress.classifyQueued}</span>
-                <span>Conflicts: {analyzeProgress.conflicts}</span>
-                <span>Failed: {analyzeProgress.failed}</span>
+                {analyzeProgress.currentFolderName && (
+                  <span>Processing: {analyzeProgress.currentFolderName}</span>
+                )}
+                <span title="Each provider message persisted in this run, counted once.">
+                  Emails examined: {analyzeProgress.processed}
+                </span>
+                <span title="New email records created in ForgeOps.">
+                  New: {analyzeProgress.created}
+                </span>
+                <span title="Emails already in ForgeOps. The existing record was updated instead of creating a duplicate.">
+                  Already imported: {analyzeProgress.existing}
+                </span>
+                <span title="Emails that belong to the folder's job, including ones that were already on that job. A new assignment and an already-correct assignment both count.">
+                  On this job: {analyzeProgress.assigned}
+                </span>
+                <span title="Emails with no classification yet, sent to the classification worker. Emails that already have a classification are not queued again.">
+                  Classification queued: {analyzeProgress.classifyQueued}
+                </span>
+                <span title="Emails that already had a classification, so this run did not queue another one.">
+                  Already classified: {analyzeProgress.classifySkipped}
+                </span>
+                <span title="Emails with a user assignment to a different job. That assignment was left in place.">
+                  Conflicts: {analyzeProgress.conflicts}
+                </span>
+                <span title="Folders or messages that hit an error during this run.">
+                  Failed: {analyzeProgress.failed}
+                </span>
+                {analyzeProgress.unavailable > 0 && (
+                  <span title="Imported ids that could not be loaded again for job assignment.">
+                    Unavailable: {analyzeProgress.unavailable}
+                  </span>
+                )}
               </div>
             )}
           </div>

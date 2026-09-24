@@ -3,6 +3,7 @@ import {
   TokenCipher,
   ensureMailboxClassifyJob,
   emptyProjectFolderEmailAnalyzeProgress,
+  addProjectFolderMessageOutcomes,
   resolveVerifiedFolderJobAssignment,
   VERIFIED_PROJECT_FOLDER_SOURCE,
   type AttachmentIngestJobPayload,
@@ -331,12 +332,11 @@ export async function processProjectFolderEmailAnalyze(
           continue;
         }
 
-        progress.created += importResult.createdMessageIds?.length ?? 0;
-        progress.existing += importResult.updatedMessageIds?.length ?? 0;
-        progress.processed +=
-          (importResult.createdMessageIds?.length ?? 0) +
-          (importResult.updatedMessageIds?.length ?? 0) +
-          (importResult.duplicateMessageIds?.length ?? 0);
+        addProjectFolderMessageOutcomes(progress, {
+          createdMessageIds: importResult.createdMessageIds,
+          updatedMessageIds: importResult.updatedMessageIds,
+          duplicateMessageIds: importResult.duplicateMessageIds,
+        });
 
         const messageIds = [
           ...(importResult.createdMessageIds ?? []),
