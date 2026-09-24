@@ -22,6 +22,8 @@ import {
 } from '../job-detail-cache'
 import { invalidateJobsListCache } from '../jobs-list-cache'
 import { jobSettingsUpdateBody } from '../job-settings-payload'
+import { formatHoursNumber, formatJobCost, formatOverviewDate, partyLabel } from '../job-overview-format'
+import { JobFabricationScope } from './JobFabricationScope'
 
 interface Props {
   workspaceId: string
@@ -32,46 +34,6 @@ interface Props {
   breakpoint?: Breakpoint
   /** Optional list-row shell for instant paint before getJob returns. */
   initialJob?: JobSummary | null
-}
-
-type ThreadSummary = {
-  threadId: string
-  latestMessageId: string
-  inboxConnectionId: string
-  subject: string | null
-  messageCount: number
-  latestAt: string
-  participants: string[]
-  snippet: string | null
-}
-
-function groupEmailsByThread(emails: JobEmail[]): ThreadSummary[] {
-  const map = new Map<string, JobEmail[]>()
-  for (const email of emails) {
-    const key = email.threadId || email.id
-    const list = map.get(key) ?? []
-    list.push(email)
-    map.set(key, list)
-  }
-  return [...map.entries()]
-    .map(([threadId, msgs]) => {
-      const sorted = [...msgs].sort(
-        (a, b) => new Date(b.sentAt || b.receivedAt || 0).getTime() - new Date(a.sentAt || a.receivedAt || 0).getTime()
-      )
-      const latest = sorted[0]!
-      const participants = [...new Set(msgs.map(m => m.senderName ?? m.senderEmail))]
-      return {
-        threadId,
-        latestMessageId: latest.id,
-        inboxConnectionId: latest.inboxConnectionId,
-        subject: latest.subject,
-        messageCount: msgs.length,
-        latestAt: latest.sentAt || latest.receivedAt || '',
-        participants,
-        snippet: latest.snippet ?? null,
-      }
-    })
-    .sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime())
 }
 
 type Tab = 'overview' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
@@ -126,11 +88,21 @@ function Card({ title, children, style: s }: { title?: string; children: React.R
   )
 }
 
-function MetricCard({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
+function PartyCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' }}>
+      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>{value}</div>
+    </div>
+  )
+}
+
+function MetricCard({ label, value, hint, accent }: { label: string; value: string | number; hint?: string; accent?: string }) {
   return (
     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14, textAlign: 'center' }}>
       <div style={{ fontSize: 22, fontWeight: 700, color: accent ?? '#111' }}>{value}</div>
       <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>{label}</div>
+      {hint && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{hint}</div>}
     </div>
   )
 }
@@ -199,6 +171,13 @@ export function JobDetailView({
   const [editNotes, setEditNotes] = useState('')
   const [editStartDate, setEditStartDate] = useState('')
   const [editTargetDate, setEditTargetDate] = useState('')
+  const [editBidDue, setEditBidDue] = useState('')
+  const [editTotalCost, setEditTotalCost] = useState('')
+  const [editEstimatorId, setEditEstimatorId] = useState('')
+  const [editContractorId, setEditContractorId] = useState('')
+  const [editClientId, setEditClientId] = useState('')
+  const [partyMembers, setPartyMembers] = useState<Array<{ id: string; name: string | null; email: string }>>([])
+  const [partyCustomers, setPartyCustomers] = useState<Array<{ id: string; name: string }>>([])
   const [newAlias, setNewAlias] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -219,6 +198,11 @@ export function JobDetailView({
     setEditNotes(j.notes ?? '')
     setEditStartDate(j.startDate?.split('T')[0] ?? '')
     setEditTargetDate(j.targetCompletionDate?.split('T')[0] ?? '')
+    setEditBidDue(j.bidDueAt?.split('T')[0] ?? '')
+    setEditTotalCost(j.totalCost ?? '')
+    setEditEstimatorId(j.estimatorUserId ?? '')
+    setEditContractorId(j.contractorCustomerId ?? '')
+    setEditClientId(j.clientCustomerId ?? '')
   }
 
   const loadJob = useCallback(async () => {
@@ -284,12 +268,22 @@ export function JobDetailView({
   }, [showMoveModal, workspaceId, allJobs.length, jobsLookupLoading])
 
   useEffect(() => {
-    if (tab === 'overview') {
+    if (tab === 'documents') {
       api.getJobEmails(workspaceId, jobId, 1, 20)
         .then(r => setOverviewEmails(r.emails))
         .catch(() => setOverviewEmails([]))
     }
   }, [tab, workspaceId, jobId])
+
+  useEffect(() => {
+    if (tab !== 'settings') return
+    api.getJobPartyOptions(workspaceId)
+      .then(r => {
+        setPartyMembers(r.members)
+        setPartyCustomers(r.customers)
+      })
+      .catch(() => {})
+  }, [tab, workspaceId])
 
   const applyEmailPage = useCallback((page: number, incoming: JobEmail[], totalPages: number, totalCount: number, replace: boolean) => {
     setEmails(prev => {
@@ -442,6 +436,11 @@ export function JobDetailView({
         notes: editNotes,
         startDate: editStartDate,
         targetCompletionDate: editTargetDate,
+        bidDueDate: editBidDue,
+        totalCost: editTotalCost,
+        estimatorUserId: editEstimatorId,
+        contractorCustomerId: editContractorId,
+        clientCustomerId: editClientId,
       }))
       setJob((prev) => {
         if (!prev) return prev
@@ -455,6 +454,13 @@ export function JobDetailView({
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleRemoveFromBidding = async () => {
+    if (!confirm('Remove this project from active bidding? The project, emails, and tasks stay. The status becomes Lead.')) return
+    await api.removeJobFromBidding(workspaceId, jobId)
+    invalidateJobDetailCache(workspaceId, jobId)
+    loadJob()
   }
 
   const handleArchive = async () => {
@@ -632,7 +638,6 @@ export function JobDetailView({
   const openTasks = tasks.filter(t => t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'BLOCKED')
   const completedTasks = tasks.filter(t => t.status === 'DONE')
   const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
-  const overviewThreads = groupEmailsByThread(overviewEmails)
 
   return (
     <div style={{ padding: isPhone ? 12 : 24 }}>
@@ -642,14 +647,33 @@ export function JobDetailView({
           onClick={onBack}
           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#6b7280', marginBottom: 8, padding: 0, minHeight: 44, display: 'inline-flex', alignItems: 'center' }}
         >
-          &larr; Back to Jobs
+          &larr; Back
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0, fontSize: isPhone ? 18 : 22, fontWeight: 700 }}>{job.name}</h2>
           {job.jobNumber && <span style={{ fontSize: 13, color: '#6b7280', fontFamily: 'monospace' }}>#{job.jobNumber}</span>}
           <StatusBadge status={job.status} />
+          {job.status === 'BIDDING' && canEdit && (
+            <button
+              type="button"
+              onClick={() => void handleRemoveFromBidding()}
+              style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '1px solid #d0d5dd', background: '#fff', cursor: 'pointer' }}
+            >
+              Remove from Bidding
+            </button>
+          )}
           {job.archivedAt && <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 500 }}>ARCHIVED</span>}
           {refreshing && <span style={{ fontSize: 11, color: '#9ca3af' }}>Updating…</span>}
+        </div>
+        <div style={{ marginTop: 8, fontSize: 13, color: '#374151' }}>
+          <span style={{ color: '#6b7280' }}>Start Date</span>{' '}
+          <strong>{formatOverviewDate(job.startDate)}</strong>
+          {job.status === 'BIDDING' && (
+            <span style={{ marginLeft: 16 }}>
+              <span style={{ color: '#6b7280' }}>Bid due</span>{' '}
+              <strong>{job.bidDueAt ? formatOverviewDate(job.bidDueAt) : 'Not set'}</strong>
+            </span>
+          )}
         </div>
       </div>
 
@@ -675,120 +699,42 @@ export function JobDetailView({
       {/* Overview Tab */}
       {tab === 'overview' && (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
-            <MetricCard label="Total Emails" value={job.emailCount} />
-            <MetricCard label="Emails (7d)" value={job.recentEmails7d} />
-            <MetricCard label="Emails (30d)" value={job.recentEmails30d} />
-            <MetricCard label="Open Tasks" value={job.openTaskCount} accent={job.openTaskCount > 0 ? '#2563eb' : undefined} />
-            <MetricCard label="Overdue Tasks" value={job.overdueTaskCount} accent={job.overdueTaskCount > 0 ? '#dc2626' : undefined} />
-            <MetricCard label="Completed Tasks" value={job.completedTaskCount} accent="#16a34a" />
-            <MetricCard label="Attachments" value={job.attachmentCount} />
-            <MetricCard label="Next Due" value={job.nextDueDate ? formatDate(job.nextDueDate) : '—'} />
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <MetricCard label="Total Cost" value={formatJobCost(job.totalCost)} />
+            <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
+            <MetricCard
+              label="Open Tasks"
+              value={job.openTaskCount.toLocaleString('en-US')}
+              hint={job.overdueTaskCount > 0 ? `${job.overdueTaskCount} overdue` : undefined}
+              accent={job.openTaskCount > 0 ? '#2563eb' : undefined}
+            />
+            <MetricCard
+              label="Estimated Hours"
+              value={job.estimatedHours == null ? '—' : formatHoursNumber(job.estimatedHours)}
+            />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 16 }}>
-            <Card title="Details">
-              <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
-                <div><span style={{ color: '#6b7280' }}>Customer:</span> <strong>{job.customerName ?? '—'}</strong></div>
-                <div><span style={{ color: '#6b7280' }}>Start Date:</span> {formatDate(job.startDate)}</div>
-                <div><span style={{ color: '#6b7280' }}>Target Completion:</span> {formatDate(job.targetCompletionDate)}</div>
-                <div><span style={{ color: '#6b7280' }}>Last Activity:</span> {formatDateTime(job.lastActivityAt)}</div>
-                <div><span style={{ color: '#6b7280' }}>Created:</span> {formatDate(job.createdAt)}</div>
-                {job.description && <div style={{ marginTop: 8, color: '#374151', lineHeight: 1.5 }}>{job.description}</div>}
-              </div>
-            </Card>
-
-            <Card title="Team">
-              {members.length === 0 ? (
-                <div style={{ color: '#888', fontSize: 13 }}>No members assigned</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {members.map(m => (
-                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{
-                        width: 28, height: 28, borderRadius: '50%', background: '#e0e7ff',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 11, fontWeight: 600, color: '#4338ca'
-                      }}>
-                        {(m.name ?? m.email)[0].toUpperCase()}
-                      </span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{m.name ?? m.email}</div>
-                        {m.role && <div style={{ fontSize: 11, color: '#6b7280' }}>{m.role}</div>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
+            <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
+            <PartyCard label="Contractor" value={partyLabel(job.contractorName)} />
+            <PartyCard label="Client" value={partyLabel(job.clientName)} />
           </div>
 
-          {aliases.length > 0 && (
-            <Card title="Email Aliases" style={{ marginTop: 16 }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {aliases.map(a => (
-                  <span key={a.id} style={{ padding: '4px 10px', background: '#f3f4f6', borderRadius: 12, fontSize: 12 }}>
-                    {a.alias}
-                  </span>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          <Card title="Emails & Threads" style={{ marginTop: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: '#6b7280' }}>
-                {overviewThreads.length} thread{overviewThreads.length !== 1 ? 's' : ''}
-                {overviewEmails.length > 0 && ` · ${overviewEmails.length} message${overviewEmails.length !== 1 ? 's' : ''}`}
-              </div>
-              <button
-                onClick={() => setTab('emails')}
-                style={{ background: 'none', border: 'none', color: '#1565c0', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}
-              >
-                View all →
-              </button>
-            </div>
-            {overviewThreads.length === 0 ? (
-              <div style={{ fontSize: 13, color: '#888', padding: '8px 0' }}>No emails assigned to this job yet.</div>
-            ) : (
-              <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden', maxHeight: 360, overflowY: 'auto' }}>
-                {overviewThreads.slice(0, 12).map((thread, i) => (
-                  <button
-                    key={thread.threadId}
-                    type="button"
-                    onClick={() => openThread(thread.latestMessageId, thread.inboxConnectionId)}
-                    style={{
-                      width: '100%', textAlign: 'left', padding: '12px 14px', display: 'block',
-                      border: 'none', borderBottom: i < Math.min(overviewThreads.length, 12) - 1 ? '1px solid #f3f4f6' : undefined,
-                      background: '#fff', cursor: onOpenMessage ? 'pointer' : 'default',
-                    }}
-                    onMouseOver={e => { if (onOpenMessage) e.currentTarget.style.background = '#f8fafc' }}
-                    onMouseOut={e => { e.currentTarget.style.background = '#fff' }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {thread.subject ?? '(no subject)'}
-                        </div>
-                        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {thread.participants.slice(0, 3).join(', ')}
-                          {thread.messageCount > 1 && (
-                            <span style={{ marginLeft: 8, color: '#9ca3af' }}>{thread.messageCount} messages</span>
-                          )}
-                        </div>
-                        {thread.snippet && (
-                          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {thread.snippet}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{formatDateTime(thread.latestAt)}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </Card>
+          <JobFabricationScope
+            workspaceId={workspaceId}
+            jobId={jobId}
+            items={job.fabricationItems ?? []}
+            canEdit={canEdit}
+            isPhone={isPhone}
+            onUpdated={(items, estimatedHours) => {
+              setJob(prev => {
+                if (!prev) return prev
+                const next = { ...prev, fabricationItems: items, estimatedHours }
+                setCachedJobDetail(workspaceId, jobId, next)
+                return next
+              })
+            }}
+          />
         </div>
       )}
 
@@ -1463,6 +1409,48 @@ export function JobDetailView({
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Target Completion</label>
                   <input type="date" value={editTargetDate} onChange={e => setEditTargetDate(e.target.value)} disabled={!canEdit}
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Bid due</label>
+                <input type="date" value={editBidDue} onChange={e => setEditBidDue(e.target.value)} disabled={!canEdit}
+                  style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Total Cost</label>
+                <input value={editTotalCost} onChange={e => setEditTotalCost(e.target.value)} disabled={!canEdit} placeholder="Not set"
+                  style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Estimator</label>
+                  <select value={editEstimatorId} onChange={e => setEditEstimatorId(e.target.value)} disabled={!canEdit}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                    <option value="">Not assigned</option>
+                    {partyMembers.map(member => (
+                      <option key={member.id} value={member.id}>{member.name || member.email}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Contractor</label>
+                  <select value={editContractorId} onChange={e => setEditContractorId(e.target.value)} disabled={!canEdit}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                    <option value="">Not assigned</option>
+                    {partyCustomers.map(customer => (
+                      <option key={customer.id} value={customer.id}>{customer.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Client</label>
+                  <select value={editClientId} onChange={e => setEditClientId(e.target.value)} disabled={!canEdit}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
+                    <option value="">Not assigned</option>
+                    {partyCustomers.map(customer => (
+                      <option key={customer.id} value={customer.id}>{customer.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div>

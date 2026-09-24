@@ -1605,9 +1605,71 @@ export const api = {
   updateJob: (workspaceId: string, jobId: string, data: {
     name?: string; jobNumber?: string; status?: string; customerId?: string | null;
     description?: string; notes?: string; startDate?: string | null; targetCompletionDate?: string | null;
+    bidDueAt?: string | null; totalCost?: number | null; estimatorUserId?: string | null;
+    contractorCustomerId?: string | null; clientCustomerId?: string | null;
   }) => request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`, {
     method: 'PUT', body: JSON.stringify(data)
   }),
+
+  getJobPartyOptions: (workspaceId: string) =>
+    request<{ members: Array<{ id: string; name: string | null; email: string }>; customers: Array<{ id: string; name: string }> }>(
+      `/workspaces/${workspaceId}/jobs/party-options`
+    ),
+
+  createJobFabricationItem: (workspaceId: string, jobId: string, data: { name: string; quantity: number; estimatedHoursPerPiece: number }) =>
+    request<{ items: JobFabricationItem[]; estimatedHours: number }>(`/workspaces/${workspaceId}/jobs/${jobId}/fabrication-items`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  updateJobFabricationItem: (workspaceId: string, jobId: string, itemId: string, data: { name?: string; quantity?: number; estimatedHoursPerPiece?: number; sortOrder?: number }) =>
+    request<{ items: JobFabricationItem[]; estimatedHours: number }>(`/workspaces/${workspaceId}/jobs/${jobId}/fabrication-items/${itemId}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }),
+
+  deleteJobFabricationItem: (workspaceId: string, jobId: string, itemId: string) =>
+    request<{ items: JobFabricationItem[]; estimatedHours: number }>(`/workspaces/${workspaceId}/jobs/${jobId}/fabrication-items/${itemId}`, {
+      method: 'DELETE',
+    }),
+
+  reorderJobFabricationItems: (workspaceId: string, jobId: string, ids: string[]) =>
+    request<{ items: JobFabricationItem[]; estimatedHours: number }>(`/workspaces/${workspaceId}/jobs/${jobId}/fabrication-order`, {
+      method: 'PUT', body: JSON.stringify({ ids }),
+    }),
+
+  getBidding: (workspaceId: string, params?: { search?: string; due?: string; sort?: string }) => {
+    const p = new URLSearchParams()
+    if (params?.search) p.set('search', params.search)
+    if (params?.due) p.set('due', params.due)
+    if (params?.sort) p.set('sort', params.sort)
+    const qs = p.toString()
+    return request<{
+      summary: { active: number; dueThisWeek: number; pastDue: number; unread: number }
+      bids: BiddingProject[]
+    }>(`/workspaces/${workspaceId}/bidding${qs ? `?${qs}` : ''}`)
+  },
+
+  addEmailToBidding: (workspaceId: string, data: {
+    messageId: string
+    action: 'use_job' | 'create'
+    jobId?: string
+    name?: string
+    jobNumber?: string | null
+    customerId?: string | null
+    bidDueAt?: string | null
+    confirmMove?: boolean
+  }) => request<{
+    job: { id: string; name: string; jobNumber: string | null; status: string }
+    assigned: number
+  }>(`/workspaces/${workspaceId}/bidding/from-email`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  removeJobFromBidding: (workspaceId: string, jobId: string) =>
+    request<{ jobId: string; status: string }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/remove-from-bidding`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
 
   archiveJob: (workspaceId: string, jobId: string) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/archive`, {
@@ -2176,6 +2238,30 @@ export interface JobLibraryFile {
   previewable: boolean;
 }
 
+export interface BiddingProject {
+  id: string
+  name: string
+  jobNumber: string | null
+  status: string
+  customerId: string | null
+  customerName: string | null
+  bidDueAt: string | null
+  emailCount: number
+  threadCount: number
+  unreadCount: number
+  lastActivityAt: string | null
+  recentSender: string | null
+}
+
+export interface JobFabricationItem {
+  id: string;
+  name: string;
+  quantity: number;
+  estimatedHoursPerPiece: number;
+  totalHours: number;
+  sortOrder: number;
+}
+
 export interface JobSummary {
   id: string;
   jobNumber: string | null;
@@ -2184,8 +2270,10 @@ export interface JobSummary {
   customerId: string | null;
   customerName: string | null;
   description: string | null;
+  totalCost?: string | null;
   startDate: string | null;
   targetCompletionDate: string | null;
+  bidDueAt?: string | null;
   archivedAt: string | null;
   createdAt: string;
   emailCount: number;
@@ -2199,10 +2287,19 @@ export interface JobSummary {
 export interface JobDetail extends JobSummary {
   notes: string | null;
   externalRef: string | null;
-  completedTaskCount: number;
-  recentEmails7d: number;
-  recentEmails30d: number;
+  completedTaskCount?: number;
+  recentEmails7d?: number;
+  recentEmails30d?: number;
   attachmentCount: number;
+  totalCost: string | null;
+  estimatedHours: number | null;
+  estimatorUserId: string | null;
+  estimatorName: string | null;
+  contractorCustomerId: string | null;
+  contractorName: string | null;
+  clientCustomerId: string | null;
+  clientName: string | null;
+  fabricationItems: JobFabricationItem[];
   members: Array<{ id: string; userId: string; name: string | null; email: string; role: string | null; createdAt: string }>;
   aliases: Array<{ id: string; alias: string; normalizedAlias: string }>;
 }

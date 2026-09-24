@@ -64,7 +64,12 @@ export function clearJobDetailCacheForTests(): void {
  */
 export function mergeJobDetailAfterUpdate(
   prev: JobDetail,
-  updated: Partial<JobDetail> & { customer?: { name?: string | null } | null }
+  updated: Partial<JobDetail> & {
+    customer?: { name?: string | null } | null
+    estimator?: { name?: string | null } | null
+    contractor?: { name?: string | null } | null
+    client?: { name?: string | null } | null
+  }
 ): JobDetail {
   return {
     ...prev,
@@ -78,6 +83,28 @@ export function mergeJobDetailAfterUpdate(
       updated.targetCompletionDate !== undefined
         ? updated.targetCompletionDate
         : prev.targetCompletionDate,
+    bidDueAt: updated.bidDueAt !== undefined ? updated.bidDueAt : prev.bidDueAt,
+    totalCost: updated.totalCost !== undefined
+      ? (updated.totalCost == null ? null : String(updated.totalCost))
+      : prev.totalCost,
+    estimatorUserId: updated.estimatorUserId !== undefined ? updated.estimatorUserId : prev.estimatorUserId,
+    estimatorName: updated.estimatorName !== undefined
+      ? updated.estimatorName
+      : updated.estimator !== undefined
+        ? (updated.estimator?.name ?? null)
+        : prev.estimatorName,
+    contractorCustomerId: updated.contractorCustomerId !== undefined ? updated.contractorCustomerId : prev.contractorCustomerId,
+    contractorName: updated.contractorName !== undefined
+      ? updated.contractorName
+      : updated.contractor !== undefined
+        ? (updated.contractor?.name ?? null)
+        : prev.contractorName,
+    clientCustomerId: updated.clientCustomerId !== undefined ? updated.clientCustomerId : prev.clientCustomerId,
+    clientName: updated.clientName !== undefined
+      ? updated.clientName
+      : updated.client !== undefined
+        ? (updated.client?.name ?? null)
+        : prev.clientName,
     customerId: updated.customerId !== undefined ? updated.customerId : prev.customerId,
     customerName: updated.customerName ?? updated.customer?.name ?? prev.customerName,
     archivedAt: updated.archivedAt !== undefined ? updated.archivedAt : prev.archivedAt,
@@ -96,9 +123,16 @@ export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
     notes: null,
     externalRef: null,
     completedTaskCount: 0,
-    recentEmails7d: 0,
-    recentEmails30d: 0,
     attachmentCount: 0,
+    totalCost: summary.totalCost ?? null,
+    estimatedHours: null,
+    estimatorUserId: null,
+    estimatorName: null,
+    contractorCustomerId: null,
+    contractorName: null,
+    clientCustomerId: null,
+    clientName: null,
+    fabricationItems: [],
     members: (summary.assignedMembers ?? []).map((m, i) => ({
       id: `shell-${m.userId}-${i}`,
       userId: m.userId,

@@ -9,6 +9,15 @@ import {
   setCachedJobsList,
 } from '../jobs-list-cache'
 import { isCurrentJobsRequest, JOBS_SEARCH_DEBOUNCE_MS } from '../jobs-search'
+import { formatJobCost } from '../job-overview-format'
+import {
+  getJobListSort,
+  JOB_LIST_SORT_OPTIONS,
+  jobListSortFromValue,
+  jobListSortValue,
+  setJobListSort,
+  type JobListSortDir,
+} from '../job-list-sort'
 
 interface Props {
   workspaceId: string
@@ -91,8 +100,9 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [totalCount, setTotalCount] = useState(0)
   const [workspaceJobsTotal, setWorkspaceJobsTotal] = useState<number | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const [sortBy, setSortBy] = useState('createdAt')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const initialSort = getJobListSort()
+  const [sortBy, setSortBy] = useState(initialSort.sortBy)
+  const [sortDir, setSortDir] = useState<JobListSortDir>(initialSort.sortDir)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
@@ -139,6 +149,10 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     const t = window.setTimeout(() => setDebouncedSearch(search), JOBS_SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(t)
   }, [search])
+
+  useEffect(() => {
+    setJobListSort({ sortBy, sortDir })
+  }, [sortBy, sortDir])
 
   const filterParams = {
     status: statusFilter !== 'ALL' ? statusFilter : undefined,
@@ -334,8 +348,32 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     zIndex: 1,
   })
 
+  const sortValue = jobListSortValue({ sortBy, sortDir })
+  const sortKnown = JOB_LIST_SORT_OPTIONS.some((option) => option.value === sortValue)
+  const sortControl = (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151' }}>
+      Sort
+      <select
+        aria-label="Sort jobs"
+        value={sortValue}
+        onChange={(e) => {
+          const next = jobListSortFromValue(e.target.value)
+          setSortBy(next.sortBy)
+          setSortDir(next.sortDir)
+        }}
+        style={{ padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', minHeight: 36 }}
+      >
+        {!sortKnown && <option value={sortValue}>{sortBy}</option>}
+        {JOB_LIST_SORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  )
+
   const renderPhoneFilters = () => (
     <div>
+      <div style={{ marginBottom: 10 }}>{sortControl}</div>
       <input
         type="text"
         placeholder="Search by job number, name, or customer..."
@@ -409,6 +447,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
 
   const renderDesktopFilters = () => (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      {sortControl}
       <input
         type="text"
         placeholder="Search by job number, name, or customer..."
@@ -488,7 +527,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
             {job.customerName ?? '—'}
           </div>
-          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#6b7280' }}>
+          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
+            <span>{formatJobCost(job.totalCost)}</span>
             <span>✉ {job.emailCount}</span>
             <span>☐ {job.openTaskCount} open</span>
             <span style={{ color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
@@ -523,6 +563,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
             <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
             <th style={stickyTh()}>Customer</th>
             <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
+            {!hideExtraCols && <th style={thStyle('startDate')} onClick={() => handleSort('startDate')}>Start{sortIndicator('startDate')}</th>}
+            {!hideExtraCols && <th style={thStyle('totalCost')} onClick={() => handleSort('totalCost')}>Cost{sortIndicator('totalCost')}</th>}
             <th style={stickyTh({ textAlign: 'center' })}>Emails</th>
             <th style={stickyTh({ textAlign: 'center' })}>Open Tasks</th>
             <th style={stickyTh({ textAlign: 'center' })}>Overdue</th>
@@ -546,6 +588,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
               <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
               <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
               <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
+              {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.startDate ? formatDate(job.startDate) : '—'}</td>}
+              {!hideExtraCols && <td style={{ padding: '10px 12px', fontSize: 12 }}>{job.totalCost == null ? '—' : formatJobCost(job.totalCost)}</td>}
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>

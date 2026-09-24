@@ -266,6 +266,7 @@ model User {
   createdCalendarEvents   CalendarEvent[] @relation("CalendarEventCreator")
   classificationCorrections ClassificationCorrection[] @relation("CorrectionReviewer")
   classificationInstructions ClassificationInstruction[] @relation("InstructionCreator")
+  estimatedJobs           Job[]            @relation("JobEstimator")
 }
 
 model ApprovedAccess {
@@ -734,6 +735,8 @@ model Customer {
   updatedAt       DateTime  @updatedAt
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   jobs            Job[]     @relation("JobCustomer")
+  contractorJobs  Job[]     @relation("JobContractor")
+  clientJobs      Job[]     @relation("JobClient")
   classifications Classification[] @relation("ClassificationCustomer")
   tasks           Task[]    @relation("TaskCustomer")
   aliases         EntityAlias[]
@@ -786,12 +789,27 @@ model Job {
   notes                 String?
   startDate             DateTime?
   targetCompletionDate  DateTime?
+  /// Pre-award bid deadline. Independent of start/target completion.
+  bidDueAt              DateTime?
+  /// Entered total cost for the job. Null means unknown, not zero.
+  /// This is not derived from fabrication items.
+  totalCost             Decimal?   @db.Decimal(14, 2)
+  /// Assigned estimator. Distinct from createdByUserId.
+  estimatorUserId       String?
+  /// General contractor, stored as an existing Customer. Distinct from client and from customerId.
+  contractorCustomerId  String?
+  /// End client, stored as an existing Customer. Distinct from the contractor.
+  clientCustomerId      String?
   archivedAt            DateTime?
   createdByUserId       String?
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
   workspace             Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   customer              Customer?  @relation("JobCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
+  estimator             User?      @relation("JobEstimator", fields: [estimatorUserId], references: [id], onDelete: SetNull)
+  contractor            Customer?  @relation("JobContractor", fields: [workspaceId, contractorCustomerId], references: [workspaceId, id], onDelete: SetNull)
+  client                Customer?  @relation("JobClient", fields: [workspaceId, clientCustomerId], references: [workspaceId, id], onDelete: SetNull)
+  fabricationItems      JobFabricationItem[]
   classifications       Classification[] @relation("ClassificationJob")
   tasks                 Task[]     @relation("TaskJob")
   aliases               EntityAlias[]
@@ -809,9 +827,27 @@ model Job {
   @@index([workspaceId, jobNumber])
   @@index([workspaceId, customerId])
   @@index([workspaceId, status])
+  @@index([workspaceId, status, bidDueAt])
   @@index([workspaceId, externalRef])
   @@index([workspaceId, archivedAt])
   @@index([createdByUserId])
+}
+
+/// A piece or assembly this job needs to fabricate.
+/// Total hours are quantity × estimatedHoursPerPiece and are not stored.
+model JobFabricationItem {
+  id                      String   @id @default(cuid())
+  workspaceId             String
+  jobId                   String
+  name                    String
+  quantity                Decimal  @db.Decimal(12, 2)
+  estimatedHoursPerPiece  Decimal  @db.Decimal(10, 2)
+  sortOrder               Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  job                     Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, jobId, sortOrder])
 }
 
 model JobDocumentFolder {

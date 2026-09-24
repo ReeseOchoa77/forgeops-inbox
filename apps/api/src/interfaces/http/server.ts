@@ -74,6 +74,8 @@ import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js"
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
+import { registerJobFabricationRoutes } from "./routes/job-fabrication.route.js";
+import { registerBiddingRoutes } from "./routes/bidding.route.js";
 import { registerTaskBulkRoutes } from "./routes/task-bulk.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
@@ -431,6 +433,8 @@ export const buildServer = async () => {
   await registerEmailAttachmentRoutes(app);
   await registerTestDataAdminRoutes(app);
   await registerJobsRoutes(app);
+  await registerJobFabricationRoutes(app);
+  await registerBiddingRoutes(app);
   await registerTaskBulkRoutes(app);
   await registerJobFilesRoutes(app);
   await registerWorkspacePreferencesRoutes(app);

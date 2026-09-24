@@ -15,6 +15,7 @@ import {
   formatJobPrimaryLabel,
   formatJobTooltip,
 } from '../components/JobAssignPicker'
+import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 import { prefetchThread } from '../message-thread-cache'
@@ -241,6 +242,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
   const [attachmentPickerOpen, setAttachmentPickerOpen] = useState<string | null>(null)
   const [jobAssigning, setJobAssigning] = useState(false)
+  const [biddingTarget, setBiddingTarget] = useState<MessageSummary | null>(null)
   const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
   /** When on, clicking a list row trashes it instead of opening the email. */
   const [massDeleteMode, setMassDeleteMode] = useState(false)
@@ -933,6 +935,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               }}>Unassigned</span>
             )
           )}
+          {showBusinessChrome && !isViewer && m.job?.status !== 'BIDDING' && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
+              style={{ fontSize: 10, fontWeight: 650, padding: '1px 7px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer' }}
+            >
+              Add to Bidding
+            </button>
+          )}
+          {showBusinessChrome && m.job?.status === 'BIDDING' && (
+            <span style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
+          )}
         </div>
 
         {SHOW_INBOX_SUGGESTED_RESPONSE && showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
@@ -1126,6 +1140,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 ? `Confirm ${formatJobPrimaryLabel(m.suggestedJob, 18)}`
                 : 'Unassigned'}
           </span>
+          {m.job?.status === 'BIDDING' ? (
+            <div style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8', marginTop: 4 }}>Active bid</div>
+          ) : !isViewer ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
+              style={{ display: 'block', marginTop: 4, padding: 0, border: 'none', background: 'none', color: '#1d4ed8', fontSize: 11, fontWeight: 650, cursor: 'pointer' }}
+            >
+              Add to Bidding
+            </button>
+          ) : null}
           {jobPickerOpen === m.id && (
             <JobAssignPicker
               workspaceId={workspaceId}
@@ -1572,6 +1597,31 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         )}
       </div>
+      {biddingTarget && (
+        <AddToBiddingDialog
+          workspaceId={workspaceId}
+          messageId={biddingTarget.id}
+          subject={biddingTarget.subject}
+          businessTypeKey={biddingTarget.classification?.businessTypeKey}
+          currentJob={biddingTarget.job ? {
+            id: biddingTarget.job.id,
+            name: biddingTarget.job.name,
+            status: biddingTarget.job.status,
+            jobNumber: biddingTarget.job.jobNumber,
+          } : null}
+          suggestedJobName={biddingTarget.suggestedJob?.name ?? null}
+          onClose={() => setBiddingTarget(null)}
+          onDone={(job) => {
+            const messageId = biddingTarget.id
+            setMessages((prev) => prev.map((row) => row.id === messageId ? {
+              ...row,
+              job: { id: job.id, name: job.name, jobNumber: job.jobNumber, status: job.status },
+              suggestedJob: null,
+            } : row))
+            setBiddingTarget(null)
+          }}
+        />
+      )}
     </div>
   )
 }

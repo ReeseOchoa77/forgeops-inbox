@@ -17,6 +17,7 @@ import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
 import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
 import { JobsView } from './views/JobsView'
+import { BiddingView } from './views/BiddingView'
 import { JobDetailView } from './views/JobDetailView'
 import { CalendarView } from './views/CalendarView'
 import {
@@ -26,7 +27,7 @@ import {
 } from './mailbox-selection'
 import { prefetchInboxList } from './inbox-list-cache'
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -34,6 +35,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'calendar', label: 'Calendar', icon: '\uD83D\uDCC5' },
+  { page: 'bidding', label: 'Bidding', icon: '\uD83D\uDCCB' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA', section: 'Manage' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
@@ -50,6 +52,7 @@ const PAGE_TITLES: Record<Page, string> = {
   review: 'Email Classification',
   tasks: 'Tasks',
   calendar: 'Calendar',
+  bidding: 'Bidding',
   jobs: 'Jobs',
   'job-detail': 'Job Detail',
   'outlook-folders': 'Email Analysis',
@@ -95,6 +98,7 @@ export default function App() {
   }>>([])
   const [sendableLoading, setSendableLoading] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('')
+  const [jobOrigin, setJobOrigin] = useState<'jobs' | 'bidding'>('jobs')
   const [selectedJobSummary, setSelectedJobSummary] = useState<JobSummary | null>(null)
   const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
   const [workspaceTabHint, setWorkspaceTabHint] = useState<'mailboxes' | 'team' | 'folders'>('mailboxes')
@@ -465,9 +469,10 @@ export default function App() {
     }
   }
 
-  const openJob = (id: string, summary?: JobSummary) => {
+  const openJob = (id: string, summary?: JobSummary, origin: 'jobs' | 'bidding' = 'jobs') => {
     setSelectedJobId(id)
     setSelectedJobSummary(summary && summary.id === id ? summary : null)
+    setJobOrigin(origin)
     setPage('job-detail')
   }
 
@@ -590,7 +595,7 @@ export default function App() {
               )
             )}
             <button
-              className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && item.page === 'jobs') ? 'active' : ''}
+              className={page === item.page || (page === 'message-detail' && item.page === 'inbox') || (page === 'job-detail' && ((jobOrigin === 'bidding' && item.page === 'bidding') || (jobOrigin !== 'bidding' && item.page === 'jobs'))) ? 'active' : ''}
               onClick={() => navigate(item.page)}
               onPointerDown={() => {
                 if (item.page === 'inbox') prefetchInboxFirstPage()
@@ -881,6 +886,16 @@ export default function App() {
             </div>
           )}
 
+          {page === 'bidding' && (
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <BiddingView
+                workspaceId={workspaceId}
+                breakpoint={bp}
+                onOpenBid={(id) => openJob(id, undefined, 'bidding')}
+              />
+            </div>
+          )}
+
           {page === 'jobs' && (
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} breakpoint={bp} />
@@ -897,7 +912,7 @@ export default function App() {
                 }
                 onBack={() => {
                   setSelectedJobSummary(null)
-                  setPage('jobs')
+                  setPage(jobOrigin === 'bidding' ? 'bidding' : 'jobs')
                 }}
                 onOpenMessage={(messageId, inboxConnectionId) =>
                   openMessage(messageId, { connectionId: inboxConnectionId, backPage: 'job-detail' })

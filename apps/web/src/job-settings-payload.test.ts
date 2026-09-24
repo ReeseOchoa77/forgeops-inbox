@@ -38,4 +38,45 @@ describe('jobSettingsUpdateBody', () => {
       targetCompletionDate: null,
     })
   })
+
+  it('sends total cost and the three parties, and clears an empty cost', () => {
+    expect(jobSettingsUpdateBody({
+      name: 'Nova Academy',
+      jobNumber: '26-184',
+      status: 'BIDDING',
+      description: '',
+      notes: '',
+      startDate: '',
+      targetCompletionDate: '',
+      totalCost: '$428,750',
+      estimatorUserId: 'user-1',
+      contractorCustomerId: 'cust-gc',
+      clientCustomerId: 'cust-client',
+    })).toMatchObject({
+      status: 'BIDDING',
+      totalCost: 428750,
+      estimatorUserId: 'user-1',
+      contractorCustomerId: 'cust-gc',
+      clientCustomerId: 'cust-client',
+    })
+
+    expect(jobSettingsUpdateBody({
+      name: 'Nova Academy',
+      jobNumber: '26-184',
+      status: 'ACTIVE',
+      description: '',
+      notes: '',
+      startDate: '',
+      targetCompletionDate: '',
+      totalCost: '',
+      estimatorUserId: '',
+      contractorCustomerId: '',
+      clientCustomerId: '',
+    })).toMatchObject({
+      totalCost: null,
+      estimatorUserId: null,
+      contractorCustomerId: null,
+      clientCustomerId: null,
+    })
+  })
 })

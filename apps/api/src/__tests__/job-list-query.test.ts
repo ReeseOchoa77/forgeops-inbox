@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildJobListWhere } from "../application/services/job-list-query.js";
+import { buildJobListWhere, jobListOrderBy } from "../application/services/job-list-query.js";
 
 const now = new Date("2026-09-24T12:00:00.000Z");
 
@@ -54,5 +57,44 @@ describe("buildJobListWhere", () => {
     expect(where.status).toBe("ACTIVE");
     expect(where.archivedAt).toBeUndefined();
     expect(where.OR).toBeUndefined();
+  });
+});
+
+describe("jobListOrderBy", () => {
+  it("keeps the existing default of newest created jobs", () => {
+    expect(jobListOrderBy("createdAt", "desc")).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
+  });
+
+  it("sorts start date with nulls last in both directions", () => {
+    expect(jobListOrderBy("startDate", "desc")[0]).toEqual({ startDate: { sort: "desc", nulls: "last" } });
+    expect(jobListOrderBy("startDate", "asc")[0]).toEqual({ startDate: { sort: "asc", nulls: "last" } });
+  });
+
+  it("sorts cost with nulls last in both directions", () => {
+    expect(jobListOrderBy("totalCost", "desc")[0]).toEqual({ totalCost: { sort: "desc", nulls: "last" } });
+    expect(jobListOrderBy("totalCost", "asc")[0]).toEqual({ totalCost: { sort: "asc", nulls: "last" } });
+  });
+
+  it("sorts name on the normalized column", () => {
+    expect(jobListOrderBy("name", "asc")[0]).toEqual({ normalizedName: "asc" });
+    expect(jobListOrderBy("name", "desc")[0]).toEqual({ normalizedName: "desc" });
+  });
+
+  it("sorts activity by updatedAt, the list's lastActivityAt", () => {
+    expect(jobListOrderBy("activity", "desc")[0]).toEqual({ updatedAt: "desc" });
+    expect(jobListOrderBy("activity", "asc")[0]).toEqual({ updatedAt: "asc" });
+  });
+
+  it("is applied on the same list query as skip and take, and still filters by workspace", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "../interfaces/http/routes/jobs.route.ts"), "utf8");
+    const listStart = src.indexOf("workspaces/:workspaceId/jobs\",");
+    const listEnd = src.indexOf("Job detail");
+    const list = src.slice(listStart, listEnd);
+    expect(list).toContain("buildJobListWhere");
+    expect(list).toContain("orderBy: jobListOrderBy(query.sortBy, query.sortDir)");
+    expect(list).toContain("skip,");
+    expect(list).toContain("take: query.pageSize");
+    expect(list).not.toContain(".sort(");
   });
 });

@@ -8,6 +8,7 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
+import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
 import {
   AttachmentActionMenu,
   CopyAllAttachmentsButton,
@@ -777,6 +778,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [jobBusy, setJobBusy] = useState(false)
   const [jobError, setJobError] = useState<string | null>(null)
   const [jobPickerOpen, setJobPickerOpen] = useState(false)
+  const [biddingOpen, setBiddingOpen] = useState(false)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
   const emailDebugLoggedForId = useRef<string | null>(null)
@@ -1330,6 +1332,21 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                       >
                         {clickedMessage.job ? 'Change job…' : 'Assign job…'}
                       </button>
+                      {clickedMessage.job?.status === 'BIDDING' ? (
+                        <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setBiddingOpen(true)}
+                          style={{
+                            marginLeft: 8, padding: '4px 10px', fontSize: 12, borderRadius: 5,
+                            border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8',
+                            minHeight: 32, cursor: 'pointer', fontWeight: 650,
+                          }}
+                        >
+                          Add to Bidding
+                        </button>
+                      )}
                       {jobPickerOpen && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 40, marginTop: 4 }}>
                           <JobAssignPicker
@@ -1495,6 +1512,26 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             existingAttachments={composeMode === 'forward' ? forwardAttachments : []}
           />
         </div>
+      )}
+      {biddingOpen && clickedMessage && (
+        <AddToBiddingDialog
+          workspaceId={workspaceId}
+          messageId={clickedMessage.id}
+          subject={clickedMessage.subject}
+          businessTypeKey={clickedMessage.classification?.businessTypeKey}
+          currentJob={clickedMessage.job ? {
+            id: clickedMessage.job.id,
+            name: clickedMessage.job.name,
+            status: clickedMessage.job.status,
+            jobNumber: clickedMessage.job.jobNumber,
+          } : null}
+          suggestedJobName={clickedMessage.suggestedJob?.name ?? null}
+          onClose={() => setBiddingOpen(false)}
+          onDone={() => {
+            setBiddingOpen(false)
+            void loadThread().then(setThreadData).catch(() => {})
+          }}
+        />
       )}
     </div>
   )

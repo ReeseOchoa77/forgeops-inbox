@@ -9,7 +9,8 @@ import {
   normalizeName,
   type JobFileTypeFilter,
 } from "@forgeops/shared";
-import { buildJobListWhere } from "../../../application/services/job-list-query.js";
+import { presentFabricationItem, totalEstimatedHours } from "../../../application/services/job-fabrication.js";
+import { buildJobListWhere, jobListOrderBy } from "../../../application/services/job-list-query.js";
 import { deleteScopedEmailMessages } from "../../../application/services/clear-inbox.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
@@ -52,7 +53,7 @@ const listQuerySchema = z.object({
   assignedUserId: z.string().optional(),
   hasOverdueTasks: z.enum(["true", "false"]).optional().transform(v => v === "true"),
   showArchived: z.enum(["true", "false"]).optional().transform(v => v === "true"),
-  sortBy: z.enum(["name", "jobNumber", "status", "createdAt", "updatedAt", "startDate", "targetCompletionDate"]).default("createdAt"),
+  sortBy: z.enum(["name", "jobNumber", "status", "createdAt", "updatedAt", "activity", "startDate", "targetCompletionDate", "totalCost"]).default("createdAt"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(25),
@@ -86,6 +87,11 @@ const updateJobSchema = z.object({
   notes: z.string().max(5000).nullable().optional(),
   startDate: jobDateInput.nullable().optional(),
   targetCompletionDate: jobDateInput.nullable().optional(),
+  bidDueAt: jobDateInput.nullable().optional(),
+  totalCost: z.union([z.number().nonnegative().max(1_000_000_000_000), z.null()]).optional(),
+  estimatorUserId: z.string().nullable().optional(),
+  contractorCustomerId: z.string().nullable().optional(),
+  clientCustomerId: z.string().nullable().optional(),
 });
 
 function activityJson(value: unknown): Prisma.InputJsonValue {
@@ -155,6 +161,32 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     });
   });
 
+  // Estimator and company options for Job Settings. Any workspace member may read them.
+  app.get("/api/v1/workspaces/:workspaceId/jobs/party-options", async (request, reply) => {
+    const { workspaceId } = wsParams.parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+
+    const [memberships, customers] = await Promise.all([
+      app.services.prisma.membership.findMany({
+        where: { workspaceId },
+        select: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { user: { name: "asc" } },
+      }),
+      app.services.prisma.customer.findMany({
+        where: { workspaceId },
+        select: { id: true, name: true },
+        orderBy: { normalizedName: "asc" },
+        take: 500,
+      }),
+    ]);
+
+    return reply.send({
+      members: memberships.map((row) => row.user),
+      customers,
+    });
+  });
+
   // 1. GET /api/v1/workspaces/:workspaceId/jobs — List jobs with filters
   app.get("/api/v1/workspaces/:workspaceId/jobs", async (request, reply) => {
     const t0 = performance.now();
@@ -187,13 +219,14 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         where,
         skip,
         take: query.pageSize,
-        orderBy: { [query.sortBy]: query.sortDir },
+        orderBy: jobListOrderBy(query.sortBy, query.sortDir),
         select: {
           id: true,
           jobNumber: true,
           name: true,
           status: true,
           customerId: true,
+          totalCost: true,
           startDate: true,
           targetCompletionDate: true,
           archivedAt: true,
@@ -304,6 +337,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       customerId: job.customerId,
       customerName: job.customer?.name ?? null,
       description: null as string | null,
+      totalCost: job.totalCost == null ? null : job.totalCost.toString(),
       startDate: job.startDate,
       targetCompletionDate: job.targetCompletionDate,
       archivedAt: job.archivedAt,
@@ -461,6 +495,10 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       where: { id: jobId, workspaceId },
       include: {
         customer: { select: { id: true, name: true } },
+        estimator: { select: { id: true, name: true, email: true } },
+        contractor: { select: { id: true, name: true } },
+        client: { select: { id: true, name: true } },
+        fabricationItems: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
         members: {
           select: {
             id: true,
@@ -481,9 +519,8 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const primaryQueryMs = Math.round(performance.now() - tPrimary);
 
     const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const memberUserIds = job.members.map((m) => m.userId);
+    const fabricationItems = job.fabricationItems.map(presentFabricationItem);
 
     const tAgg = performance.now();
     // Users + metrics in ONE parallel wave (was sequential users then aggregates).
@@ -495,8 +532,6 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       openTasks,
       overdueTasks,
       completedTasks,
-      recentEmails7d,
-      recentEmails30d,
       lastActivity,
       nextDueTask,
       jobFileCount,
@@ -519,12 +554,6 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         },
       }),
       app.services.prisma.task.count({ where: { jobId, status: "DONE" } }),
-      app.services.prisma.emailMessage.count({
-        where: { jobId, workspaceId, sentAt: { gte: sevenDaysAgo } },
-      }),
-      app.services.prisma.emailMessage.count({
-        where: { jobId, workspaceId, sentAt: { gte: thirtyDaysAgo } },
-      }),
       app.services.prisma.jobActivityLog.findFirst({
         where: { jobId },
         orderBy: { createdAt: "desc" },
@@ -571,14 +600,22 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         externalRef: job.externalRef,
         startDate: job.startDate?.toISOString() ?? null,
         targetCompletionDate: job.targetCompletionDate?.toISOString() ?? null,
+        bidDueAt: job.bidDueAt?.toISOString() ?? null,
+        totalCost: job.totalCost == null ? null : job.totalCost.toString(),
+        estimatedHours: totalEstimatedHours(fabricationItems),
+        estimatorUserId: job.estimatorUserId,
+        estimatorName: job.estimator?.name ?? null,
+        contractorCustomerId: job.contractorCustomerId,
+        contractorName: job.contractor?.name ?? null,
+        clientCustomerId: job.clientCustomerId,
+        clientName: job.client?.name ?? null,
+        fabricationItems,
         archivedAt: job.archivedAt?.toISOString() ?? null,
         createdAt: job.createdAt.toISOString(),
         emailCount,
         openTaskCount: openTasks,
         overdueTaskCount: overdueTasks,
         completedTaskCount: completedTasks,
-        recentEmails7d,
-        recentEmails30d,
         lastActivityAt: lastActivity?.createdAt?.toISOString() ?? null,
         nextDueDate: nextDueTask?.dueAt?.toISOString() ?? null,
         attachmentCount: jobFileCount,
@@ -645,6 +682,22 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
 
     const statusChanged = body.status && body.status !== existing.status;
 
+    if (body.estimatorUserId) {
+      const member = await app.services.prisma.membership.findFirst({
+        where: { workspaceId, userId: body.estimatorUserId },
+        select: { id: true },
+      });
+      if (!member) return reply.code(400).send({ message: "Estimator is not a member of this workspace" });
+    }
+    for (const customerId of [body.contractorCustomerId, body.clientCustomerId]) {
+      if (!customerId) continue;
+      const customer = await app.services.prisma.customer.findFirst({
+        where: { id: customerId, workspaceId },
+        select: { id: true },
+      });
+      if (!customer) return reply.code(400).send({ message: "Customer is not in this workspace" });
+    }
+
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) { data.name = body.name; data.normalizedName = normalizeName(body.name); }
     if (body.jobNumber !== undefined) data.jobNumber = body.jobNumber;
@@ -654,12 +707,22 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     if (body.notes !== undefined) data.notes = body.notes;
     if (body.startDate !== undefined) data.startDate = body.startDate ? new Date(body.startDate) : null;
     if (body.targetCompletionDate !== undefined) data.targetCompletionDate = body.targetCompletionDate ? new Date(body.targetCompletionDate) : null;
+    if (body.bidDueAt !== undefined) data.bidDueAt = body.bidDueAt ? new Date(body.bidDueAt) : null;
+    if (body.totalCost !== undefined) data.totalCost = body.totalCost;
+    if (body.estimatorUserId !== undefined) data.estimatorUserId = body.estimatorUserId;
+    if (body.contractorCustomerId !== undefined) data.contractorCustomerId = body.contractorCustomerId;
+    if (body.clientCustomerId !== undefined) data.clientCustomerId = body.clientCustomerId;
 
     const updated = await app.services.prisma.$transaction(async (tx) => {
       const job = await tx.job.update({
         where: { id: jobId },
         data,
-        include: { customer: { select: { id: true, name: true } } },
+        include: {
+          customer: { select: { id: true, name: true } },
+          estimator: { select: { id: true, name: true, email: true } },
+          contractor: { select: { id: true, name: true } },
+          client: { select: { id: true, name: true } },
+        },
       });
 
       await tx.jobActivityLog.create({
@@ -688,7 +751,15 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       request,
     });
 
-    return reply.send({ job: updated });
+    return reply.send({
+      job: {
+        ...updated,
+        totalCost: updated.totalCost == null ? null : updated.totalCost.toString(),
+        estimatorName: updated.estimator?.name ?? null,
+        contractorName: updated.contractor?.name ?? null,
+        clientName: updated.client?.name ?? null,
+      },
+    });
   });
 
   // 5. POST /api/v1/workspaces/:workspaceId/jobs/:jobId/archive — Archive job

@@ -51,3 +51,36 @@ export function buildJobListWhere(input: JobListQueryInput): Prisma.JobWhereInpu
 
   return where;
 }
+
+/**
+ * Server-side jobs list order. Applied on the same query as skip/take.
+ * Name sorts on normalizedName. Activity reuses updatedAt, which the list
+ * already exposes as lastActivityAt. Null start dates and costs sort last.
+ * Default remains createdAt descending.
+ */
+export function jobListOrderBy(
+  sortBy: string,
+  sortDir: "asc" | "desc",
+): Prisma.JobOrderByWithRelationInput[] {
+  const nullsLast = { sort: sortDir, nulls: "last" as const };
+  switch (sortBy) {
+    case "name":
+      return [{ normalizedName: sortDir }, { id: "asc" }];
+    case "activity":
+    case "updatedAt":
+      return [{ updatedAt: sortDir }, { id: "asc" }];
+    case "startDate":
+      return [{ startDate: nullsLast }, { id: "asc" }];
+    case "totalCost":
+      return [{ totalCost: nullsLast }, { id: "asc" }];
+    case "targetCompletionDate":
+      return [{ targetCompletionDate: nullsLast }, { id: "asc" }];
+    case "jobNumber":
+      return [{ jobNumber: nullsLast }, { id: "asc" }];
+    case "status":
+      return [{ status: sortDir }, { id: "asc" }];
+    case "createdAt":
+    default:
+      return [{ createdAt: sortDir }, { id: "asc" }];
+  }
+}
