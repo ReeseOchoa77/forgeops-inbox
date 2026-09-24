@@ -8,6 +8,7 @@ import {
   jobsListCacheKey,
   setCachedJobsList,
 } from '../jobs-list-cache'
+import { isCurrentJobsRequest, JOBS_SEARCH_DEBOUNCE_MS } from '../jobs-search'
 
 interface Props {
   workspaceId: string
@@ -104,6 +105,9 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const hasPaintedRef = useRef(false)
   const listRef = useRef<HTMLDivElement | null>(null)
   const loadMoreLock = useRef(false)
+  const requestSeqRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+  const workspaceRef = useRef(workspaceId)
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
@@ -132,7 +136,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   }, [workspaceId, refreshWorkspaceJobsTotal])
 
   useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedSearch(search), 300)
+    const t = window.setTimeout(() => setDebouncedSearch(search), JOBS_SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(t)
   }, [search])
 
@@ -154,6 +158,11 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     const cached = !append ? getCachedJobsList(cacheKey) : null
     const soft = hasPaintedRef.current && !append
 
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const seq = ++requestSeqRef.current
+
     if (append) setLoadingMore(true)
     else if (soft || cached) setRefreshing(true)
     else setLoading(true)
@@ -164,7 +173,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
         page: nextPage,
         pageSize: PAGE_SIZE,
         ...filterParams,
-      })
+      }, { signal: controller.signal })
+      if (!isCurrentJobsRequest(seq, requestSeqRef.current)) return
       setJobs((prev) => (append ? [...prev, ...res.jobs] : res.jobs))
       setPage(nextPage)
       setTotalCount(res.pagination.totalCount)
@@ -179,22 +189,33 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           hasMore: more,
         })
       }
+      const elapsed = Math.round(performance.now() - t0)
       if (!paintLoggedRef.current) {
         paintLoggedRef.current = true
         console.info({
           event: 'jobsInitialUsefulPaintMs',
           source: 'network',
-          ms: Math.round(performance.now() - t0),
+          ms: elapsed,
           rowCount: res.jobs.length,
         })
       }
-    } catch {
-      /* ignore */
+      if (filterParams.search) {
+        console.info({
+          event: 'jobsSearchResolvedMs',
+          ms: elapsed,
+          rowCount: res.jobs.length,
+          searchLength: filterParams.search.length,
+        })
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
     } finally {
-      setLoading(false)
-      setRefreshing(false)
-      setLoadingMore(false)
-      loadMoreLock.current = false
+      if (isCurrentJobsRequest(seq, requestSeqRef.current)) {
+        setLoading(false)
+        setRefreshing(false)
+        setLoadingMore(false)
+        loadMoreLock.current = false
+      }
     }
   }, [
     workspaceId,
@@ -210,6 +231,14 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
 
   useEffect(() => {
     paintLoggedRef.current = false
+    if (workspaceRef.current !== workspaceId) {
+      workspaceRef.current = workspaceId
+      setJobs([])
+      setPage(1)
+      setTotalCount(0)
+      setHasMore(false)
+      hasPaintedRef.current = false
+    }
     const key = jobsListCacheKey(workspaceId, {
       page: 1,
       status: statusFilter !== 'ALL' ? statusFilter : undefined,
@@ -238,11 +267,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           rowCount: cached.jobs.length,
         })
       }
-    } else {
-      hasPaintedRef.current = false
-      setJobs([])
-      setPage(1)
-      setHasMore(false)
     }
     void loadJobs({ page: 1, append: false })
   }, [loadJobs, workspaceId, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])

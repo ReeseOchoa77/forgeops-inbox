@@ -5,7 +5,7 @@ import type {
   ProviderAttachmentMetadata,
   ProviderMailboxSyncResult
 } from "@forgeops/shared";
-import { shouldInspectAttachments } from "@forgeops/shared";
+import { isBlockedByInboxClearedAt, shouldInspectAttachments } from "@forgeops/shared";
 
 export type AttachmentIngestCandidate = {
   emailMessageId: string;
@@ -205,11 +205,15 @@ export const importProviderMailbox = async (input: {
             continue;
           }
 
-          // Clear Inbox watermark: do not re-create older provider messages on live sync.
+          // Live sync re-reads the current watermark at persist time.
+          // receivedAt, else sentAt. Missing provider time fails closed.
+          // bypassInboxClearedAt is only set by explicit historical callers.
           if (
-            clearedAt &&
-            message.receivedAt &&
-            message.receivedAt.getTime() <= clearedAt.getTime()
+            isBlockedByInboxClearedAt({
+              inboxClearedAt: clearedAt,
+              receivedAt: message.receivedAt,
+              sentAt: message.sentAt,
+            })
           ) {
             skippedClearedCount += 1;
             continue;

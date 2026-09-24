@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, normalizeTaskDueAt, resolveTaskSourceDate, safeDateOrNull } from "@forgeops/shared";
+import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, normalizeTaskDueAt, resolveTaskSourceDate, safeDateOrNull, isBlockedByInboxClearedAt } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -759,6 +759,25 @@ async function handleN8nIngest(
       }
     }
     // n8n selectedJobId is a weak compatibility hint only — ForgeOps JobMatcher decides.
+
+    const clearedConnection = await app.services.prisma.inboxConnection.findUnique({
+      where: { id: connectionId },
+      select: { inboxClearedAt: true },
+    });
+    const n8nReceivedAt = new Date(body.email.receivedAt);
+    if (
+      isBlockedByInboxClearedAt({
+        inboxClearedAt: clearedConnection?.inboxClearedAt ?? null,
+        receivedAt: Number.isNaN(n8nReceivedAt.getTime()) ? null : n8nReceivedAt,
+        sentAt: null,
+      })
+    ) {
+      reply.code(200).send({
+        status: "skipped_cleared",
+        inboxConnectionId: connectionId,
+      });
+      return;
+    }
 
     const result = await app.services.prisma.$transaction(async (tx) => {
       return upsertEmailData(tx, workspaceId, connectionId, body);

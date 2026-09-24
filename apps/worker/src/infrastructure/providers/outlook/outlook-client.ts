@@ -423,8 +423,10 @@ const mergeParticipants = (
 
 const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): OutlookMessageSnapshot => {
   const from = msg.from ? mapGraphAddress(msg.from) : null;
-  const sentAt = parseDate(msg.sentDateTime) ?? new Date();
+  const parsedSent = parseDate(msg.sentDateTime);
   const receivedAt = parseDate(msg.receivedDateTime);
+  // Never stamp a missing provider date as "now" — that looks newer than inboxClearedAt.
+  const sentAt = parsedSent ?? receivedAt ?? new Date(0);
 
   return {
     outlookMessageId: msg.id,

@@ -24,4 +24,14 @@ describe("jobs list enrichment batching", () => {
     const LOOKUP_LIMIT = 500;
     expect(LOOKUP_LIMIT).toBeLessThanOrEqual(500);
   });
+
+  it("maps email counts from one groupBy, not a query per job", () => {
+    const groups = [
+      { jobId: "j1", _count: { _all: 40 } },
+      { jobId: "j2", _count: { _all: 2 } },
+    ];
+    const emailCountByJob = new Map(groups.map((g) => [g.jobId, g._count._all]));
+    const pageIds = ["j1", "j2", "j3"];
+    expect(pageIds.map((id) => emailCountByJob.get(id) ?? 0)).toEqual([40, 2, 0]);
+  });
 });

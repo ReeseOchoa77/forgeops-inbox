@@ -409,6 +409,20 @@ export function JobDetailView({
     setEmails(prev => prev.filter(e => e.id !== messageId))
   }
 
+  const handleDeleteEmail = async (messageId: string) => {
+    if (
+      !confirm(
+        'Delete this email from ForgeOps?\n\n' +
+          'The job stays. Other emails on this job stay. This does not delete the message from Outlook.'
+      )
+    ) {
+      return
+    }
+    await api.deleteJobEmail(workspaceId, jobId, messageId)
+    setEmails(prev => prev.filter(e => e.id !== messageId))
+    setOverviewEmails(prev => prev.filter(e => e.id !== messageId))
+  }
+
   const handleMoveEmail = async (messageId: string) => {
     if (!moveJobId) return
     try {
@@ -748,10 +762,17 @@ export function JobDetailView({
                         </button>
                         <button
                           onClick={() => handleRemoveEmail(email.id)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#999', padding: '4px 8px' }}
-                          title="Remove from job"
+                          style={{ background: 'none', border: '1px solid #d0d5dd', borderRadius: 4, cursor: 'pointer', fontSize: 11, color: '#555', padding: '3px 8px' }}
+                          title="Unassign this email. It stays in ForgeOps."
                         >
-                          &times;
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteEmail(email.id)}
+                          style={{ background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, cursor: 'pointer', fontSize: 11, color: '#c62828', padding: '3px 8px', fontWeight: 600 }}
+                          title="Delete this email from ForgeOps. The job and Outlook message stay."
+                        >
+                          Delete
                         </button>
                       </div>
                     )}

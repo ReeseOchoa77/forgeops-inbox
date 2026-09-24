@@ -9,6 +9,8 @@ import {
   normalizeName,
   type JobFileTypeFilter,
 } from "@forgeops/shared";
+import { buildJobListWhere } from "../../../application/services/job-list-query.js";
+import { deleteScopedEmailMessages } from "../../../application/services/clear-inbox.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -154,39 +156,22 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const skip = (query.page - 1) * query.pageSize;
     const now = new Date();
     const openTaskStatuses = ["OPEN", "IN_PROGRESS", "BLOCKED"] as const;
+    const searchTerm = query.search?.trim() ?? "";
 
-    const where: Record<string, unknown> = { workspaceId };
-
-    if (query.status) {
-      where.status = query.status;
-    }
-    if (query.customerId) {
-      where.customerId = query.customerId;
-    }
-    if (!query.showArchived) {
-      where.archivedAt = null;
-    }
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: "insensitive" } },
-        { jobNumber: { contains: query.search, mode: "insensitive" } },
-        { description: { contains: query.search, mode: "insensitive" } },
-      ];
-    }
-    if (query.assignedUserId) {
-      where.members = { some: { userId: query.assignedUserId } };
-    }
-    // Push overdue filter into SQL so pagination/totals stay correct
-    if (query.hasOverdueTasks) {
-      where.tasks = {
-        some: {
-          status: { in: [...openTaskStatuses] },
-          dueAt: { lt: now },
-        },
-      };
-    }
+    const where = buildJobListWhere({
+      workspaceId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(searchTerm ? { search: searchTerm } : {}),
+      showArchived: query.showArchived,
+      ...(query.assignedUserId ? { assignedUserId: query.assignedUserId } : {}),
+      hasOverdueTasks: query.hasOverdueTasks,
+      now,
+    });
 
     const tDb = performance.now();
+    let listMs = 0;
+    let countMs = 0;
     const [jobs, totalCount] = await Promise.all([
       app.services.prisma.job.findMany({
         where,
@@ -209,20 +194,26 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
             select: { id: true, userId: true, role: true, createdAt: true },
             take: 8,
           },
-          _count: { select: { assignedEmails: true } },
         },
+      }).then((rows) => {
+        listMs = Math.round(performance.now() - tDb);
+        return rows;
       }),
-      app.services.prisma.job.count({ where }),
+      app.services.prisma.job.count({ where }).then((count) => {
+        countMs = Math.round(performance.now() - tDb);
+        return count;
+      }),
     ]);
     const primaryQueryMs = Math.round(performance.now() - tDb);
 
     const jobIds = jobs.map((j) => j.id);
 
     const tAgg = performance.now();
-    // Skip jobActivityLog distinct — use job.updatedAt as lastActivity proxy (list only).
-    const [memberUsers, openTaskGroups, overdueTaskGroups, nextDueGroups] =
+    // Email counts are a separate grouped query on the page's job ids.
+    // Counting them inside findMany joins EmailMessage before LIMIT.
+    const [memberUsers, openTaskGroups, overdueTaskGroups, nextDueGroups, emailCountGroups] =
       jobIds.length === 0
-        ? [[], [], [], []] as const
+        ? [[], [], [], [], []] as const
         : await Promise.all([
             (() => {
               const allMemberUserIds = [
@@ -261,6 +252,14 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
               },
               _min: { dueAt: true },
             }),
+            app.services.prisma.emailMessage.groupBy({
+              by: ["jobId"],
+              where: {
+                workspaceId,
+                jobId: { in: jobIds },
+              },
+              _count: { _all: true },
+            }),
           ]);
     const aggregateMs = Math.round(performance.now() - tAgg);
     const dbMs = primaryQueryMs + aggregateMs;
@@ -281,6 +280,11 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
         .map((g) => [g.jobId, g._min.dueAt])
     );
+    const emailCountByJob = new Map(
+      emailCountGroups
+        .filter((g): g is typeof g & { jobId: string } => Boolean(g.jobId))
+        .map((g) => [g.jobId, g._count._all])
+    );
 
     const enriched = jobs.map((job) => ({
       id: job.id,
@@ -294,7 +298,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       targetCompletionDate: job.targetCompletionDate,
       archivedAt: job.archivedAt,
       createdAt: job.createdAt,
-      emailCount: job._count.assignedEmails,
+      emailCount: emailCountByJob.get(job.id) ?? 0,
       openTaskCount: openCountByJob.get(job.id) ?? 0,
       overdueTaskCount: overdueCountByJob.get(job.id) ?? 0,
       lastActivityAt: job.updatedAt,
@@ -324,9 +328,13 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       event: "api-performance",
       route: "jobs.list",
       totalMs: Math.round(performance.now() - t0),
+      listMs,
+      countMs,
       primaryQueryMs,
       aggregateMs,
       dbMs,
+      hasSearch: searchTerm.length > 0,
+      searchLength: searchTerm.length,
       resultCount: enriched.length,
       payloadBytes,
     });
@@ -916,6 +924,66 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
 
     return reply.code(204).send();
   });
+
+  /**
+   * Delete one Job email from ForgeOps. The Job and sibling messages stay.
+   * Does not delete the message at the mail provider.
+   * Does not move the mailbox clear watermark.
+   */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/jobs/:jobId/emails/:messageId/delete",
+    async (request, reply) => {
+      const params = z.object({
+        workspaceId: z.string().min(1),
+        jobId: z.string().min(1),
+        messageId: z.string().min(1),
+      }).parse(request.params);
+      const auth = await requireAuth(app, request, reply, params.workspaceId);
+      if (!auth) return;
+      if (!canEdit(auth.workspaceRole)) {
+        return reply.code(403).send({ message: "Edit permission required" });
+      }
+
+      const existing = await loadJobWithTenantCheck(app, reply, params.jobId, params.workspaceId);
+      if (!existing) return;
+
+      const message = await app.services.prisma.emailMessage.findFirst({
+        where: { id: params.messageId, workspaceId: params.workspaceId, jobId: params.jobId },
+        select: { id: true, threadId: true },
+      });
+      if (!message) {
+        return reply.code(404).send({ message: "Email message not found or not assigned to this job" });
+      }
+
+      await app.services.prisma.$transaction(async (tx) => {
+        await tx.jobActivityLog.create({
+          data: {
+            jobId: params.jobId,
+            workspaceId: params.workspaceId,
+            actorUserId: auth.userId,
+            action: "EMAIL_REMOVED",
+            entityType: "EMAIL_MESSAGE",
+            entityId: message.id,
+            newValue: { deleted: true },
+          },
+        });
+        await deleteScopedEmailMessages(tx, {
+          where: {
+            id: message.id,
+            workspaceId: params.workspaceId,
+            jobId: params.jobId,
+          },
+          emptyThreadWhere: {
+            id: message.threadId,
+            workspaceId: params.workspaceId,
+            messages: { none: {} },
+          },
+        });
+      });
+
+      return reply.send({ status: "deleted", messageId: message.id, jobId: params.jobId });
+    }
+  );
 
   // 9. POST /api/v1/workspaces/:workspaceId/jobs/:jobId/emails/move — Reassign email
   app.post("/api/v1/workspaces/:workspaceId/jobs/:jobId/emails/move", async (request, reply) => {

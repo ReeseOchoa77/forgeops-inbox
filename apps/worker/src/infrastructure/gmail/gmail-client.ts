@@ -371,7 +371,7 @@ const collectContent = (
 const parseMessage = (message: z.infer<typeof gmailMessageSchema>): GmailMessageSnapshot => {
   const headers = toHeaderMap(message.payload?.headers);
   const receivedAt = parseInternalDate(message.internalDate);
-  const fallbackTimestamp = receivedAt ?? new Date();
+  const fallbackTimestamp = receivedAt ?? new Date(0);
   const subject = headers.get("subject") ?? null;
   const from = parseEmailAddress(headers.get("from") ?? "");
   const toAddresses = parseEmailAddressList(headers.get("to") ?? null);

@@ -877,15 +877,27 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) }
     ),
 
-  clearInbox: (workspaceId: string, connectionId: string) =>
+  previewClearInbox: (workspaceId: string, connectionId: string) =>
+    request<{ unassignedCount: number; jobAssociatedCount: number }>(
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox-preview`
+    ),
+
+  clearInbox: (
+    workspaceId: string,
+    connectionId: string,
+    mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' = 'NON_JOB_ONLY'
+  ) =>
     request<{
       status: string
+      mode: 'NON_JOB_ONLY' | 'ALL_EMAILS'
       deletedCount: number
+      preservedJobEmailCount: number
+      removedJobEmailCount: number
       inboxClearedAt: string
       listenerEnabled: boolean
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox`,
-      { method: 'POST', body: JSON.stringify({}) }
+      { method: 'POST', body: JSON.stringify({ mode }) }
     ),
 
   getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
@@ -1465,7 +1477,7 @@ export const api = {
     page?: number; pageSize?: number; status?: string; customerId?: string;
     search?: string; assignedUserId?: string; hasOverdueTasks?: boolean;
     showArchived?: boolean; sortBy?: string; sortDir?: string;
-  }) => {
+  }, init?: { signal?: AbortSignal }) => {
     const p = new URLSearchParams();
     if (params?.page) p.set('page', String(params.page));
     if (params?.pageSize) p.set('pageSize', String(params.pageSize));
@@ -1478,7 +1490,8 @@ export const api = {
     if (params?.sortBy) p.set('sortBy', params.sortBy);
     if (params?.sortDir) p.set('sortDir', params.sortDir);
     return request<{ jobs: JobSummary[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(
-      `/workspaces/${workspaceId}/jobs?${p.toString()}`
+      `/workspaces/${workspaceId}/jobs?${p.toString()}`,
+      init?.signal ? { signal: init.signal } : undefined
     );
   },
 
@@ -1572,6 +1585,12 @@ export const api = {
     request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails/${messageId}`, {
       method: 'DELETE'
     }),
+
+  deleteJobEmail: (workspaceId: string, jobId: string, messageId: string) =>
+    request<{ status: string; messageId: string; jobId: string }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/emails/${messageId}/delete`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
 
   moveEmailToJob: (workspaceId: string, jobId: string, data: { messageId: string; targetJobId: string }) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails/move`, {

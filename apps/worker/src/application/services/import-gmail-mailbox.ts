@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import type { InboxSyncResult } from "@forgeops/shared";
+import { isBlockedByInboxClearedAt, type InboxSyncResult } from "@forgeops/shared";
 
 import type {
   GmailAddress,
@@ -29,8 +29,15 @@ export const importGmailMailbox = async (input: {
   workspaceId: string;
   inboxConnectionId: string;
   mailbox: GmailMailboxSyncSnapshot;
-}): Promise<InboxSyncResult> =>
-  input.prisma.$transaction(async (tx) => {
+  bypassInboxClearedAt?: boolean;
+}): Promise<InboxSyncResult> => {
+  const connection = await input.prisma.inboxConnection.findUnique({
+    where: { id: input.inboxConnectionId },
+    select: { inboxClearedAt: true },
+  });
+  const clearedAt = input.bypassInboxClearedAt ? null : (connection?.inboxClearedAt ?? null);
+
+  return input.prisma.$transaction(async (tx) => {
     const gmailThreadIds = input.mailbox.threads.map((thread) => thread.gmailThreadId);
     const gmailMessageIds = input.mailbox.threads.flatMap((thread) =>
       thread.messages.map((message) => message.gmailMessageId)
@@ -136,6 +143,16 @@ export const importGmailMailbox = async (input: {
           receivedAt: message.receivedAt
         };
 
+        if (
+          isBlockedByInboxClearedAt({
+            inboxClearedAt: clearedAt,
+            receivedAt: message.receivedAt,
+            sentAt: message.sentAt,
+          })
+        ) {
+          continue;
+        }
+
         if (existingMessageId) {
           await tx.emailMessage.update({
             where: {
@@ -170,3 +187,4 @@ export const importGmailMailbox = async (input: {
       newestSyncCursor: input.mailbox.newestHistoryId
     };
   });
+};

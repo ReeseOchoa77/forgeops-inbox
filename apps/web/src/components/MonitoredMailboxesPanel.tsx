@@ -59,6 +59,7 @@ type Props = {
     | { type: 'error'; connectionId: string; message: string }
   clearing: string
   onClearInbox: (id: string, email: string) => void
+  onClearAllEmails: (id: string, email: string) => void
   isOwner: boolean
   canManage: boolean
   onAddMailbox?: () => void
@@ -75,6 +76,7 @@ export function MonitoredMailboxesPanel({
   authAction,
   clearing,
   onClearInbox,
+  onClearAllEmails,
   isOwner,
   canManage,
   onAddMailbox,
@@ -458,17 +460,6 @@ export function MonitoredMailboxesPanel({
                       {actionLoading ? 'Starting…' : 'Reauthorize'}
                     </button>
                   )}
-                  {isOwner && !isDisconnected && c.counts.messages > 0 && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-danger"
-                      style={{ fontSize: 10, padding: '2px 8px' }}
-                      disabled={clearing === c.id}
-                      onClick={() => onClearInbox(c.id, c.email)}
-                    >
-                      {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
-                    </button>
-                  )}
                   {canManage && onRemove && !isDisconnected && (
                     <button
                       type="button"
@@ -482,6 +473,60 @@ export function MonitoredMailboxesPanel({
                   )}
                 </div>
               </div>
+
+              {isOwner && !isDisconnected && c.counts.messages > 0 && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: '1px solid #eee',
+                    display: 'grid',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Clear Inbox</div>
+                      <div style={{ fontSize: 12, color: '#555', marginTop: 2, lineHeight: 1.4 }}>
+                        Removes emails that are not assigned to a Job. Emails saved under Jobs are preserved.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={clearing === c.id}
+                      onClick={() => onClearInbox(c.id, c.email)}
+                    >
+                      {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#9b1c1c' }}>Clear All Emails</div>
+                      <div style={{ fontSize: 12, color: '#7f1d1d', marginTop: 2, lineHeight: 1.4 }}>
+                        Removes all ForgeOps emails, including emails assigned to Jobs. Jobs themselves are not deleted.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={clearing === c.id}
+                      onClick={() => onClearAllEmails(c.id, c.email)}
+                      style={{
+                        background: '#9b1c1c',
+                        color: '#fff',
+                        border: '1px solid #7f1d1d',
+                        borderRadius: 6,
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: clearing === c.id ? 'default' : 'pointer',
+                      }}
+                    >
+                      {clearing === c.id ? 'Clearing...' : 'Clear All Emails'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {mailboxImport && (
                 <div style={{ marginTop: 12 }}>
