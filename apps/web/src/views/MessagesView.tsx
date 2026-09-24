@@ -1451,6 +1451,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 onChange={setJobFilter}
               />
 
+              <button
+                type="button"
+                onClick={() => setJobFilter(jobFilter === 'unassigned' ? '' : 'unassigned')}
+                title="Only emails that are not assigned to a job"
+                style={{
+                  padding: '3px 10px',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  borderRadius: 12,
+                  border: jobFilter === 'unassigned' ? '1px solid #1a1a2e' : '1px solid #ddd',
+                  background: jobFilter === 'unassigned' ? '#1a1a2e' : '#fff',
+                  color: jobFilter === 'unassigned' ? '#fff' : '#666',
+                  cursor: 'pointer',
+                }}
+              >
+                No job
+              </button>
+
               <span style={{ color: '#ddd' }}>|</span>
 
               <InboxExcludeFilter

@@ -90,6 +90,19 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     });
   });
 
+  it("No job filter sends jobId=unassigned", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        jobFilter: "unassigned",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      jobId: "unassigned",
+    });
+  });
+
   it("Business subtype + job only apply when not Sent", () => {
     expect(
       buildInboxMessageListFilters({
