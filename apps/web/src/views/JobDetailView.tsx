@@ -159,9 +159,16 @@ export function JobDetailView({
   const [tab, setTab] = useState<Tab>('overview')
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [overviewEmails, setOverviewEmails] = useState<JobEmail[]>([])
-  const [emailPage, setEmailPage] = useState(1)
-  const [emailTotalPages, setEmailTotalPages] = useState(1)
+  const [emailTotal, setEmailTotal] = useState(0)
+  const [emailsLoading, setEmailsLoading] = useState(false)
+  const [emailsHasMore, setEmailsHasMore] = useState(false)
   const [emailSearch, setEmailSearch] = useState('')
+  const emailScrollRef = useRef<HTMLDivElement | null>(null)
+  const emailSentinelRef = useRef<HTMLDivElement | null>(null)
+  const emailNextPageRef = useRef(1)
+  const emailsLoadingRef = useRef(false)
+  const emailsHasMoreRef = useRef(false)
+  const emailLoadGenRef = useRef(0)
   const [tasks, setTasks] = useState<JobTask[]>([])
   const [libraryFiles, setLibraryFiles] = useState<JobLibraryFile[]>([])
   const [libraryTotal, setLibraryTotal] = useState(0)
@@ -278,14 +285,80 @@ export function JobDetailView({
     }
   }, [tab, workspaceId, jobId])
 
-  useEffect(() => {
-    if (tab === 'emails') {
-      api.getJobEmails(workspaceId, jobId, emailPage).then(r => {
-        setEmails(r.emails)
-        setEmailTotalPages(r.pagination.totalPages)
-      }).catch(() => {})
+  const applyEmailPage = useCallback((page: number, incoming: JobEmail[], totalPages: number, totalCount: number, replace: boolean) => {
+    setEmails(prev => {
+      if (replace) return incoming
+      const seen = new Set(prev.map(email => email.id))
+      return [...prev, ...incoming.filter(email => !seen.has(email.id))]
+    })
+    setEmailTotal(totalCount)
+    emailNextPageRef.current = page + 1
+    const more = page < totalPages
+    emailsHasMoreRef.current = more
+    setEmailsHasMore(more)
+  }, [])
+
+  const loadMoreEmails = useCallback(async () => {
+    if (emailsLoadingRef.current || !emailsHasMoreRef.current) return
+    const gen = emailLoadGenRef.current
+    const page = emailNextPageRef.current
+    emailsLoadingRef.current = true
+    setEmailsLoading(true)
+    try {
+      const result = await api.getJobEmails(workspaceId, jobId, page, 25)
+      if (gen !== emailLoadGenRef.current) return
+      applyEmailPage(page, result.emails, result.pagination.totalPages, result.pagination.totalCount, false)
+    } catch {
+      /* keep the rows already shown */
+    } finally {
+      if (gen === emailLoadGenRef.current) {
+        emailsLoadingRef.current = false
+        setEmailsLoading(false)
+      }
     }
-  }, [tab, workspaceId, jobId, emailPage])
+  }, [applyEmailPage, workspaceId, jobId])
+
+  useEffect(() => {
+    if (tab !== 'emails') return
+    const gen = ++emailLoadGenRef.current
+    emailsLoadingRef.current = true
+    emailsHasMoreRef.current = false
+    emailNextPageRef.current = 1
+    setEmails([])
+    setEmailTotal(0)
+    setEmailsHasMore(false)
+    setEmailsLoading(true)
+    let cancelled = false
+    api.getJobEmails(workspaceId, jobId, 1, 25)
+      .then(result => {
+        if (cancelled || gen !== emailLoadGenRef.current) return
+        applyEmailPage(1, result.emails, result.pagination.totalPages, result.pagination.totalCount, true)
+      })
+      .catch(() => {
+        if (cancelled || gen !== emailLoadGenRef.current) return
+        setEmails([])
+        setEmailsHasMore(false)
+        emailsHasMoreRef.current = false
+      })
+      .finally(() => {
+        if (cancelled || gen !== emailLoadGenRef.current) return
+        emailsLoadingRef.current = false
+        setEmailsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [tab, workspaceId, jobId, applyEmailPage])
+
+  useEffect(() => {
+    if (tab !== 'emails') return
+    const root = emailScrollRef.current
+    const sentinel = emailSentinelRef.current
+    if (!root || !sentinel) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMoreEmails()
+    }, { root, rootMargin: '160px' })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [tab, emails.length, emailsHasMore, loadMoreEmails])
 
   useEffect(() => {
     if (tab === 'tasks') {
@@ -407,6 +480,7 @@ export function JobDetailView({
   const handleRemoveEmail = async (messageId: string) => {
     await api.removeEmailFromJob(workspaceId, jobId, messageId)
     setEmails(prev => prev.filter(e => e.id !== messageId))
+    setEmailTotal(total => Math.max(0, total - 1))
   }
 
   const handleDeleteEmail = async (messageId: string) => {
@@ -421,6 +495,7 @@ export function JobDetailView({
     await api.deleteJobEmail(workspaceId, jobId, messageId)
     setEmails(prev => prev.filter(e => e.id !== messageId))
     setOverviewEmails(prev => prev.filter(e => e.id !== messageId))
+    setEmailTotal(total => Math.max(0, total - 1))
   }
 
   const handleMoveEmail = async (messageId: string) => {
@@ -428,6 +503,7 @@ export function JobDetailView({
     try {
       await api.moveEmailToJob(workspaceId, jobId, { messageId, targetJobId: moveJobId })
       setEmails(prev => prev.filter(e => e.id !== messageId))
+      setEmailTotal(total => Math.max(0, total - 1))
       setShowMoveModal(null)
       setMoveJobId('')
     } catch { /* ignore */ }
@@ -717,11 +793,30 @@ export function JobDetailView({
               style={{ flex: 1, minWidth: 180, padding: '7px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }}
             />
           </div>
-          {filteredEmails.length === 0 ? (
+          {emailTotal > 0 && (
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+              {emails.length} loaded · {emailTotal} on this job
+            </div>
+          )}
+          {emails.length === 0 && !emailsLoading ? (
             <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>No emails assigned to this job.</div>
           ) : (
             <>
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+              <div
+                ref={emailScrollRef}
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  maxHeight: isPhone ? '62vh' : 'min(640px, calc(100vh - 280px))',
+                  overflowY: 'auto',
+                }}
+              >
+                {emails.length === 0 && emailsLoading && (
+                  <div style={{ textAlign: 'center', padding: 32, color: '#888', fontSize: 13 }}>Loading emails…</div>
+                )}
+                {emails.length > 0 && filteredEmails.length === 0 && !emailsHasMore && (
+                  <div style={{ textAlign: 'center', padding: 32, color: '#888', fontSize: 13 }}>No emails match that search.</div>
+                )}
                 {filteredEmails.map((email, i) => (
                   <div
                     key={email.id}
@@ -778,14 +873,11 @@ export function JobDetailView({
                     )}
                   </div>
                 ))}
+                <div ref={emailSentinelRef} style={{ height: 1 }} />
+                {emailsLoading && emails.length > 0 && (
+                  <div style={{ textAlign: 'center', padding: 12, color: '#9ca3af', fontSize: 12 }}>Loading more…</div>
+                )}
               </div>
-              {emailTotalPages > 1 && (
-                <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
-                  <button disabled={emailPage <= 1} onClick={() => setEmailPage(p => p - 1)} style={{ padding: '4px 10px', border: '1px solid #d0d5dd', borderRadius: 4, background: '#fff', cursor: emailPage > 1 ? 'pointer' : 'not-allowed', opacity: emailPage <= 1 ? 0.5 : 1 }}>Prev</button>
-                  <span style={{ fontSize: 12, alignSelf: 'center', color: '#6b7280' }}>Page {emailPage} of {emailTotalPages}</span>
-                  <button disabled={emailPage >= emailTotalPages} onClick={() => setEmailPage(p => p + 1)} style={{ padding: '4px 10px', border: '1px solid #d0d5dd', borderRadius: 4, background: '#fff', cursor: emailPage < emailTotalPages ? 'pointer' : 'not-allowed', opacity: emailPage >= emailTotalPages ? 0.5 : 1 }}>Next</button>
-                </div>
-              )}
             </>
           )}
 
