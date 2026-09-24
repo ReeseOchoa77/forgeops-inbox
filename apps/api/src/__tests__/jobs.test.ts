@@ -69,8 +69,14 @@ const updateJobSchema = z.object({
   customerId: z.string().max(100).nullable().optional(),
   description: z.string().max(5000).nullable().optional(),
   notes: z.string().max(5000).nullable().optional(),
-  startDate: z.string().datetime().nullable().optional(),
-  targetCompletionDate: z.string().datetime().nullable().optional(),
+  startDate: z.union([
+    z.string().datetime(),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ]).nullable().optional(),
+  targetCompletionDate: z.union([
+    z.string().datetime(),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ]).nullable().optional(),
 });
 
 const assignEmailSchema = z.object({
@@ -321,6 +327,15 @@ describe("Jobs Feature - Schema Validation", () => {
       const result = updateJobSchema.safeParse({
         startDate: null,
         targetCompletionDate: null,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts calendar dates from the job settings form", () => {
+      const result = updateJobSchema.safeParse({
+        description: "Also known as: Nova Academy, NOVA",
+        startDate: "2026-09-24",
+        targetCompletionDate: "2026-12-01",
       });
       expect(result.success).toBe(true);
     });

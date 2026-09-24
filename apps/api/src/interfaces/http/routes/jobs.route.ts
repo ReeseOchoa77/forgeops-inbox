@@ -71,6 +71,12 @@ const createJobSchema = z.object({
   aliases: z.array(z.string().min(1).max(300)).optional(),
 });
 
+/** Settings date inputs submit YYYY-MM-DD. Full ISO datetimes are also accepted. */
+const jobDateInput = z.union([
+  z.string().datetime(),
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+]);
+
 const updateJobSchema = z.object({
   name: z.string().min(1).max(300).optional(),
   jobNumber: z.string().min(1).max(100).optional(),
@@ -78,9 +84,13 @@ const updateJobSchema = z.object({
   customerId: z.string().nullable().optional(),
   description: z.string().max(5000).nullable().optional(),
   notes: z.string().max(5000).nullable().optional(),
-  startDate: z.string().datetime().nullable().optional(),
-  targetCompletionDate: z.string().datetime().nullable().optional(),
+  startDate: jobDateInput.nullable().optional(),
+  targetCompletionDate: jobDateInput.nullable().optional(),
 });
+
+function activityJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
 
 const paginationQuery = z.object({
   page: z.coerce.number().int().positive().default(1),
@@ -661,7 +671,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           previousValue: statusChanged
             ? ({ status: existing.status } as Prisma.InputJsonValue)
             : Prisma.JsonNull,
-          newValue: (statusChanged ? { status: body.status } : data) as Prisma.InputJsonValue,
+          newValue: activityJson(statusChanged ? { status: body.status } : data),
         },
       });
 

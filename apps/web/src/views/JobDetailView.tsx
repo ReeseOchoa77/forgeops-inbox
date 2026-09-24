@@ -20,6 +20,8 @@ import {
   mergeJobDetailAfterUpdate,
   setCachedJobDetail,
 } from '../job-detail-cache'
+import { invalidateJobsListCache } from '../jobs-list-cache'
+import { jobSettingsUpdateBody } from '../job-settings-payload'
 
 interface Props {
   workspaceId: string
@@ -199,6 +201,8 @@ export function JobDetailView({
   const [editTargetDate, setEditTargetDate] = useState('')
   const [newAlias, setNewAlias] = useState('')
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const detailEpoch = useRef(0)
 
   const [moveJobId, setMoveJobId] = useState('')
   const [allJobs, setAllJobs] = useState<JobLookup[]>([])
@@ -218,12 +222,14 @@ export function JobDetailView({
   }
 
   const loadJob = useCallback(async () => {
+    const epoch = detailEpoch.current
     const soft = hasShellRef.current
     if (soft) setRefreshing(true)
     else setLoading(true)
     const t0 = performance.now()
     try {
       const res = await api.getJob(workspaceId, jobId)
+      if (epoch !== detailEpoch.current) return
       setJob(res.job)
       setCachedJobDetail(workspaceId, jobId, res.job)
       applyJobToEditForm(res.job)
@@ -424,24 +430,29 @@ export function JobDetailView({
 
   const handleSave = async () => {
     if (!canEdit) return
+    detailEpoch.current += 1
     setSaving(true)
+    setSaveError(null)
     try {
-      const res = await api.updateJob(workspaceId, jobId, {
+      const res = await api.updateJob(workspaceId, jobId, jobSettingsUpdateBody({
         name: editName,
         jobNumber: editJobNumber,
         status: editStatus,
-        description: editDescription || undefined,
-        notes: editNotes || undefined,
-        startDate: editStartDate || null,
-        targetCompletionDate: editTargetDate || null,
-      })
+        description: editDescription,
+        notes: editNotes,
+        startDate: editStartDate,
+        targetCompletionDate: editTargetDate,
+      }))
       setJob((prev) => {
         if (!prev) return prev
         const next = mergeJobDetailAfterUpdate(prev, res.job)
         setCachedJobDetail(workspaceId, jobId, next)
         return next
       })
-    } catch { /* ignore */ } finally {
+      invalidateJobsListCache(workspaceId)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not save job')
+    } finally {
       setSaving(false)
     }
   }
@@ -1468,11 +1479,12 @@ export function JobDetailView({
                   style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, resize: 'vertical' }} />
               </div>
               {canEdit && (
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button onClick={handleSave} disabled={saving}
                     style={{ padding: '8px 20px', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
                     {saving ? 'Saving...' : 'Save Changes'}
                   </button>
+                  {saveError && <span style={{ fontSize: 12, color: '#b42318' }}>{saveError}</span>}
                 </div>
               )}
             </div>
