@@ -28,6 +28,27 @@ import {
 } from "../../infrastructure/providers/outlook/outlook-client.js";
 
 const PAGE_SIZE = 50;
+const ABORT_MESSAGE = "Aborted from Worker Jobs. Mail already saved stays saved.";
+
+async function cancelledAnalyzeResult(
+  prisma: PrismaClient,
+  payload: ProjectFolderEmailAnalyzeJobPayload,
+  progress: ProjectFolderEmailAnalyzeProgress
+): Promise<ProjectFolderEmailAnalyzeJobResult | null> {
+  const fresh = await prisma.projectFolderEmailAnalyzeRun.findUnique({
+    where: { id: payload.runId },
+    select: { status: true, errorMessage: true },
+  });
+  if (fresh?.status !== "CANCELLED") return null;
+  return {
+    workspaceId: payload.workspaceId,
+    inboxConnectionId: payload.inboxConnectionId,
+    runId: payload.runId,
+    status: "CANCELLED",
+    progress,
+    errorMessage: fresh.errorMessage ?? ABORT_MESSAGE,
+  };
+}
 
 function mapOutlookMessage(msg: OutlookMessageSnapshot): ProviderMessageSnapshot {
   return {
@@ -190,6 +211,9 @@ export async function processProjectFolderEmailAnalyze(
 
   progress.foldersTotal = folderIds.length;
 
+  const stoppedBeforeStart = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+  if (stoppedBeforeStart) return stoppedBeforeStart;
+
   await deps.prisma.projectFolderEmailAnalyzeRun.update({
     where: { id: run.id },
     data: {
@@ -251,6 +275,9 @@ export async function processProjectFolderEmailAnalyze(
 
   try {
     for (const folderId of folderIds) {
+      const stoppedFolder = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+      if (stoppedFolder) return stoppedFolder;
+
       const folder = await deps.prisma.discoveredFolder.findFirst({
         where: {
           id: folderId,
@@ -307,6 +334,9 @@ export async function processProjectFolderEmailAnalyze(
 
       let pageCursor: string | null = null;
       do {
+        const stoppedPage = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+        if (stoppedPage) return stoppedPage;
+
         let page;
         try {
           page = deps.listFolderMessages
@@ -519,10 +549,16 @@ export async function processProjectFolderEmailAnalyze(
         await writeProgress(deps.prisma, run.id, progress);
       } while (pageCursor);
 
+      const stoppedAfterPages = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+      if (stoppedAfterPages) return stoppedAfterPages;
+
       progress.foldersDone += 1;
       progress.currentFolderName = null;
       await writeProgress(deps.prisma, run.id, progress);
     }
+
+    const stoppedAtEnd = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+    if (stoppedAtEnd) return stoppedAtEnd;
 
     await writeProgress(deps.prisma, run.id, progress, { status: "COMPLETED" });
     return {
@@ -533,6 +569,8 @@ export async function processProjectFolderEmailAnalyze(
       progress,
     };
   } catch (e) {
+    const stopped = await cancelledAnalyzeResult(deps.prisma, payload, progress);
+    if (stopped) return stopped;
     const msg = e instanceof Error ? e.message : String(e);
     if (deps.finalAttempt !== false) {
       await writeProgress(deps.prisma, run.id, progress, {

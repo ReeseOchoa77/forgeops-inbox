@@ -252,6 +252,7 @@ describe("listWorkerJobs", () => {
     expect(listed.jobs[0]?.progress?.stage).toContain("200 examined");
     expect(listed.jobs[0]?.progress?.stage).toContain("Nova Academy");
     expect(listed.jobs[0]?.progress?.stage).toContain("0/3");
+    expect(listed.jobs[0]?.capabilities.cancel).toBe(true);
   });
 
   it("does not mark an active BullMQ job stale when progress is old", async () => {
@@ -286,6 +287,7 @@ describe("listWorkerJobs", () => {
     expect(listed.jobs.map((row) => row.displayState)).toEqual(["ACTIVE"]);
     expect(listed.jobs[0]?.attention).toBeNull();
     expect(listed.jobs[0]?.queueState).toBe("active");
+    expect(listed.jobs[0]?.capabilities.cancel).toBe(true);
   });
 
   it("still lists the application run when Redis reads fail", async () => {
@@ -321,6 +323,7 @@ describe("listWorkerJobs", () => {
     expect(listed.jobs[0]?.queueUnreadable).toBe(true);
     expect(listed.jobs[0]?.attention).toBeNull();
     expect(listed.jobs[0]?.runState).toBe("RUNNING");
+    expect(listed.jobs[0]?.capabilities.cancel).toBe(false);
   });
 
   it("marks a finished BullMQ job orphaned while the application run is still RUNNING", async () => {
@@ -361,6 +364,7 @@ describe("listWorkerJobs", () => {
     expect(listed.jobs[0]?.displayState).toBe("STALE");
     expect(listed.jobs[0]?.attention).toBe("INCONSISTENT");
     expect(listed.jobs[0]?.runState).toBe("RUNNING");
+    expect(listed.jobs[0]?.capabilities.cancel).toBe(true);
   });
 });
 
@@ -447,6 +451,63 @@ describe("worker job actions", () => {
     expect(handle.removed).toEqual(["historical-import-imp-1"]);
     expect(updates[0]).toMatchObject({
       where: { id: "imp-1", status: { in: ["PENDING", "RUNNING"] } },
+      data: { status: "CANCELLED" },
+    });
+  });
+
+  it("aborts a running folder analysis without removing the queue job", async () => {
+    const updates: unknown[] = [];
+    const handle = queue({
+      active: [
+        job({
+          id: "project-folder-email-analyze-run-1",
+          data: { workspaceId: "ws-a", runId: "run-1" },
+          getState: async () => "active",
+        }),
+      ],
+    });
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as {
+      updateMany: (args: unknown) => Promise<{ count: number }>;
+    }).updateMany = async (args) => {
+      updates.push(args);
+      return { count: 1 };
+    };
+    const result = await cancelWorkerJob(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+      "project-folder-email-analyze-run-1"
+    );
+    expect(result.mode).toBe("cooperative");
+    expect(handle.removed).toEqual([]);
+    expect(updates[0]).toMatchObject({
+      where: { id: "run-1", status: { in: ["PENDING", "RUNNING"] } },
+      data: { status: "CANCELLED" },
+    });
+  });
+
+  it("aborts an orphaned folder analysis when the queue job is gone", async () => {
+    const updates: unknown[] = [];
+    const handle = queue({});
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as {
+      updateMany: (args: unknown) => Promise<{ count: number }>;
+      findUnique: () => Promise<{ workspaceId: string }>;
+    }).updateMany = async (args) => {
+      updates.push(args);
+      return { count: 1 };
+    };
+    (db.projectFolderEmailAnalyzeRun as unknown as { findUnique: () => Promise<{ workspaceId: string }> }).findUnique =
+      async () => ({ workspaceId: "ws-a" });
+    const result = await cancelWorkerJob(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+      "project-folder-email-analyze-cmufuolb20008zo5ibynqhai5"
+    );
+    expect(result.mode).toBe("closed");
+    expect(result.workspaceId).toBe("ws-a");
+    expect(updates[0]).toMatchObject({
+      where: { id: "cmufuolb20008zo5ibynqhai5", status: { in: ["PENDING", "RUNNING"] } },
       data: { status: "CANCELLED" },
     });
   });

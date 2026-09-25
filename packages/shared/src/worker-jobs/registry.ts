@@ -100,10 +100,10 @@ export const WORKER_JOB_DEFINITIONS: Record<QueueName, WorkerJobDefinition> = {
   [QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE]: {
     queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
     displayName: "Project folder analysis",
-    purpose: "Import mail from verified project folders. Removing the job does not remove folder mappings.",
+    purpose: "Import mail from verified project folders. Abort stops at the next page and keeps mail already saved.",
     pause: false,
     resume: false,
-    cancelActive: false,
+    cancelActive: true,
     revert: false,
     revertReason: "This run does not record which rows it created versus reused.",
   },
@@ -164,10 +164,12 @@ export function capabilitiesForJob(input: {
     input.runStatus === "FAILED" ||
     input.runStatus === "CANCELLED" ||
     input.runStatus === "CANCELLING";
+  const openRun = input.runStatus === "PENDING" || input.runStatus === "RUNNING";
+  const queueGone = state === "missing" || state === "failed" || state === "completed";
   return {
     pause: false,
     resume: false,
-    cancel: waiting || (active && def.cancelActive && !terminal),
+    cancel: waiting || (active && def.cancelActive && !terminal) || (queueGone && def.cancelActive && openRun),
     retry: state === "failed",
     remove: state !== "active" && state !== "missing",
     revert: false,

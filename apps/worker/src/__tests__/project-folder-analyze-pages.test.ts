@@ -68,7 +68,11 @@ function pagesOf(total: number, pageSize: number) {
   return { calls, list };
 }
 
-function harness(list: ReturnType<typeof pagesOf>["list"], failMessageId?: string) {
+function harness(
+  list: ReturnType<typeof pagesOf>["list"],
+  failMessageId?: string,
+  statusOf: () => string = () => "RUNNING"
+) {
   const updates: Array<Record<string, unknown>> = [];
   const classifyAdds: string[] = [];
   const prisma = {
@@ -84,6 +88,7 @@ function harness(list: ReturnType<typeof pagesOf>["list"], failMessageId?: strin
         return data;
       },
       updateMany: async () => ({ count: 1 }),
+      findUnique: async () => ({ status: statusOf(), errorMessage: null }),
     },
     inboxConnection: {
       findFirst: async () => ({
@@ -237,6 +242,38 @@ describe("project folder analysis pages", () => {
     ).rejects.toThrow(/timed out/);
     expect(updates.some((row) => row.status === "FAILED")).toBe(false);
     expect(updates.some((row) => row.status === "RUNNING")).toBe(true);
+  });
+
+  it("stops before the next page after the run is aborted", async () => {
+    const { list } = pagesOf(200, 50);
+    let status = "RUNNING";
+    let fetches = 0;
+    const { deps, updates } = harness(async (input) => {
+      fetches += 1;
+      const page = await list(input);
+      status = "CANCELLED";
+      return page;
+    }, undefined, () => status);
+    const result = await processProjectFolderEmailAnalyze(
+      { workspaceId: "ws", inboxConnectionId: "cx", runId: "run-1" },
+      deps
+    );
+    expect(fetches).toBe(1);
+    expect(result.status).toBe("CANCELLED");
+    expect(updates.some((row) => row.status === "COMPLETED")).toBe(false);
+    expect(lastProgress(updates)).toMatchObject({ processed: 50, foldersDone: 0 });
+  });
+
+  it("does not start a run that is already aborted", async () => {
+    const { list, calls } = pagesOf(10, 50);
+    const { deps, updates } = harness(list, undefined, () => "CANCELLED");
+    const result = await processProjectFolderEmailAnalyze(
+      { workspaceId: "ws", inboxConnectionId: "cx", runId: "run-1" },
+      deps
+    );
+    expect(result.status).toBe("CANCELLED");
+    expect(calls).toEqual([]);
+    expect(updates.some((row) => row.status === "RUNNING")).toBe(false);
   });
 
   it("continues the folder when one message fails", async () => {

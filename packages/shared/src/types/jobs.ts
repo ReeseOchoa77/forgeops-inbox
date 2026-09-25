@@ -175,7 +175,7 @@ export interface ProjectFolderEmailAnalyzeJobResult {
   workspaceId: string;
   inboxConnectionId: string;
   runId: string;
-  status: "COMPLETED" | "FAILED";
+  status: "COMPLETED" | "FAILED" | "CANCELLED";
   progress: ProjectFolderEmailAnalyzeProgress;
   errorMessage?: string;
 }

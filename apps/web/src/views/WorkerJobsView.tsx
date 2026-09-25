@@ -151,8 +151,7 @@ export function WorkerJobsView(props: {
     <div style={{ padding: '4px 2px 24px' }}>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Worker Jobs</h2>
       <p style={{ fontSize: 13, color: '#666', margin: '0 0 14px', maxWidth: 760 }}>
-        Platform administrators can see every workspace. Removing or cancelling a queue job does not undo data already saved.
-        Pause and Revert stay unavailable until a job type has a checkpoint or an effect journal.
+        Platform administrators can see every workspace. Abort stops a waiting job immediately. A running import, reclassify, or folder analysis stops at its next checkpoint. Mail already saved stays saved.
       </p>
       {error && (
         <div style={{ padding: '8px 12px', marginBottom: 12, background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, fontSize: 13 }}>
@@ -298,7 +297,7 @@ export function WorkerJobsView(props: {
                     }}
                     onRetry={() => void act(row.jobId, () => api.retryWorkerJob(row.queue, row.jobId))}
                     onCancel={() => {
-                      if (!window.confirm('Cancel this job? Work already saved stays saved. A running import or reclassify stops at its next checkpoint.')) return
+                      if (!window.confirm('Abort this job? It stops at the next checkpoint. Mail already saved stays saved.')) return
                       void act(row.jobId, () => api.cancelWorkerJob(row.queue, row.jobId))
                     }}
                     onRemove={() => {
@@ -341,6 +340,19 @@ export function WorkerJobsView(props: {
           <DetailLine label="Progress" value={progressText(detail.job)} />
           <DetailLine label="Attempts" value={`${detail.job.attemptsMade}${detail.job.maxAttempts != null ? ` / ${detail.job.maxAttempts}` : ''}`} />
           <DetailLine label="Failure" value={detail.job.failedReason ?? '—'} />
+          {detail.job.capabilities.cancel && (
+            <button
+              type="button"
+              style={{ ...btn, color: '#9b1c1c', marginBottom: 8 }}
+              disabled={Boolean(busy)}
+              onClick={() => {
+                if (!window.confirm('Abort this job? It stops at the next checkpoint. Mail already saved stays saved.')) return
+                void act(detail.job.jobId, () => api.cancelWorkerJob(detail.job.queue, detail.job.jobId))
+              }}
+            >
+              Abort
+            </button>
+          )}
           <p style={{ fontSize: 12, color: '#666' }}>Revert unavailable. {detail.job.revertReason}</p>
           <p style={{ fontSize: 12, color: '#666' }}>
             {detail.queuePaused
@@ -369,11 +381,23 @@ function RowActions(props: {
   const primary = row.capabilities.retry
     ? { label: 'Retry', run: props.onRetry }
     : row.capabilities.cancel
-      ? { label: 'Cancel', run: props.onCancel }
+      ? { label: 'Abort', run: props.onCancel }
       : { label: 'Details', run: props.onDetails }
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-      <button type="button" style={btn} disabled={Boolean(props.busy)} onClick={primary.run}>{primary.label}</button>
+      <button
+        type="button"
+        style={{ ...btn, ...(primary.label === 'Abort' ? { color: '#9b1c1c' } : {}) }}
+        disabled={Boolean(props.busy)}
+        onClick={primary.run}
+      >
+        {primary.label}
+      </button>
+      {row.capabilities.cancel && primary.label !== 'Abort' && (
+        <button type="button" style={{ ...btn, color: '#9b1c1c' }} disabled={Boolean(props.busy)} onClick={props.onCancel}>
+          Abort
+        </button>
+      )}
       <details>
         <summary style={{ cursor: 'pointer', fontSize: 12 }}>More</summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>

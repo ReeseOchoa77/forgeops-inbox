@@ -367,7 +367,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     setAnalyzeProgress(progress)
     setAnalyzing(isAnalyzeRunInProgress(run.status))
     rememberAnalyzeRun(workspaceId, connectionIdForRun, { runId: run.id, progress })
-    if (run.status === 'FAILED' && run.errorMessage) setError(run.errorMessage)
+    if ((run.status === 'FAILED' || run.status === 'CANCELLED') && run.errorMessage) setError(run.errorMessage)
   }, [workspaceId])
 
   const pollAnalyzeRun = useCallback(async (runId: string, connectionIdForRun: string, gen: number) => {

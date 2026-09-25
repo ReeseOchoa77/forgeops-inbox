@@ -1297,6 +1297,7 @@ enum ProjectFolderAnalyzeStatus {
   RUNNING
   COMPLETED
   FAILED
+  CANCELLED
 }
 
 /// Progress + status for native "Analyze Emails" on VERIFIED project folders.

@@ -64,6 +64,40 @@ describe("worker job capabilities", () => {
         runStatus: "CANCELLING",
       }).cancel
     ).toBe(false);
+    expect(
+      capabilitiesForJob({
+        queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+        bullState: "active",
+        runStatus: "RUNNING",
+      }).cancel
+    ).toBe(true);
+    expect(
+      capabilitiesForJob({
+        queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+        bullState: "missing",
+        runStatus: "RUNNING",
+      }).cancel
+    ).toBe(true);
+    expect(
+      capabilitiesForJob({
+        queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+        bullState: "missing",
+        runStatus: "FAILED",
+      }).cancel
+    ).toBe(false);
+    expect(
+      capabilitiesForJob({
+        queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+        bullState: "failed",
+        runStatus: "RUNNING",
+      }).cancel
+    ).toBe(true);
+    expect(
+      capabilitiesForJob({
+        queue: QueueNames.MAILBOX_CLASSIFY,
+        bullState: "failed",
+      }).cancel
+    ).toBe(false);
   });
 
   it("keeps revert off for every registered queue", () => {
