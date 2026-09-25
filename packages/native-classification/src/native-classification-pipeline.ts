@@ -34,6 +34,14 @@ export interface NativeClassificationPipelineInput {
   senderEmail: string;
   senderDomain?: string | null | undefined;
   attachmentNames?: string[] | null | undefined;
+  /** At most a few prior snippets. The current message stays primary. */
+  threadSnippets?: Array<{
+    senderEmail?: string | null;
+    subject?: string | null;
+    snippet?: string | null;
+  }> | null | undefined;
+  /** Identity only. Must not be treated as a subtype. */
+  jobContext?: { name: string; jobNumber?: string | null } | null | undefined;
   candidateLookupFailed?: boolean | undefined;
   /**
    * Pre-existing EmailMessage.jobId resolved to a valid same-workspace Job.
@@ -186,6 +194,8 @@ export async function runNativeClassificationPipeline(
       attachmentNames,
       activeBusinessTypes: candidates?.activeBusinessTypes ?? [],
       summary: semanticSignals.summary,
+      threadSnippets: input.threadSnippets ?? [],
+      job: input.jobContext ?? null,
     });
 
     entities = await deps.entitySelector.select({

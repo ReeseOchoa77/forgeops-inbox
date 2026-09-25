@@ -53,6 +53,7 @@ import { registerMailboxControlRoutes } from "./routes/mailbox-control.route.js"
 import { registerInboxReadRoutes } from "./routes/inbox-read.route.js";
 import { registerReviewActionRoutes } from "./routes/review-action.route.js";
 import { registerClassificationAuditRoutes } from "./routes/classification-audit.route.js";
+import { registerSubtypeValidationRoutes } from "./routes/subtype-validation.route.js";
 import { registerAllowlistRoutes } from "./routes/allowlist.route.js";
 import { registerInboxActionsRoutes } from "./routes/inbox-actions.route.js";
 import { registerImportRoutes } from "./routes/import.route.js";
@@ -387,6 +388,7 @@ export const buildServer = async () => {
   await registerGmailRoutes(app);
   await registerReviewActionRoutes(app);
   await registerClassificationAuditRoutes(app);
+  await registerSubtypeValidationRoutes(app);
   await registerAllowlistRoutes(app);
   await registerInboxActionsRoutes(app);
   await registerImportRoutes(app);

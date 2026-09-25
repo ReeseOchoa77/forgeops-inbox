@@ -813,6 +813,7 @@ async function handleN8nIngest(
 
         if (result.classificationId) {
           await persistJobMatchResult(app.services.prisma, {
+            workspaceId,
             classificationId: result.classificationId,
             emailMessageId: result.messageId,
             match,

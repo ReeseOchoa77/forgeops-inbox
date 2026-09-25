@@ -1,9 +1,31 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { businessTypeLabels } from '../components/Badges'
+import { BlindSubtypeReview } from '../components/BlindSubtypeReview'
 import {
   api,
+  type BlindSubtypePacket,
   type ClassificationAuditItem,
   type ClassificationInspection,
+  type SubtypeShadowCase,
+  type SubtypeShadowScore,
+  type SubtypeValidationSampleItem,
+  type SubtypeVerificationResult,
 } from '../api'
+
+const SUBTYPE_ERROR_CATEGORIES = [
+  'TAXONOMY_BOUNDARY',
+  'CURRENT_BODY_PREPROCESSING',
+  'MISSING_THREAD_CONTEXT',
+  'MISLEADING_THREAD_CONTEXT',
+  'SUBJECT_INTERPRETATION',
+  'ATTACHMENT_FILENAME',
+  'SENDER_HINT',
+  'JOB_HINT',
+  'MODEL_DECISION',
+  'INSUFFICIENT_INFORMATION',
+  'HUMAN_LABEL_AMBIGUOUS',
+  'OTHER',
+] as const
 
 interface Props {
   workspaceId: string
@@ -107,6 +129,8 @@ function ClassificationInspectorPanel({
   const [bodyLoading, setBodyLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [subtypeChoice, setSubtypeChoice] = useState('')
+  const [subtypeBusy, setSubtypeBusy] = useState(false)
 
   const load = useCallback(async (includeBody = false) => {
     if (includeBody) setBodyLoading(true)
@@ -179,6 +203,31 @@ function ClassificationInspectorPanel({
     }
   }
 
+  const verifySubtype = async (action: 'confirm' | 'change') => {
+    setSubtypeBusy(true)
+    setNotice(null)
+    try {
+      const result = await api.verifySubtype(workspaceId, row.classificationId, {
+        action,
+        ...(action === 'change' ? { businessType: subtypeChoice } : {}),
+      })
+      setNotice(
+        action === 'confirm'
+          ? `Subtype confirmed as ${result.humanLabel}. The stored classification was not changed.`
+          : `Expected subtype saved as ${result.humanLabel}. The stored classification was not changed.`
+      )
+      setSubtypeChoice('')
+      await load(showBody)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Subtype verification failed')
+    } finally {
+      setSubtypeBusy(false)
+    }
+  }
+
+  const latestSubtypeLabel = data?.corrections.find((correction) =>
+    correction.reason?.startsWith('subtype-verify:')
+  )
   const fin = categoryBadge(data?.classification.mailboxCategory ?? row.finalCategory)
 
   return (
@@ -236,6 +285,74 @@ function ClassificationInspectorPanel({
               <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
                 <div><strong>Business / Personal:</strong> <Badge {...fin} /></div>
                 <div><strong>Type / subtype:</strong> {data.classification.businessTypeKey ?? '—'}</div>
+                <div>
+                  <strong>Subtype confidence:</strong>{' '}
+                  {data.subtypeDecision
+                    ? `${pct(data.subtypeDecision.confidence)} (${data.subtypeDecision.band})`
+                    : data.classification.businessTypeConfidence != null
+                      ? pct(data.classification.businessTypeConfidence)
+                      : '—'}
+                </div>
+                <div>
+                  <strong>Classifier:</strong>{' '}
+                  {data.subtypeDecision?.classifierVersion ?? data.classification.modelVersion ?? '—'}
+                  {data.classification.modelName ? ` · ${data.classification.modelName}` : ''}
+                  {data.classification.processedAt
+                    ? ` · ${formatDate(data.classification.processedAt)}`
+                    : ''}
+                </div>
+                {data.subtypeDecision?.competingType && (
+                  <div><strong>Competing subtype:</strong> {data.subtypeDecision.competingType}</div>
+                )}
+                {data.subtypeDecision && data.subtypeDecision.evidence.length > 0 && (
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
+                    {data.subtypeDecision.evidence.map((marker) => (
+                      <li key={marker}>{marker}</li>
+                    ))}
+                  </ul>
+                )}
+                {data.classification.mailboxCategory === 'BUSINESS' && data.classification.businessTypeKey && (
+                  <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                    <div style={{ color: '#666' }}>
+                      Human subtype label
+                      {latestSubtypeLabel
+                        ? `: ${latestSubtypeLabel.correctedBusinessType ?? '—'}`
+                        : ': not set'}
+                      . Confirm or Change records the expected subtype and does not change the stored classification, job, or tasks.
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={subtypeBusy}
+                        onClick={() => void verifySubtype('confirm')}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, border: '1px solid #2e7d32', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer' }}
+                      >
+                        Confirm
+                      </button>
+                      <select
+                        value={subtypeChoice}
+                        onChange={(event) => setSubtypeChoice(event.target.value)}
+                        style={{ fontSize: 11, padding: '4px 6px' }}
+                        aria-label="Correct subtype"
+                      >
+                        <option value="">Change to…</option>
+                        {Object.entries(businessTypeLabels)
+                          .filter(([key]) => key !== data.classification.businessTypeKey)
+                          .map(([key, label]) => (
+                            <option key={key} value={key}>{label}</option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={subtypeBusy || !subtypeChoice}
+                        onClick={() => void verifySubtype('change')}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, border: '1px solid #3949ab', background: '#e8eaf6', color: '#3949ab', cursor: 'pointer' }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <strong>Job:</strong>{' '}
                   {data.entities.job
@@ -451,6 +568,9 @@ function ClassificationInspectorPanel({
                   {data.corrections.map((c) => (
                     <li key={c.id} style={{ marginBottom: 4 }}>
                       {c.originalMailboxCategory ?? '?'} → {c.correctedMailboxCategory ?? '?'}
+                      {c.originalBusinessType || c.correctedBusinessType
+                        ? ` · subtype ${c.originalBusinessType ?? '—'} → ${c.correctedBusinessType ?? '—'}`
+                        : ''}
                       {' · '}{formatDate(c.reviewedAt)}
                       {c.reason ? ` · ${c.reason}` : ''}
                     </li>
@@ -547,6 +667,21 @@ export function ReviewQueueView({ workspaceId, connectionId }: Props) {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [selected, setSelected] = useState<ClassificationAuditItem | null>(null)
+  const [sampleItems, setSampleItems] = useState<SubtypeValidationSampleItem[]>([])
+  const [sampleNote, setSampleNote] = useState('')
+  const [sampleBusy, setSampleBusy] = useState(false)
+  const [blindIndex, setBlindIndex] = useState<number | null>(null)
+  const [blindPacket, setBlindPacket] = useState<BlindSubtypePacket | null>(null)
+  const [blindReveal, setBlindReveal] = useState<SubtypeVerificationResult | null>(null)
+  const [blindLoading, setBlindLoading] = useState(false)
+  const [blindBusy, setBlindBusy] = useState(false)
+  const [blindProgress, setBlindProgress] = useState({
+    reviewed: 0, labeled: 0, ambiguous: 0, target: 200, remaining: 0,
+  })
+  const [shadowBusy, setShadowBusy] = useState(false)
+  const [shadowNote, setShadowNote] = useState('')
+  const [shadowCases, setShadowCases] = useState<SubtypeShadowCase[]>([])
+  const [shadowScore, setShadowScore] = useState<SubtypeShadowScore | null>(null)
 
   const load = useCallback(async () => {
     const soft = items.length > 0
@@ -576,6 +711,129 @@ export function ReviewQueueView({ workspaceId, connectionId }: Props) {
   useEffect(() => { void load() }, [load])
   useEffect(() => { setSelected(null) }, [connectionId, statusFilter, categoryFilter, page])
 
+  const loadSample = async () => {
+    setSampleBusy(true)
+    setSampleNote('')
+    try {
+      const sample = await api.getSubtypeValidationSample(workspaceId, connectionId, 200)
+      setSampleItems(sample.items)
+      setBlindProgress(sample.progress)
+      setBlindReveal(null)
+      setBlindIndex(sample.items.length > 0 ? 0 : null)
+      setSampleNote(
+        sample.items.length === 0
+          ? 'No unlabeled business emails left in this sample.'
+          : `${sample.items.length} unlabeled emails ready. Labels already saved stay saved if you leave.`
+      )
+    } catch (e) {
+      setSampleNote(e instanceof Error ? e.message : 'Sample failed')
+    } finally {
+      setSampleBusy(false)
+    }
+  }
+
+  const runShadow = async () => {
+    setShadowBusy(true)
+    setShadowNote('')
+    setShadowScore(null)
+    setShadowCases([])
+    try {
+      const verified = await api.listVerifiedSubtypes(workspaceId)
+      if (verified.total === 0) {
+        setShadowNote('No independent blind subtype labels yet. Save a label in Subtype validation first.')
+        return
+      }
+      const collected: SubtypeShadowCase[] = []
+      const ids = verified.items.map((item) => item.classificationId)
+      for (let i = 0; i < ids.length; i += 10) {
+        const batch = ids.slice(i, i + 10)
+        setShadowNote(`Evaluating ${Math.min(i + batch.length, ids.length)} of ${ids.length}…`)
+        const result = await api.runSubtypeShadow(workspaceId, batch)
+        collected.push(...result.cases)
+        setShadowCases([...collected])
+      }
+      const score = await api.scoreSubtypeShadow(workspaceId, collected.map((row) => ({
+        classificationId: row.classificationId,
+        expected: row.expected,
+        predicted: row.predicted,
+        confidence: row.confidence,
+        competingType: row.competingType,
+        inputChars: row.inputChars,
+      })))
+      setShadowScore(score)
+      const accuracy = score.accuracy == null ? 'n/a' : `${Math.round(score.accuracy * 100)}%`
+      setShadowNote(
+        `${score.correct} of ${score.total} correct (${accuracy}). ` +
+        `${score.input.modelCalls} subtype model calls. ` +
+        `Average input ${score.input.averageInputChars == null ? 'n/a' : Math.round(score.input.averageInputChars)} characters. ` +
+        'Stored classifications were not changed.'
+      )
+    } catch (e) {
+      setShadowNote(e instanceof Error ? e.message : 'Shadow evaluation failed')
+    } finally {
+      setShadowBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (blindIndex == null) {
+      setBlindPacket(null)
+      return
+    }
+    const item = sampleItems[blindIndex]
+    if (!item) return
+    let cancelled = false
+    setBlindLoading(true)
+    setBlindReveal(null)
+    setBlindPacket(null)
+    void api.getBlindSubtypePacket(workspaceId, item.classificationId)
+      .then((packet) => {
+        if (!cancelled) setBlindPacket(packet)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setSampleNote(error instanceof Error ? error.message : 'Could not load email evidence')
+      })
+      .finally(() => {
+        if (!cancelled) setBlindLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [blindIndex, sampleItems, workspaceId])
+
+  const submitBlind = async (body: { action: 'blind' | 'ambiguous'; businessType?: string; ambiguityReason?: string }) => {
+    if (blindIndex == null) return
+    const item = sampleItems[blindIndex]
+    if (!item) return
+    setBlindBusy(true)
+    try {
+      const result = await api.verifySubtype(workspaceId, item.classificationId, body)
+      setBlindReveal(result)
+      setBlindProgress((prev) => ({
+        ...prev,
+        reviewed: prev.reviewed + 1,
+        labeled: prev.labeled + (result.ambiguous ? 0 : 1),
+        ambiguous: prev.ambiguous + (result.ambiguous ? 1 : 0),
+        remaining: Math.max(0, prev.remaining - 1),
+      }))
+    } catch (error) {
+      setSampleNote(error instanceof Error ? error.message : 'Could not save the label')
+    } finally {
+      setBlindBusy(false)
+    }
+  }
+
+  const nextBlind = () => {
+    if (blindIndex == null) return
+    const next = blindIndex + 1
+    if (next >= sampleItems.length) {
+      setBlindIndex(null)
+      setSampleNote('End of this sample. Load the sample again to pick up any emails you have not labeled.')
+      return
+    }
+    setBlindIndex(next)
+  }
+
   const filterBtn = (active: boolean) => ({
     padding: '5px 12px',
     fontSize: 12,
@@ -598,6 +856,80 @@ export function ReviewQueueView({ workspaceId, connectionId }: Props) {
           Classification history and evidence inspector. Click a row to see why ForgeOps classified it —
           not an inbox review queue.
         </p>
+
+        <div style={{ marginBottom: 12, padding: 10, border: '1px solid #e5e5e5', borderRadius: 8, background: '#fafafa' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Subtype validation</div>
+          <p style={{ fontSize: 12, color: '#666', margin: '0 0 8px' }}>
+            Loads a stratified sample and hides the stored subtype until you choose a purpose.
+            Saved labels stay on the correction history and do not change the classification.
+            Reviewed {blindProgress.reviewed} / {blindProgress.target}. Remaining in this queue: {blindProgress.remaining}.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <button type="button" disabled={sampleBusy} onClick={() => void loadSample()} style={filterBtn(false)}>
+              {sampleBusy ? 'Sampling…' : 'Load validation sample'}
+            </button>
+            <button type="button" disabled={shadowBusy} onClick={() => void runShadow()} style={filterBtn(false)}>
+              {shadowBusy ? 'Evaluating…' : 'Run shadow evaluation'}
+            </button>
+          </div>
+          {sampleNote && <p style={{ fontSize: 12, color: '#444', margin: '0 0 8px' }}>{sampleNote}</p>}
+          {shadowNote && <p style={{ fontSize: 12, color: '#444', margin: '0 0 8px' }}>{shadowNote}</p>}
+          {sampleItems.length > 0 && (
+            <div style={{ maxHeight: 160, overflow: 'auto', marginBottom: 8 }}>
+              {sampleItems.map((item, index) => (
+                <button
+                  key={item.classificationId}
+                  type="button"
+                  onClick={() => setBlindIndex(index)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', fontSize: 12, padding: '4px 0', background: 'none', border: 'none', cursor: 'pointer' }}
+                >
+                  {item.subject || '(no subject)'} · {item.senderName || item.senderEmail}
+                </button>
+              ))}
+            </div>
+          )}
+          {shadowScore && (
+            <div style={{ fontSize: 12, color: '#333', marginBottom: 8 }}>
+              <div>
+                Accuracy {shadowScore.accuracy == null ? '—' : `${Math.round(shadowScore.accuracy * 100)}%`}
+                {' · '}mistakes {shadowScore.incorrect}
+                {' · '}competing recovered {shadowScore.competing.expectedWasCompeting}/{shadowScore.competing.wrongPrimary}
+              </div>
+              <div>
+                {shadowScore.bands.map((band) => (
+                  <span key={band.band} style={{ marginRight: 10 }}>
+                    {band.band} {band.sampleCount === 0 || band.accuracy == null ? '—' : `${Math.round(band.accuracy * 100)}%`} ({band.sampleCount})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {shadowCases.filter((row) => row.predicted !== row.expected).map((row) => (
+            <div key={row.classificationId} style={{ fontSize: 11, padding: '6px 0', borderTop: '1px solid #eee' }}>
+              <div><strong>{row.expected}</strong> predicted {row.predicted} · {Math.round(row.confidence * 100)}% · competing {row.competingType ?? 'null'} · {row.classifierVersion}</div>
+              <div style={{ color: '#555' }}>{row.subject}</div>
+              <div style={{ color: '#555' }}>{row.currentExcerpt}</div>
+              {row.threadExcerpts.length > 0 && <div style={{ color: '#777' }}>Thread: {row.threadExcerpts.join(' · ')}</div>}
+              {row.attachmentNames.length > 0 && <div style={{ color: '#777' }}>Files: {row.attachmentNames.join(', ')}</div>}
+              <div>Evidence: {row.evidence.join('; ')}</div>
+              <select
+                defaultValue=""
+                aria-label={`Error category for ${row.classificationId}`}
+                onChange={(event) => {
+                  const category = event.target.value
+                  if (!category) return
+                  void api.setSubtypeErrorCategory(workspaceId, row.classificationId, category)
+                }}
+                style={{ fontSize: 11, marginTop: 4 }}
+              >
+                <option value="">Why this failed…</option>
+                {SUBTYPE_ERROR_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
           <div style={{
@@ -723,7 +1055,21 @@ export function ReviewQueueView({ workspaceId, connectionId }: Props) {
           )}
         </div>
 
-        {selected && (
+        {blindIndex != null && (
+          <BlindSubtypeReview
+            packet={blindPacket}
+            loading={blindLoading}
+            busy={blindBusy}
+            reveal={blindReveal}
+            progress={blindProgress}
+            onSubmitSubtype={(businessType) => void submitBlind({ action: 'blind', businessType })}
+            onSubmitAmbiguous={(ambiguityReason) => void submitBlind({ action: 'ambiguous', ambiguityReason })}
+            onNext={nextBlind}
+            onClose={() => setBlindIndex(null)}
+          />
+        )}
+
+        {blindIndex == null && selected && (
           <ClassificationInspectorPanel
             workspaceId={workspaceId}
             connectionId={connectionId}

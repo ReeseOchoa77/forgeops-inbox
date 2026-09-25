@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { normalizeName } from "@forgeops/shared";
+import { normalizeName, tasksForEmailJobLink } from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
@@ -320,6 +320,12 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
             jobAssignedByUserId: auth.userId,
           },
         });
+        const createdTaskLink = tasksForEmailJobLink({
+          workspaceId,
+          sourceMessageIds: threadMessages.map((row) => row.id),
+          jobId: job.id,
+        });
+        if (createdTaskLink) await tx.task.updateMany(createdTaskLink);
         await tx.jobActivityLog.create({
           data: {
             jobId: job.id,
@@ -396,6 +402,12 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
           jobAssignedByUserId: auth.userId,
         },
       });
+      const taskLink = tasksForEmailJobLink({
+        workspaceId,
+        sourceMessageIds: threadMessages.map((row) => row.id),
+        jobId: job.id,
+      });
+      if (taskLink) await tx.task.updateMany(taskLink);
       await tx.jobActivityLog.create({
         data: {
           jobId: job.id,

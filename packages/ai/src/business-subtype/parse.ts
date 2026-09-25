@@ -3,6 +3,7 @@ import {
   requireFiniteProbability,
   StructuredOutputValidationError,
 } from "../openai/responses-json.js";
+import { SUBTYPE_CLASSIFIER_VERSION } from "./evidence-packet.js";
 import {
   BUSINESS_SUBTYPE_KEYS,
   type BusinessSubtypeKey,
@@ -17,8 +18,14 @@ export function parseBusinessSubtypeResult(raw: unknown): BusinessSubtypeResult 
     ]);
   }
 
+  const allowed = new Set([
+    "businessType",
+    "businessTypeConfidence",
+    "competingType",
+    "evidence",
+  ]);
   for (const key of Object.keys(raw)) {
-    if (key !== "businessType" && key !== "businessTypeConfidence") {
+    if (!allowed.has(key)) {
       issues.push(`unexpected property "${key}"`);
     }
   }
@@ -42,12 +49,49 @@ export function parseBusinessSubtypeResult(raw: unknown): BusinessSubtypeResult 
     issues
   );
 
-  if (issues.length > 0 || businessType == null || businessTypeConfidence == null) {
+  let competingType: BusinessSubtypeKey | null = null;
+  if (raw.competingType === null) {
+    competingType = null;
+  } else if (typeof raw.competingType !== "string") {
+    issues.push("competingType must be an allowed subtype or null");
+  } else if (!(BUSINESS_SUBTYPE_KEYS as readonly string[]).includes(raw.competingType)) {
+    issues.push(`competingType is not an allowed subtype (got "${raw.competingType}")`);
+  } else if (raw.competingType === businessType) {
+    issues.push("competingType must differ from businessType");
+  } else {
+    competingType = raw.competingType as BusinessSubtypeKey;
+  }
+
+  const evidence: string[] = [];
+  if (!Array.isArray(raw.evidence) || raw.evidence.length < 1 || raw.evidence.length > 4) {
+    issues.push("evidence must be 1 to 4 short strings");
+  } else {
+    for (const item of raw.evidence) {
+      if (typeof item !== "string" || item.trim().length === 0 || item.length > 240) {
+        issues.push("each evidence marker must be a non-empty string up to 240 characters");
+        break;
+      }
+      evidence.push(item.trim());
+    }
+  }
+
+  if (
+    issues.length > 0 ||
+    businessType == null ||
+    businessTypeConfidence == null ||
+    evidence.length === 0
+  ) {
     throw new StructuredOutputValidationError(
       "business subtype",
       issues.length > 0 ? issues : ["incomplete business subtype payload"]
     );
   }
 
-  return { businessType, businessTypeConfidence };
+  return {
+    businessType,
+    businessTypeConfidence,
+    competingType,
+    evidence,
+    classifierVersion: SUBTYPE_CLASSIFIER_VERSION,
+  };
 }

@@ -32,5 +32,7 @@ export * from "./project-folders/match-folder-to-job.js";
 export * from "./project-folders/verified-folder-job-assignment.js";
 export * from "./mailbox-reclassify-filters.js";
 export * from "./classifier-generated-tasks.js";
+export * from "./task-job-link.js";
+export * from "./subtype-validation.js";
 export * from "./inbox-cleared-at.js";
 export * from "./worker-jobs/registry.js";

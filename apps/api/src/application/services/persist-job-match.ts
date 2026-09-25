@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { JobMatchEvidence, JobMatchResult } from "@forgeops/shared";
-import { isProtectedJobAssignment } from "@forgeops/shared";
+import { isProtectedJobAssignment, tasksForEmailJobLink } from "@forgeops/shared";
 
 export function isManualJobAssignment(existing: {
   jobAssignmentIsManual?: boolean | null;
@@ -102,8 +102,15 @@ export async function persistJobMatchResult(
         data: JobMatchPersistenceFields["emailMessage"];
       }) => Promise<unknown>;
     };
+    task: {
+      updateMany: (args: {
+        where: { workspaceId: string; sourceMessageId: { in: string[] } };
+        data: { jobId: string | null };
+      }) => Promise<unknown>;
+    };
   },
   input: {
+    workspaceId: string;
     classificationId: string;
     emailMessageId: string;
     match: JobMatchResult;
@@ -113,10 +120,18 @@ export async function persistJobMatchResult(
       jobAssignmentSource?: string | null;
     } | null;
   }
-): Promise<{ applied: boolean; preservedManual: boolean }> {
+): Promise<{ applied: boolean; preservedManual: boolean; jobId: string | null }> {
   const fields = buildJobMatchPersistence(input.match, input.existing);
+  const jobId = fields ? fields.emailMessage.jobId : (input.existing?.jobId ?? null);
+  const taskLink = tasksForEmailJobLink({
+    workspaceId: input.workspaceId,
+    sourceMessageIds: [input.emailMessageId],
+    jobId,
+  });
+
   if (!fields) {
-    return { applied: false, preservedManual: true };
+    if (taskLink) await tx.task.updateMany(taskLink);
+    return { applied: false, preservedManual: true, jobId };
   }
 
   await Promise.all([
@@ -128,7 +143,8 @@ export async function persistJobMatchResult(
       where: { id: input.emailMessageId },
       data: fields.emailMessage,
     }),
+    ...(taskLink ? [tx.task.updateMany(taskLink)] : []),
   ]);
 
-  return { applied: true, preservedManual: false };
+  return { applied: true, preservedManual: false, jobId };
 }

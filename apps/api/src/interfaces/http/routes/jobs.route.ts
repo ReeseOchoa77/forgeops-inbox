@@ -6,6 +6,7 @@ import {
   includeEmailAttachmentInJobLibrary,
   fileExtension,
   canPreviewFile,
+  tasksForEmailJobLink,
   JOB_FILE_TYPE_FILTERS,
   normalizeName,
   type JobFileTypeFilter,
@@ -901,6 +902,12 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
             jobAssignmentIsManual: true,
           },
         });
+        const taskLink = tasksForEmailJobLink({
+          workspaceId,
+          sourceMessageIds: messages.map((row) => row.id),
+          jobId,
+        });
+        if (taskLink) await tx.task.updateMany(taskLink);
 
         await tx.jobActivityLog.create({
           data: {
@@ -938,6 +945,12 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           jobAssignmentIsManual: true,
         },
       });
+      const taskLink = tasksForEmailJobLink({
+        workspaceId,
+        sourceMessageIds: [message.id],
+        jobId,
+      });
+      if (taskLink) await tx.task.updateMany(taskLink);
 
       await tx.jobActivityLog.create({
         data: {
@@ -991,6 +1004,12 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           jobAssignmentIsManual: false,
         },
       });
+      const taskLink = tasksForEmailJobLink({
+        workspaceId: params.workspaceId,
+        sourceMessageIds: [params.messageId],
+        jobId: null,
+      });
+      if (taskLink) await tx.task.updateMany(taskLink);
 
       await tx.jobActivityLog.create({
         data: {
@@ -1111,6 +1130,12 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           jobAssignmentIsManual: true,
         },
       });
+      const taskLink = tasksForEmailJobLink({
+        workspaceId,
+        sourceMessageIds: [body.messageId],
+        jobId: body.targetJobId,
+      });
+      if (taskLink) await tx.task.updateMany(taskLink);
 
       await tx.jobActivityLog.create({
         data: {

@@ -5,6 +5,7 @@ import {
   buildInspectionSignals,
   buildPriorityInspection,
   computeClassificationHistoryStatus,
+  readSubtypeDecision,
   listAvailableInspectionStages,
   resolveInspectionJobMarkers,
   type ClassificationHistoryStatus,
@@ -557,6 +558,7 @@ export const registerClassificationAuditRoutes = async (
         },
         jobAssociation,
         jobCandidate,
+        subtypeDecision: readSubtypeDecision(evidence),
         tasks: row.tasks.map((t) => ({
           id: t.id,
           title: t.title,

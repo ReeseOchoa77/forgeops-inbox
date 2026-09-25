@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { subtypeConfidenceBand } from "@forgeops/ai";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { NativeClassificationPipelineResult } from "@forgeops/native-classification";
 import {
@@ -265,6 +266,16 @@ export async function persistNativeClassificationResult(input: {
         ? (decision.classificationEvidence as { jobAssociation: unknown })
             .jobAssociation
         : { status: "NONE" as const },
+    subtypeDecision: subtype
+      ? {
+          classifierVersion: subtype.classifierVersion ?? "subtype-v1",
+          businessType: subtype.businessType,
+          confidence: subtype.businessTypeConfidence,
+          band: subtypeConfidenceBand(subtype.businessTypeConfidence),
+          competingType: subtype.competingType ?? null,
+          evidence: Array.isArray(subtype.evidence) ? subtype.evidence.slice(0, 4) : [],
+        }
+      : null,
   };
 
   const rawAiPayload = {
@@ -272,6 +283,8 @@ export async function persistNativeClassificationResult(input: {
     mailboxCategory,
     classificationDecision: decision.classificationDecision,
   };
+
+  let taskJobId: string | null = message.jobId ?? null;
 
   const itemStatus = requiresReview ? "NEEDS_REVIEW" : "NEW";
   const reviewQueue = requiresReview ? "TRIAGE" : null;
@@ -435,7 +448,8 @@ export async function persistNativeClassificationResult(input: {
     });
 
     if (jobMatch) {
-      await persistJobMatchResult(tx, {
+      const persisted = await persistJobMatchResult(tx, {
+        workspaceId: input.workspaceId,
         classificationId: classification.id,
         emailMessageId: message.id,
         match: jobMatch,
@@ -445,6 +459,7 @@ export async function persistNativeClassificationResult(input: {
           jobAssignmentSource: message.jobAssignmentSource,
         },
       });
+      taskJobId = persisted.jobId;
     }
 
     await tx.emailMessage.update({
@@ -558,6 +573,7 @@ export async function persistNativeClassificationResult(input: {
             reviewedAt: payload.reviewedAt,
             completedAt: payload.completedAt,
             status: payload.status,
+            jobId: taskJobId,
           },
           create: {
             workspaceId: input.workspaceId,
@@ -577,6 +593,7 @@ export async function persistNativeClassificationResult(input: {
             requiresReview: payload.requiresReview,
             reviewQueue: payload.reviewQueue,
             reviewStatus: payload.reviewStatus,
+            jobId: taskJobId,
           },
         });
 

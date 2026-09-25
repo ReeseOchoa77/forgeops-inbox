@@ -26,6 +26,32 @@ export type ClassificationHistoryStatus =
  * Product-facing history status. Requires-review / pending are treated as AUTO
  * (classified history) — not a user-facing "Needs Review" workflow.
  */
+export function readSubtypeDecision(evidence: unknown): ClassificationInspectionPayload["subtypeDecision"] {
+  if (!evidence || typeof evidence !== "object") return null;
+  const raw = (evidence as { subtypeDecision?: unknown }).subtypeDecision;
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.businessType !== "string" || typeof row.classifierVersion !== "string") {
+    return null;
+  }
+  const confidence = typeof row.confidence === "number" ? row.confidence : null;
+  if (confidence == null || !Number.isFinite(confidence)) return null;
+  const band =
+    row.band === "HIGH" || row.band === "MEDIUM" || row.band === "LOW" ? row.band : null;
+  if (!band) return null;
+  const markers = Array.isArray(row.evidence)
+    ? row.evidence.filter((item): item is string => typeof item === "string").slice(0, 4)
+    : [];
+  return {
+    classifierVersion: row.classifierVersion,
+    businessType: row.businessType,
+    confidence,
+    band,
+    competingType: typeof row.competingType === "string" ? row.competingType : null,
+    evidence: markers,
+  };
+}
+
 export function computeClassificationHistoryStatus(input: {
   reviewStatus: string;
   previousCategory: string | null | undefined;
@@ -135,6 +161,18 @@ export type ClassificationInspectionPayload = {
     isPublicDomain: boolean;
     businessEvidenceCount: number;
     personalEvidenceCount: number;
+  } | null;
+  /**
+   * Persisted subtype evidence markers. Null on classifications made before subtype-v2.
+   * Not model chain-of-thought.
+   */
+  subtypeDecision: {
+    classifierVersion: string;
+    businessType: string;
+    confidence: number;
+    band: "HIGH" | "MEDIUM" | "LOW";
+    competingType: string | null;
+    evidence: string[];
   } | null;
   corrections: Array<{
     id: string;

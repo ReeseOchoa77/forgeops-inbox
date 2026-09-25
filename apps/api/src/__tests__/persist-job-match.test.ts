@@ -46,12 +46,15 @@ describe("persist-job-match", () => {
   it("13. dual persistence writes Classification + EmailMessage together", async () => {
     const classificationUpdate = vi.fn();
     const emailUpdate = vi.fn();
+    const taskUpdate = vi.fn();
     const tx = {
       classification: { update: classificationUpdate },
       emailMessage: { update: emailUpdate },
+      task: { updateMany: taskUpdate },
     };
 
     const result = await persistJobMatchResult(tx, {
+      workspaceId: "ws-1",
       classificationId: "cls-1",
       emailMessageId: "msg-1",
       match: strongMatch,
@@ -83,6 +86,10 @@ describe("persist-job-match", () => {
     const clsJobId = classificationUpdate.mock.calls[0]![0].data.jobId;
     const msgJobId = emailUpdate.mock.calls[0]![0].data.jobId;
     expect(clsJobId).toBe(msgJobId);
+    expect(taskUpdate).toHaveBeenCalledWith({
+      where: { workspaceId: "ws-1", sourceMessageId: { in: ["msg-1"] } },
+      data: { jobId: "job-new" },
+    });
   });
 
   it("clears stale auto job when no match", async () => {

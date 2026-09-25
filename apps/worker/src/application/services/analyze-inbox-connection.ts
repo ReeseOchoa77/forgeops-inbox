@@ -429,8 +429,10 @@ export const analyzeInboxConnection = async (input: {
         }
       });
 
+      let taskJobId: string | null = message.jobId ?? null;
       if (jobMatch) {
-        await persistJobMatchResult(tx, {
+        const persisted = await persistJobMatchResult(tx, {
+          workspaceId: input.workspaceId,
           classificationId: persistedClassification.id,
           emailMessageId: message.id,
           match: jobMatch,
@@ -440,6 +442,7 @@ export const analyzeInboxConnection = async (input: {
             jobAssignmentSource: message.jobAssignmentSource,
           },
         });
+        taskJobId = persisted.jobId;
       }
 
       if (taskCandidate) {
@@ -476,7 +479,8 @@ export const analyzeInboxConnection = async (input: {
             reviewStatus: taskReviewState?.reviewStatus ?? "NOT_REQUIRED",
             reviewedByUserId: null,
             reviewedAt: null,
-            completedAt: null
+            completedAt: null,
+            jobId: taskJobId,
           },
           create: {
             workspaceId: input.workspaceId,
@@ -495,7 +499,8 @@ export const analyzeInboxConnection = async (input: {
             confidence: toConfidence(taskCandidate.confidence),
             requiresReview: taskCandidate.requiresReview,
             reviewQueue: taskReviewState?.reviewQueue ?? null,
-            reviewStatus: taskReviewState?.reviewStatus ?? "NOT_REQUIRED"
+            reviewStatus: taskReviewState?.reviewStatus ?? "NOT_REQUIRED",
+            jobId: taskJobId,
           }
         });
 

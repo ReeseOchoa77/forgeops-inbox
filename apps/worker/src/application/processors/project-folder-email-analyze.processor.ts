@@ -6,6 +6,7 @@ import {
   addProjectFolderMessageOutcomes,
   resolveVerifiedFolderJobAssignment,
   VERIFIED_PROJECT_FOLDER_SOURCE,
+  tasksForEmailJobLink,
   type AttachmentIngestJobPayload,
   type AttachmentIngestResult,
   type MailboxClassifyJobPayload,
@@ -453,6 +454,12 @@ export async function processProjectFolderEmailAnalyze(
                   mailboxCategory: "BUSINESS",
                 },
               });
+              const taskLink = tasksForEmailJobLink({
+                workspaceId: payload.workspaceId,
+                sourceMessageIds: [existing.id],
+                jobId: folder.matchedJobId,
+              });
+              if (taskLink) await deps.prisma.task.updateMany(taskLink);
               progress.assigned += 1;
 
               if (existing.classifications.length > 0) {

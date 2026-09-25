@@ -15,7 +15,7 @@ export function BusinessBadge({ category }: { category: string | null }) {
   return <span style={{ ...badgeBase, background: '#f0f0f0', color: '#888' }}>Non-Business</span>
 }
 
-const businessTypeLabels: Record<string, string> = {
+export const businessTypeLabels: Record<string, string> = {
   BID_OPPORTUNITY: 'Bid Opportunity',
   BID_UPDATE: 'Bid Update / Addendum',
   ESTIMATE_QUOTE: 'Estimate / Quote',

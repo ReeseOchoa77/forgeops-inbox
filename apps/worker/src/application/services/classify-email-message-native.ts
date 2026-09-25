@@ -179,6 +179,7 @@ export async function classifyEmailMessageNative(
         attachmentMetadata: true,
         jobId: true,
         jobAssignmentSource: true,
+        threadId: true,
         job: {
           select: {
             id: true,
@@ -225,6 +226,18 @@ export async function classifyEmailMessageNative(
       message.normalizedEmail?.senderDomain?.trim() ||
       extractDomain(message.senderEmail ?? "") ||
       "";
+    const priorMessages = message.threadId
+      ? await deps.prisma.emailMessage.findMany({
+          where: {
+            workspaceId: payload.workspaceId,
+            threadId: message.threadId,
+            id: { not: message.id },
+          },
+          orderBy: { receivedAt: "desc" },
+          take: 3,
+          select: { senderEmail: true, subject: true, snippet: true },
+        })
+      : [];
 
     const pipeline = await runNativeClassificationPipeline(
       {
@@ -237,6 +250,15 @@ export async function classifyEmailMessageNative(
         senderEmail: message.senderEmail,
         senderDomain,
         attachmentNames: attachmentNamesFromMetadata(message.attachmentMetadata),
+        threadSnippets: priorMessages,
+        ...(confirmedJobAssociation
+          ? {
+              jobContext: {
+                name: confirmedJobAssociation.name,
+                jobNumber: confirmedJobAssociation.jobNumber,
+              },
+            }
+          : {}),
         ...(payload.taskMode === "REMOVE_ONLY"
           ? { skipTaskExtraction: true }
           : {}),

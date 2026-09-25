@@ -8,6 +8,8 @@ export * from "./prompts/inbox-classification.prompt.js";
 export * from "./semantic-signals/prompt.js";
 export * from "./semantic-signals/types.js";
 export * from "./business-subtype/prompt.js";
+export * from "./business-subtype/evidence-packet.js";
+export * from "./business-subtype/evaluate.js";
 export * from "./business-subtype/parse.js";
 export * from "./business-subtype/classifier.js";
 export * from "./entity-selection/prompt.js";

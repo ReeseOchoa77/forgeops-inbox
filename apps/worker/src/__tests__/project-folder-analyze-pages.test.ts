@@ -109,6 +109,7 @@ function harness(
         matchedJob: { id: "job-1", workspaceId: "ws", name: "Nova", jobNumber: "1" },
       }),
     },
+    task: { updateMany: async () => ({ count: 0 }) },
     emailMessage: {
       findFirst: async ({ where }: { where: { id: string } }) => {
         if (failMessageId && where.id === failMessageId) {

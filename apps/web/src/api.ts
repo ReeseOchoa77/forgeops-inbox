@@ -331,6 +331,84 @@ export interface ReviewItem {
   reviewReasons: string[];
 }
 
+export interface SubtypeValidationSampleItem {
+  classificationId: string;
+  messageId: string;
+  inboxConnectionId: string;
+  subject: string | null;
+  senderEmail: string;
+  senderName: string | null;
+  date: string | null;
+}
+
+export interface BlindSubtypePacket {
+  classificationId: string;
+  subject: string;
+  currentMessage: string;
+  thread: Array<{ senderEmail: string; subject: string; snippet: string }>;
+  attachmentNames: string[];
+  sender: { name: string; email: string; domain: string };
+  job: { name: string; jobNumber: string } | null;
+}
+
+export interface SubtypeVerificationResult {
+  correctionId: string;
+  action: 'confirm' | 'change' | 'blind' | 'ambiguous';
+  humanLabel: string | null;
+  ambiguous: boolean;
+  ambiguityReason: string | null;
+  productionSubtype: string | null;
+  matchesProduction: boolean | null;
+  confidence: number | null;
+  competingType: string | null;
+  evidence: string[];
+  classifierVersion: string | null;
+  classificationUnchanged?: boolean;
+}
+
+export interface SubtypeShadowCase {
+  classificationId: string;
+  expected: string;
+  predicted: string;
+  confidence: number;
+  competingType: string | null;
+  evidence: string[];
+  classifierVersion: string;
+  inputChars: number;
+  subject: string;
+  currentExcerpt: string;
+  threadExcerpts: string[];
+  attachmentNames: string[];
+}
+
+export interface SubtypeShadowScore {
+  total: number;
+  correct: number;
+  incorrect: number;
+  accuracy: number | null;
+  perSubtype: Array<{
+    subtype: string;
+    sampleCount: number;
+    predictedCount: number;
+    correct: number;
+    precision: number | null;
+    recall: number | null;
+  }>;
+  bands: Array<{ band: 'HIGH' | 'MEDIUM' | 'LOW'; sampleCount: number; correct: number; accuracy: number | null }>;
+  confusion: Array<{ expected: string; predicted: string; count: number }>;
+  competing: { wrongPrimary: number; expectedWasCompeting: number; percentage: number | null };
+  otherBusiness: {
+    predicted: number;
+    expected: number;
+    predictedAndCorrect: number;
+    whenPredictedHumanExpected: Array<{ subtype: string; count: number }>;
+  };
+  input: { modelCalls: number; averageInputChars: number | null; totalInputChars: number };
+  reviewed: number;
+  humanLabeled: number;
+  humanAmbiguous: number;
+}
+
 export interface ClassificationAuditItem {
   classificationId: string;
   messageId: string;
@@ -463,6 +541,14 @@ export interface ClassificationInspection {
     isPublicDomain: boolean;
     businessEvidenceCount: number;
     personalEvidenceCount: number;
+  } | null;
+  subtypeDecision: {
+    classifierVersion: string;
+    businessType: string;
+    confidence: number;
+    band: 'HIGH' | 'MEDIUM' | 'LOW';
+    competingType: string | null;
+    evidence: string[];
   } | null;
   corrections: Array<{
     id: string;
@@ -1023,6 +1109,78 @@ export const api = {
 
   getCorrections: (workspaceId: string, messageId: string) =>
     request<{ corrections: Array<Record<string, unknown>> }>(`/workspaces/${workspaceId}/messages/${messageId}/corrections`),
+
+  getSubtypeValidationCounts: (workspaceId: string) =>
+    request<{
+      subtypeChanges: Array<{ original: string | null; corrected: string | null; count: number }>;
+      sameSubtypeCorrections: number;
+      reviewStatus: Array<{ reviewStatus: string; count: number }>;
+      productionSubtypes: Array<{ subtype: string; count: number }>;
+      verifications: Array<{ action: 'confirm' | 'change'; category: string | null; expected: string | null; count: number }>;
+    }>(`/workspaces/${workspaceId}/subtype-validation/counts`),
+
+  getSubtypeValidationSample: (workspaceId: string, connectionId: string, target = 200) =>
+    request<{
+      classificationIds: string[];
+      target: number;
+      available: number;
+      items: SubtypeValidationSampleItem[];
+      progress: { reviewed: number; labeled: number; ambiguous: number; target: number; remaining: number };
+    }>(`/workspaces/${workspaceId}/inbox-connections/${connectionId}/subtype-validation/sample?target=${target}`),
+
+  getBlindSubtypePacket: (workspaceId: string, classificationId: string) =>
+    request<BlindSubtypePacket>(
+      `/workspaces/${workspaceId}/classifications/${classificationId}/subtype-validation/packet`
+    ),
+
+  verifySubtype: (
+    workspaceId: string,
+    classificationId: string,
+    body: { action: 'confirm' | 'change' | 'blind' | 'ambiguous'; businessType?: string; ambiguityReason?: string }
+  ) =>
+    request<SubtypeVerificationResult & { status: string }>(
+      `/workspaces/${workspaceId}/classifications/${classificationId}/subtype-verification`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  setSubtypeErrorCategory: (workspaceId: string, classificationId: string, category: string) =>
+    request<{ correctionId: string; category: string }>(
+      `/workspaces/${workspaceId}/classifications/${classificationId}/subtype-verification/category`,
+      { method: 'POST', body: JSON.stringify({ category }) }
+    ),
+
+  listVerifiedSubtypes: (workspaceId: string) =>
+    request<{ total: number; items: Array<{ classificationId: string; expected: string; action: 'confirm' | 'change' }> }>(
+      `/workspaces/${workspaceId}/subtype-validation/verified`
+    ),
+
+  runSubtypeShadow: (workspaceId: string, classificationIds: string[]) =>
+    request<{
+      cases: SubtypeShadowCase[];
+      skipped: Array<{ classificationId: string; reason: string }>;
+      elapsedMs: number;
+      persistedToClassification: boolean;
+      model: string;
+    }>(`/workspaces/${workspaceId}/subtype-validation/shadow`, {
+      method: 'POST',
+      body: JSON.stringify({ classificationIds }),
+    }),
+
+  scoreSubtypeShadow: (
+    workspaceId: string,
+    predictions: Array<{
+      classificationId: string;
+      expected: string;
+      predicted: string;
+      confidence: number;
+      competingType: string | null;
+      inputChars?: number;
+    }>
+  ) =>
+    request<SubtypeShadowScore>(`/workspaces/${workspaceId}/subtype-validation/score`, {
+      method: 'POST',
+      body: JSON.stringify({ predictions }),
+    }),
 
   getMessageDetail: (workspaceId: string, connectionId: string, messageId: string) =>
     request<{ data: MessageDetail }>(

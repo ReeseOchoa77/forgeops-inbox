@@ -11,8 +11,15 @@ describe("business subtype contract", () => {
         parseBusinessSubtypeResult({
           businessType,
           businessTypeConfidence: 0.9,
+          competingType: null,
+          evidence: ["subject states the workflow"],
         })
-      ).toEqual({ businessType, businessTypeConfidence: 0.9 });
+      ).toMatchObject({
+        businessType,
+        businessTypeConfidence: 0.9,
+        competingType: null,
+        classifierVersion: "subtype-v2",
+      });
     }
   });
 
@@ -21,6 +28,8 @@ describe("business subtype contract", () => {
       parseBusinessSubtypeResult({
         businessType: "BID_INVITATION",
         businessTypeConfidence: 0.9,
+        competingType: null,
+        evidence: ["subject"],
       })
     ).toThrow(StructuredOutputValidationError);
   });
@@ -30,6 +39,8 @@ describe("business subtype contract", () => {
       parseBusinessSubtypeResult({
         businessType: "OTHER_BUSINESS",
         businessTypeConfidence: 1.2,
+        competingType: null,
+        evidence: ["subject"],
       })
     ).toThrow(/between 0 and 1/);
 
@@ -37,6 +48,8 @@ describe("business subtype contract", () => {
       parseBusinessSubtypeResult({
         businessType: "OTHER_BUSINESS",
         businessTypeConfidence: 0.5,
+        competingType: null,
+        evidence: ["subject"],
         mailboxCategory: "BUSINESS",
       })
     ).toThrow(/unexpected property/);
