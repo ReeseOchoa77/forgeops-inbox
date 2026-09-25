@@ -9,6 +9,14 @@ import {
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import { InboxExcludeFilter } from '../components/InboxExcludeFilter'
 import { AttachmentActionMenu } from '../components/AttachmentActionMenu'
+import { FilePreviewModal } from '../components/FilePreviewModal'
+import {
+  canPreviewFile,
+  previewFilesFrom,
+  previewIndexFor,
+  toPreviewFile,
+  type PreviewFile,
+} from '../file-preview'
 import {
   JobAssignPicker,
   JobFilterSelect,
@@ -64,6 +72,7 @@ function InboxAttachmentsButton({
   const [attachments, setAttachments] = useState<StoredAttachment[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
+  const [preview, setPreview] = useState<{ files: PreviewFile[]; index: number } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -144,7 +153,32 @@ function InboxAttachmentsButton({
             >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {att.filename}
+                  {canPreviewFile({ filename: att.filename, contentType: att.mimeType }) ? (
+                    <button
+                      type="button"
+                      title="Preview"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const files = previewFilesFrom(downloadable, (row) => toPreviewFile({
+                          id: row.id,
+                          filename: row.filename,
+                          contentType: row.mimeType,
+                          sizeBytes: row.sizeBytes,
+                          available: row.uploadStatus === 'UPLOADED',
+                          previewUrl: api.getStoredAttachmentDownloadUrl(workspaceId, row.id, true),
+                          downloadUrl: api.getStoredAttachmentDownloadUrl(workspaceId, row.id),
+                        }))
+                        if (!files.some((file) => file.id === att.id)) return
+                        setPreview({ files, index: previewIndexFor(files, att.id) })
+                      }}
+                      style={{
+                        background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 500,
+                        cursor: 'pointer', textAlign: 'left', color: 'inherit', maxWidth: '100%',
+                      }}
+                    >
+                      {att.filename}
+                    </button>
+                  ) : att.filename}
                 </div>
                 <div style={{ fontSize: 10, color: '#999', marginTop: 1 }}>
                   {formatAttachmentSize(att.sizeBytes)}
@@ -177,6 +211,14 @@ function InboxAttachmentsButton({
             </div>
           ))}
         </div>
+      )}
+      {preview && (
+        <FilePreviewModal
+          files={preview.files}
+          index={preview.index}
+          onIndexChange={(index) => setPreview((current) => current ? { ...current, index } : current)}
+          onClose={() => setPreview(null)}
+        />
       )}
     </span>
   )

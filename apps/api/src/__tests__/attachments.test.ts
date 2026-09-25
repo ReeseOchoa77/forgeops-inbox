@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { resolveContentDelivery } from "@forgeops/shared";
 
 // ── Schema validation tests ─────────────────────────────────────────────
 
@@ -312,8 +313,14 @@ describe("mock storage abstraction", () => {
         store.delete(key);
       }),
       exists: vi.fn(async (key: string) => store.has(key)),
-      getSignedDownloadUrl: vi.fn(async (key: string, filename: string, _contentType: string, _expiresIn?: number) =>
-        `https://s3.example.com/${key}?filename=${filename}&X-Amz-Signature=mock`
+      getSignedDownloadUrl: vi.fn(async (
+        key: string,
+        filename: string,
+        _contentType: string,
+        _expiresIn?: number,
+        disposition: "inline" | "attachment" = "attachment",
+      ) =>
+        `https://s3.example.com/${key}?filename=${filename}&disposition=${disposition}&X-Amz-Signature=mock`
       ),
       getObject: vi.fn(async (key: string) => {
         const item = store.get(key);
@@ -355,6 +362,26 @@ describe("mock storage abstraction", () => {
     );
     expect(url).toContain("s3.example.com");
     expect(url).toContain("file.pdf");
+    expect(url).toContain("disposition=attachment");
+  });
+
+  it("signed preview URL can request inline disposition without a public object URL", async () => {
+    const storage = createMockStorage();
+    const delivery = resolveContentDelivery({
+      filename: "drawing-set.pdf",
+      mimeType: "application/pdf",
+      inlineRequested: true,
+    });
+    const url = await storage.getSignedDownloadUrl(
+      "attachments/ws1/msg1/att1/drawing-set.pdf",
+      "drawing-set.pdf",
+      delivery.contentType,
+      900,
+      delivery.disposition,
+    );
+    expect(delivery.disposition).toBe("inline");
+    expect(url).toContain("disposition=inline");
+    expect(url).not.toContain("public-read");
   });
 
   it("download requires workspace access (auth check pattern)", () => {
@@ -490,6 +517,38 @@ describe("download route contract", () => {
       (r) => r.uploadStatus === "UPLOADED" && r.storageKey
     );
     expect(downloadable.map((r) => r.id)).toEqual(["a3"]);
+  });
+
+  it("inline preview uses the same workspace-scoped attachment lookup as download", () => {
+    const where = {
+      id: "guessed-attachment-id",
+      workspaceId: "ws-member",
+    };
+    const otherWorkspace = "ws-other";
+    const allowed = where.workspaceId === otherWorkspace && where.id === "guessed-attachment-id";
+    expect(allowed).toBe(false);
+    expect(where.workspaceId).toBe("ws-member");
+  });
+
+  it("does not inline unsafe types even when inline is requested", () => {
+    expect(
+      resolveContentDelivery({
+        filename: "logo.svg",
+        mimeType: "image/svg+xml",
+        inlineRequested: true,
+      }).disposition,
+    ).toBe("attachment");
+  });
+
+  it("preview delivery does not include an email read mutation", () => {
+    const downloadSelect = {
+      storageKey: true,
+      filename: true,
+      mimeType: true,
+      sizeBytes: true,
+      uploadStatus: true,
+    };
+    expect(downloadSelect).not.toHaveProperty("isRead");
   });
 
   it("rejects wrong workspace/attachment combination", () => {

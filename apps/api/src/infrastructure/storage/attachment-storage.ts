@@ -15,7 +15,8 @@ export interface AttachmentStorage {
     key: string,
     filename: string,
     contentType: string,
-    expiresInSeconds?: number
+    expiresInSeconds?: number,
+    disposition?: "inline" | "attachment",
   ): Promise<string>;
   getObject(key: string): Promise<{ data: Buffer; contentType: string }>;
   readonly configured: boolean;
@@ -106,14 +107,15 @@ export class S3AttachmentStorage implements AttachmentStorage {
     key: string,
     filename: string,
     contentType: string,
-    expiresInSeconds = 900
+    expiresInSeconds = 900,
+    disposition: "inline" | "attachment" = "attachment",
   ): Promise<string> {
     const client = this.requireClient();
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
       ResponseContentType: contentType,
-      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(filename)}"`,
+      ResponseContentDisposition: `${disposition}; filename="${encodeURIComponent(filename)}"`,
     });
     return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
   }

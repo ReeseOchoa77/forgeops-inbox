@@ -26,6 +26,7 @@ export * from "./audit/audit-retention.js";
 export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";
 export * from "./job-file-types.js";
+export * from "./file-preview.js";
 export * from "./date-bounds.js";
 export * from "./project-folders/match-folder-to-job.js";
 export * from "./project-folders/verified-folder-job-assignment.js";

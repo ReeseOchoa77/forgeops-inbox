@@ -1843,8 +1843,8 @@ export const api = {
     }
   },
 
-  getJobFileDownloadUrl: (workspaceId: string, jobId: string, fileId: string) =>
-    `${BASE}/workspaces/${workspaceId}/jobs/${jobId}/files/${fileId}/download`,
+  getJobFileDownloadUrl: (workspaceId: string, jobId: string, fileId: string, inline = false) =>
+    `${BASE}/workspaces/${workspaceId}/jobs/${jobId}/files/${fileId}/download${inline ? '?inline=true' : ''}`,
 
   getJobActivity: (workspaceId: string, jobId: string, page = 1) =>
     request<{ activity: JobActivity[]; pagination: { page: number; pageSize: number; totalCount: number; totalPages: number } }>(

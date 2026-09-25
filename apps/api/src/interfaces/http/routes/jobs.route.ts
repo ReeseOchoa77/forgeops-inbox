@@ -5,7 +5,7 @@ import {
   classifyJobFileType,
   includeEmailAttachmentInJobLibrary,
   fileExtension,
-  isPreviewableImage,
+  canPreviewFile,
   JOB_FILE_TYPE_FILTERS,
   normalizeName,
   type JobFileTypeFilter,
@@ -1335,7 +1335,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
             a.emailMessage.senderEmail ||
             null,
           folderId: null,
-          previewable: isPreviewableImage(a.mimeType, a.filename),
+          previewable: canPreviewFile({ filename: a.filename, contentType: a.mimeType }),
         };
       }),
       ...jobUploads.map((f) => ({
@@ -1351,7 +1351,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         emailSubject: null,
         sender: null,
         folderId: f.folderId,
-        previewable: isPreviewableImage(f.mimeType, f.filename),
+        previewable: canPreviewFile({ filename: f.filename, contentType: f.mimeType }),
       })),
     ];
 

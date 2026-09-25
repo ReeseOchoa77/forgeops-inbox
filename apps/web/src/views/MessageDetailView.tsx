@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
 import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment, type ConnectionSummary } from '../api'
 import { PriorityBadge } from '../components/Badges'
@@ -14,6 +14,15 @@ import {
   AttachmentActionMenu,
   CopyAllAttachmentsButton,
 } from '../components/AttachmentActionMenu'
+import { FilePreviewModal } from '../components/FilePreviewModal'
+import {
+  canPreviewFile,
+  previewFilesFrom,
+  previewIndexFor,
+  storedAttachmentIdFromUrl,
+  toPreviewFile,
+  type PreviewFile,
+} from '../file-preview'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import {
   getCachedThread,
@@ -114,6 +123,18 @@ function rewriteCidImages(
   return out
 }
 
+function emailPreviewFiles(workspaceId: string, rows: StoredAttachment[]): PreviewFile[] {
+  return previewFilesFrom(rows, (att) => toPreviewFile({
+    id: att.id,
+    filename: att.filename,
+    contentType: att.mimeType,
+    sizeBytes: att.sizeBytes,
+    available: att.uploadStatus === 'UPLOADED',
+    previewUrl: api.getStoredAttachmentDownloadUrl(workspaceId, att.id, true),
+    downloadUrl: api.getStoredAttachmentDownloadUrl(workspaceId, att.id),
+  }))
+}
+
 function isInlineImage(att: StoredAttachment): boolean {
   const mime = (att.mimeType ?? '').toLowerCase()
   return att.isInline && mime.startsWith('image/')
@@ -176,6 +197,8 @@ function EmailBody({
   }
 
   // Paint immediately: rewrite with provider metadata (or neutralize) — never wait on attachments GET.
+  const [storedRows, setStoredRows] = useState<StoredAttachment[]>([])
+  const [preview, setPreview] = useState<{ files: PreviewFile[]; index: number } | null>(null)
   const [resolvedHtml, setResolvedHtml] = useState<string | null>(() => {
     if (!bodyHtml) return null
     if (!/cid:/i.test(bodyHtml)) return bodyHtml
@@ -207,6 +230,7 @@ function EmailBody({
       .then(r => {
         if (cancelled) return
         const cidToUrl = new Map(providerMap)
+        setStoredRows(r.attachments)
         for (const a of r.attachments) {
           const mime = (a.mimeType ?? '').toLowerCase()
           const isImage = mime.startsWith('image/')
@@ -230,10 +254,41 @@ function EmailBody({
     return () => { cancelled = true }
   }, [bodyHtml, workspaceId, connectionId, emailId, attachmentMetadata])
 
+  useEffect(() => {
+    if (!bodyHtml || /cid:/i.test(bodyHtml)) return
+    let cancelled = false
+    api.getEmailAttachments(workspaceId, emailId)
+      .then((r) => { if (!cancelled) setStoredRows(r.attachments) })
+      .catch(() => { if (!cancelled) setStoredRows([]) })
+    return () => { cancelled = true }
+  }, [bodyHtml, workspaceId, emailId])
+
   // Click inline attachment images to download (same endpoints as the Attachments list)
   useEffect(() => {
     const el = htmlBodyRef.current
     if (!el || !resolvedHtml || !showHtml) return
+
+    const openStoredPreview = (src: string): boolean => {
+      const id = storedAttachmentIdFromUrl(src)
+      if (!id) return false
+      const known = storedRows.find((row) => row.id === id)
+      if (known && !canPreviewFile({ filename: known.filename, contentType: known.mimeType })) return false
+      const files = known
+        ? emailPreviewFiles(workspaceId, storedRows)
+        : previewFilesFrom([{ id }], () => toPreviewFile({
+          id,
+          filename: 'image',
+          contentType: 'image/png',
+          sizeBytes: null,
+          available: true,
+          previewUrl: api.getStoredAttachmentDownloadUrl(workspaceId, id, true),
+          downloadUrl: api.getStoredAttachmentDownloadUrl(workspaceId, id),
+        }))
+      const previewIndex = files.findIndex((item) => item.id === id)
+      if (previewIndex < 0) return false
+      setPreview({ files, index: previewIndex })
+      return true
+    }
 
     el.querySelectorAll('img').forEach(img => {
       const src = img.getAttribute('src') ?? ''
@@ -242,11 +297,20 @@ function EmailBody({
         return
       }
       if (!isAppAttachmentUrl(src)) return
+      const storedId = storedAttachmentIdFromUrl(src)
+      const known = storedId ? storedRows.find((row) => row.id === storedId) : undefined
+      const previewable = Boolean(
+        storedId && (
+          !known || canPreviewFile({ filename: known.filename, contentType: known.mimeType })
+        ),
+      )
       img.style.cursor = 'pointer'
-      if (!img.title) img.title = 'Click to download'
+      if (!img.title || img.title === 'Click to download' || img.title === 'Click to preview') {
+        img.title = previewable ? 'Click to preview' : 'Click to download'
+      }
       img.setAttribute('role', 'button')
       img.setAttribute('tabindex', '0')
-      img.setAttribute('aria-label', 'Download image')
+      img.setAttribute('aria-label', previewable ? 'Preview image' : 'Download image')
     })
 
     const downloadFromImg = (img: HTMLImageElement) => {
@@ -267,7 +331,8 @@ function EmailBody({
       if (!isAppAttachmentUrl(target.currentSrc || target.getAttribute('src') || '')) return
       e.preventDefault()
       e.stopPropagation()
-      downloadFromImg(target)
+      const src = target.currentSrc || target.getAttribute('src') || ''
+      if (!openStoredPreview(src)) downloadFromImg(target)
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -277,7 +342,8 @@ function EmailBody({
       if (!isAppAttachmentUrl(target.currentSrc || target.getAttribute('src') || '')) return
       e.preventDefault()
       e.stopPropagation()
-      downloadFromImg(target)
+      const src = target.currentSrc || target.getAttribute('src') || ''
+      if (!openStoredPreview(src)) downloadFromImg(target)
     }
 
     el.addEventListener('click', onClick)
@@ -286,7 +352,7 @@ function EmailBody({
       el.removeEventListener('click', onClick)
       el.removeEventListener('keydown', onKeyDown)
     }
-  }, [resolvedHtml, showHtml])
+  }, [resolvedHtml, showHtml, storedRows, workspaceId])
 
   if (!bodyHtml && !bodyText) {
     return <div style={{ color: '#aaa', fontSize: 13, padding: 16 }}>(empty body)</div>
@@ -327,6 +393,14 @@ function EmailBody({
         }}>
           {bodyText}
         </div>
+      )}
+      {preview && (
+        <FilePreviewModal
+          files={preview.files}
+          index={preview.index}
+          onIndexChange={(index) => setPreview((current) => current ? { ...current, index } : current)}
+          onClose={() => setPreview(null)}
+        />
       )}
     </div>
   )
@@ -571,6 +645,13 @@ function SelectedAttachmentsPanel({
   const [threadExtra, setThreadExtra] = useState<Array<StoredAttachment & { sourceEmailMessageId: string }> | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ files: PreviewFile[]; index: number } | null>(null)
+
+  const openAttachmentPreview = (id: string, rows: StoredAttachment[]) => {
+    const files = emailPreviewFiles(workspaceId, rows)
+    if (!files.some((file) => file.id === id)) return
+    setPreview({ files, index: previewIndexFor(files, id) })
+  }
 
   const flashCopy = (msg: string) => {
     setCopyNotice(msg)
@@ -662,7 +743,16 @@ function SelectedAttachmentsPanel({
               <span style={{ fontSize: 14, flexShrink: 0 }}>{fileIcon(att.mimeType)}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {att.filename}
+                  {canPreviewFile({ filename: att.filename, contentType: att.mimeType }) ? (
+                    <button
+                      type="button"
+                      onClick={() => openAttachmentPreview(att.id, downloadable)}
+                      style={previewNameButton}
+                      title="Preview"
+                    >
+                      {att.filename}
+                    </button>
+                  ) : att.filename}
                 </div>
                 <div style={{ fontSize: 10, color: '#888' }}>{formatSize(att.sizeBytes)}</div>
               </div>
@@ -728,7 +818,16 @@ function SelectedAttachmentsPanel({
                   >
                     <span style={{ fontSize: 14 }}>{fileIcon(att.mimeType)}</span>
                     <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                      {att.filename}
+                      {canPreviewFile({ filename: att.filename, contentType: att.mimeType }) ? (
+                        <button
+                          type="button"
+                          onClick={() => openAttachmentPreview(att.id, threadDownloadable)}
+                          style={previewNameButton}
+                          title="Preview"
+                        >
+                          {att.filename}
+                        </button>
+                      ) : att.filename}
                     </div>
                     {att.uploadStatus === 'UPLOADED' && (
                       <a
@@ -753,8 +852,32 @@ function SelectedAttachmentsPanel({
           )}
         </div>
       )}
+      {preview && (
+        <FilePreviewModal
+          files={preview.files}
+          index={preview.index}
+          onIndexChange={(index) => setPreview((current) => current ? { ...current, index } : current)}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   )
+}
+
+const previewNameButton: CSSProperties = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  margin: 0,
+  font: 'inherit',
+  fontWeight: 500,
+  color: 'inherit',
+  cursor: 'pointer',
+  textAlign: 'left',
+  maxWidth: '100%',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 export function MessageDetailView({ workspaceId, connectionId, messageId, onBack, breakpoint = 'desktop', connections }: Props) {

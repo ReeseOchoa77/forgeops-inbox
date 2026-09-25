@@ -24,6 +24,14 @@ import { invalidateJobsListCache } from '../jobs-list-cache'
 import { jobSettingsUpdateBody } from '../job-settings-payload'
 import { formatHoursNumber, formatJobCost, formatOverviewDate, partyLabel } from '../job-overview-format'
 import { JobFabricationScope } from './JobFabricationScope'
+import { FilePreviewModal } from '../components/FilePreviewModal'
+import {
+  canPreviewFile,
+  previewFilesFrom,
+  previewIndexFor,
+  toPreviewFile,
+  type PreviewFile,
+} from '../file-preview'
 
 interface Props {
   workspaceId: string
@@ -152,6 +160,7 @@ export function JobDetailView({
   const [fileSort, setFileSort] = useState<'newest' | 'oldest'>('newest')
   const [fileFolders, setFileFolders] = useState<JobFileFolder[]>([])
   const [jobFiles, setJobFiles] = useState<JobStoredFile[]>([])
+  const [filePreview, setFilePreview] = useState<{ files: PreviewFile[]; index: number } | null>(null)
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
   const [folderBreadcrumb, setFolderBreadcrumb] = useState<Array<{ id: string; name: string }>>([])
   const [filesLoading, setFilesLoading] = useState(false)
@@ -1127,7 +1136,31 @@ export function JobDetailView({
                         <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>📄</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {file.filename}
+                            {canPreviewFile({ filename: file.filename, contentType: file.mimeType }) ? (
+                              <button
+                                type="button"
+                                title="Preview"
+                                onClick={() => {
+                                  const files = previewFilesFrom(jobFiles, (row) => toPreviewFile({
+                                    id: row.id,
+                                    filename: row.filename,
+                                    contentType: row.mimeType,
+                                    sizeBytes: row.sizeBytes,
+                                    available: row.uploadStatus === 'UPLOADED',
+                                    previewUrl: api.getJobFileDownloadUrl(workspaceId, jobId, row.id, true),
+                                    downloadUrl: api.getJobFileDownloadUrl(workspaceId, jobId, row.id),
+                                  }))
+                                  if (!files.some((item) => item.id === file.id)) return
+                                  setFilePreview({ files, index: previewIndexFor(files, file.id) })
+                                }}
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 500,
+                                  cursor: 'pointer', textAlign: 'left', color: 'inherit',
+                                }}
+                              >
+                                {file.filename}
+                              </button>
+                            ) : file.filename}
                           </div>
                           <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
                             {formatBytes(file.sizeBytes)} · {formatDate(file.createdAt)}
@@ -1230,12 +1263,29 @@ export function JobDetailView({
                           file.sourceType === 'EMAIL_ATTACHMENT'
                             ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id)
                             : api.getJobFileDownloadUrl(workspaceId, jobId, file.id)
-                        const previewUrl =
-                          file.previewable
-                            ? (file.sourceType === 'EMAIL_ATTACHMENT'
-                              ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id, true)
-                              : downloadUrl)
-                            : null
+                        const previewable = canPreviewFile({ filename: file.filename, contentType: file.mimeType })
+                        const openPreview = () => {
+                          const files = previewFilesFrom(libraryFiles, (row) => {
+                            const rowDownload = row.sourceType === 'EMAIL_ATTACHMENT'
+                              ? api.getStoredAttachmentDownloadUrl(workspaceId, row.id)
+                              : api.getJobFileDownloadUrl(workspaceId, jobId, row.id)
+                            const rowPreview = row.sourceType === 'EMAIL_ATTACHMENT'
+                              ? api.getStoredAttachmentDownloadUrl(workspaceId, row.id, true)
+                              : api.getJobFileDownloadUrl(workspaceId, jobId, row.id, true)
+                            return toPreviewFile({
+                              id: `${row.sourceType}:${row.id}`,
+                              filename: row.filename,
+                              contentType: row.mimeType,
+                              sizeBytes: row.sizeBytes,
+                              available: true,
+                              previewUrl: rowPreview,
+                              downloadUrl: rowDownload,
+                            })
+                          })
+                          const previewId = `${file.sourceType}:${file.id}`
+                          if (!files.some((item) => item.id === previewId)) return
+                          setFilePreview({ files, index: previewIndexFor(files, previewId) })
+                        }
                         return (
                           <div
                             key={`${file.sourceType}-${file.id}`}
@@ -1244,29 +1294,43 @@ export function JobDetailView({
                               display: 'flex', flexDirection: 'column', gap: 8, background: '#fff',
                             }}
                           >
-                            {previewUrl ? (
-                              <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
-                                <img
-                                  src={previewUrl}
-                                  alt={file.filename}
-                                  loading="lazy"
-                                  style={{
-                                    width: '100%', height: 120, objectFit: 'cover', borderRadius: 6,
-                                    background: '#f3f4f6',
-                                  }}
-                                />
-                              </a>
+                            {previewable ? (
+                              <button
+                                type="button"
+                                onClick={openPreview}
+                                title="Preview"
+                                style={{
+                                  height: 72, borderRadius: 6, background: '#f8fafc', border: '1px solid #e5e7eb',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 13, fontWeight: 700, color: '#475569', cursor: 'pointer',
+                                  fontFamily: 'inherit',
+                                }}
+                              >
+                                {file.fileType === 'PDF' ? 'PDF' : 'Image'}
+                              </button>
                             ) : (
                               <div style={{
                                 height: 72, borderRadius: 6, background: '#f8fafc',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 fontSize: 28, color: '#94a3b8',
                               }}>
-                                {file.fileType === 'PDF' ? 'PDF' : file.extension || 'FILE'}
+                                {file.extension || 'FILE'}
                               </div>
                             )}
                             <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.filename}>
-                              {file.filename}
+                              {previewable ? (
+                                <button
+                                  type="button"
+                                  onClick={openPreview}
+                                  title="Preview"
+                                  style={{
+                                    background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600,
+                                    cursor: 'pointer', textAlign: 'left', color: 'inherit', maxWidth: '100%',
+                                  }}
+                                >
+                                  {file.filename}
+                                </button>
+                              ) : file.filename}
                             </div>
                             <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4 }}>
                               {formatBytes(file.sizeBytes)} · {formatDate(file.date)}
@@ -1550,6 +1614,14 @@ export function JobDetailView({
             </Card>
           )}
         </div>
+      )}
+      {filePreview && (
+        <FilePreviewModal
+          files={filePreview.files}
+          index={filePreview.index}
+          onIndexChange={(index) => setFilePreview((current) => current ? { ...current, index } : current)}
+          onClose={() => setFilePreview(null)}
+        />
       )}
     </div>
   )

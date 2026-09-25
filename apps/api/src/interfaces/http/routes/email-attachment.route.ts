@@ -3,6 +3,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 
+import {
+  contentDispositionHeader,
+  PREVIEW_NOT_STORED_MESSAGE,
+  resolveContentDelivery,
+} from "@forgeops/shared";
 import { getSessionFromRequest } from "../authentication.js";
 import { verifyN8nApiKey } from "../n8n-auth.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
@@ -10,11 +15,6 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 const BLOCKED_EXTENSIONS = new Set([
   ".exe", ".bat", ".cmd", ".scr", ".msi", ".com",
   ".vbs", ".js", ".ps1", ".sh", ".pif", ".ws", ".wsf",
-]);
-
-const SAFE_INLINE_TYPES = new Set([
-  "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
-  "application/pdf",
 ]);
 
 function sanitizeFilename(filename: string): string {
@@ -435,41 +435,52 @@ export const registerEmailAttachmentRoutes = async (
       const membership = await requireWorkspaceMembership(app.services.prisma, session.userId, params.workspaceId);
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
+      // Same workspace scope as download. Does not update EmailMessage read state.
       const attachment = await app.services.prisma.emailAttachment.findFirst({
         where: {
           id: params.attachmentId,
           workspaceId: params.workspaceId,
-          uploadStatus: "UPLOADED",
         },
         select: {
           storageKey: true,
           filename: true,
           mimeType: true,
           sizeBytes: true,
+          uploadStatus: true,
         },
       });
 
-      if (!attachment?.storageKey) {
-        return reply.code(404).send({ message: "Attachment not found or not uploaded" });
+      if (!attachment) {
+        return reply.code(404).send({ message: "Attachment not found" });
       }
 
+      if (attachment.uploadStatus !== "UPLOADED" || !attachment.storageKey) {
+        return reply.code(404).send({
+          message: query.inline
+            ? PREVIEW_NOT_STORED_MESSAGE
+            : "Attachment not found or not uploaded",
+        });
+      }
+
+      const delivery = resolveContentDelivery({
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        inlineRequested: query.inline,
+      });
       const storage = app.services.attachmentStorage;
 
       if (storage.configured) {
-        // Use signed URL redirect
-        const disposition = query.inline && SAFE_INLINE_TYPES.has(attachment.mimeType)
-          ? "inline" : "attachment";
-
         try {
           const signedUrl = await storage.getSignedDownloadUrl(
             attachment.storageKey,
             attachment.filename,
-            attachment.mimeType,
-            900
+            delivery.contentType,
+            900,
+            delivery.disposition,
           );
 
           return reply
-            .header("Content-Disposition", `${disposition}; filename="${encodeURIComponent(attachment.filename)}"`)
+            .header("Content-Disposition", contentDispositionHeader(delivery.disposition, attachment.filename))
             .code(302)
             .redirect(signedUrl);
         } catch (e) {
@@ -502,12 +513,10 @@ export const registerEmailAttachmentRoutes = async (
         }
 
         const data = readFileSync(join(dir, match));
-        const disposition = query.inline && SAFE_INLINE_TYPES.has(attachment.mimeType)
-          ? "inline" : "attachment";
 
         return reply
-          .header("Content-Type", attachment.mimeType)
-          .header("Content-Disposition", `${disposition}; filename="${encodeURIComponent(attachment.filename)}"`)
+          .header("Content-Type", delivery.contentType)
+          .header("Content-Disposition", contentDispositionHeader(delivery.disposition, attachment.filename))
           .header("Content-Length", data.length)
           .send(data);
       } catch {

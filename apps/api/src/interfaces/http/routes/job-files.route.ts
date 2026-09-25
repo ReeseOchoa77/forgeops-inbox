@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import {
+  contentDispositionHeader,
+  PREVIEW_NOT_STORED_MESSAGE,
+  resolveContentDelivery,
+} from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -34,6 +39,10 @@ const updateFileSchema = z.object({
 
 const listQuery = z.object({
   folderId: z.string().min(1).optional(),
+});
+
+const downloadQuery = z.object({
+  inline: z.enum(["true", "false"]).optional().transform((v) => v === "true"),
 });
 
 const BLOCKED_EXTENSIONS = new Set([
@@ -571,25 +580,40 @@ export const registerJobFilesRoutes = async (app: FastifyInstance) => {
   // Download file
   app.get("/api/v1/workspaces/:workspaceId/jobs/:jobId/files/:fileId/download", async (request, reply) => {
     const { workspaceId, jobId, fileId } = fileParams.parse(request.params);
+    const query = downloadQuery.parse(request.query);
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
     if (!(await loadJob(app, reply, jobId, workspaceId))) return;
 
     const file = await app.services.prisma.jobFile.findFirst({
-      where: { id: fileId, workspaceId, jobId, uploadStatus: "UPLOADED" },
+      where: { id: fileId, workspaceId, jobId },
     });
-    if (!file?.storageKey) return reply.code(404).send({ message: "File not found" });
+    if (!file) return reply.code(404).send({ message: "File not found" });
+    if (file.uploadStatus !== "UPLOADED" || !file.storageKey) {
+      return reply.code(404).send({
+        message: query.inline ? PREVIEW_NOT_STORED_MESSAGE : "File not found",
+      });
+    }
 
+    const delivery = resolveContentDelivery({
+      filename: file.filename,
+      mimeType: file.mimeType,
+      inlineRequested: query.inline,
+    });
     const storage = app.services.attachmentStorage;
     if (storage.configured) {
       try {
         const signedUrl = await storage.getSignedDownloadUrl(
           file.storageKey,
           file.filename,
-          file.mimeType,
+          delivery.contentType,
           900,
+          delivery.disposition,
         );
-        return reply.code(302).redirect(signedUrl);
+        return reply
+          .header("Content-Disposition", contentDispositionHeader(delivery.disposition, file.filename))
+          .code(302)
+          .redirect(signedUrl);
       } catch {
         return reply.code(502).send({ message: "Failed to generate download URL" });
       }
@@ -601,8 +625,8 @@ export const registerJobFilesRoutes = async (app: FastifyInstance) => {
     }
     const data = readFileSync(fullPath);
     return reply
-      .header("Content-Type", file.mimeType)
-      .header("Content-Disposition", `attachment; filename="${encodeURIComponent(file.filename)}"`)
+      .header("Content-Type", delivery.contentType)
+      .header("Content-Disposition", contentDispositionHeader(delivery.disposition, file.filename))
       .header("Content-Length", data.length)
       .send(data);
   });
