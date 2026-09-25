@@ -39,6 +39,15 @@ describe("clear inbox message scope", () => {
     });
   });
 
+  it("removes only Import Previous Emails and keeps project-folder mail", () => {
+    expect(whereFor("HISTORICAL_IMPORT_ONLY")).toEqual({
+      workspaceId,
+      inboxConnectionId,
+      fromHistoricalImport: true,
+      fromProjectFolder: false,
+    });
+  });
+
   it("does not widen safe clear to another mailbox", () => {
     const where = clearInboxMessageWhere({
       workspaceId,
@@ -139,6 +148,28 @@ describe("clear inbox deletion", () => {
     expect((messageDelete?.args as { where: { jobId?: null } }).where.jobId).toBeUndefined();
     expect(calls.some((c) => c.model === "job")).toBe(false);
     expect(calls.some((c) => c.model === "inboxConnection")).toBe(true);
+  });
+
+  it("removes imported mail without moving the live-sync watermark", async () => {
+    const { prisma, calls } = fakeClient(12);
+    const result = await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "HISTORICAL_IMPORT_ONLY",
+      clearedAt,
+    });
+    expect(result.deletedCount).toBe(12);
+    const messageDelete = calls.find((c) => c.model === "emailMessage" && c.op === "deleteMany");
+    expect(messageDelete?.args).toEqual({
+      where: {
+        workspaceId,
+        inboxConnectionId,
+        fromHistoricalImport: true,
+        fromProjectFolder: false,
+      },
+    });
+    expect(calls.some((c) => c.model === "inboxConnection")).toBe(false);
+    expect(calls.some((c) => c.model === "job" || c.model === "discoveredFolder")).toBe(false);
   });
 
   it("sets the watermark in the same transaction as the deletes", async () => {

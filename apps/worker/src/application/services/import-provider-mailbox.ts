@@ -7,6 +7,17 @@ import type {
 } from "@forgeops/shared";
 import { isBlockedByInboxClearedAt, shouldInspectAttachments } from "@forgeops/shared";
 
+export type EmailImportOrigin = "INBOX" | "HISTORICAL_IMPORT" | "PROJECT_FOLDER";
+
+/** Flags written on create or refresh. Live inbox sync writes neither flag. */
+export function emailOriginWrite(
+  origin: EmailImportOrigin | undefined
+): { fromHistoricalImport?: true; fromProjectFolder?: true } {
+  if (origin === "HISTORICAL_IMPORT") return { fromHistoricalImport: true };
+  if (origin === "PROJECT_FOLDER") return { fromProjectFolder: true };
+  return {};
+}
+
 export type AttachmentIngestCandidate = {
   emailMessageId: string;
   providerMessageId: string;
@@ -39,10 +50,12 @@ export const importProviderMailbox = async (input: {
   inboxConnectionId: string;
   mailbox: ProviderMailboxSyncResult;
   /**
-   * When true (historical import), ignore InboxConnection.inboxClearedAt.
+   * When true (historical import and project-folder analysis), ignore InboxConnection.inboxClearedAt.
    * Live sync must leave this false/undefined so Clear Inbox sticks.
    */
   bypassInboxClearedAt?: boolean;
+  /** Defaults to live inbox sync. Does not clear a flag that was already set. */
+  origin?: EmailImportOrigin;
 }): Promise<InboxSyncResult & { attachmentIngestCandidates: AttachmentIngestCandidate[]; skippedClearedCount: number }> => {
   const connectionMeta = await input.prisma.inboxConnection.findFirst({
     where: { id: input.inboxConnectionId, workspaceId: input.workspaceId },
@@ -52,6 +65,7 @@ export const importProviderMailbox = async (input: {
     input.bypassInboxClearedAt || !connectionMeta?.inboxClearedAt
       ? null
       : connectionMeta.inboxClearedAt;
+  const originWrite = emailOriginWrite(input.origin);
 
   let skippedClearedCount = 0;
 
@@ -184,6 +198,7 @@ export const importProviderMailbox = async (input: {
               where: { id: existingMessageId },
               data: {
                 ...messageData,
+                ...originWrite,
                 ...(providerSaysUnread ? { isRead: false } : {}),
               }
             });
@@ -226,6 +241,7 @@ export const importProviderMailbox = async (input: {
               threadId: persistedThread.id,
               gmailMessageId: message.providerMessageId,
               ...messageData,
+              ...originWrite,
               isRead: !providerSaysUnread,
             }
           });

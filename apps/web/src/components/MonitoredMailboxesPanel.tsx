@@ -59,6 +59,7 @@ type Props = {
     | { type: 'error'; connectionId: string; message: string }
   clearing: string
   onClearInbox: (id: string, email: string) => void
+  onRemoveImportedEmails: (id: string, email: string) => void
   onClearAllEmails: (id: string, email: string) => void
   isOwner: boolean
   canManage: boolean
@@ -76,6 +77,7 @@ export function MonitoredMailboxesPanel({
   authAction,
   clearing,
   onClearInbox,
+  onRemoveImportedEmails,
   onClearAllEmails,
   isOwner,
   canManage,
@@ -498,6 +500,22 @@ export function MonitoredMailboxesPanel({
                       onClick={() => onClearInbox(c.id, c.email)}
                     >
                       {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Remove Imported Emails</div>
+                      <div style={{ fontSize: 12, color: '#555', marginTop: 2, lineHeight: 1.4 }}>
+                        Removes emails from Import Previous Emails. Project folder analysis and regular inbox sync stay.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={clearing === c.id}
+                      onClick={() => onRemoveImportedEmails(c.id, c.email)}
+                    >
+                      {clearing === c.id ? 'Removing...' : 'Remove Imported'}
                     </button>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>

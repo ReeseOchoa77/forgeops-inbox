@@ -319,6 +319,7 @@ export async function processProjectFolderEmailAnalyze(
             inboxConnectionId: payload.inboxConnectionId,
             mailbox,
             bypassInboxClearedAt: true,
+            origin: "PROJECT_FOLDER",
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);

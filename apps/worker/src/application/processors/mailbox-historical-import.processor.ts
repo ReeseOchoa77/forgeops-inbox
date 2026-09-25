@@ -313,6 +313,7 @@ export async function processMailboxHistoricalImport(
             },
             // Explicit historical import may re-pull mail from before Clear Inbox.
             bypassInboxClearedAt: true,
+            origin: "HISTORICAL_IMPORT",
           });
           importedCount += result.messagesImported;
           duplicateCount += result.duplicatesSkipped;

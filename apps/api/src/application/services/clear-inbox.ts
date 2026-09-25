@@ -1,7 +1,11 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
-/** Safe clear keeps Job emails. Clear all removes every mailbox email. */
-export type ClearInboxMode = "NON_JOB_ONLY" | "ALL_EMAILS";
+/**
+ * NON_JOB_ONLY keeps Job emails. ALL_EMAILS removes every mailbox email.
+ * HISTORICAL_IMPORT_ONLY removes Import Previous Emails and leaves
+ * project-folder analysis and regular inbox sync in place.
+ */
+export type ClearInboxMode = "NON_JOB_ONLY" | "ALL_EMAILS" | "HISTORICAL_IMPORT_ONLY";
 
 export function clearInboxMessageWhere(input: {
   workspaceId: string;
@@ -12,6 +16,9 @@ export function clearInboxMessageWhere(input: {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,
     ...(input.mode === "NON_JOB_ONLY" ? { jobId: null } : {}),
+    ...(input.mode === "HISTORICAL_IMPORT_ONLY"
+      ? { fromHistoricalImport: true, fromProjectFolder: false }
+      : {}),
   };
 }
 
@@ -48,16 +55,19 @@ export async function deleteScopedEmailMessages(
 export async function previewClearInbox(
   prisma: PrismaClient,
   input: { workspaceId: string; inboxConnectionId: string }
-): Promise<{ unassignedCount: number; jobAssociatedCount: number }> {
+): Promise<{ unassignedCount: number; jobAssociatedCount: number; historicalImportCount: number }> {
   const base = {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,
   };
-  const [unassignedCount, jobAssociatedCount] = await Promise.all([
+  const [unassignedCount, jobAssociatedCount, historicalImportCount] = await Promise.all([
     prisma.emailMessage.count({ where: { ...base, jobId: null } }),
     prisma.emailMessage.count({ where: { ...base, jobId: { not: null } } }),
+    prisma.emailMessage.count({
+      where: { ...base, fromHistoricalImport: true, fromProjectFolder: false },
+    }),
   ]);
-  return { unassignedCount, jobAssociatedCount };
+  return { unassignedCount, jobAssociatedCount, historicalImportCount };
 }
 
 export async function clearConnectionInbox(
@@ -90,13 +100,16 @@ export async function clearConnectionInbox(
         messages: { none: {} },
       },
     });
-    await tx.inboxConnection.update({
-      where: { id: input.inboxConnectionId },
-      data: {
-        inboxClearedAt: input.clearedAt,
-        syncCursor: null,
-      },
-    });
+    // Imported-mail removal must not move the live-sync watermark.
+    if (input.mode !== "HISTORICAL_IMPORT_ONLY") {
+      await tx.inboxConnection.update({
+        where: { id: input.inboxConnectionId },
+        data: {
+          inboxClearedAt: input.clearedAt,
+          syncCursor: null,
+        },
+      });
+    }
     return {
       deletedCount,
       preservedJobEmailCount: input.mode === "NON_JOB_ONLY" ? jobAssociatedCount : 0,

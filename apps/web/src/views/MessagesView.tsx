@@ -18,6 +18,26 @@ import {
 import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
+
+function EmailOriginTag({ origin }: { origin: MessageSummary['emailOrigin'] }) {
+  if (origin !== 'PROJECT_FOLDER' && origin !== 'HISTORICAL_IMPORT') return null
+  const projectFolder = origin === 'PROJECT_FOLDER'
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        padding: '1px 6px',
+        borderRadius: 10,
+        whiteSpace: 'nowrap',
+        background: projectFolder ? '#e8f0fe' : '#f3e8ff',
+        color: projectFolder ? '#1d4ed8' : '#6b21a8',
+      }}
+    >
+      {projectFolder ? 'Project folder' : 'Imported'}
+    </span>
+  )
+}
 import { prefetchThread } from '../message-thread-cache'
 
 /** Inbox list prompt. Off until suggested responses are ready to show again. */
@@ -842,6 +862,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
         <div style={{ marginTop: 4, fontWeight: m.isRead ? 400 : 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span>{m.subject ?? '(no subject)'}</span>
+          <EmailOriginTag origin={m.emailOrigin} />
           {m.hasAttachments && (
             <InboxAttachmentsButton
               workspaceId={workspaceId}
@@ -1052,6 +1073,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       <td style={{ padding: '7px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: m.isRead ? 400 : 600 }}>{m.subject ?? '(no subject)'}</span>
+          <EmailOriginTag origin={m.emailOrigin} />
           {m.hasAttachments && (
             <InboxAttachmentsButton
               workspaceId={workspaceId}

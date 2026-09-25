@@ -227,6 +227,8 @@ export interface MessageSummary {
   taskCandidate: TaskSummary | null;
   job?: MessageJobSummary | null;
   suggestedJob?: MessageJobSummary | null;
+  /** Inbox sync, Import Previous Emails, or project-folder analysis. */
+  emailOrigin?: 'INBOX' | 'HISTORICAL_IMPORT' | 'PROJECT_FOLDER';
   jobAssignmentSource?: string | null;
   jobAssignmentIsManual?: boolean;
   jobMatchConfidence?: number | null;
@@ -880,22 +882,22 @@ export const api = {
     ),
 
   previewClearInbox: (workspaceId: string, connectionId: string) =>
-    request<{ unassignedCount: number; jobAssociatedCount: number }>(
+    request<{ unassignedCount: number; jobAssociatedCount: number; historicalImportCount?: number }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox-preview`
     ),
 
   clearInbox: (
     workspaceId: string,
     connectionId: string,
-    mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' = 'NON_JOB_ONLY'
+    mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' | 'HISTORICAL_IMPORT_ONLY' = 'NON_JOB_ONLY'
   ) =>
     request<{
       status: string
-      mode: 'NON_JOB_ONLY' | 'ALL_EMAILS'
+      mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' | 'HISTORICAL_IMPORT_ONLY'
       deletedCount: number
       preservedJobEmailCount: number
       removedJobEmailCount: number
-      inboxClearedAt: string
+      inboxClearedAt: string | null
       listenerEnabled: boolean
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox`,

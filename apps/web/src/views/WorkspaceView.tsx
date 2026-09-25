@@ -142,6 +142,37 @@ export function WorkspaceView({
     }
   }
 
+  const handleRemoveImportedEmails = async (connId: string, email: string) => {
+    let preview: { historicalImportCount?: number } | null = null
+    try {
+      preview = await api.previewClearInbox(workspaceId, connId)
+    } catch {
+      preview = null
+    }
+    const counts = preview && typeof preview.historicalImportCount === 'number'
+      ? `\n\n${preview.historicalImportCount.toLocaleString()} emails from Import Previous Emails will be removed.`
+      : ''
+    if (
+      !confirm(
+        `Remove imported emails for ${email}?${counts}\n\n` +
+          `This removes emails brought in by Import Previous Emails.\n` +
+          `Emails from project folder analysis and regular inbox sync stay.\n\n` +
+          `Live sync is unchanged. This cannot be undone.`
+      )
+    ) {
+      return
+    }
+    setClearing(connId)
+    try {
+      await api.clearInbox(workspaceId, connId, 'HISTORICAL_IMPORT_ONLY')
+      window.location.reload()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to remove imported emails')
+    } finally {
+      setClearing('')
+    }
+  }
+
   const handleClearAllEmails = async (connId: string, email: string) => {
     let preview: { unassignedCount: number; jobAssociatedCount: number } | null = null
     try {
@@ -322,6 +353,7 @@ export function WorkspaceView({
               onAuthorize={(c) => void handleAuthorize(c)}
               onReconnect={(c) => void handleReconnect(c)}
               onClearInbox={(id, email) => void handleClearInbox(id, email)}
+              onRemoveImportedEmails={(id, email) => void handleRemoveImportedEmails(id, email)}
               onClearAllEmails={(id, email) => void handleClearAllEmails(id, email)}
               onAddMailbox={canManageMailboxes ? () => setAddMailboxOpen(true) : undefined}
               onRemove={canManageMailboxes ? (c) => void handleRemoveMailbox(c) : undefined}

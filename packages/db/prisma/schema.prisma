@@ -468,6 +468,11 @@ model EmailMessage {
   isTrashed        Boolean       @default(false)
   isSpam           Boolean       @default(false)
   isTestData       Boolean       @default(false)
+  /// Import Previous Emails created or refreshed this message.
+  fromHistoricalImport Boolean   @default(false)
+  /// Verified project-folder analysis created or refreshed this message.
+  /// Once set, a later historical import must not make this row removable as imported mail.
+  fromProjectFolder Boolean      @default(false)
   isArchived       Boolean       @default(false)
   archivedAt       DateTime?
   mailboxCategory  MailboxCategory @default(BUSINESS)

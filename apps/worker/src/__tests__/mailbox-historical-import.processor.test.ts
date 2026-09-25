@@ -85,8 +85,10 @@ describe("processMailboxHistoricalImport pagination", () => {
       async (input: {
         mailbox: { threads: Array<{ messages: Array<{ providerMessageId: string }> }> };
         bypassInboxClearedAt?: boolean;
+        origin?: string;
       }) => {
         expect(input.bypassInboxClearedAt).toBe(true);
+        expect(input.origin).toBe("HISTORICAL_IMPORT");
         const ids = input.mailbox.threads.flatMap((t) =>
           t.messages.map((m) => m.providerMessageId)
         );

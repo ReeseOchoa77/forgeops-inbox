@@ -633,7 +633,7 @@ export const registerMailboxControlRoutes = async (
   );
 
   const clearInboxModeSchema = z.object({
-    mode: z.enum(["NON_JOB_ONLY", "ALL_EMAILS"]).default("NON_JOB_ONLY"),
+    mode: z.enum(["NON_JOB_ONLY", "ALL_EMAILS", "HISTORICAL_IMPORT_ONLY"]).default("NON_JOB_ONLY"),
   });
 
   async function loadOwnedConnection(
@@ -690,7 +690,9 @@ export const registerMailboxControlRoutes = async (
    * Clear one mailbox in ForgeOps.
    * NON_JOB_ONLY deletes EmailMessage rows with jobId null.
    * ALL_EMAILS deletes every EmailMessage on the connection, including Job mail.
-   * Both set inboxClearedAt and clear syncCursor in the same transaction.
+   * HISTORICAL_IMPORT_ONLY deletes Import Previous Emails and keeps project-folder mail.
+   * NON_JOB_ONLY and ALL_EMAILS set inboxClearedAt and clear syncCursor in the same transaction.
+   * HISTORICAL_IMPORT_ONLY leaves the live-sync watermark alone.
    * Jobs, folder mappings, and the listener stay. Outlook messages are not deleted.
    * Historical import and verified project-folder analysis may still bypass the watermark.
    */
@@ -722,13 +724,20 @@ export const registerMailboxControlRoutes = async (
         actorUserId: access.session.userId,
         entityType: "INBOX_CONNECTION",
         entityId: connection.id,
-        action: mode === "ALL_EMAILS" ? "inbox_connection.cleared_all" : "inbox_connection.cleared",
+        action:
+          mode === "ALL_EMAILS"
+            ? "inbox_connection.cleared_all"
+            : mode === "HISTORICAL_IMPORT_ONLY"
+              ? "inbox_connection.cleared_historical_import"
+              : "inbox_connection.cleared",
         metadata: {
           mode,
           deletedCount: result.deletedCount,
           preservedJobEmailCount: result.preservedJobEmailCount,
           removedJobEmailCount: result.removedJobEmailCount,
-          inboxClearedAt: clearedAt.toISOString(),
+          ...(mode === "HISTORICAL_IMPORT_ONLY"
+            ? { watermarkChanged: false }
+            : { inboxClearedAt: clearedAt.toISOString() }),
           listenerRemainsEnabled: connection.nativeListeningEnabled,
           ingestionSource: connection.ingestionSource,
         },
@@ -741,7 +750,7 @@ export const registerMailboxControlRoutes = async (
         deletedCount: result.deletedCount,
         preservedJobEmailCount: result.preservedJobEmailCount,
         removedJobEmailCount: result.removedJobEmailCount,
-        inboxClearedAt: clearedAt.toISOString(),
+        inboxClearedAt: mode === "HISTORICAL_IMPORT_ONLY" ? null : clearedAt.toISOString(),
         listenerEnabled: connection.nativeListeningEnabled,
       });
     }

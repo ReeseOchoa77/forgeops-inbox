@@ -336,7 +336,9 @@ const messageSummarySchema = z.object({
     .optional(),
   classificationLastAttemptAt: z.string().datetime().nullable().optional(),
   classificationAttemptCount: z.number().int().optional(),
-  classificationError: z.string().nullable().optional()
+  classificationError: z.string().nullable().optional(),
+  /** PROJECT_FOLDER wins over HISTORICAL_IMPORT when a message was seen both ways. */
+  emailOrigin: z.enum(["INBOX", "HISTORICAL_IMPORT", "PROJECT_FOLDER"]).optional()
 });
 
 const normalizedEmailDetailSchema = z.object({
@@ -769,6 +771,8 @@ const serializeInboxListMessage = (message: {
   classificationLastAttemptAt?: Date | null;
   classificationAttemptCount?: number;
   classificationError?: string | null;
+  fromHistoricalImport?: boolean;
+  fromProjectFolder?: boolean;
 }) => {
   const c = message.classifications[0] ?? null;
   return messageSummarySchema.parse({
@@ -823,7 +827,12 @@ const serializeInboxListMessage = (message: {
       message.classificationLastAttemptAt ?? null
     ),
     classificationAttemptCount: message.classificationAttemptCount ?? 0,
-    classificationError: message.classificationError ?? null
+    classificationError: message.classificationError ?? null,
+    emailOrigin: message.fromProjectFolder
+      ? "PROJECT_FOLDER"
+      : message.fromHistoricalImport
+        ? "HISTORICAL_IMPORT"
+        : "INBOX"
   });
 };
 
@@ -1757,6 +1766,8 @@ export const registerInboxReadRoutes = async (
           isPinned: true,
           hasAttachments: true,
           mailboxCategory: true,
+          fromHistoricalImport: true,
+          fromProjectFolder: true,
           classificationStatus: true,
           classificationLastAttemptAt: true,
           classificationAttemptCount: true,
