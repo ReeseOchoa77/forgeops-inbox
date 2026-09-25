@@ -742,6 +742,8 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
 
+    await releaseOrphanedFolderMatches(app.services.prisma, workspaceId);
+
     const query = z
       .object({
         connectionId: z.string().min(1),
@@ -1919,6 +1921,8 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
     if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
 
     const query = z.object({ status: z.enum(["DISCOVERED", "APPROVED", "IGNORED", "MATCHED", "ARCHIVED"]).optional() }).parse(request.query);
+
+    await releaseOrphanedFolderMatches(app.services.prisma, workspaceId);
 
     const folders = await app.services.prisma.discoveredFolder.findMany({
       where: { workspaceId, ...(query.status ? { status: query.status } : {}) },

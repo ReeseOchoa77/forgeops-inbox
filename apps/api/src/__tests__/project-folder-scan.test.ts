@@ -141,6 +141,7 @@ describe("scanNativeProjectFolders persistence", () => {
     folders: Map<string, Record<string, unknown>>;
   }) {
     return {
+      $executeRaw: vi.fn().mockResolvedValue(0),
       inboxConnection: {
         findFirst: vi.fn().mockResolvedValue({
           id: "conn1",

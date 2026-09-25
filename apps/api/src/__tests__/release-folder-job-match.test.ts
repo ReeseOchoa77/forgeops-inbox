@@ -56,5 +56,13 @@ describe("release folder matches when a job is deleted", () => {
       "utf8",
     );
     expect(listRoute).toContain("releaseOrphanedFolderMatches(app.services.prisma, workspaceId)");
+
+    const hereService = readFileSync(
+      resolve(here, "../application/services/release-folder-job-match.ts"),
+      "utf8",
+    );
+    expect(hereService).toContain("NOT EXISTS");
+    expect(hereService).toContain('FROM "Job" j');
+    expect(hereService).toContain('f."matchedJobId" IS NOT NULL');
   });
 });

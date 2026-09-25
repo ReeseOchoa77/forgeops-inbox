@@ -61,9 +61,48 @@ export async function releaseOrphanedFolderMatches(
   db: FolderMatchDb,
   workspaceId: string,
 ): Promise<number> {
-  const result = await db.discoveredFolder.updateMany({
-    where: orphanedFolderMatchWhere(workspaceId),
-    data: clearedFolderMatchData,
-  });
-  return result.count;
+  // Null job ids left the folder verified. A stored id with no Job row is the
+  // same situation when the foreign key did not clear it.
+  const cleared = await db.$executeRaw`
+    UPDATE "DiscoveredFolder" AS f
+    SET
+      "matchedJobId" = NULL,
+      "status" = CASE
+        WHEN f."status" IN ('IGNORED', 'ARCHIVED') THEN f."status"
+        ELSE 'DISCOVERED'::"FolderStatus"
+      END,
+      "matchConfidence" = CASE
+        WHEN f."status" IN ('IGNORED', 'ARCHIVED') THEN f."matchConfidence"
+        ELSE NULL
+      END,
+      "matchReason" = CASE
+        WHEN f."status" IN ('IGNORED', 'ARCHIVED') THEN f."matchReason"
+        ELSE NULL
+      END,
+      "approvedAt" = CASE
+        WHEN f."status" IN ('IGNORED', 'ARCHIVED') THEN f."approvedAt"
+        ELSE NULL
+      END,
+      "approvedByUserId" = CASE
+        WHEN f."status" IN ('IGNORED', 'ARCHIVED') THEN f."approvedByUserId"
+        ELSE NULL
+      END,
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE f."workspaceId" = ${workspaceId}
+      AND (
+        (
+          f."matchedJobId" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "Job" j
+            WHERE j."id" = f."matchedJobId"
+              AND j."workspaceId" = f."workspaceId"
+          )
+        )
+        OR (
+          f."matchedJobId" IS NULL
+          AND f."status" IN ('APPROVED', 'MATCHED')
+        )
+      )
+  `;
+  return Number(cleared);
 }

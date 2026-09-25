@@ -13,7 +13,7 @@ import {
   resolveProjectsRoot,
   type DiscoveredGraphFolder,
 } from "./outlook-mail-folders.js";
-import { shouldPreserveFolderMatch } from "./release-folder-job-match.js";
+import { releaseOrphanedFolderMatches, shouldPreserveFolderMatch } from "./release-folder-job-match.js";
 
 export class ProjectFolderScanError extends Error {
   readonly code:
@@ -195,6 +195,7 @@ export async function scanNativeProjectFolders(input: {
   }
 
   const mailboxEmail = connection.email.toLowerCase();
+  await releaseOrphanedFolderMatches(input.prisma, input.workspaceId);
 
   // Ensure a Projects JobFolderRoot exists for this workspace (config + future filters).
   const projectsNormalized = normalizeName(PROJECTS_ROOT_DISPLAY_NAME);
