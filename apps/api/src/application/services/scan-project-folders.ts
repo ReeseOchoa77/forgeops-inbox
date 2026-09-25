@@ -13,6 +13,7 @@ import {
   resolveProjectsRoot,
   type DiscoveredGraphFolder,
 } from "./outlook-mail-folders.js";
+import { shouldPreserveFolderMatch } from "./release-folder-job-match.js";
 
 export class ProjectFolderScanError extends Error {
   readonly code:
@@ -328,11 +329,8 @@ export async function scanNativeProjectFolders(input: {
     };
 
     if (existing) {
-      // Preserve manual VERIFIED / IGNORED / user MATCHED unless still DISCOVERED.
-      const preserveMatch =
-        existing.status === "APPROVED" ||
-        existing.status === "IGNORED" ||
-        (existing.status === "MATCHED" && Boolean(existing.matchedJobId));
+      // Keep a verified or suggested match only while the job still exists.
+      const preserveMatch = shouldPreserveFolderMatch(existing.status, existing.matchedJobId);
 
       // IMPORTANT: DiscoveredFolder.matchedJob uses composite FK
       // (workspaceId, matchedJobId). Relation disconnect/connect would null

@@ -13,6 +13,7 @@ import {
   JOB_MATCHER_VERSION
 } from "@forgeops/shared";
 
+import { releaseFoldersForDeletedJob } from "../../../application/services/release-folder-job-match.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -285,10 +286,7 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
         where: { workspaceId: params.workspaceId, jobId: params.jobId },
         data: { jobId: null },
       });
-      await tx.discoveredFolder.updateMany({
-        where: { workspaceId: params.workspaceId, matchedJobId: params.jobId },
-        data: { matchedJobId: null },
-      });
+      await releaseFoldersForDeletedJob(tx, params.workspaceId, params.jobId);
       await tx.entityAlias.deleteMany({
         where: { workspaceId: params.workspaceId, jobId: params.jobId },
       });

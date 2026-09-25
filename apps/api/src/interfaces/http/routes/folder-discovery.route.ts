@@ -21,6 +21,7 @@ import {
   enqueueProjectFolderEmailAnalyze,
   ProjectFolderEmailAnalyzeError,
 } from "../../../application/services/enqueue-project-folder-email-analyze.js";
+import { releaseOrphanedFolderMatches } from "../../../application/services/release-folder-job-match.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -963,6 +964,9 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         page: z.coerce.number().int().min(1).default(1),
         pageSize: z.coerce.number().int().min(1).max(200).default(50),
       }).parse(request.query);
+
+      stage = "release_orphaned_matches";
+      await releaseOrphanedFolderMatches(app.services.prisma, workspaceId);
 
       stage = "build_where";
       const where: Record<string, unknown> = { workspaceId };
