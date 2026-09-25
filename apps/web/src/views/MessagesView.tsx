@@ -21,8 +21,7 @@ import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 
 function EmailOriginTag({ origin }: { origin: MessageSummary['emailOrigin'] }) {
-  if (origin !== 'PROJECT_FOLDER' && origin !== 'HISTORICAL_IMPORT') return null
-  const projectFolder = origin === 'PROJECT_FOLDER'
+  if (origin !== 'HISTORICAL_IMPORT') return null
   return (
     <span
       style={{
@@ -31,11 +30,11 @@ function EmailOriginTag({ origin }: { origin: MessageSummary['emailOrigin'] }) {
         padding: '1px 6px',
         borderRadius: 10,
         whiteSpace: 'nowrap',
-        background: projectFolder ? '#e8f0fe' : '#f3e8ff',
-        color: projectFolder ? '#1d4ed8' : '#6b21a8',
+        background: '#f3e8ff',
+        color: '#6b21a8',
       }}
     >
-      {projectFolder ? 'Project folder' : 'Imported'}
+      Imported
     </span>
   )
 }
