@@ -39,11 +39,10 @@ describe("clear inbox message scope", () => {
     });
   });
 
-  it("removes only Import Previous Emails and keeps project-folder mail", () => {
+  it("removes imported mail and regular inbox sync, and keeps project-folder mail", () => {
     expect(whereFor("HISTORICAL_IMPORT_ONLY")).toEqual({
       workspaceId,
       inboxConnectionId,
-      fromHistoricalImport: true,
       fromProjectFolder: false,
     });
   });
@@ -150,7 +149,7 @@ describe("clear inbox deletion", () => {
     expect(calls.some((c) => c.model === "inboxConnection")).toBe(true);
   });
 
-  it("removes imported mail without moving the live-sync watermark", async () => {
+  it("removes imported mail and inbox sync, keeps project-folder mail, and sets the watermark", async () => {
     const { prisma, calls } = fakeClient(12);
     const result = await clearConnectionInbox(prisma as never, {
       workspaceId,
@@ -164,11 +163,14 @@ describe("clear inbox deletion", () => {
       where: {
         workspaceId,
         inboxConnectionId,
-        fromHistoricalImport: true,
         fromProjectFolder: false,
       },
     });
-    expect(calls.some((c) => c.model === "inboxConnection")).toBe(false);
+    const watermark = calls.find((c) => c.model === "inboxConnection");
+    expect(watermark?.args).toEqual({
+      where: { id: inboxConnectionId },
+      data: { inboxClearedAt: clearedAt, syncCursor: null },
+    });
     expect(calls.some((c) => c.model === "job" || c.model === "discoveredFolder")).toBe(false);
   });
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type ApprovedAccessEntry, type ConnectionSummary } from '../api'
 import { AddMonitoredMailboxModal } from '../components/AddMonitoredMailboxModal'
 import { MonitoredMailboxesPanel } from '../components/MonitoredMailboxesPanel'
-import { CLEAR_ALL_EMAILS_PHRASE, clearAllEmailsConfirmationMatches } from '../clear-inbox'
+import type { ClearInboxChoice } from '../clear-inbox'
 import { TeamAccessView } from './TeamAccessView'
 import { FoldersView } from './FoldersView'
 
@@ -111,92 +111,13 @@ export function WorkspaceView({
     return () => { cancelled = true }
   }, [workspaceId])
 
-  const handleClearInbox = async (connId: string, email: string) => {
-    let preview: { unassignedCount: number; jobAssociatedCount: number } | null = null
-    try {
-      preview = await api.previewClearInbox(workspaceId, connId)
-    } catch {
-      preview = null
-    }
-    const counts = preview
-      ? `\n\n${preview.unassignedCount.toLocaleString()} inbox emails will be removed.\n${preview.jobAssociatedCount.toLocaleString()} Job-associated emails will be preserved.`
-      : ''
-    if (
-      !confirm(
-        `Clear Inbox for ${email}?${counts}\n\n` +
-          `This will remove emails that are not assigned to a Job.\n` +
-          `Emails assigned to Jobs will be preserved.\n\n` +
-          `New emails will continue syncing. Older unassigned emails will not return unless you explicitly import them.`
-      )
-    ) {
-      return
-    }
+  const handleClearEmails = async (connId: string, mode: ClearInboxChoice) => {
     setClearing(connId)
     try {
-      await api.clearInbox(workspaceId, connId, 'NON_JOB_ONLY')
+      await api.clearInbox(workspaceId, connId, mode)
       window.location.reload()
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to clear inbox')
-    } finally {
-      setClearing('')
-    }
-  }
-
-  const handleRemoveImportedEmails = async (connId: string, email: string) => {
-    let preview: { historicalImportCount?: number } | null = null
-    try {
-      preview = await api.previewClearInbox(workspaceId, connId)
-    } catch {
-      preview = null
-    }
-    const counts = preview && typeof preview.historicalImportCount === 'number'
-      ? `\n\n${preview.historicalImportCount.toLocaleString()} emails from Import Previous Emails will be removed.`
-      : ''
-    if (
-      !confirm(
-        `Remove imported emails for ${email}?${counts}\n\n` +
-          `This removes emails brought in by Import Previous Emails.\n` +
-          `Emails from project folder analysis and regular inbox sync stay.\n\n` +
-          `Live sync is unchanged. This cannot be undone.`
-      )
-    ) {
-      return
-    }
-    setClearing(connId)
-    try {
-      await api.clearInbox(workspaceId, connId, 'HISTORICAL_IMPORT_ONLY')
-      window.location.reload()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to remove imported emails')
-    } finally {
-      setClearing('')
-    }
-  }
-
-  const handleClearAllEmails = async (connId: string, email: string) => {
-    let preview: { unassignedCount: number; jobAssociatedCount: number } | null = null
-    try {
-      preview = await api.previewClearInbox(workspaceId, connId)
-    } catch {
-      preview = null
-    }
-    const total = preview ? preview.unassignedCount + preview.jobAssociatedCount : null
-    const counts = preview
-      ? `\n\n${total!.toLocaleString()} emails will be removed, including ${preview.jobAssociatedCount.toLocaleString()} assigned to Jobs.`
-      : ''
-    const typed = window.prompt(
-      `Clear ALL emails for ${email}?${counts}\n\n` +
-        `This will remove all emails, including emails assigned to Jobs.\n` +
-        `Jobs themselves are not deleted. This cannot be undone.\n\n` +
-        `Type "${CLEAR_ALL_EMAILS_PHRASE}" to continue.`
-    )
-    if (!clearAllEmailsConfirmationMatches(typed ?? '')) return
-    setClearing(connId)
-    try {
-      await api.clearInbox(workspaceId, connId, 'ALL_EMAILS')
-      window.location.reload()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to clear all emails')
+      alert(e instanceof Error ? e.message : 'Failed to clear emails')
     } finally {
       setClearing('')
     }
@@ -352,9 +273,7 @@ export function WorkspaceView({
               onRefresh={refreshConnections}
               onAuthorize={(c) => void handleAuthorize(c)}
               onReconnect={(c) => void handleReconnect(c)}
-              onClearInbox={(id, email) => void handleClearInbox(id, email)}
-              onRemoveImportedEmails={(id, email) => void handleRemoveImportedEmails(id, email)}
-              onClearAllEmails={(id, email) => void handleClearAllEmails(id, email)}
+              onClearEmails={(id, mode) => void handleClearEmails(id, mode)}
               onAddMailbox={canManageMailboxes ? () => setAddMailboxOpen(true) : undefined}
               onRemove={canManageMailboxes ? (c) => void handleRemoveMailbox(c) : undefined}
             />

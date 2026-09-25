@@ -132,6 +132,22 @@ async function writeProgress(
   });
 }
 
+/** Mark an open run FAILED. A later retry may set RUNNING again. */
+export async function failOpenProjectFolderEmailAnalyzeRun(
+  prisma: PrismaClient,
+  runId: string,
+  errorMessage: string
+): Promise<void> {
+  await prisma.projectFolderEmailAnalyzeRun.updateMany({
+    where: { id: runId, status: { in: ["PENDING", "RUNNING"] } },
+    data: {
+      status: "FAILED",
+      errorMessage: errorMessage.slice(0, 2000),
+      completedAt: new Date(),
+    },
+  });
+}
+
 export async function processProjectFolderEmailAnalyze(
   payload: ProjectFolderEmailAnalyzeJobPayload,
   deps: {
@@ -140,6 +156,19 @@ export async function processProjectFolderEmailAnalyze(
     outlookConfig: OutlookClientConfig;
     classifyQueue: Queue<MailboxClassifyJobPayload, MailboxClassifyJobResult>;
     attachmentIngestQueue: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>;
+    /** When set, tests supply pages without calling Graph. */
+    listFolderMessages?: (input: {
+      refreshToken: string;
+      folderId: string;
+      pageSize: number;
+      pageCursor: string | null;
+    }) => Promise<{
+      items: OutlookMessageSnapshot[];
+      nextPageCursor: string | null;
+      refreshedRefreshToken?: string | null;
+    }>;
+    /** True on the last BullMQ attempt. Earlier attempts rethrow and stay RUNNING. */
+    finalAttempt?: boolean;
   }
 ): Promise<ProjectFolderEmailAnalyzeJobResult> {
   const progress = emptyProjectFolderEmailAnalyzeProgress();
@@ -217,7 +246,7 @@ export async function processProjectFolderEmailAnalyze(
     };
   }
 
-  const client = new OutlookClient(deps.outlookConfig);
+  const client = deps.listFolderMessages ? null : new OutlookClient(deps.outlookConfig);
   let refreshToken = deps.tokenCipher.decrypt(connection.encryptedRefreshToken);
 
   try {
@@ -280,12 +309,19 @@ export async function processProjectFolderEmailAnalyze(
       do {
         let page;
         try {
-          page = await client.listMailFolderMessages({
-            refreshToken,
-            folderId: folder.providerFolderId,
-            pageSize: PAGE_SIZE,
-            pageCursor,
-          });
+          page = deps.listFolderMessages
+            ? await deps.listFolderMessages({
+                refreshToken,
+                folderId: folder.providerFolderId,
+                pageSize: PAGE_SIZE,
+                pageCursor,
+              })
+            : await client!.listMailFolderMessages({
+                refreshToken,
+                folderId: folder.providerFolderId,
+                pageSize: PAGE_SIZE,
+                pageCursor,
+              });
           if (page.refreshedRefreshToken) {
             refreshToken = page.refreshedRefreshToken;
           }
@@ -295,8 +331,7 @@ export async function processProjectFolderEmailAnalyze(
             folderId: folder.id,
             error: msg.slice(0, 200),
           });
-          progress.failed += 1;
-          break;
+          throw e;
         }
 
         if (page.items.length === 0) {
@@ -499,17 +534,12 @@ export async function processProjectFolderEmailAnalyze(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await writeProgress(deps.prisma, run.id, progress, {
-      status: "FAILED",
-      errorMessage: msg.slice(0, 2000),
-    });
-    return {
-      workspaceId: payload.workspaceId,
-      inboxConnectionId: payload.inboxConnectionId,
-      runId: run.id,
-      status: "FAILED",
-      progress,
-      errorMessage: msg,
-    };
+    if (deps.finalAttempt !== false) {
+      await writeProgress(deps.prisma, run.id, progress, {
+        status: "FAILED",
+        errorMessage: msg.slice(0, 2000),
+      });
+    }
+    throw e;
   }
 }

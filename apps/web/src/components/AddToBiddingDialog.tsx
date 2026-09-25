@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ApiRequestError, api, type BiddingProject, type CustomerSummary } from '../api'
-import { suggestedBidName } from '../bidding-display'
+import { isBidsEstimatingSubtype, suggestedBidName } from '../bidding-display'
 
 type ExistingJob = {
   id: string
@@ -19,8 +19,6 @@ type Props = {
   onClose: () => void
   onDone: (job: { id: string; name: string; jobNumber: string | null; status: string }) => void
 }
-
-const BIDDING_KEYS = new Set(['BID_OPPORTUNITY', 'BID_UPDATE', 'ESTIMATE_QUOTE'])
 
 export function AddToBiddingDialog({
   workspaceId,
@@ -135,7 +133,7 @@ export function AddToBiddingDialog({
         <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.45, marginBottom: 12 }}>
           This keeps the email in the inbox and marks the project as an active bid. Classifying an email as bidding-related does not do this by itself.
         </div>
-        {businessTypeKey && BIDDING_KEYS.has(businessTypeKey) && (
+        {isBidsEstimatingSubtype(businessTypeKey) && (
           <div style={{ fontSize: 12, color: '#1d4ed8', background: '#eff6ff', borderRadius: 6, padding: '8px 10px', marginBottom: 12 }}>
             This email is classified as bidding-related. Add it here only if you are actively pursuing the project.
           </div>

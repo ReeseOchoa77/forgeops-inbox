@@ -882,7 +882,12 @@ export const api = {
     ),
 
   previewClearInbox: (workspaceId: string, connectionId: string) =>
-    request<{ unassignedCount: number; jobAssociatedCount: number; historicalImportCount?: number }>(
+    request<{
+      unassignedCount: number
+      jobAssociatedCount: number
+      nonProjectFolderCount: number
+      projectFolderCount: number
+    }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox-preview`
     ),
 
@@ -2144,6 +2149,8 @@ export interface WorkerJobRow {
   progress: WorkerJobProgress | null
   origin: string
   attention: 'LONG_RUNNING' | 'INCONSISTENT' | null
+  lastProgressAt: string | null
+  queueUnreadable: boolean
   failedReason: string | null
   capabilities: WorkerJobCapabilities
   revertReason: string

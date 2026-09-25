@@ -8,6 +8,18 @@ import {
   type WorkerJobsList,
 } from '../api'
 
+function dateTime(iso: string | null): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 function clock(iso: string | null): string {
   if (!iso) return '—'
   const date = new Date(iso)
@@ -29,12 +41,18 @@ function duration(ms: number | null): string {
 
 function progressText(row: WorkerJobRow): string {
   const progress = row.progress
-  if (!progress) return row.displayState === 'ACTIVE' ? 'Processing…' : '—'
-  if (progress.total != null && progress.total > 0) {
-    const pct = progress.percent != null ? ` · ${progress.percent}%` : ''
-    return `${progress.current.toLocaleString()} / ${progress.total.toLocaleString()} ${progress.unit}${pct}`
-  }
-  return `${progress.current.toLocaleString()} ${progress.unit}`
+  const stage = progress?.stage
+  const counts = !progress
+    ? row.displayState === 'ACTIVE' ? 'Processing…' : '—'
+    : progress.total != null && progress.total > 0
+      ? `${progress.current.toLocaleString()} / ${progress.total.toLocaleString()} ${progress.unit}${progress.percent != null ? ` · ${progress.percent}%` : ''}`
+      : `${progress.current.toLocaleString()} ${progress.unit}`
+  return stage ? `${stage}` : counts
+}
+
+function bullLabel(row: WorkerJobRow): string {
+  if (row.queueUnreadable) return 'UNAVAILABLE'
+  return row.queueState ?? 'MISSING'
 }
 
 export function WorkerJobsView(props: {
@@ -235,7 +253,7 @@ export function WorkerJobsView(props: {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: 'left', color: '#777' }}>
-              {['Status', 'Job', 'Queue', 'Progress', 'Resource', 'Queued', 'Started', 'Duration', 'Attempts', 'Actions'].map((col) => (
+              {['Status', 'Job', 'Queue', 'Progress', 'Last progress', 'Resource', 'Queued', 'Started', 'Duration', 'Attempts', 'Actions'].map((col) => (
                 <th key={col} style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{col}</th>
               ))}
             </tr>
@@ -245,8 +263,10 @@ export function WorkerJobsView(props: {
               <tr key={`${row.queue}:${row.jobId}`}>
                 <td style={cell}>
                   {row.displayState}
-                  {row.attention === 'INCONSISTENT' && <div style={{ color: '#9b1c1c' }}>STALE / INCONSISTENT</div>}
+                  {row.attention === 'INCONSISTENT' && <div style={{ color: '#9b1c1c' }}>STALE / ORPHANED</div>}
                   {row.attention === 'LONG_RUNNING' && <div style={{ color: '#9a6700' }}>Running a long time</div>}
+                  <div style={{ color: '#555' }}>App: {row.runState ?? '—'}</div>
+                  <div style={{ color: '#555' }}>BullMQ: {bullLabel(row)}</div>
                 </td>
                 <td style={cell}>
                   <div>{row.displayName}</div>
@@ -254,6 +274,7 @@ export function WorkerJobsView(props: {
                 </td>
                 <td style={cell}>{row.queue}</td>
                 <td style={cell}>{progressText(row)}</td>
+                <td style={cell}>{dateTime(row.lastProgressAt)}</td>
                 <td style={cell}>
                   {row.resourceLabel}
                   {row.inboxConnectionId && row.workspaceId === props.currentWorkspaceId && (
@@ -289,7 +310,7 @@ export function WorkerJobsView(props: {
               </tr>
             ))}
             {data && data.jobs.length === 0 && (
-              <tr><td style={cell} colSpan={10}>No jobs in this window.</td></tr>
+              <tr><td style={cell} colSpan={11}>No jobs in this window.</td></tr>
             )}
           </tbody>
         </table>
@@ -306,8 +327,9 @@ export function WorkerJobsView(props: {
           <h3 style={{ fontSize: 16 }}>{detail.job.displayName}</h3>
           <DetailLine label="Job ID" value={detail.job.jobId} />
           <DetailLine label="Queue" value={detail.job.queue} />
-          <DetailLine label="Queue state" value={detail.job.queueState ?? '—'} />
+          <DetailLine label="Queue state" value={bullLabel(detail.job)} />
           <DetailLine label="ForgeOps run state" value={detail.job.runState ?? '—'} />
+          <DetailLine label="Last progress" value={dateTime(detail.job.lastProgressAt)} />
           <DetailLine label="Display" value={detail.job.displayState} />
           <DetailLine label="Workspace" value={detail.job.workspaceId ?? 'System'} />
           <DetailLine label="Resource" value={detail.job.resourceLabel} />

@@ -9,6 +9,7 @@ import {
 } from '../components/JobAssignPicker'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
 import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
+import { isBidsEstimatingSubtype } from '../bidding-display'
 import {
   AttachmentActionMenu,
   CopyAllAttachmentsButton,
@@ -1334,7 +1335,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                       </button>
                       {clickedMessage.job?.status === 'BIDDING' ? (
                         <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
-                      ) : (
+                      ) : isBidsEstimatingSubtype(clickedMessage.classification?.businessTypeKey) ? (
                         <button
                           type="button"
                           onClick={() => setBiddingOpen(true)}
@@ -1346,7 +1347,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                         >
                           Add to Bidding
                         </button>
-                      )}
+                      ) : null}
                       {jobPickerOpen && (
                         <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 40, marginTop: 4 }}>
                           <JobAssignPicker

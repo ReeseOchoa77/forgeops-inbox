@@ -1,3 +1,13 @@
+const BIDS_ESTIMATING_SUBTYPES = new Set([
+  'BID_OPPORTUNITY',
+  'BID_UPDATE',
+  'ESTIMATE_QUOTE',
+])
+
+export function isBidsEstimatingSubtype(businessTypeKey: string | null | undefined): boolean {
+  return Boolean(businessTypeKey && BIDS_ESTIMATING_SUBTYPES.has(businessTypeKey))
+}
+
 export function suggestedBidName(subject: string | null | undefined, jobName?: string | null): string {
   if (jobName?.trim()) return jobName.trim().slice(0, 300)
   let cleaned = (subject ?? '').trim()

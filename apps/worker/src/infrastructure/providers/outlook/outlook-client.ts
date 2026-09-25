@@ -6,6 +6,8 @@ const MAX_MESSAGES_PER_SYNC = 100;
 const MAX_STORED_BODY_TEXT_LENGTH = 20_000;
 const MAX_THROTTLE_RETRIES = 3;
 const DEFAULT_THROTTLE_WAIT_MS = 5_000;
+/** One Graph HTTP call. Retries stay bounded; a silent socket cannot wait forever. */
+const DEFAULT_GRAPH_TIMEOUT_MS = 60_000;
 
 const graphEmailAddressSchema = z.object({
   emailAddress: z.object({
@@ -185,6 +187,10 @@ export interface OutlookClientConfig {
   clientId?: string;
   clientSecret?: string;
   tenantId?: string;
+  /** Per-request AbortSignal timeout. Default 60s. */
+  requestTimeoutMs?: number;
+  /** Wait between timed-out attempts. Default matches throttle backoff. */
+  retryDelayMs?: number;
 }
 
 export interface OutlookAddress {
@@ -498,6 +504,13 @@ const groupByConversation = (
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
 
 const parseRetryAfterMs = (response: Response): number => {
   const header = response.headers.get("Retry-After");
@@ -850,7 +863,8 @@ export class OutlookClient {
     const response = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString()
+      body: body.toString(),
+      signal: AbortSignal.timeout(this.requestTimeoutMs()),
     });
 
     if (!response.ok) {
@@ -877,14 +891,42 @@ export class OutlookClient {
     };
   }
 
+  private requestTimeoutMs(): number {
+    return this.config.requestTimeoutMs ?? DEFAULT_GRAPH_TIMEOUT_MS;
+  }
+
   private async fetchWithThrottleRetry(
     url: string,
     headers: Record<string, string>
   ): Promise<Response> {
     let attempt = 0;
+    let timeoutAttempt = 0;
 
     while (true) {
-      const response = await fetch(url, { headers });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(this.requestTimeoutMs()),
+        });
+      } catch (error) {
+        if (!isTimeoutError(error) || timeoutAttempt >= MAX_THROTTLE_RETRIES) {
+          if (isTimeoutError(error)) {
+            throw new Error(
+              `Outlook Graph request timed out after ${timeoutAttempt + 1} attempts`
+            );
+          }
+          throw error;
+        }
+        timeoutAttempt += 1;
+        console.warn("outlook-graph-timeout", {
+          attempt: timeoutAttempt,
+          timeoutMs: this.requestTimeoutMs(),
+          url: url.split("?")[0],
+        });
+        await sleep(this.config.retryDelayMs ?? DEFAULT_THROTTLE_WAIT_MS);
+        continue;
+      }
 
       const shouldRetry =
         attempt < MAX_THROTTLE_RETRIES &&

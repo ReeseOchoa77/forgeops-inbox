@@ -19,6 +19,17 @@ import {
 const PAGE_SIZE_MAX = 25;
 const PER_STATE_LIMIT = 25;
 const LONG_RUNNING_MS = 6 * 60 * 60 * 1000;
+/** Missing or finished queue work with an open app run is orphaned after this gap. */
+export const ORPHAN_PROGRESS_GAP_MS = 2 * 60 * 1000;
+const LIVE_BULL_STATES = new Set([
+  "active",
+  "waiting",
+  "waiting-children",
+  "prioritized",
+  "delayed",
+  "paused",
+]);
+const OPEN_APP_STATES = new Set(["PENDING", "RUNNING", "CANCELLING"]);
 
 const OPEN_AND_DONE = [
   "active",
@@ -104,6 +115,9 @@ export type WorkerJobRow = {
   progress: WorkerJobProgress | null;
   origin: string;
   attention: "LONG_RUNNING" | "INCONSISTENT" | null;
+  lastProgressAt: string | null;
+  /** Redis could not be read. Absence of a job was not confirmed. */
+  queueUnreadable: boolean;
   failedReason: string | null;
   capabilities: WorkerJobCapabilities;
   revertReason: string;
@@ -143,7 +157,24 @@ type RunSnapshot = {
   status: string;
   progress: WorkerJobProgress | null;
   errorMessage: string | null;
+  updatedAt: Date | null;
 };
+
+export function applicationRunIsOrphaned(input: {
+  appStatus: string | null;
+  bullState: string | null;
+  lastProgressAt: Date | null;
+  now: number;
+  queueUnreadable?: boolean;
+}): boolean {
+  if (input.queueUnreadable) return false;
+  if (!input.appStatus || !OPEN_APP_STATES.has(input.appStatus)) return false;
+  if (input.bullState && LIVE_BULL_STATES.has(input.bullState)) return false;
+  const age = input.lastProgressAt
+    ? input.now - input.lastProgressAt.getTime()
+    : Number.POSITIVE_INFINITY;
+  return age >= ORPHAN_PROGRESS_GAP_MS;
+}
 
 function asRecord(data: unknown): Record<string, unknown> {
   if (data && typeof data === "object" && !Array.isArray(data)) {
@@ -298,6 +329,7 @@ async function loadRuns(
         processedCount: true,
         requestedLimit: true,
         errorMessage: true,
+        updatedAt: true,
       },
     });
     for (const row of rows) {
@@ -306,6 +338,7 @@ async function loadRuns(
         {
           status: row.status,
           errorMessage: row.errorMessage,
+          updatedAt: row.updatedAt ?? null,
           progress: progressOf(
             row.processedCount,
             row.requestedLimit > 0 ? row.requestedLimit : null,
@@ -326,12 +359,14 @@ async function loadRuns(
         totalMatched: true,
         taskMode: true,
         errorMessage: true,
+        updatedAt: true,
       },
     });
     for (const row of rows) {
       map.set(row.id, {
         status: row.status,
         errorMessage: row.errorMessage,
+        updatedAt: row.updatedAt ?? null,
         progress: progressOf(row.completed, row.totalMatched > 0 ? row.totalMatched : null, "emails", row.taskMode),
       });
     }
@@ -339,7 +374,7 @@ async function loadRuns(
   if (ids.analyzes.length) {
     const rows = await prisma.projectFolderEmailAnalyzeRun.findMany({
       where: { id: { in: ids.analyzes } },
-      select: { id: true, status: true, progress: true, errorMessage: true },
+      select: { id: true, status: true, progress: true, errorMessage: true, updatedAt: true },
     });
     for (const row of rows) {
       const progress = asRecord(row.progress);
@@ -364,6 +399,7 @@ async function loadRuns(
       map.set(row.id, {
         status: row.status,
         errorMessage: row.errorMessage,
+        updatedAt: row.updatedAt ?? null,
         progress: progressOf(
           foldersDone,
           foldersTotal > 0 ? foldersTotal : null,
@@ -413,23 +449,32 @@ function toRow(input: {
   mailboxEmail: string | null;
   now: number;
   missingJob?: boolean;
+  queueUnreadable?: boolean;
 }): WorkerJobRow {
   const def = WORKER_JOB_DEFINITIONS[input.queue];
   const runState = input.run?.status ?? null;
   const queueState = input.bullState;
+  const queueUnreadable = input.queueUnreadable === true;
+  const lastProgressAt = input.run?.updatedAt ?? null;
   let displayState = input.missingJob
     ? "STALE"
     : displayStateForBull(queueState ?? "unknown", runState);
-  let attention: WorkerJobRow["attention"] = input.missingJob ? "INCONSISTENT" : null;
+  const orphaned = applicationRunIsOrphaned({
+    appStatus: runState,
+    bullState: input.missingJob ? null : queueState,
+    lastProgressAt,
+    now: input.now,
+    queueUnreadable,
+  });
+  let attention: WorkerJobRow["attention"] = orphaned ? "INCONSISTENT" : null;
+  if (orphaned) displayState = "STALE";
   if (
+    !orphaned &&
     queueState === "active" &&
     input.processedOn &&
     input.now - input.processedOn > LONG_RUNNING_MS
   ) {
     attention = "LONG_RUNNING";
-  }
-  if (runState === "RUNNING" && input.missingJob) {
-    displayState = "STALE";
   }
   const resource = resourceOf(input.queue, input.data, input.mailboxEmail);
   const failed = input.failedReason ?? input.run?.errorMessage ?? null;
@@ -455,6 +500,8 @@ function toRow(input: {
     progress: input.run?.progress ?? null,
     origin: originOf(input.data, input.jobId),
     attention,
+    lastProgressAt: lastProgressAt ? lastProgressAt.toISOString() : null,
+    queueUnreadable,
     failedReason: failed ? failed.slice(0, 300) : null,
     capabilities: capabilitiesForJob({
       queue: input.queue,
@@ -463,6 +510,18 @@ function toRow(input: {
     }),
     revertReason: def.revertReason,
   };
+}
+
+async function readQueue<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<{ value: T; failed: boolean }> {
+  try {
+    return { value: await fn(), failed: false };
+  } catch (error) {
+    console.warn("worker-jobs-queue-read-failed", {
+      label,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { value: fallback, failed: true };
+  }
 }
 
 export async function listWorkerJobs(
@@ -495,30 +554,40 @@ export async function listWorkerJobs(
   let truncated = false;
 
   for (const entry of deps.queues) {
-    const counts = countSummary(
-      await entry.queue.getJobCounts(
-        "active",
-        "waiting",
-        "prioritized",
-        "waiting-children",
-        "delayed",
-        "paused",
-        "failed",
-        "completed"
-      )
+    const countsRead = await readQueue(
+      `${entry.name}:counts`,
+      () =>
+        entry.queue.getJobCounts(
+          "active",
+          "waiting",
+          "prioritized",
+          "waiting-children",
+          "delayed",
+          "paused",
+          "failed",
+          "completed"
+        ),
+      {}
     );
+    const pausedRead = await readQueue(`${entry.name}:paused`, () => entry.queue.isPaused(), false);
+    const counts = countSummary(countsRead.value);
     summary = addSummary(summary, counts);
     queueSummaries.push({
       name: entry.name,
       displayName: WORKER_JOB_DEFINITIONS[entry.name].displayName,
-      paused: await entry.queue.isPaused(),
+      paused: pausedRead.value,
       counts,
     });
   }
 
   for (const entry of selected) {
     for (const state of states) {
-      const jobs = await entry.queue.getJobs([state], 0, PER_STATE_LIMIT - 1);
+      const jobsRead = await readQueue(
+        `${entry.name}:${state}`,
+        () => entry.queue.getJobs([state], 0, PER_STATE_LIMIT - 1),
+        [] as WorkerQueueJob[]
+      );
+      const jobs = jobsRead.value;
       if (jobs.length >= PER_STATE_LIMIT) truncated = true;
       for (const job of jobs) {
         if (!job.id) continue;
@@ -552,8 +621,27 @@ export async function listWorkerJobs(
     for (const run of running) {
       const jobId = historicalImportJobId(run.id);
       if (knownJobs.has(`${QueueNames.MAILBOX_HISTORICAL_IMPORT}:${jobId}`)) continue;
-      const existing = historical ? await historical.queue.getJob(jobId) : undefined;
-      if (existing) continue;
+      const lookedUp = historical
+        ? await readQueue(
+            `${QueueNames.MAILBOX_HISTORICAL_IMPORT}:${jobId}`,
+            () => historical.queue.getJob(jobId),
+            undefined as WorkerQueueJob | undefined
+          )
+        : { value: undefined as WorkerQueueJob | undefined, failed: false };
+      if (lookedUp.value?.id) {
+        const stateRead = await readQueue(
+          `${jobId}:state`,
+          () => lookedUp.value!.getState(),
+          "unknown"
+        );
+        collected.push({
+          queue: QueueNames.MAILBOX_HISTORICAL_IMPORT,
+          state: stateRead.value,
+          job: lookedUp.value,
+        });
+        importIds.push(run.id);
+        continue;
+      }
       importIds.push(run.id);
       stale.push(
         toRow({
@@ -565,7 +653,8 @@ export async function listWorkerJobs(
           run: null,
           mailboxEmail: null,
           now,
-          missingJob: true,
+          missingJob: !lookedUp.failed,
+          queueUnreadable: lookedUp.failed,
         })
       );
     }
@@ -581,8 +670,23 @@ export async function listWorkerJobs(
     for (const run of running) {
       const jobId = buildMailboxReclassifyJobId(run.id);
       if (knownJobs.has(`${QueueNames.MAILBOX_RECLASSIFY}:${jobId}`)) continue;
-      const existing = reclassify ? await reclassify.queue.getJob(jobId) : undefined;
-      if (existing) continue;
+      const lookedUp = reclassify
+        ? await readQueue(
+            `${QueueNames.MAILBOX_RECLASSIFY}:${jobId}`,
+            () => reclassify.queue.getJob(jobId),
+            undefined as WorkerQueueJob | undefined
+          )
+        : { value: undefined as WorkerQueueJob | undefined, failed: false };
+      if (lookedUp.value?.id) {
+        const stateRead = await readQueue(`${jobId}:state`, () => lookedUp.value!.getState(), "unknown");
+        collected.push({
+          queue: QueueNames.MAILBOX_RECLASSIFY,
+          state: stateRead.value,
+          job: lookedUp.value,
+        });
+        reclassifyIds.push(run.id);
+        continue;
+      }
       reclassifyIds.push(run.id);
       stale.push(
         toRow({
@@ -594,7 +698,8 @@ export async function listWorkerJobs(
           run: null,
           mailboxEmail: null,
           now,
-          missingJob: true,
+          missingJob: !lookedUp.failed,
+          queueUnreadable: lookedUp.failed,
         })
       );
     }
@@ -610,8 +715,23 @@ export async function listWorkerJobs(
     for (const run of running) {
       const jobId = buildProjectFolderEmailAnalyzeJobId(run.id);
       if (knownJobs.has(`${QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE}:${jobId}`)) continue;
-      const existing = analyze ? await analyze.queue.getJob(jobId) : undefined;
-      if (existing) continue;
+      const lookedUp = analyze
+        ? await readQueue(
+            `${QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE}:${jobId}`,
+            () => analyze.queue.getJob(jobId),
+            undefined as WorkerQueueJob | undefined
+          )
+        : { value: undefined as WorkerQueueJob | undefined, failed: false };
+      if (lookedUp.value?.id) {
+        const stateRead = await readQueue(`${jobId}:state`, () => lookedUp.value!.getState(), "unknown");
+        collected.push({
+          queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
+          state: stateRead.value,
+          job: lookedUp.value,
+        });
+        analyzeIds.push(run.id);
+        continue;
+      }
       analyzeIds.push(run.id);
       stale.push(
         toRow({
@@ -623,7 +743,8 @@ export async function listWorkerJobs(
           run: null,
           mailboxEmail: null,
           now,
-          missingJob: true,
+          missingJob: !lookedUp.failed,
+          queueUnreadable: lookedUp.failed,
         })
       );
     }
@@ -676,16 +797,26 @@ export async function listWorkerJobs(
 
   for (const row of stale) {
     const snapshot = row.resourceId ? runs.get(row.resourceId) ?? null : null;
+    const lastProgressAt = snapshot?.updatedAt ?? null;
+    const orphaned = applicationRunIsOrphaned({
+      appStatus: snapshot?.status ?? row.runState,
+      bullState: row.queueState,
+      lastProgressAt,
+      now,
+      queueUnreadable: row.queueUnreadable,
+    });
     rows.push({
       ...row,
       ...(snapshot
         ? {
             runState: snapshot.status,
-            displayState: "STALE" as const,
             progress: snapshot.progress,
             failedReason: snapshot.errorMessage?.slice(0, 300) ?? row.failedReason,
           }
         : {}),
+      lastProgressAt: lastProgressAt ? lastProgressAt.toISOString() : null,
+      displayState: orphaned ? "STALE" : row.displayState,
+      attention: orphaned ? "INCONSISTENT" : row.queueUnreadable ? null : row.attention,
       resourceLabel: row.inboxConnectionId
         ? emailById.get(row.inboxConnectionId) ?? row.resourceLabel
         : row.resourceLabel,
@@ -751,6 +882,98 @@ async function loadSchedules(queues: WorkerQueueBundle[]): Promise<WorkerJobsLis
   });
 }
 
+async function detailForMissingApplicationJob(
+  prisma: PrismaClient,
+  queueName: QueueName,
+  jobId: string
+): Promise<{
+  job: WorkerJobRow;
+  payload: unknown;
+  stack: string[];
+  queuePaused: boolean;
+} | null> {
+  const now = Date.now();
+  if (queueName === QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE && jobId.startsWith("project-folder-email-analyze-")) {
+    const runId = jobId.slice("project-folder-email-analyze-".length);
+    const run = await prisma.projectFolderEmailAnalyzeRun.findUnique({
+      where: { id: runId },
+      select: { id: true, workspaceId: true, inboxConnectionId: true },
+    });
+    if (!run) return null;
+    const runs = await loadRuns(prisma, { imports: [], reclassifies: [], analyzes: [run.id] });
+    const data = { workspaceId: run.workspaceId, inboxConnectionId: run.inboxConnectionId, runId: run.id };
+    return {
+      job: toRow({
+        queue: queueName,
+        jobId,
+        jobName: queueName,
+        bullState: null,
+        data,
+        run: runs.get(run.id) ?? null,
+        mailboxEmail: null,
+        now,
+        missingJob: true,
+      }),
+      payload: sanitizeJobData(data),
+      stack: [],
+      queuePaused: false,
+    };
+  }
+  if (queueName === QueueNames.MAILBOX_HISTORICAL_IMPORT && jobId.startsWith("historical-import-")) {
+    const importId = jobId.slice("historical-import-".length);
+    const row = await prisma.mailboxHistoricalImport.findUnique({
+      where: { id: importId },
+      select: { id: true, workspaceId: true, inboxConnectionId: true },
+    });
+    if (!row) return null;
+    const runs = await loadRuns(prisma, { imports: [row.id], reclassifies: [], analyzes: [] });
+    const data = { workspaceId: row.workspaceId, inboxConnectionId: row.inboxConnectionId, importId: row.id };
+    return {
+      job: toRow({
+        queue: queueName,
+        jobId,
+        jobName: queueName,
+        bullState: null,
+        data,
+        run: runs.get(row.id) ?? null,
+        mailboxEmail: null,
+        now,
+        missingJob: true,
+      }),
+      payload: sanitizeJobData(data),
+      stack: [],
+      queuePaused: false,
+    };
+  }
+  if (queueName === QueueNames.MAILBOX_RECLASSIFY && jobId.startsWith("mailbox-reclassify-")) {
+    const runId = jobId.slice("mailbox-reclassify-".length);
+    const row = await prisma.mailboxReclassifyRun.findUnique({
+      where: { id: runId },
+      select: { id: true, workspaceId: true, inboxConnectionId: true },
+    });
+    if (!row) return null;
+    const runs = await loadRuns(prisma, { imports: [], reclassifies: [row.id], analyzes: [] });
+    const data = { workspaceId: row.workspaceId, inboxConnectionId: row.inboxConnectionId, runId: row.id };
+    return {
+      job: toRow({
+        queue: queueName,
+        jobId,
+        jobName: queueName,
+        bullState: null,
+        data,
+        run: runs.get(row.id) ?? null,
+        mailboxEmail: null,
+        now,
+        missingJob: true,
+      }),
+      payload: sanitizeJobData(data),
+      stack: [],
+      queuePaused: false,
+    };
+  }
+  return null;
+}
+
 export async function getWorkerJobDetail(
   deps: { queues: WorkerQueueBundle[]; prisma: PrismaClient },
   queueName: string,
@@ -764,8 +987,10 @@ export async function getWorkerJobDetail(
   if (!isKnownQueue(queueName)) return null;
   const entry = deps.queues.find((item) => item.name === queueName);
   if (!entry) return null;
-  const job = await entry.queue.getJob(jobId);
-  if (!job?.id) return null;
+  const job = await entry.queue.getJob(jobId).catch(() => undefined);
+  if (!job?.id) {
+    return detailForMissingApplicationJob(deps.prisma, queueName, jobId);
+  }
   const data = asRecord(job.data);
   const key = runKey(queueName, data);
   const runs = await loadRuns(deps.prisma, {

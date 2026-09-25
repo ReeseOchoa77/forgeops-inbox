@@ -4,6 +4,7 @@ import { QueueNames } from "@forgeops/shared";
 
 import {
   WorkerJobActionError,
+  applicationRunIsOrphaned,
   cancelWorkerJob,
   listWorkerJobs,
   removeWorkerJob,
@@ -212,6 +213,187 @@ describe("listWorkerJobs", () => {
     );
     expect(listed.jobs[0]?.displayState).toBe("STALE");
     expect(listed.jobs[0]?.attention).toBe("INCONSISTENT");
+  });
+
+  it("shows a running folder analysis when its BullMQ job is missing", async () => {
+    const old = new Date("2026-09-24T18:34:24.000Z");
+    const handle = queue({});
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as { findMany: (args: { where?: { status?: unknown } }) => Promise<unknown[]> }).findMany =
+      async (args) => {
+        if (args.where?.status) {
+          return [{ id: "cmufuolb20008zo5ibynqhai5", workspaceId: "ws-a", inboxConnectionId: "cx" }];
+        }
+        return [{
+          id: "cmufuolb20008zo5ibynqhai5",
+          status: "RUNNING",
+          errorMessage: null,
+          updatedAt: old,
+          progress: {
+            processed: 300,
+            created: 100,
+            existing: 100,
+            foldersDone: 0,
+            foldersTotal: 3,
+            currentFolderName: "Nova Academy",
+          },
+        }];
+      };
+    const listed = await listWorkerJobs(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      { status: "all", queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE }
+    );
+    expect(listed.jobs).toHaveLength(1);
+    expect(listed.jobs[0]?.displayState).toBe("STALE");
+    expect(listed.jobs[0]?.attention).toBe("INCONSISTENT");
+    expect(listed.jobs[0]?.queueState).toBeNull();
+    expect(listed.jobs[0]?.runState).toBe("RUNNING");
+    expect(listed.jobs[0]?.lastProgressAt).toBe(old.toISOString());
+    expect(listed.jobs[0]?.progress?.stage).toContain("200 examined");
+    expect(listed.jobs[0]?.progress?.stage).toContain("Nova Academy");
+    expect(listed.jobs[0]?.progress?.stage).toContain("0/3");
+  });
+
+  it("does not mark an active BullMQ job stale when progress is old", async () => {
+    const old = new Date("2026-09-24T18:34:24.000Z");
+    const active = job({
+      id: "project-folder-email-analyze-run-live",
+      data: { workspaceId: "ws-a", inboxConnectionId: "cx", runId: "run-live" },
+      getState: async () => "active",
+      processedOn: Date.now(),
+    });
+    const handle = queue({});
+    handle.getJobs = async () => [];
+    handle.getJob = async (id) => (id === active.id ? active : undefined);
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as { findMany: (args: { where?: { status?: unknown } }) => Promise<unknown[]> }).findMany =
+      async (args) => {
+        if (args.where?.status) {
+          return [{ id: "run-live", workspaceId: "ws-a", inboxConnectionId: "cx" }];
+        }
+        return [{
+          id: "run-live",
+          status: "RUNNING",
+          errorMessage: null,
+          updatedAt: old,
+          progress: { processed: 50, created: 50, existing: 0, foldersDone: 0, foldersTotal: 1, currentFolderName: "Live" },
+        }];
+      };
+    const listed = await listWorkerJobs(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      { status: "all", queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE }
+    );
+    expect(listed.jobs.map((row) => row.displayState)).toEqual(["ACTIVE"]);
+    expect(listed.jobs[0]?.attention).toBeNull();
+    expect(listed.jobs[0]?.queueState).toBe("active");
+  });
+
+  it("still lists the application run when Redis reads fail", async () => {
+    const handle = queue({});
+    handle.getJobCounts = async () => {
+      throw new Error("redis down");
+    };
+    handle.getJobs = async () => {
+      throw new Error("redis down");
+    };
+    handle.getJob = async () => {
+      throw new Error("redis down");
+    };
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as { findMany: (args: { where?: { status?: unknown } }) => Promise<unknown[]> }).findMany =
+      async (args) => {
+        if (args.where?.status) {
+          return [{ id: "run-redis", workspaceId: "ws-a", inboxConnectionId: "cx" }];
+        }
+        return [{
+          id: "run-redis",
+          status: "RUNNING",
+          errorMessage: null,
+          updatedAt: new Date("2026-09-24T18:34:24.000Z"),
+          progress: { foldersDone: 0, foldersTotal: 3, processed: 200, created: 100, existing: 100 },
+        }];
+      };
+    const listed = await listWorkerJobs(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      { status: "all", queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE }
+    );
+    expect(listed.jobs).toHaveLength(1);
+    expect(listed.jobs[0]?.queueUnreadable).toBe(true);
+    expect(listed.jobs[0]?.attention).toBeNull();
+    expect(listed.jobs[0]?.runState).toBe("RUNNING");
+  });
+
+  it("marks a finished BullMQ job orphaned while the application run is still RUNNING", async () => {
+    const old = new Date("2026-09-24T18:34:24.000Z");
+    const handle = queue({
+      failed: [
+        job({
+          id: "project-folder-email-analyze-run-done",
+          data: { workspaceId: "ws-a", inboxConnectionId: "cx", runId: "run-done" },
+          failedReason: "stalled",
+          getState: async () => "failed",
+        }),
+      ],
+    });
+    const db = prisma();
+    (db.projectFolderEmailAnalyzeRun as unknown as { findMany: (args: { where?: { status?: unknown; id?: { in?: string[] } } }) => Promise<unknown[]> }).findMany =
+      async (args) => {
+        if (args.where?.id?.in) {
+          return [{
+            id: "run-done",
+            status: "RUNNING",
+            errorMessage: null,
+            updatedAt: old,
+            progress: { foldersDone: 0, foldersTotal: 3, processed: 200, created: 200, existing: 0, currentFolderName: "Nova Academy" },
+          }];
+        }
+        if (args.where?.status) {
+          return [{ id: "run-done", workspaceId: "ws-a", inboxConnectionId: "cx" }];
+        }
+        return [];
+      };
+    const listed = await listWorkerJobs(
+      { queues: bundle(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, handle), prisma: db },
+      { status: "all", queue: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE }
+    );
+    expect(listed.jobs).toHaveLength(1);
+    expect(listed.jobs[0]?.queueState).toBe("failed");
+    expect(listed.jobs[0]?.displayState).toBe("STALE");
+    expect(listed.jobs[0]?.attention).toBe("INCONSISTENT");
+    expect(listed.jobs[0]?.runState).toBe("RUNNING");
+  });
+});
+
+describe("application run orphan rule", () => {
+  const now = Date.parse("2026-09-25T15:00:00.000Z");
+  const old = new Date("2026-09-24T18:34:24.000Z");
+
+  it("treats a missing queue job with old progress as orphaned", () => {
+    expect(applicationRunIsOrphaned({
+      appStatus: "RUNNING",
+      bullState: null,
+      lastProgressAt: old,
+      now,
+    })).toBe(true);
+  });
+
+  it("keeps an active queue job even when progress is old", () => {
+    expect(applicationRunIsOrphaned({
+      appStatus: "RUNNING",
+      bullState: "active",
+      lastProgressAt: old,
+      now,
+    })).toBe(false);
+  });
+
+  it("does not call a run orphaned when the queue could not be read", () => {
+    expect(applicationRunIsOrphaned({
+      appStatus: "RUNNING",
+      bullState: null,
+      lastProgressAt: old,
+      now,
+      queueUnreadable: true,
+    })).toBe(false);
   });
 });
 

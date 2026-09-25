@@ -2,8 +2,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 /**
  * NON_JOB_ONLY keeps Job emails. ALL_EMAILS removes every mailbox email.
- * HISTORICAL_IMPORT_ONLY removes Import Previous Emails and leaves
- * project-folder analysis and regular inbox sync in place.
+ * HISTORICAL_IMPORT_ONLY removes Import Previous Emails and regular inbox
+ * sync. Project-folder analysis stays.
  */
 export type ClearInboxMode = "NON_JOB_ONLY" | "ALL_EMAILS" | "HISTORICAL_IMPORT_ONLY";
 
@@ -16,9 +16,7 @@ export function clearInboxMessageWhere(input: {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,
     ...(input.mode === "NON_JOB_ONLY" ? { jobId: null } : {}),
-    ...(input.mode === "HISTORICAL_IMPORT_ONLY"
-      ? { fromHistoricalImport: true, fromProjectFolder: false }
-      : {}),
+    ...(input.mode === "HISTORICAL_IMPORT_ONLY" ? { fromProjectFolder: false } : {}),
   };
 }
 
@@ -55,19 +53,24 @@ export async function deleteScopedEmailMessages(
 export async function previewClearInbox(
   prisma: PrismaClient,
   input: { workspaceId: string; inboxConnectionId: string }
-): Promise<{ unassignedCount: number; jobAssociatedCount: number; historicalImportCount: number }> {
+): Promise<{
+  unassignedCount: number;
+  jobAssociatedCount: number;
+  nonProjectFolderCount: number;
+  projectFolderCount: number;
+}> {
   const base = {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,
   };
-  const [unassignedCount, jobAssociatedCount, historicalImportCount] = await Promise.all([
-    prisma.emailMessage.count({ where: { ...base, jobId: null } }),
-    prisma.emailMessage.count({ where: { ...base, jobId: { not: null } } }),
-    prisma.emailMessage.count({
-      where: { ...base, fromHistoricalImport: true, fromProjectFolder: false },
-    }),
-  ]);
-  return { unassignedCount, jobAssociatedCount, historicalImportCount };
+  const [unassignedCount, jobAssociatedCount, nonProjectFolderCount, projectFolderCount] =
+    await Promise.all([
+      prisma.emailMessage.count({ where: { ...base, jobId: null } }),
+      prisma.emailMessage.count({ where: { ...base, jobId: { not: null } } }),
+      prisma.emailMessage.count({ where: { ...base, fromProjectFolder: false } }),
+      prisma.emailMessage.count({ where: { ...base, fromProjectFolder: true } }),
+    ]);
+  return { unassignedCount, jobAssociatedCount, nonProjectFolderCount, projectFolderCount };
 }
 
 export async function clearConnectionInbox(
@@ -100,16 +103,16 @@ export async function clearConnectionInbox(
         messages: { none: {} },
       },
     });
-    // Imported-mail removal must not move the live-sync watermark.
-    if (input.mode !== "HISTORICAL_IMPORT_ONLY") {
-      await tx.inboxConnection.update({
-        where: { id: input.inboxConnectionId },
-        data: {
-          inboxClearedAt: input.clearedAt,
-          syncCursor: null,
-        },
-      });
-    }
+    // Every mode deletes live inbox mail, so the watermark has to move or
+    // the next sync brings those messages back. Project-folder analysis
+    // bypasses the watermark and is kept by HISTORICAL_IMPORT_ONLY.
+    await tx.inboxConnection.update({
+      where: { id: input.inboxConnectionId },
+      data: {
+        inboxClearedAt: input.clearedAt,
+        syncCursor: null,
+      },
+    });
     return {
       deletedCount,
       preservedJobEmailCount: input.mode === "NON_JOB_ONLY" ? jobAssociatedCount : 0,

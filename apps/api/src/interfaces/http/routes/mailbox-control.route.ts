@@ -690,9 +690,9 @@ export const registerMailboxControlRoutes = async (
    * Clear one mailbox in ForgeOps.
    * NON_JOB_ONLY deletes EmailMessage rows with jobId null.
    * ALL_EMAILS deletes every EmailMessage on the connection, including Job mail.
-   * HISTORICAL_IMPORT_ONLY deletes Import Previous Emails and keeps project-folder mail.
-   * NON_JOB_ONLY and ALL_EMAILS set inboxClearedAt and clear syncCursor in the same transaction.
-   * HISTORICAL_IMPORT_ONLY leaves the live-sync watermark alone.
+   * HISTORICAL_IMPORT_ONLY deletes Import Previous Emails and regular inbox sync,
+   * and keeps project-folder analysis.
+   * Every mode sets inboxClearedAt and clears syncCursor in the same transaction.
    * Jobs, folder mappings, and the listener stay. Outlook messages are not deleted.
    * Historical import and verified project-folder analysis may still bypass the watermark.
    */
@@ -735,9 +735,7 @@ export const registerMailboxControlRoutes = async (
           deletedCount: result.deletedCount,
           preservedJobEmailCount: result.preservedJobEmailCount,
           removedJobEmailCount: result.removedJobEmailCount,
-          ...(mode === "HISTORICAL_IMPORT_ONLY"
-            ? { watermarkChanged: false }
-            : { inboxClearedAt: clearedAt.toISOString() }),
+          inboxClearedAt: clearedAt.toISOString(),
           listenerRemainsEnabled: connection.nativeListeningEnabled,
           ingestionSource: connection.ingestionSource,
         },
@@ -750,7 +748,7 @@ export const registerMailboxControlRoutes = async (
         deletedCount: result.deletedCount,
         preservedJobEmailCount: result.preservedJobEmailCount,
         removedJobEmailCount: result.removedJobEmailCount,
-        inboxClearedAt: mode === "HISTORICAL_IMPORT_ONLY" ? null : clearedAt.toISOString(),
+        inboxClearedAt: clearedAt.toISOString(),
         listenerEnabled: connection.nativeListeningEnabled,
       });
     }

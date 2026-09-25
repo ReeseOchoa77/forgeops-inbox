@@ -18,6 +18,11 @@ import {
   isImportInProgress,
 } from '../mailbox-import-progress'
 import { ReclassifyEmailsModal } from './ReclassifyEmailsModal'
+import {
+  CLEAR_ALL_EMAILS_PHRASE,
+  clearAllEmailsConfirmationMatches,
+  type ClearInboxChoice,
+} from '../clear-inbox'
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -40,6 +45,224 @@ function providerLabel(provider: string): string {
   return provider
 }
 
+const CLEAR_EMAIL_OPTIONS: Array<{
+  mode: ClearInboxChoice
+  title: string
+  detail: string
+  danger?: boolean
+}> = [
+  {
+    mode: 'NON_JOB_ONLY',
+    title: 'Clear Inbox',
+    detail:
+      'Removes emails that are not assigned to a Job. Emails saved under Jobs are preserved. New mail keeps syncing. Older unassigned mail does not come back unless you import it.',
+  },
+  {
+    mode: 'HISTORICAL_IMPORT_ONLY',
+    title: 'Remove Imported and Inbox',
+    detail:
+      'Removes emails from Import Previous Emails and regular inbox sync, including Job emails from those sources. Emails from project folder analysis stay. Jobs are not deleted. New mail keeps syncing.',
+  },
+  {
+    mode: 'ALL_EMAILS',
+    title: 'Clear All Emails',
+    detail:
+      'Removes all ForgeOps emails, including emails assigned to Jobs. Jobs themselves are not deleted.',
+    danger: true,
+  },
+]
+
+function countLine(
+  mode: ClearInboxChoice,
+  preview: {
+    unassignedCount: number
+    jobAssociatedCount: number
+    nonProjectFolderCount: number
+    projectFolderCount: number
+  } | null,
+): string | null {
+  if (!preview) return null
+  if (mode === 'NON_JOB_ONLY') {
+    return `${preview.unassignedCount.toLocaleString()} emails will be removed. ${preview.jobAssociatedCount.toLocaleString()} Job emails will be preserved.`
+  }
+  if (mode === 'HISTORICAL_IMPORT_ONLY') {
+    return `${preview.nonProjectFolderCount.toLocaleString()} emails will be removed. ${preview.projectFolderCount.toLocaleString()} project-folder emails will stay.`
+  }
+  const total = preview.unassignedCount + preview.jobAssociatedCount
+  return `${total.toLocaleString()} emails will be removed, including ${preview.jobAssociatedCount.toLocaleString()} assigned to Jobs.`
+}
+
+function ClearEmailsDialog({
+  workspaceId,
+  connectionId,
+  email,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  workspaceId: string
+  connectionId: string
+  email: string
+  busy: boolean
+  onClose: () => void
+  onConfirm: (mode: ClearInboxChoice) => void
+}) {
+  const [choice, setChoice] = useState<ClearInboxChoice>('NON_JOB_ONLY')
+  const [phrase, setPhrase] = useState('')
+  const [preview, setPreview] = useState<{
+    unassignedCount: number
+    jobAssociatedCount: number
+    nonProjectFolderCount: number
+    projectFolderCount: number
+  } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void api.previewClearInbox(workspaceId, connectionId).then(
+      (counts) => {
+        if (!cancelled) setPreview(counts)
+      },
+      () => {
+        if (!cancelled) setPreview(null)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, connectionId])
+
+  const phraseOk = choice !== 'ALL_EMAILS' || clearAllEmailsConfirmationMatches(phrase)
+  const selected = CLEAR_EMAIL_OPTIONS.find((option) => option.mode === choice)
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Clear emails for ${email}`}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose()
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          borderRadius: 8,
+          maxWidth: 560,
+          width: '100%',
+          maxHeight: '90vh',
+          overflow: 'auto',
+          padding: 20,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#1a1a2e' }}>Clear emails</div>
+        <div style={{ fontSize: 12, color: '#555', marginTop: 4, marginBottom: 14 }}>{email}</div>
+        <div style={{ display: 'grid', gap: 8 }}>
+          {CLEAR_EMAIL_OPTIONS.map((option) => {
+            const active = choice === option.mode
+            return (
+              <label
+                key={option.mode}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '16px 1fr',
+                  gap: 10,
+                  alignItems: 'start',
+                  padding: 10,
+                  borderRadius: 6,
+                  border: active
+                    ? option.danger
+                      ? '1px solid #9b1c1c'
+                      : '1px solid #1a1a2e'
+                    : '1px solid #e5e5e5',
+                  cursor: busy ? 'default' : 'pointer',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="clear-email-choice"
+                  checked={active}
+                  disabled={busy}
+                  onChange={() => {
+                    setChoice(option.mode)
+                    setPhrase('')
+                  }}
+                  style={{ marginTop: 2 }}
+                />
+                <span>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: option.danger ? '#9b1c1c' : '#1a1a2e',
+                    }}
+                  >
+                    {option.title}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 12, color: '#555', marginTop: 4, lineHeight: 1.45 }}>
+                    {option.detail}
+                  </span>
+                  {active && countLine(option.mode, preview) && (
+                    <span style={{ display: 'block', fontSize: 12, color: '#1a1a2e', marginTop: 6, fontWeight: 600 }}>
+                      {countLine(option.mode, preview)}
+                    </span>
+                  )}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+        {choice === 'ALL_EMAILS' && (
+          <label style={{ display: 'block', marginTop: 14, fontSize: 12, color: '#7f1d1d' }}>
+            Type "{CLEAR_ALL_EMAILS_PHRASE}" to continue.
+            <input
+              value={phrase}
+              disabled={busy}
+              onChange={(e) => setPhrase(e.target.value)}
+              autoComplete="off"
+              style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
+            />
+          </label>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy || !phraseOk}
+            onClick={() => onConfirm(choice)}
+            style={{
+              background: selected?.danger ? '#9b1c1c' : '#1a1a2e',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: busy || !phraseOk ? 'default' : 'pointer',
+              opacity: busy || !phraseOk ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'Clearing...' : selected?.title ?? 'Clear emails'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function processingLabel(source: string | undefined): string {
   if (source === 'NATIVE') return 'NATIVE'
   if (source === 'SHADOW') return 'SHADOW (reserved)'
@@ -58,9 +281,7 @@ type Props = {
     | { type: 'loading'; connectionId: string }
     | { type: 'error'; connectionId: string; message: string }
   clearing: string
-  onClearInbox: (id: string, email: string) => void
-  onRemoveImportedEmails: (id: string, email: string) => void
-  onClearAllEmails: (id: string, email: string) => void
+  onClearEmails: (id: string, mode: ClearInboxChoice) => void
   isOwner: boolean
   canManage: boolean
   onAddMailbox?: () => void
@@ -76,9 +297,7 @@ export function MonitoredMailboxesPanel({
   onReconnect,
   authAction,
   clearing,
-  onClearInbox,
-  onRemoveImportedEmails,
-  onClearAllEmails,
+  onClearEmails,
   isOwner,
   canManage,
   onAddMailbox,
@@ -101,6 +320,7 @@ export function MonitoredMailboxesPanel({
   >({})
   const [importError, setImportError] = useState<string | null>(null)
   const [reclassifyFor, setReclassifyFor] = useState<ConnectionSummary | null>(null)
+  const [clearFor, setClearFor] = useState<{ id: string; email: string } | null>(null)
 
   // Resume any in-flight imports when the panel loads / mailbox set changes.
   // Depend on connection ids (not the connections array identity) so settings
@@ -482,67 +702,27 @@ export function MonitoredMailboxesPanel({
                     marginTop: 12,
                     paddingTop: 12,
                     borderTop: '1px solid #eee',
-                    display: 'grid',
-                    gap: 10,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ minWidth: 220, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Clear Inbox</div>
-                      <div style={{ fontSize: 12, color: '#555', marginTop: 2, lineHeight: 1.4 }}>
-                        Removes emails that are not assigned to a Job. Emails saved under Jobs are preserved.
-                      </div>
+                  <div style={{ minWidth: 220, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Clear Emails</div>
+                    <div style={{ fontSize: 12, color: '#555', marginTop: 2, lineHeight: 1.4 }}>
+                      Choose what to remove for this mailbox.
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      disabled={clearing === c.id}
-                      onClick={() => onClearInbox(c.id, c.email)}
-                    >
-                      {clearing === c.id ? 'Clearing...' : 'Clear Inbox'}
-                    </button>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ minWidth: 220, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Remove Imported Emails</div>
-                      <div style={{ fontSize: 12, color: '#555', marginTop: 2, lineHeight: 1.4 }}>
-                        Removes emails from Import Previous Emails. Project folder analysis and regular inbox sync stay.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      disabled={clearing === c.id}
-                      onClick={() => onRemoveImportedEmails(c.id, c.email)}
-                    >
-                      {clearing === c.id ? 'Removing...' : 'Remove Imported'}
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ minWidth: 220, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#9b1c1c' }}>Clear All Emails</div>
-                      <div style={{ fontSize: 12, color: '#7f1d1d', marginTop: 2, lineHeight: 1.4 }}>
-                        Removes all ForgeOps emails, including emails assigned to Jobs. Jobs themselves are not deleted.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={clearing === c.id}
-                      onClick={() => onClearAllEmails(c.id, c.email)}
-                      style={{
-                        background: '#9b1c1c',
-                        color: '#fff',
-                        border: '1px solid #7f1d1d',
-                        borderRadius: 6,
-                        padding: '6px 12px',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: clearing === c.id ? 'default' : 'pointer',
-                      }}
-                    >
-                      {clearing === c.id ? 'Clearing...' : 'Clear All Emails'}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={clearing === c.id}
+                    onClick={() => setClearFor({ id: c.id, email: c.email })}
+                  >
+                    {clearing === c.id ? 'Clearing...' : 'Clear Emails'}
+                  </button>
                 </div>
               )}
 
@@ -903,6 +1083,24 @@ export function MonitoredMailboxesPanel({
           workspaceId={workspaceId}
           connection={reclassifyFor}
           onClose={() => setReclassifyFor(null)}
+        />
+      )}
+
+      {clearFor && (
+        <ClearEmailsDialog
+          workspaceId={workspaceId}
+          connectionId={clearFor.id}
+          email={clearFor.email}
+          busy={clearing === clearFor.id}
+          onClose={() => {
+            if (clearing === clearFor.id) return
+            setClearFor(null)
+          }}
+          onConfirm={(mode) => {
+            const id = clearFor.id
+            setClearFor(null)
+            onClearEmails(id, mode)
+          }}
         />
       )}
     </>

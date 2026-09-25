@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { formatBidDue, suggestedBidName } from './bidding-display'
+import { formatBidDue, isBidsEstimatingSubtype, suggestedBidName } from './bidding-display'
+
+describe('isBidsEstimatingSubtype', () => {
+  it('matches only Bids & Estimating subtypes', () => {
+    expect(isBidsEstimatingSubtype('BID_OPPORTUNITY')).toBe(true)
+    expect(isBidsEstimatingSubtype('BID_UPDATE')).toBe(true)
+    expect(isBidsEstimatingSubtype('ESTIMATE_QUOTE')).toBe(true)
+    expect(isBidsEstimatingSubtype('PROJECT_COORDINATION')).toBe(false)
+    expect(isBidsEstimatingSubtype(null)).toBe(false)
+  })
+})
 
 describe('suggestedBidName', () => {
   it('prefers an existing project name over the subject', () => {

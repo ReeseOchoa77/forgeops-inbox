@@ -11,7 +11,10 @@ import {
 } from "@forgeops/shared";
 import { Queue, Worker } from "bullmq";
 
-import { processProjectFolderEmailAnalyze } from "../application/processors/project-folder-email-analyze.processor.js";
+import {
+  failOpenProjectFolderEmailAnalyzeRun,
+  processProjectFolderEmailAnalyze,
+} from "../application/processors/project-folder-email-analyze.processor.js";
 import type { WorkerEnv } from "../config/env.js";
 import { createBullMqConnection } from "../infrastructure/redis/connection.js";
 
@@ -55,8 +58,9 @@ export const startProjectFolderEmailAnalyzeWorker = (
     ProjectFolderEmailAnalyzeJobResult
   >(
     QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE,
-    async (job) =>
-      processProjectFolderEmailAnalyze(job.data, {
+    async (job) => {
+      const maxAttempts = job.opts.attempts ?? 1;
+      return processProjectFolderEmailAnalyze(job.data, {
         prisma,
         tokenCipher,
         outlookConfig: {
@@ -68,7 +72,9 @@ export const startProjectFolderEmailAnalyzeWorker = (
         },
         classifyQueue,
         attachmentIngestQueue,
-      }),
+        finalAttempt: job.attemptsMade >= maxAttempts,
+      });
+    },
     {
       connection: createBullMqConnection(env.REDIS_URL),
       concurrency: 1,
@@ -76,10 +82,22 @@ export const startProjectFolderEmailAnalyzeWorker = (
   );
 
   worker.on("failed", (job, err) => {
+    const runId = job?.data.runId;
+    const maxAttempts = job?.opts.attempts ?? 1;
+    const attemptsMade = job?.attemptsMade ?? 0;
     console.error("project-folder-email-analyze-failed", {
       jobId: job?.id,
-      runId: job?.data.runId,
+      runId,
+      attemptsMade,
+      maxAttempts,
       error: err.message,
+    });
+    if (!runId || attemptsMade < maxAttempts) return;
+    void failOpenProjectFolderEmailAnalyzeRun(prisma, runId, err.message).catch((statusError) => {
+      console.error("project-folder-email-analyze-fail-status", {
+        runId,
+        error: statusError instanceof Error ? statusError.message : String(statusError),
+      });
     });
   });
 

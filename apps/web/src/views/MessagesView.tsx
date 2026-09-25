@@ -16,6 +16,7 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
+import { isBidsEstimatingSubtype } from '../bidding-display'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 
@@ -956,7 +957,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               }}>Unassigned</span>
             )
           )}
-          {showBusinessChrome && !isViewer && m.job?.status !== 'BIDDING' && (
+          {showBusinessChrome && !isViewer && m.job?.status !== 'BIDDING' && isBidsEstimatingSubtype(m.classification?.businessTypeKey) && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
@@ -1164,7 +1165,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </span>
           {m.job?.status === 'BIDDING' ? (
             <div style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8', marginTop: 4 }}>Active bid</div>
-          ) : !isViewer ? (
+          ) : !isViewer && isBidsEstimatingSubtype(m.classification?.businessTypeKey) ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
