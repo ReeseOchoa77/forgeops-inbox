@@ -29,6 +29,7 @@ import {
   canPreviewFile,
   previewFilesFrom,
   previewIndexFor,
+  previewKind,
   toPreviewFile,
   type PreviewFile,
 } from '../file-preview'
@@ -85,6 +86,50 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1048576).toFixed(1)} MB`
+}
+
+function LibraryImageThumb({
+  src,
+  filename,
+  onOpen,
+}: {
+  src: string
+  filename: string
+  onOpen: () => void
+}) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return (
+      <button type="button" onClick={onOpen} title="Preview" style={thumbFallbackStyle}>
+        Image
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Preview ${filename}`}
+      style={{
+        padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden',
+        background: '#f3f4f6', cursor: 'pointer', height: 140, width: '100%',
+      }}
+    >
+      <img
+        src={src}
+        alt={filename}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        style={{ width: '100%', height: 140, objectFit: 'cover', display: 'block' }}
+      />
+    </button>
+  )
+}
+
+const thumbFallbackStyle: React.CSSProperties = {
+  height: 140, width: '100%', borderRadius: 6, background: '#f8fafc', border: '1px solid #e5e7eb',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  fontSize: 13, fontWeight: 700, color: '#475569', cursor: 'pointer', fontFamily: 'inherit',
 }
 
 function Card({ title, children, style: s }: { title?: string; children: React.ReactNode; style?: React.CSSProperties }) {
@@ -1263,7 +1308,13 @@ export function JobDetailView({
                           file.sourceType === 'EMAIL_ATTACHMENT'
                             ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id)
                             : api.getJobFileDownloadUrl(workspaceId, jobId, file.id)
-                        const previewable = canPreviewFile({ filename: file.filename, contentType: file.mimeType })
+                        const kind = previewKind({ filename: file.filename, contentType: file.mimeType })
+                        const previewable = kind !== null
+                        const thumbUrl = kind === 'image'
+                          ? (file.sourceType === 'EMAIL_ATTACHMENT'
+                            ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id, true)
+                            : api.getJobFileDownloadUrl(workspaceId, jobId, file.id, true))
+                          : null
                         const openPreview = () => {
                           const files = previewFilesFrom(libraryFiles, (row) => {
                             const rowDownload = row.sourceType === 'EMAIL_ATTACHMENT'
@@ -1294,19 +1345,21 @@ export function JobDetailView({
                               display: 'flex', flexDirection: 'column', gap: 8, background: '#fff',
                             }}
                           >
-                            {previewable ? (
+                            {thumbUrl ? (
+                              <LibraryImageThumb src={thumbUrl} filename={file.filename} onOpen={openPreview} />
+                            ) : previewable ? (
                               <button
                                 type="button"
                                 onClick={openPreview}
                                 title="Preview"
                                 style={{
-                                  height: 72, borderRadius: 6, background: '#f8fafc', border: '1px solid #e5e7eb',
+                                  height: 140, borderRadius: 6, background: '#f8fafc', border: '1px solid #e5e7eb',
                                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                                   fontSize: 13, fontWeight: 700, color: '#475569', cursor: 'pointer',
                                   fontFamily: 'inherit',
                                 }}
                               >
-                                {file.fileType === 'PDF' ? 'PDF' : 'Image'}
+                                PDF
                               </button>
                             ) : (
                               <div style={{
