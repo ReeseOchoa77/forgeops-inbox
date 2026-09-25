@@ -51,8 +51,7 @@ function nativeTaskKey(title: string, index: number): string {
  * - AI entity selectedCustomerId / selectedVendorId / entityMatchConfidence / matchEvidence
  *   are written from the entity-selection model.
  * - AI selectedJobId is stored ONLY in rawAiPayload / evidence as a hint.
- * - Classification.jobId is the suggested job until the user confirms it.
- * - EmailMessage.jobId is set only by a user (or an explicit folder import).
+ * - Classification.jobId and EmailMessage.jobId are owned by JobMatcherService.
  *   (JobMatcher may overwrite entityMatchConfidence/matchEvidence afterward, same as n8n).
  *
  * CLASSIFIED means core classification succeeded (NormalizedEmail + Classification +

@@ -1287,7 +1287,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                 )}
                 {isBusinessMessage && clickedMessage && (
                   <>
-                    {clickedMessage.job ? (
+                    {clickedMessage.job && (
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
                         background: clickedMessage.jobAssignmentIsManual ? '#e3f2fd' : '#f3e5f5',
@@ -1296,21 +1296,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                         {formatJobPrimaryLabel(clickedMessage.job, 36)}
                         {clickedMessage.job.jobNumber ? ` · #${clickedMessage.job.jobNumber}` : ''}
                       </span>
-                    ) : clickedMessage.suggestedJob ? (
-                      <button
-                        type="button"
-                        disabled={jobBusy}
-                        onClick={() => void handleAssignJob(clickedMessage.suggestedJob!)}
-                        title={`Click to confirm this email belongs on ${clickedMessage.suggestedJob.name}`}
-                        style={{
-                          fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 5,
-                          background: '#fff8e1', color: '#8a5a00', border: '1px solid #f5d77a',
-                          cursor: jobBusy ? 'not-allowed' : 'pointer', minHeight: 32,
-                        }}
-                      >
-                        Confirm {formatJobPrimaryLabel(clickedMessage.suggestedJob, 28)}
-                      </button>
-                    ) : null}
+                    )}
                     {clickedMessage.job && (
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,

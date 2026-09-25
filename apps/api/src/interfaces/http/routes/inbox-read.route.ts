@@ -325,7 +325,7 @@ const messageSummarySchema = z.object({
   classification: classificationSummarySchema.nullable(),
   taskCandidate: taskSummarySchema.nullable(),
   job: jobSummarySchema.nullable().optional(),
-  /** Matcher suggestion. Not an assignment until the user confirms it. */
+  /** Classification job when the email itself has no job yet. */
   suggestedJob: jobSummarySchema.nullable().optional(),
   jobAssignmentSource: z.string().nullable().optional(),
   jobAssignmentIsManual: z.boolean().optional(),
