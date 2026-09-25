@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyJobFileType,
   fileExtension,
+  includeEmailAttachmentInJobLibrary,
   isPreviewableImage,
 } from "../job-file-types.js";
 import {
@@ -25,6 +26,29 @@ describe("job file type classification", () => {
     expect(classifyJobFileType("text/csv", "sheet.csv")).toBe("SPREADSHEETS");
     expect(classifyJobFileType("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "a.docx")).toBe("DOCUMENTS");
     expect(classifyJobFileType("application/zip", "a.zip")).toBe("OTHER");
+  });
+
+  it("keeps inline images in the job library and leaves other inline parts out", () => {
+    expect(includeEmailAttachmentInJobLibrary({
+      isInline: false,
+      mimeType: "application/pdf",
+      filename: "plan.pdf",
+    })).toBe(true);
+    expect(includeEmailAttachmentInJobLibrary({
+      isInline: true,
+      mimeType: "image/jpeg",
+      filename: "image001.jpg",
+    })).toBe(true);
+    expect(includeEmailAttachmentInJobLibrary({
+      isInline: true,
+      mimeType: "application/octet-stream",
+      filename: "photo.png",
+    })).toBe(true);
+    expect(includeEmailAttachmentInJobLibrary({
+      isInline: true,
+      mimeType: "application/pdf",
+      filename: "embedded.pdf",
+    })).toBe(false);
   });
 
   it("exposes extension and previewable images", () => {

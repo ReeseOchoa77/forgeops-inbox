@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   classifyJobFileType,
+  includeEmailAttachmentInJobLibrary,
   fileExtension,
   isPreviewableImage,
   JOB_FILE_TYPE_FILTERS,
@@ -1252,7 +1253,6 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         where: {
           workspaceId,
           emailMessage: { jobId, workspaceId },
-          isInline: false,
           uploadStatus: "UPLOADED",
         },
         select: {
@@ -1260,6 +1260,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           filename: true,
           mimeType: true,
           sizeBytes: true,
+          isInline: true,
           createdAt: true,
           emailMessage: {
             select: {
@@ -1306,8 +1307,16 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       previewable: boolean;
     };
 
+    const libraryAttachments = attachments.filter((a) =>
+      includeEmailAttachmentInJobLibrary({
+        isInline: a.isInline,
+        mimeType: a.mimeType,
+        filename: a.filename,
+      })
+    );
+
     const files: LibraryFile[] = [
-      ...attachments.map((a) => {
+      ...libraryAttachments.map((a) => {
         const date =
           a.emailMessage.receivedAt ?? a.emailMessage.sentAt ?? a.createdAt;
         return {
@@ -1362,7 +1371,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const pageFiles = filtered.slice(skip, skip + query.pageSize);
 
     // Backward-compatible `documents` = email attachments only (legacy shape).
-    const documents = attachments.map((a) => ({
+    const documents = libraryAttachments.map((a) => ({
       id: a.id,
       filename: a.filename,
       mimeType: a.mimeType,

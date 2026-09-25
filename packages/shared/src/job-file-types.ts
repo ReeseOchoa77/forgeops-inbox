@@ -66,6 +66,16 @@ export function fileExtension(filename: string): string {
   return ext ? `.${ext}` : "";
 }
 
+/** Non-inline files stay in the job library. Inline files appear only when they are images. */
+export function includeEmailAttachmentInJobLibrary(input: {
+  isInline: boolean;
+  mimeType: string | null | undefined;
+  filename: string;
+}): boolean {
+  if (!input.isInline) return true;
+  return classifyJobFileType(input.mimeType, input.filename) === "IMAGES";
+}
+
 export function isPreviewableImage(
   mimeType: string | null | undefined,
   filename: string
