@@ -117,6 +117,16 @@ export const WORKER_JOB_DEFINITIONS: Record<QueueName, WorkerJobDefinition> = {
     revert: false,
     revertReason: "Previous classifications are not snapshotted for this run.",
   },
+  [QueueNames.INLINE_IMAGE_RELEVANCE]: {
+    queue: QueueNames.INLINE_IMAGE_RELEVANCE,
+    displayName: "Inline image relevance",
+    purpose: "Marks stored inline images as relevant, noise, or uncertain. Does not delete or hide them.",
+    pause: false,
+    resume: false,
+    cancelActive: false,
+    revert: false,
+    revertReason: "Classifications are metadata. Removing the job does not change stored images.",
+  },
 };
 
 export function isKnownQueue(value: string): value is QueueName {

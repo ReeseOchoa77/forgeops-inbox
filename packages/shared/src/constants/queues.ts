@@ -7,6 +7,7 @@ export const QueueNames = {
   MAILBOX_CLASSIFY: "mailbox-classify",
   PROJECT_FOLDER_EMAIL_ANALYZE: "project-folder-email-analyze",
   MAILBOX_RECLASSIFY: "mailbox-reclassify",
+  INLINE_IMAGE_RELEVANCE: "inline-image-relevance",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -32,5 +33,14 @@ export function buildProjectFolderEmailAnalyzeJobId(runId: string): string {
 /** Deterministic job id for a mailbox reclassification orchestrator run. */
 export function buildMailboxReclassifyJobId(runId: string): string {
   return `mailbox-reclassify-${runId}`;
+}
+
+/** One manual inline-image relevance pass. runId keeps pages unique after a finished run. */
+export function buildInlineImageRelevanceJobId(
+  workspaceId: string,
+  page = 0,
+  runId = "run"
+): string {
+  return `inline-image-relevance-${workspaceId}-${runId}-p${page}`;
 }
 

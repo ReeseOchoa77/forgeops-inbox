@@ -235,6 +235,7 @@ model Workspace {
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
+  inlineImageRelevanceClassifications InlineImageRelevanceClassification[]
   jobActivityLogs      JobActivityLog[]
   jobDocumentFolders   JobDocumentFolder[]
   jobFiles             JobFile[]
@@ -1447,9 +1448,62 @@ model EmailAttachment {
   updatedAt             DateTime              @updatedAt
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   emailMessage          EmailMessage          @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  relevanceClassifications InlineImageRelevanceClassification[]
 
   @@unique([workspaceId, emailMessageId, providerAttachmentId])
   @@unique([workspaceId, storageKey])
   @@index([workspaceId, emailMessageId])
   @@index([checksum])
+}
+
+/// Metadata about an inline image. The EmailAttachment row and its bytes stay canonical.
+enum InlineImageRelevance {
+  RELEVANT
+  NOISE
+  UNCERTAIN
+}
+
+enum InlineImageNoiseReason {
+  LOGO
+  ICON
+  SIGNATURE_GRAPHIC
+  DECORATIVE
+  TRACKING_PIXEL
+  BADGE
+  REPEATED_BRANDING
+  OTHER_NOISE
+}
+
+enum InlineImageRelevanceMethod {
+  DETERMINISTIC
+  VISION
+  HUMAN
+  HUMAN_CONFIRMED_HASH_MATCH
+  MODEL_HASH_MATCH
+}
+
+model InlineImageRelevanceClassification {
+  id                 String                       @id @default(cuid())
+  workspaceId        String
+  emailAttachmentId  String
+  relevance          InlineImageRelevance
+  noiseReason        InlineImageNoiseReason?
+  confidence         Float
+  method             InlineImageRelevanceMethod
+  analyzerVersion    String
+  evidence           String
+  contentChecksum    String?
+  /// Same-workspace attachment whose reviewed or vision result was copied. Not a cross-workspace key.
+  sourceAttachmentId String?
+  inputTokens        Int?
+  outputTokens       Int?
+  analyzedAt         DateTime                     @default(now())
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+  workspace          Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  emailAttachment    EmailAttachment              @relation(fields: [emailAttachmentId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, emailAttachmentId, analyzerVersion])
+  @@index([workspaceId, contentChecksum, analyzerVersion])
+  @@index([workspaceId, relevance])
 }

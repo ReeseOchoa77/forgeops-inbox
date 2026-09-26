@@ -1603,6 +1603,36 @@ export const api = {
   adminGetWorkspaces: () =>
     request<{ workspaces: AdminWorkspace[] }>('/admin/workspaces'),
 
+  getInlineImageRelevance: (workspaceId: string) =>
+    request<{
+      summary: {
+        analyzerVersion: string
+        totalInlineImages: number
+        classified: number
+        relevant: number
+        noise: number
+        uncertain: number
+        remaining: number
+      }
+    }>(`/workspaces/${workspaceId}/inline-image-relevance`),
+
+  analyzeInlineImages: (workspaceId: string, body: { force?: boolean } = {}) =>
+    request<{
+      jobId: string
+      summary: {
+        analyzerVersion: string
+        totalInlineImages: number
+        classified: number
+        relevant: number
+        noise: number
+        uncertain: number
+        remaining: number
+      }
+    }>(`/workspaces/${workspaceId}/inline-image-relevance/analyze`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   listWorkerJobs: (query: {
     status?: string
     queue?: string

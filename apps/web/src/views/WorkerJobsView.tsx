@@ -70,11 +70,48 @@ export function WorkerJobsView(props: {
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<WorkerJobDetail | null>(null)
   const [busy, setBusy] = useState('')
+  const [relevanceNote, setRelevanceNote] = useState('')
+  const [relevance, setRelevance] = useState<{
+    totalInlineImages: number
+    classified: number
+    relevant: number
+    noise: number
+    uncertain: number
+    remaining: number
+  } | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 250)
     return () => window.clearTimeout(timer)
   }, [searchInput])
+
+  useEffect(() => {
+    if (!props.currentWorkspaceId) return
+    let cancelled = false
+    api.getInlineImageRelevance(props.currentWorkspaceId)
+      .then((result) => {
+        if (!cancelled) setRelevance(result.summary)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [props.currentWorkspaceId])
+
+  async function analyzeInlineImages() {
+    setBusy('relevance')
+    setError('')
+    setRelevanceNote('')
+    try {
+      const result = await api.analyzeInlineImages(props.currentWorkspaceId, { force: false })
+      setRelevance(result.summary)
+      setRelevanceNote('Analysis queued. Stored images stay visible and are not deleted.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not queue inline image analysis')
+    } finally {
+      setBusy('')
+    }
+  }
 
   useEffect(() => {
     setPage(1)
@@ -100,8 +137,20 @@ export function WorkerJobsView(props: {
       }
     }
     void load(false)
+    const refreshRelevance = () => {
+      if (!props.currentWorkspaceId) return
+      api.getInlineImageRelevance(props.currentWorkspaceId)
+        .then((result) => {
+          if (!cancelled) setRelevance(result.summary)
+        })
+        .catch(() => {})
+    }
+    refreshRelevance()
     const timer = window.setInterval(() => {
-      if (!document.hidden) void load(true)
+      if (!document.hidden) {
+        void load(true)
+        refreshRelevance()
+      }
     }, 4000)
     const onVis = () => {
       if (!document.hidden) void load(true)
@@ -112,7 +161,7 @@ export function WorkerJobsView(props: {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [status, queue, workspaceId, search, page])
+  }, [status, queue, workspaceId, search, page, props.currentWorkspaceId])
 
   useEffect(() => {
     void api.adminGetWorkspaces().then((result) => setWorkspaces(result.workspaces)).catch(() => {})
@@ -153,6 +202,17 @@ export function WorkerJobsView(props: {
       <p style={{ fontSize: 13, color: '#666', margin: '0 0 14px', maxWidth: 760 }}>
         Platform administrators can see every workspace. Abort stops a waiting job immediately. A running import, reclassify, or folder analysis stops at its next checkpoint. Mail already saved stays saved.
       </p>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+        <button type="button" disabled={Boolean(busy)} onClick={() => void analyzeInlineImages()} style={btn}>
+          Analyze inline images
+        </button>
+        <span style={{ fontSize: 12, color: '#666' }}>
+          {relevance
+            ? `${relevance.classified} classified of ${relevance.totalInlineImages} inline images · ${relevance.relevant} relevant · ${relevance.noise} noise · ${relevance.uncertain} uncertain · ${relevance.remaining} remaining`
+            : 'Current workspace only. This marks images. It does not hide or delete them.'}
+        </span>
+        {relevanceNote && <span style={{ fontSize: 12, color: '#2e7d32' }}>{relevanceNote}</span>}
+      </div>
       {error && (
         <div style={{ padding: '8px 12px', marginBottom: 12, background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, fontSize: 13 }}>
           {error}

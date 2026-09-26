@@ -35,6 +35,7 @@ const workerEnvSchema = z
     OPENAI_SUBTYPE_MODEL: z.string().default("chat-latest"),
     OPENAI_ENTITY_MODEL: z.string().default("chat-latest"),
     OPENAI_TASK_MODEL: z.string().default("chat-latest"),
+    OPENAI_IMAGE_RELEVANCE_MODEL: z.string().default("gpt-4o-mini"),
     GOOGLE_CLIENT_ID: optionalStringFromEnv,
     GOOGLE_CLIENT_SECRET: optionalStringFromEnv,
     GOOGLE_REDIRECT_URI: optionalUrlFromEnv,

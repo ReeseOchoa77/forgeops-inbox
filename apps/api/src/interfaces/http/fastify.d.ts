@@ -46,6 +46,10 @@ declare module "fastify" {
         import("@forgeops/shared").MailboxReclassifyJobPayload,
         import("@forgeops/shared").MailboxReclassifyJobResult
       >;
+      inlineImageRelevanceQueue: Queue<
+        import("@forgeops/shared").InlineImageRelevanceJobPayload,
+        import("@forgeops/shared").InlineImageRelevanceJobResult
+      >;
       googleOAuthService: GoogleOAuthService;
       providerRegistry: ProviderRegistry;
       sessionStore: RedisSessionStore;

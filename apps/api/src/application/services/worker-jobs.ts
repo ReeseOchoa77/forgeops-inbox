@@ -303,6 +303,7 @@ export function workerQueuesFromServices(services: {
   mailboxClassifyQueue: WorkerQueueHandle;
   projectFolderEmailAnalyzeQueue: WorkerQueueHandle;
   mailboxReclassifyQueue: WorkerQueueHandle;
+  inlineImageRelevanceQueue: WorkerQueueHandle;
 }): WorkerQueueBundle[] {
   return [
     { name: QueueNames.INBOX_SYNC, queue: services.inboxSyncQueue },
@@ -312,6 +313,7 @@ export function workerQueuesFromServices(services: {
     { name: QueueNames.MAILBOX_CLASSIFY, queue: services.mailboxClassifyQueue },
     { name: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, queue: services.projectFolderEmailAnalyzeQueue },
     { name: QueueNames.MAILBOX_RECLASSIFY, queue: services.mailboxReclassifyQueue },
+    { name: QueueNames.INLINE_IMAGE_RELEVANCE, queue: services.inlineImageRelevanceQueue },
   ];
 }
 

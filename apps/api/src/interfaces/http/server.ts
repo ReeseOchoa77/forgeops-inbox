@@ -25,6 +25,8 @@ import {
   type ProjectFolderEmailAnalyzeJobResult,
   type MailboxReclassifyJobPayload,
   type MailboxReclassifyJobResult,
+  type InlineImageRelevanceJobPayload,
+  type InlineImageRelevanceJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -69,6 +71,7 @@ import { registerDocumentImportRoutes } from "./routes/document-import.route.js"
 import { registerClassificationEngineRoutes } from "./routes/classification-engine.route.js";
 import { registerRetryClassificationRoutes } from "./routes/retry-classification.route.js";
 import { registerMailboxReclassifyRoutes } from "./routes/mailbox-reclassify.route.js";
+import { registerInlineImageRelevanceRoutes } from "./routes/inline-image-relevance.route.js";
 import { registerWorkerJobRoutes } from "./routes/worker-jobs.route.js";
 import { registerFolderDiscoveryRoutes } from "./routes/folder-discovery.route.js";
 import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js";
@@ -164,6 +167,12 @@ export const buildServer = async () => {
     MailboxReclassifyJobPayload,
     MailboxReclassifyJobResult
   >(QueueNames.MAILBOX_RECLASSIFY, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const inlineImageRelevanceQueue = new Queue<
+    InlineImageRelevanceJobPayload,
+    InlineImageRelevanceJobResult
+  >(QueueNames.INLINE_IMAGE_RELEVANCE, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -333,6 +342,7 @@ export const buildServer = async () => {
       mailboxClassifyQueue,
       projectFolderEmailAnalyzeQueue,
       mailboxReclassifyQueue,
+      inlineImageRelevanceQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -418,6 +428,7 @@ export const buildServer = async () => {
   await registerClassificationEngineRoutes(app);
   await registerRetryClassificationRoutes(app);
   registerMailboxReclassifyRoutes(app);
+  registerInlineImageRelevanceRoutes(app);
   registerWorkerJobRoutes(app);
   app.log.info({
     event: "mailbox_reclassify_routes_registered",
@@ -500,6 +511,7 @@ export const buildServer = async () => {
     await mailboxClassifyQueue.close();
     await projectFolderEmailAnalyzeQueue.close();
     await mailboxReclassifyQueue.close();
+    await inlineImageRelevanceQueue.close();
     await attachmentIngestQueue.close();
     await redis.quit();
     await prisma.$disconnect();

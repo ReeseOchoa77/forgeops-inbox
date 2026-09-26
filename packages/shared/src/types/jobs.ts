@@ -120,6 +120,39 @@ export interface MailboxHistoricalImportJobResult {
   errorMessage?: string;
 }
 
+/** Manual classification of already-stored inline images. Does not change attachment bytes. */
+export interface InlineImageRelevanceJobPayload {
+  workspaceId: string;
+  initiatedBy?: string;
+  /** Re-call vision for images that already have this analyzer version. */
+  force?: boolean;
+  /** Exclusive cursor. The next page starts after this attachment id. */
+  afterAttachmentId?: string | null;
+  page?: number;
+  /** Ties continuation pages to one manual run so a finished run can start again. */
+  runId?: string;
+}
+
+export interface InlineImageRelevanceJobResult {
+  workspaceId: string;
+  analyzed: number;
+  reused: number;
+  failed: number;
+  unsupported: number;
+  remaining: number;
+  deterministic: number;
+  hashHuman: number;
+  hashModel: number;
+  vision: number;
+  uncertain: number;
+  relevant: number;
+  noise: number;
+  visionCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  continued: boolean;
+}
+
 export interface AttachmentIngestJobPayload {
   workspaceId: string;
   inboxConnectionId: string;
