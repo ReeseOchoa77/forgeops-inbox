@@ -25,6 +25,7 @@ export * from "./audit/audit-metadata.js";
 export * from "./audit/audit-retention.js";
 export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";
+export * from "./ai-automation-gates.js";
 export * from "./job-file-types.js";
 export * from "./file-preview.js";
 export * from "./date-bounds.js";

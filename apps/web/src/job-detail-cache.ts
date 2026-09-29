@@ -122,7 +122,6 @@ export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
     ...summary,
     notes: null,
     externalRef: null,
-    completedTaskCount: 0,
     attachmentCount: 0,
     totalCost: summary.totalCost ?? null,
     estimatedHours: null,
@@ -133,6 +132,8 @@ export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
     clientCustomerId: null,
     clientName: null,
     fabricationItems: [],
+    projectManager: null,
+    participants: [],
     members: (summary.assignedMembers ?? []).map((m, i) => ({
       id: `shell-${m.userId}-${i}`,
       userId: m.userId,

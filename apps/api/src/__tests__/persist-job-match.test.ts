@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import {
   buildJobMatchPersistence,
@@ -21,6 +21,17 @@ const strongMatch: JobMatchResult = {
 };
 
 describe("persist-job-match", () => {
+  const previous = process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
+
+  beforeEach(() => {
+    process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = "true";
+  });
+
+  afterEach(() => {
+    if (previous === undefined) delete process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
+    else process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = previous;
+  });
+
   it("15. manual assignment is protected", () => {
     expect(
       isManualJobAssignment({
@@ -107,5 +118,30 @@ describe("persist-job-match", () => {
     });
     expect(fields?.emailMessage.jobId).toBeNull();
     expect(fields?.classification.jobId).toBeNull();
+  });
+
+  it("freezes automatic matcher assignment when JOB_MATCHER_AUTO_ASSIGN_ENABLED is off", async () => {
+    delete process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
+    expect(buildJobMatchPersistence(strongMatch, null)).toBeNull();
+
+    const classificationUpdate = vi.fn();
+    const emailUpdate = vi.fn();
+    const result = await persistJobMatchResult(
+      {
+        classification: { update: classificationUpdate },
+        emailMessage: { update: emailUpdate },
+        task: { updateMany: vi.fn() },
+      },
+      {
+        workspaceId: "ws-1",
+        classificationId: "cls-1",
+        emailMessageId: "msg-1",
+        match: strongMatch,
+        existing: { jobId: null, jobAssignmentIsManual: false, jobAssignmentSource: null },
+      }
+    );
+    expect(result.applied).toBe(false);
+    expect(classificationUpdate).not.toHaveBeenCalled();
+    expect(emailUpdate).not.toHaveBeenCalled();
   });
 });

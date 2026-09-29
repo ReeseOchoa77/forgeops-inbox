@@ -42,6 +42,7 @@ describe("fabrication scope", () => {
       estimatedHoursPerPiece: 3.5,
       totalHours: 84,
       sortOrder: 0,
+      workPackageId: null,
     });
   });
 
@@ -77,24 +78,27 @@ describe("fabrication scope", () => {
     const overview = readFileSync(resolve(here, "../../../web/src/views/JobDetailView.tsx"), "utf8");
     const headerAndOverview = overview.slice(overview.indexOf("{job.name}"), overview.indexOf("tab === 'emails'"));
     expect(headerAndOverview).toContain("StatusBadge");
-    expect(headerAndOverview).toContain("Start Date");
-    expect(headerAndOverview).toContain('label="Total Cost"');
+    expect(headerAndOverview).toContain(">Start</span>");
+    expect(headerAndOverview).toContain("TOTAL_COST_DISPLAY_LABEL");
     expect(headerAndOverview).toContain('label="Emails"');
     expect(headerAndOverview).toContain('label="Open Tasks"');
     expect(headerAndOverview).toContain('label="Estimated Hours"');
     expect(headerAndOverview).toContain('label="Estimator"');
     expect(headerAndOverview).toContain('label="Contractor"');
     expect(headerAndOverview).toContain('label="Client"');
-    expect(headerAndOverview).toContain("<JobFabricationScope");
+    expect(headerAndOverview).toContain("<WorkPackageOverviewSummary");
+    expect(headerAndOverview).toContain("<ScheduleOverviewSummary");
+    expect(headerAndOverview).toContain("<JobScopeView");
+    expect(headerAndOverview).toContain("<JobScheduleView");
+    expect(headerAndOverview).not.toContain("<JobFabricationScope");
     for (const removed of ["Emails (7d)", "Emails (30d)", "Completed Tasks", "Last Activity", 'title="Team"', "Created:"]) {
       expect(headerAndOverview).not.toContain(removed);
     }
-    const scope = readFileSync(resolve(here, "../../../web/src/views/JobFabricationScope.tsx"), "utf8");
-    expect(scope).toContain("FABRICATION SCOPE");
-    expect(scope).toContain("No fabrication items have been added.");
-    expect(scope).toContain("+ Add Item");
-    expect(scope).toContain("Hrs / Piece");
-    expect(scope).toContain("Remove");
+    const scope = readFileSync(resolve(here, "../../../web/src/views/JobScopeView.tsx"), "utf8");
+    expect(scope).toContain("+ Work Package");
+    expect(scope).toContain("Unassigned");
+    expect(scope).toContain("Hrs / pc");
+    expect(scope).toContain("FABRICATING");
 
     const list = readFileSync(resolve(here, "../../../web/src/views/JobsView.tsx"), "utf8");
     expect(list).toContain("sortBy,");

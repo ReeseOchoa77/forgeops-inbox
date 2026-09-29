@@ -70,7 +70,6 @@ export function WorkerJobsView(props: {
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<WorkerJobDetail | null>(null)
   const [busy, setBusy] = useState('')
-  const [relevanceNote, setRelevanceNote] = useState('')
   const [relevance, setRelevance] = useState<{
     totalInlineImages: number
     classified: number
@@ -97,21 +96,6 @@ export function WorkerJobsView(props: {
       cancelled = true
     }
   }, [props.currentWorkspaceId])
-
-  async function analyzeInlineImages() {
-    setBusy('relevance')
-    setError('')
-    setRelevanceNote('')
-    try {
-      const result = await api.analyzeInlineImages(props.currentWorkspaceId, { force: false })
-      setRelevance(result.summary)
-      setRelevanceNote('Analysis queued. Stored images stay visible and are not deleted.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not queue inline image analysis')
-    } finally {
-      setBusy('')
-    }
-  }
 
   useEffect(() => {
     setPage(1)
@@ -203,15 +187,12 @@ export function WorkerJobsView(props: {
         Platform administrators can see every workspace. Abort stops a waiting job immediately. A running import, reclassify, or folder analysis stops at its next checkpoint. Mail already saved stays saved.
       </p>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
-        <button type="button" disabled={Boolean(busy)} onClick={() => void analyzeInlineImages()} style={btn}>
-          Analyze inline images
-        </button>
+        {/* Analyze inline images paused — set INLINE_IMAGE_AI_ANALYZE_ENABLED=true to re-enable */}
         <span style={{ fontSize: 12, color: '#666' }}>
           {relevance
-            ? `${relevance.classified} classified of ${relevance.totalInlineImages} inline images · ${relevance.relevant} relevant · ${relevance.noise} noise · ${relevance.uncertain} uncertain · ${relevance.remaining} remaining`
-            : 'Current workspace only. This marks images. It does not hide or delete them.'}
+            ? `Inline image AI analysis is paused. Existing classifications remain: ${relevance.classified} classified of ${relevance.totalInlineImages} · ${relevance.relevant} relevant · ${relevance.noise} noise · ${relevance.uncertain} uncertain · ${relevance.remaining} remaining`
+            : 'Inline image AI analysis is paused. Existing relevance markings and human corrections remain available on Job Documents.'}
         </span>
-        {relevanceNote && <span style={{ fontSize: 12, color: '#2e7d32' }}>{relevanceNote}</span>}
       </div>
       {error && (
         <div style={{ padding: '8px 12px', marginBottom: 12, background: '#fce4ec', border: '1px solid #e8a09a', borderRadius: 4, fontSize: 13 }}>

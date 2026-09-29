@@ -1,11 +1,15 @@
-export const OVERVIEW_METRIC_LABELS = ["Total Cost", "Emails", "Open Tasks", "Estimated Hours"] as const
-export const OVERVIEW_PARTY_LABELS = ["Estimator", "Contractor", "Client"] as const
+export const OVERVIEW_METRIC_LABELS = ["Entered total", "Emails", "Open Tasks", "Estimated Hours"] as const
+export const OVERVIEW_PARTY_LABELS = ["Estimator", "Project Manager", "Contractor", "Client"] as const
 export const OVERVIEW_REMOVED_LABELS = [
   "Emails (7d)",
   "Emails (30d)",
   "Completed Tasks",
   "Last Activity",
+  "Created",
 ] as const
+
+/** Conservative label — Job.totalCost semantics are ambiguous (not proven sell or cost). */
+export const TOTAL_COST_DISPLAY_LABEL = "Entered total"
 
 export function formatJobCost(value: string | number | null | undefined): string {
   if (value == null || value === "") return "Not set"
@@ -45,7 +49,7 @@ export function formatQuantity(value: number): string {
 
 export function partyLabel(name: string | null | undefined): string {
   const trimmed = name?.trim()
-  return trimmed ? trimmed : "Not assigned"
+  return trimmed ? trimmed : "Not set"
 }
 
 export function lineEstimatedHours(quantity: number, hoursPerPiece: number): number {

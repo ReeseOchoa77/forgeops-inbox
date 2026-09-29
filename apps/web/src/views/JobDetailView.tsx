@@ -11,6 +11,9 @@ import {
   type JobStoredFile,
   type JobLibraryFile,
   type JobSummary,
+  type InlineImageRelevanceInfo,
+  type JobWorkPackage,
+  type JobDocumentControl,
 } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import {
@@ -22,9 +25,24 @@ import {
 } from '../job-detail-cache'
 import { invalidateJobsListCache } from '../jobs-list-cache'
 import { jobSettingsUpdateBody } from '../job-settings-payload'
-import { formatHoursNumber, formatJobCost, formatOverviewDate, partyLabel } from '../job-overview-format'
-import { JobFabricationScope } from './JobFabricationScope'
+import { formatHoursNumber, formatJobCost, formatOverviewDate, partyLabel, TOTAL_COST_DISPLAY_LABEL } from '../job-overview-format'
+import { JobScopeView, WorkPackageOverviewSummary } from './JobScopeView'
+import { JobScheduleView, ScheduleOverviewSummary } from './JobScheduleView'
+import { JobChangesView, ChangesOverviewSummary } from './JobChangesView'
+import { JobDocumentControlForm, DocumentControlSummary } from '../components/JobDocumentControlForm'
 import { FilePreviewModal } from '../components/FilePreviewModal'
+import {
+  InlineImageRelevanceActions,
+  InlineImageRelevanceBadge,
+  InlineImageRelevanceDetails,
+} from '../components/InlineImageRelevanceMark'
+import { JobProjectParties } from '../components/JobProjectParties'
+import {
+  imageCardBackground,
+  imageCardBorder,
+  type ImageRelevanceFilter,
+  type InlineImageNoiseReason,
+} from '../inline-image-relevance'
 import {
   canPreviewFile,
   previewFilesFrom,
@@ -45,7 +63,7 @@ interface Props {
   initialJob?: JobSummary | null
 }
 
-type Tab = 'overview' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
+type Tab = 'overview' | 'scope' | 'schedule' | 'changes' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   LEAD: { bg: '#e9ecef', color: '#495057' },
@@ -92,10 +110,12 @@ function LibraryImageThumb({
   src,
   filename,
   onOpen,
+  border,
 }: {
   src: string
   filename: string
   onOpen: () => void
+  border?: string
 }) {
   const [failed, setFailed] = useState(false)
   if (failed) {
@@ -111,7 +131,7 @@ function LibraryImageThumb({
       onClick={onOpen}
       title={`Preview ${filename}`}
       style={{
-        padding: 0, border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden',
+        padding: 0, border: border ?? '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden',
         background: '#f3f4f6', cursor: 'pointer', height: 140, width: '100%',
       }}
     >
@@ -124,6 +144,23 @@ function LibraryImageThumb({
       />
     </button>
   )
+}
+
+function adjustImageCounts(
+  prev: { all: number; relevant: number; noise: number; uncertain: number; notAnalyzed: number },
+  before: InlineImageRelevanceInfo | null,
+  after: InlineImageRelevanceInfo
+) {
+  const next = { ...prev }
+  if (!before) next.notAnalyzed = Math.max(0, next.notAnalyzed - 1)
+  else if (before.relevance === 'RELEVANT') next.relevant = Math.max(0, next.relevant - 1)
+  else if (before.relevance === 'NOISE') next.noise = Math.max(0, next.noise - 1)
+  else if (before.relevance === 'UNCERTAIN') next.uncertain = Math.max(0, next.uncertain - 1)
+
+  if (after.relevance === 'RELEVANT') next.relevant += 1
+  else if (after.relevance === 'NOISE') next.noise += 1
+  else if (after.relevance === 'UNCERTAIN') next.uncertain += 1
+  return next
 }
 
 const thumbFallbackStyle: React.CSSProperties = {
@@ -202,8 +239,41 @@ export function JobDetailView({
   const [fileTypeFilter, setFileTypeFilter] = useState<
     'ALL' | 'IMAGES' | 'PDF' | 'SPREADSHEETS' | 'DOCUMENTS' | 'OTHER'
   >('ALL')
-  const [fileSort, setFileSort] = useState<'newest' | 'oldest'>('newest')
+  const [imageRelevanceFilter, setImageRelevanceFilter] = useState<ImageRelevanceFilter>('ALL')
+  const [imageReviewMode, setImageReviewMode] = useState(false)
+  const [imageRelevanceCounts, setImageRelevanceCounts] = useState({
+    all: 0,
+    relevant: 0,
+    noise: 0,
+    uncertain: 0,
+    notAnalyzed: 0,
+  })
+  const [correctingAttachmentId, setCorrectingAttachmentId] = useState<string | null>(null)
+  const [detailsAttachmentId, setDetailsAttachmentId] = useState<string | null>(null)
+  const [fileSort, setFileSort] = useState<'newest' | 'oldest' | 'name' | 'type' | 'documentDate'>('newest')
+  const [docCategory, setDocCategory] = useState<
+    | 'ALL'
+    | 'DRAWINGS'
+    | 'SHOP_SUBMITTALS'
+    | 'RFIS'
+    | 'ASI_BULLETIN_ADDENDUM'
+    | 'CONTRACTS_POS'
+    | 'CHANGE_ORDERS'
+    | 'INVOICES'
+    | 'DELIVERY'
+    | 'OTHER'
+  >('ALL')
+  const [controlState, setControlState] = useState<'ALL' | 'CURRENT' | 'SUPERSEDED' | 'UNCLASSIFIED'>('ALL')
+  const [docSearch, setDocSearch] = useState('')
+  const [debouncedDocSearch, setDebouncedDocSearch] = useState('')
+  const [classifyingKey, setClassifyingKey] = useState<string | null>(null)
+  const [docPackages, setDocPackages] = useState<JobWorkPackage[]>([])
   const [fileFolders, setFileFolders] = useState<JobFileFolder[]>([])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedDocSearch(docSearch.trim()), 250)
+    return () => window.clearTimeout(t)
+  }, [docSearch])
   const [jobFiles, setJobFiles] = useState<JobStoredFile[]>([])
   const [filePreview, setFilePreview] = useState<{ files: PreviewFile[]; index: number } | null>(null)
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
@@ -431,19 +501,37 @@ export function JobDetailView({
               files: [] as JobLibraryFile[],
               documents: [] as JobDocument[],
               pagination: { page: 1, pageSize: 100, totalCount: 0, totalPages: 1 },
-              filters: { type: 'ALL', sort: 'newest' },
+              filters: { type: 'ALL', sort: 'newest', imageRelevance: 'ALL' },
+              imageRelevanceCounts: {
+                all: 0,
+                relevant: 0,
+                noise: 0,
+                uncertain: 0,
+                notAnalyzed: 0,
+              },
             })
           : api
               .getJobDocuments(workspaceId, jobId, {
                 type: fileTypeFilter,
                 sort: fileSort,
                 pageSize: 200,
+                imageRelevance: imageRelevanceFilter,
+                docCategory,
+                controlState,
+                q: debouncedDocSearch || undefined,
               })
               .catch(() => ({
                 files: [] as JobLibraryFile[],
                 documents: [] as JobDocument[],
                 pagination: { page: 1, pageSize: 100, totalCount: 0, totalPages: 1 },
-                filters: { type: 'ALL', sort: 'newest' },
+                filters: { type: 'ALL', sort: 'newest', imageRelevance: 'ALL' },
+                imageRelevanceCounts: {
+                  all: 0,
+                  relevant: 0,
+                  noise: 0,
+                  uncertain: 0,
+                  notAnalyzed: 0,
+                },
               })),
       ])
       setFileFolders(filesRes.folders)
@@ -453,13 +541,47 @@ export function JobDetailView({
       if (!folderId) {
         setLibraryFiles(emailDocs.files ?? [])
         setLibraryTotal(emailDocs.pagination?.totalCount ?? emailDocs.files?.length ?? 0)
+        if (emailDocs.imageRelevanceCounts) {
+          setImageRelevanceCounts(emailDocs.imageRelevanceCounts)
+        }
+        void api.getJobScope(workspaceId, jobId).then((scope) => {
+          setDocPackages(scope.packages)
+        }).catch(() => {
+          setDocPackages([])
+        })
       }
     } catch (e) {
       setFileError(e instanceof Error ? e.message : 'Failed to load files')
     } finally {
       setFilesLoading(false)
     }
-  }, [workspaceId, jobId, fileTypeFilter, fileSort])
+  }, [workspaceId, jobId, fileTypeFilter, fileSort, imageRelevanceFilter, docCategory, controlState, debouncedDocSearch])
+
+  const correctLibraryImageRelevance = useCallback(async (
+    attachmentId: string,
+    body: { relevance: 'RELEVANT' | 'NOISE'; noiseReason?: InlineImageNoiseReason | null }
+  ) => {
+    const before =
+      libraryFiles.find((f) => f.id === attachmentId)?.imageRelevance ?? null
+    setCorrectingAttachmentId(attachmentId)
+    setFileError(null)
+    try {
+      const res = await api.correctInlineImageRelevance(workspaceId, attachmentId, body)
+      const next = res.classification
+      setLibraryFiles((prev) =>
+        prev.map((file) =>
+          file.id === attachmentId && file.sourceType === 'EMAIL_ATTACHMENT'
+            ? { ...file, imageRelevance: next }
+            : file
+        )
+      )
+      setImageRelevanceCounts((counts) => adjustImageCounts(counts, before, next))
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Failed to save image review')
+    } finally {
+      setCorrectingAttachmentId(null)
+    }
+  }, [workspaceId, libraryFiles])
 
   useEffect(() => {
     if (tab === 'documents') {
@@ -672,6 +794,9 @@ export function JobDetailView({
 
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'overview', label: 'Overview' },
+    { key: 'scope', label: 'Scope' },
+    { key: 'schedule', label: 'Schedule' },
+    { key: 'changes', label: 'Changes' },
     { key: 'emails', label: 'Emails' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'documents', label: 'Documents' },
@@ -704,8 +829,12 @@ export function JobDetailView({
           &larr; Back
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {job.jobNumber && (
+            <span style={{ fontSize: 13, color: '#6b7280', fontFamily: 'monospace', fontWeight: 600 }}>
+              #{job.jobNumber}
+            </span>
+          )}
           <h2 style={{ margin: 0, fontSize: isPhone ? 18 : 22, fontWeight: 700 }}>{job.name}</h2>
-          {job.jobNumber && <span style={{ fontSize: 13, color: '#6b7280', fontFamily: 'monospace' }}>#{job.jobNumber}</span>}
           <StatusBadge status={job.status} />
           {job.status === 'BIDDING' && canEdit && (
             <button
@@ -719,15 +848,35 @@ export function JobDetailView({
           {job.archivedAt && <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 500 }}>ARCHIVED</span>}
           {refreshing && <span style={{ fontSize: 11, color: '#9ca3af' }}>Updating…</span>}
         </div>
-        <div style={{ marginTop: 8, fontSize: 13, color: '#374151' }}>
-          <span style={{ color: '#6b7280' }}>Start Date</span>{' '}
-          <strong>{formatOverviewDate(job.startDate)}</strong>
+        <div style={{ marginTop: 10, display: 'flex', gap: isPhone ? 10 : 20, flexWrap: 'wrap', fontSize: 13, color: '#374151' }}>
+          <span>
+            <span style={{ color: '#6b7280' }}>Start</span>{' '}
+            <strong>{formatOverviewDate(job.startDate)}</strong>
+          </span>
+          <span>
+            <span style={{ color: '#6b7280' }}>Target</span>{' '}
+            <strong>{formatOverviewDate(job.targetCompletionDate)}</strong>
+          </span>
           {job.status === 'BIDDING' && (
-            <span style={{ marginLeft: 16 }}>
+            <span>
               <span style={{ color: '#6b7280' }}>Bid due</span>{' '}
-              <strong>{job.bidDueAt ? formatOverviewDate(job.bidDueAt) : 'Not set'}</strong>
+              <strong>{formatOverviewDate(job.bidDueAt)}</strong>
             </span>
           )}
+        </div>
+        <div style={{
+          marginTop: 12,
+          display: 'grid',
+          gridTemplateColumns: isPhone ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))',
+          gap: 8,
+        }}>
+          <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
+          <PartyCard
+            label="Project Manager"
+            value={partyLabel(job.projectManager?.name ?? null)}
+          />
+          <PartyCard label="Contractor" value={partyLabel(job.contractorName)} />
+          <PartyCard label="Client" value={partyLabel(job.clientName)} />
         </div>
       </div>
 
@@ -753,8 +902,63 @@ export function JobDetailView({
       {/* Overview Tab */}
       {tab === 'overview' && (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
-            <MetricCard label="Total Cost" value={formatJobCost(job.totalCost)} />
+          {(job.description || job.externalRef || job.notes) && (
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                Project summary
+              </div>
+              {job.description && (
+                <div style={{ fontSize: 13, color: '#374151', whiteSpace: 'pre-wrap', marginBottom: job.externalRef || job.notes ? 10 : 0 }}>
+                  {job.description}
+                </div>
+              )}
+              {job.externalRef && (
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: job.notes ? 6 : 0 }}>
+                  External ref: <strong style={{ color: '#111' }}>{job.externalRef}</strong>
+                </div>
+              )}
+              {job.notes && (
+                <div style={{ fontSize: 12, color: '#6b7280', whiteSpace: 'pre-wrap' }}>
+                  Notes: {job.notes}
+                </div>
+              )}
+            </div>
+          )}
+
+          <JobProjectParties
+            workspaceId={workspaceId}
+            jobId={jobId}
+            participants={job.participants ?? []}
+            canEdit={canEdit}
+            isPhone={isPhone}
+            onChange={(participants) => {
+              setJob((prev) => {
+                if (!prev) return prev
+                const projectManager =
+                  participants.find((p) => p.role === 'PROJECT_MANAGER' && p.isPrimary) ??
+                  participants.find((p) => p.role === 'PROJECT_MANAGER') ??
+                  null
+                const next = { ...prev, participants, projectManager }
+                setCachedJobDetail(workspaceId, jobId, next)
+                return next
+              })
+            }}
+          />
+
+          <WorkPackageOverviewSummary summary={job.workPackageSummary} />
+
+          <ScheduleOverviewSummary
+            summary={job.scheduleSummary}
+            onViewSchedule={() => setTab('schedule')}
+          />
+
+          <ChangesOverviewSummary
+            summary={job.changesSummary}
+            onViewChanges={() => setTab('changes')}
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(4, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
+            <MetricCard label={TOTAL_COST_DISPLAY_LABEL} value={formatJobCost(job.totalCost)} />
             <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
             <MetricCard
               label="Open Tasks"
@@ -764,32 +968,69 @@ export function JobDetailView({
             />
             <MetricCard
               label="Estimated Hours"
-              value={job.estimatedHours == null ? '—' : formatHoursNumber(job.estimatedHours)}
+              value={job.estimatedHours == null ? 'Not set' : formatHoursNumber(job.estimatedHours)}
             />
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
-            <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
-            <PartyCard label="Contractor" value={partyLabel(job.contractorName)} />
-            <PartyCard label="Client" value={partyLabel(job.clientName)} />
-          </div>
-
-          <JobFabricationScope
-            workspaceId={workspaceId}
-            jobId={jobId}
-            items={job.fabricationItems ?? []}
-            canEdit={canEdit}
-            isPhone={isPhone}
-            onUpdated={(items, estimatedHours) => {
-              setJob(prev => {
-                if (!prev) return prev
-                const next = { ...prev, fabricationItems: items, estimatedHours }
-                setCachedJobDetail(workspaceId, jobId, next)
-                return next
-              })
-            }}
-          />
         </div>
+      )}
+
+      {tab === 'scope' && (
+        <JobScopeView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onEstimatedHoursChange={(estimatedHours) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, estimatedHours }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+          onSummaryChange={(workPackageSummary) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, workPackageSummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
+      )}
+
+      {tab === 'schedule' && (
+        <JobScheduleView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onSummaryChange={(scheduleSummary) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, scheduleSummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
+      )}
+
+      {tab === 'changes' && (
+        <JobChangesView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onSummaryChange={(changesSummary) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, changesSummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
       )}
 
       {/* Emails Tab */}
@@ -1272,7 +1513,10 @@ export function JobDetailView({
                       <button
                         key={key}
                         type="button"
-                        onClick={() => setFileTypeFilter(key)}
+                        onClick={() => {
+                          setFileTypeFilter(key)
+                          if (key !== 'IMAGES' && key !== 'ALL') setImageRelevanceFilter('ALL')
+                        }}
                         style={{
                           padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
                           border: fileTypeFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
@@ -1283,16 +1527,93 @@ export function JobDetailView({
                         {label}
                       </button>
                     ))}
+                    <select
+                      value={docCategory}
+                      onChange={(e) => setDocCategory(e.target.value as typeof docCategory)}
+                      style={{ padding: '3px 8px', fontSize: 11, borderRadius: 6, border: '1px solid #ddd' }}
+                    >
+                      <option value="ALL">All document types</option>
+                      <option value="DRAWINGS">Drawings / Specs</option>
+                      <option value="SHOP_SUBMITTALS">Shop drawings / Submittals</option>
+                      <option value="RFIS">RFIs</option>
+                      <option value="ASI_BULLETIN_ADDENDUM">ASI / Bulletins / Addenda</option>
+                      <option value="CONTRACTS_POS">Contracts / POs</option>
+                      <option value="CHANGE_ORDERS">Change orders</option>
+                      <option value="INVOICES">Invoices</option>
+                      <option value="DELIVERY">Delivery</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                    <select
+                      value={controlState}
+                      onChange={(e) => setControlState(e.target.value as typeof controlState)}
+                      style={{ padding: '3px 8px', fontSize: 11, borderRadius: 6, border: '1px solid #ddd' }}
+                    >
+                      <option value="ALL">All versions</option>
+                      <option value="CURRENT">Current</option>
+                      <option value="SUPERSEDED">Superseded</option>
+                      <option value="UNCLASSIFIED">Unclassified</option>
+                    </select>
+                    <input
+                      value={docSearch}
+                      onChange={(e) => setDocSearch(e.target.value)}
+                      placeholder="Search filename, number, title…"
+                      style={{ padding: '3px 8px', fontSize: 11, borderRadius: 6, border: '1px solid #ddd', minWidth: 160 }}
+                    />
                     <span style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      onClick={() => setImageReviewMode((v) => !v)}
+                      style={{
+                        padding: '3px 10px', fontSize: 11, fontWeight: 600, borderRadius: 6,
+                        border: imageReviewMode ? '1px solid #1a1a2e' : '1px solid #ddd',
+                        background: imageReviewMode ? '#1a1a2e' : '#fff',
+                        color: imageReviewMode ? '#fff' : '#555', cursor: 'pointer',
+                      }}
+                    >
+                      {imageReviewMode ? 'Review on' : 'Review images'}
+                    </button>
                     <select
                       value={fileSort}
-                      onChange={(e) => setFileSort(e.target.value as 'newest' | 'oldest')}
+                      onChange={(e) => setFileSort(e.target.value as typeof fileSort)}
                       style={{ padding: '3px 8px', fontSize: 11, borderRadius: 6, border: '1px solid #ddd' }}
                     >
                       <option value="newest">Newest first</option>
                       <option value="oldest">Oldest first</option>
+                      <option value="name">Name</option>
+                      <option value="type">Document type</option>
+                      <option value="documentDate">Document date</option>
                     </select>
                   </div>
+
+                  {(fileTypeFilter === 'ALL' || fileTypeFilter === 'IMAGES') && imageRelevanceCounts.all > 0 && (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+                      {([
+                        ['ALL', `All images (${imageRelevanceCounts.all})`],
+                        ['RELEVANT', `Relevant (${imageRelevanceCounts.relevant})`],
+                        ['NOISE', `Likely irrelevant (${imageRelevanceCounts.noise})`],
+                        ['UNCERTAIN', `Unsure (${imageRelevanceCounts.uncertain})`],
+                        ['NOT_ANALYZED', `Not analyzed (${imageRelevanceCounts.notAnalyzed})`],
+                      ] as const).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setImageRelevanceFilter(key)}
+                          style={{
+                            padding: '2px 8px', fontSize: 11, fontWeight: 500, borderRadius: 10,
+                            border: imageRelevanceFilter === key ? '1px solid #9ca3af' : '1px solid #e5e7eb',
+                            background: imageRelevanceFilter === key ? '#f3f4f6' : '#fff',
+                            color: '#555', cursor: 'pointer',
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                        View filter only — nothing is deleted or hidden from storage
+                      </span>
+                    </div>
+                  )}
+
                   {libraryFiles.length === 0 ? (
                     <div style={{ fontSize: 13, color: '#888' }}>
                       No files linked to this job yet. Email attachments and uploads will appear here.
@@ -1310,6 +1631,10 @@ export function JobDetailView({
                             : api.getJobFileDownloadUrl(workspaceId, jobId, file.id)
                         const kind = previewKind({ filename: file.filename, contentType: file.mimeType })
                         const previewable = kind !== null
+                        const relevance = file.sourceType === 'EMAIL_ATTACHMENT' && file.fileType === 'IMAGES'
+                          ? (file.imageRelevance ?? null)
+                          : null
+                        const showRelevanceChrome = file.fileType === 'IMAGES' && file.sourceType === 'EMAIL_ATTACHMENT'
                         const thumbUrl = kind === 'image'
                           ? (file.sourceType === 'EMAIL_ATTACHMENT'
                             ? api.getStoredAttachmentDownloadUrl(workspaceId, file.id, true)
@@ -1341,12 +1666,26 @@ export function JobDetailView({
                           <div
                             key={`${file.sourceType}-${file.id}`}
                             style={{
-                              border: '1px solid #e5e7eb', borderRadius: 8, padding: 10,
-                              display: 'flex', flexDirection: 'column', gap: 8, background: '#fff',
+                              border: showRelevanceChrome ? imageCardBorder(relevance) : '1px solid #e5e7eb',
+                              borderRadius: 8,
+                              padding: 10,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 8,
+                              background: showRelevanceChrome ? imageCardBackground(relevance) : '#fff',
                             }}
                           >
                             {thumbUrl ? (
-                              <LibraryImageThumb src={thumbUrl} filename={file.filename} onOpen={openPreview} />
+                              <LibraryImageThumb
+                                src={thumbUrl}
+                                filename={file.filename}
+                                onOpen={openPreview}
+                                border={showRelevanceChrome && relevance?.relevance === 'NOISE'
+                                  ? '2px solid #f5b5b5'
+                                  : showRelevanceChrome && relevance?.relevance === 'UNCERTAIN'
+                                    ? '2px solid #d1d5db'
+                                    : undefined}
+                              />
                             ) : previewable ? (
                               <button
                                 type="button"
@@ -1370,6 +1709,29 @@ export function JobDetailView({
                                 {file.extension || 'FILE'}
                               </div>
                             )}
+                            {showRelevanceChrome && (
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <InlineImageRelevanceBadge info={relevance} reviewMode={imageReviewMode} />
+                                {(imageReviewMode || relevance?.relevance === 'NOISE' || relevance?.relevance === 'UNCERTAIN') && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setDetailsAttachmentId((id) => (id === file.id ? null : file.id))
+                                    }
+                                    style={{
+                                      background: 'none', border: 'none', padding: 0, fontSize: 10,
+                                      color: '#6b7280', cursor: 'pointer', textDecoration: 'underline',
+                                      fontFamily: 'inherit',
+                                    }}
+                                  >
+                                    {detailsAttachmentId === file.id ? 'Hide details' : 'Details'}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {showRelevanceChrome && detailsAttachmentId === file.id && (
+                              <InlineImageRelevanceDetails info={relevance} />
+                            )}
                             <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.filename}>
                               {previewable ? (
                                 <button
@@ -1385,6 +1747,11 @@ export function JobDetailView({
                                 </button>
                               ) : file.filename}
                             </div>
+                            {file.control ? (
+                              <DocumentControlSummary control={file.control} />
+                            ) : (
+                              <div style={{ fontSize: 11, color: '#9ca3af' }}>Unclassified</div>
+                            )}
                             <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4 }}>
                               {formatBytes(file.sizeBytes)} · {formatDate(file.date)}
                               <br />
@@ -1407,7 +1774,37 @@ export function JobDetailView({
                                 </>
                               ) : null}
                             </div>
-                            <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+                            {classifyingKey === `${file.sourceType}:${file.id}` && (
+                              <JobDocumentControlForm
+                                workspaceId={workspaceId}
+                                jobId={jobId}
+                                file={file}
+                                packages={docPackages}
+                                classifiedPeers={libraryFiles}
+                                canEdit={canEdit}
+                                onClose={() => setClassifyingKey(null)}
+                                onSaved={(control: JobDocumentControl | null) => {
+                                  setLibraryFiles((prev) =>
+                                    prev.map((row) =>
+                                      row.id === file.id && row.sourceType === file.sourceType
+                                        ? { ...row, control }
+                                        : row.control && control?.supersedesId === row.control.id
+                                          ? { ...row, control: { ...row.control, isCurrent: false } }
+                                          : row
+                                    )
+                                  )
+                                }}
+                              />
+                            )}
+                            {showRelevanceChrome && (imageReviewMode || relevance?.relevance === 'NOISE' || relevance?.relevance === 'UNCERTAIN') && (
+                              <InlineImageRelevanceActions
+                                info={relevance}
+                                canCorrect={canEdit}
+                                busy={correctingAttachmentId === file.id}
+                                onCorrect={(body) => correctLibraryImageRelevance(file.id, body)}
+                              />
+                            )}
+                            <div style={{ display: 'flex', gap: 8, marginTop: 'auto', flexWrap: 'wrap' }}>
                               <a
                                 href={downloadUrl}
                                 target="_blank"
@@ -1418,6 +1815,22 @@ export function JobDetailView({
                               >
                                 Download
                               </a>
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setClassifyingKey((key) =>
+                                      key === `${file.sourceType}:${file.id}` ? null : `${file.sourceType}:${file.id}`
+                                    )
+                                  }
+                                  style={{
+                                    background: 'none', border: 'none', padding: 0, fontSize: 11,
+                                    color: '#6b7280', cursor: 'pointer', textDecoration: 'underline',
+                                  }}
+                                >
+                                  {file.control ? 'Edit details' : 'Add document details'}
+                                </button>
+                              )}
                               {file.emailId && onOpenMessage && (
                                 <button
                                   type="button"
@@ -1534,7 +1947,7 @@ export function JobDetailView({
                   style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Total Cost</label>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Entered total</label>
                 <input value={editTotalCost} onChange={e => setEditTotalCost(e.target.value)} disabled={!canEdit} placeholder="Not set"
                   style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
               </div>

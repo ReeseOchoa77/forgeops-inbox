@@ -39,6 +39,7 @@ export function presentFabricationItem(item: {
   quantity: { toString(): string } | number | string;
   estimatedHoursPerPiece: { toString(): string } | number | string;
   sortOrder: number;
+  workPackageId?: string | null;
 }) {
   const quantity = decimalToNumber(item.quantity);
   const estimatedHoursPerPiece = decimalToNumber(item.estimatedHoursPerPiece);
@@ -49,5 +50,6 @@ export function presentFabricationItem(item: {
     estimatedHoursPerPiece,
     totalHours: lineEstimatedHours(quantity, estimatedHoursPerPiece),
     sortOrder: item.sortOrder,
+    workPackageId: item.workPackageId ?? null,
   };
 }

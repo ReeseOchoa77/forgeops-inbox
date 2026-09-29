@@ -196,6 +196,183 @@ enum JobActivityAction {
   DOCUMENT_UPLOADED
   DOCUMENT_MOVED
   DOCUMENT_DELETED
+  PARTICIPANT_ADDED
+  PARTICIPANT_UPDATED
+  PARTICIPANT_REMOVED
+  WORK_PACKAGE_CREATED
+  WORK_PACKAGE_UPDATED
+  WORK_PACKAGE_DELETED
+  FABRICATION_ITEM_MOVED
+  MILESTONE_CREATED
+  MILESTONE_UPDATED
+  MILESTONE_COMPLETED
+  MILESTONE_REOPENED
+  MILESTONE_CANCELLED
+  MILESTONE_DELETED
+  DOCUMENT_CLASSIFIED
+  DOCUMENT_METADATA_UPDATED
+  DOCUMENT_SUPERSEDED
+  DOCUMENT_CONTROL_CLEARED
+  RFI_CREATED
+  RFI_UPDATED
+  RFI_ANSWERED
+  RFI_CLOSED
+  RFI_CANCELLED
+  DIRECTIVE_CREATED
+  DIRECTIVE_UPDATED
+  DIRECTIVE_VOIDED
+  CHANGE_CREATED
+  CHANGE_UPDATED
+  CHANGE_STATUS_CHANGED
+  CHANGE_ORDER_CREATED
+  CHANGE_ORDER_UPDATED
+  CHANGE_ORDER_STATUS_CHANGED
+}
+
+/// Formal clarification request. Distinct from email subtype RFI_CLARIFICATION.
+enum JobRfiStatus {
+  DRAFT
+  OPEN
+  ANSWERED
+  CLOSED
+  CANCELLED
+}
+
+/// Formal project directive (instruction/revision). Not an RFI.
+enum JobDirectiveType {
+  ASI
+  BULLETIN
+  ADDENDUM
+  OTHER
+}
+
+enum JobDirectiveStatus {
+  ACTIVE
+  VOID
+}
+
+/// Operational/commercial scope delta. Distinct from formal Change Order.
+enum JobChangeType {
+  EXTRA
+  CREDIT
+  SCOPE_CHANGE
+  REWORK
+  BACKCHARGE
+  OTHER
+}
+
+enum JobChangeStatus {
+  IDENTIFIED
+  PRICING
+  PROPOSED
+  APPROVED
+  REJECTED
+  VOID
+}
+
+/// Formal commercial Change Order that may bundle multiple Changes.
+enum JobChangeOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  VOID
+}
+
+/// Project-document semantic type. Distinct from MIME fileType buckets and KnowledgeDocument DocumentType.
+enum JobDocumentRecordType {
+  OTHER
+  ARCHITECTURAL_DRAWING
+  STRUCTURAL_DRAWING
+  CIVIL_DRAWING
+  SPECIFICATION
+  SHOP_DRAWING
+  SUBMITTAL
+  RFI_DOCUMENT
+  ASI
+  BULLETIN
+  ADDENDUM
+  PROPOSAL_QUOTE
+  PURCHASE_ORDER
+  CONTRACT
+  CHANGE_ORDER
+  INVOICE
+  DELIVERY_DOCUMENT
+}
+
+/// Submittal/shop-drawing workflow only. Not used for invoices, contracts, etc.
+enum JobDocumentSubmittalStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  APPROVED_AS_NOTED
+  REVISE_AND_RESUBMIT
+  REJECTED
+}
+
+/// Operational schedule checkpoint. Does not replace CalendarEvent appointments
+/// or future procurement/shipping entities.
+enum JobMilestoneType {
+  GENERAL
+  SHOP_DRAWINGS
+  SUBMITTAL
+  APPROVAL
+  FIELD_MEASURE
+  MATERIAL_REQUIRED
+  MATERIAL_ORDERED
+  MATERIAL_EXPECTED
+  FABRICATION_START
+  FABRICATION_COMPLETE
+  READY_TO_SHIP
+  DELIVERY
+  INSTALLATION_START
+  INSTALLATION_COMPLETE
+  PROJECT_COMPLETE
+}
+
+/// Canonical milestone lifecycle. OVERDUE is derived from plannedDate + OPEN — not stored.
+enum JobMilestoneStatus {
+  OPEN
+  COMPLETE
+  CANCELLED
+}
+
+/// Operational subdivision of a Job (area, stair, rails, etc.). Does not replace Job.status.
+enum JobWorkPackageStatus {
+  NOT_STARTED
+  DETAILING
+  AWAITING_APPROVAL
+  FIELD_MEASURE
+  READY_FOR_FABRICATION
+  FABRICATING
+  READY_TO_SHIP
+  DELIVERED
+  INSTALLING
+  COMPLETE
+  ON_HOLD
+}
+
+/// Project-team role on a Job. Complements estimatorUserId / contractorCustomerId / clientCustomerId.
+enum JobParticipantRole {
+  PROJECT_MANAGER
+  ESTIMATOR
+  GENERAL_CONTRACTOR
+  CLIENT
+  OWNER
+  ARCHITECT
+  ENGINEER
+  DETAILER
+  ERECTOR
+  SUPPLIER
+  OTHER
+}
+
+enum JobParticipantPartyType {
+  USER
+  CUSTOMER
+  VENDOR
+  CONTACT
 }
 
 model Workspace {
@@ -240,6 +417,14 @@ model Workspace {
   jobDocumentFolders   JobDocumentFolder[]
   jobFiles             JobFile[]
   calendarEvents       CalendarEvent[]
+  jobParticipants      JobParticipant[]
+  jobWorkPackages      JobWorkPackage[]
+  jobMilestones        JobMilestone[]
+  jobDocumentRecords   JobDocumentRecord[]
+  jobRfis              JobRfi[]
+  jobDirectives        JobDirective[]
+  jobChanges           JobChange[]
+  jobChangeOrders      JobChangeOrder[]
 }
 
 model User {
@@ -268,6 +453,7 @@ model User {
   classificationCorrections ClassificationCorrection[] @relation("CorrectionReviewer")
   classificationInstructions ClassificationInstruction[] @relation("InstructionCreator")
   estimatedJobs           Job[]            @relation("JobEstimator")
+  jobParticipations       JobParticipant[] @relation("JobParticipantUser")
 }
 
 model ApprovedAccess {
@@ -747,6 +933,7 @@ model Customer {
   tasks           Task[]    @relation("TaskCustomer")
   aliases         EntityAlias[]
   contacts        EntityContact[]
+  jobParticipations JobParticipant[] @relation("JobParticipantCustomer")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -773,6 +960,7 @@ model Vendor {
   tasks           Task[]    @relation("TaskVendor")
   aliases         EntityAlias[]
   contacts        EntityContact[]
+  jobParticipations JobParticipant[] @relation("JobParticipantVendor")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -827,6 +1015,15 @@ model Job {
   files                 JobFile[]
   knowledgeDocuments    KnowledgeDocument[] @relation("JobKnowledgeDocuments")
   calendarEvents        CalendarEvent[] @relation("CalendarEventJob")
+  /// Additional project parties. Does not replace estimator/contractor/client FKs.
+  participants          JobParticipant[]
+  workPackages          JobWorkPackage[]
+  milestones            JobMilestone[]
+  documentRecords       JobDocumentRecord[]
+  rfis                  JobRfi[]
+  directives            JobDirective[]
+  changes               JobChange[]
+  changeOrders          JobChangeOrder[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -839,12 +1036,328 @@ model Job {
   @@index([createdByUserId])
 }
 
+/// Additional project party on a Job. Complements estimatorUserId / contractorCustomerId / clientCustomerId.
+/// Exactly one of userId / customerId / vendorId / contactId is set (enforced in application).
+model JobParticipant {
+  id           String                  @id @default(cuid())
+  workspaceId  String
+  jobId        String
+  role         JobParticipantRole
+  partyType    JobParticipantPartyType
+  userId       String?
+  customerId   String?
+  vendorId     String?
+  contactId    String?
+  /// Preferred for PROJECT_MANAGER when multiple PMs exist.
+  isPrimary    Boolean                 @default(false)
+  title        String?
+  notes        String?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  workspace    Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job          Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user         User?                   @relation("JobParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  customer     Customer?               @relation("JobParticipantCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: Cascade)
+  vendor       Vendor?                 @relation("JobParticipantVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: Cascade)
+  contact      EntityContact?          @relation("JobParticipantContact", fields: [contactId], references: [id], onDelete: Cascade)
+  rfisRequested JobRfi[]               @relation("RfiRequestedBy")
+  rfisAssigned  JobRfi[]               @relation("RfiAssignedTo")
+
+  @@unique([jobId, role, userId])
+  @@unique([jobId, role, customerId])
+  @@unique([jobId, role, vendorId])
+  @@unique([jobId, role, contactId])
+  @@index([workspaceId, jobId])
+  @@index([workspaceId, role])
+  @@index([jobId, role, isPrimary])
+}
+
+/// Operational subdivision of a Job's physical/fabrication scope.
+/// Status is manually controlled. Does not replace Job.status.
+model JobWorkPackage {
+  id           String               @id @default(cuid())
+  workspaceId  String
+  jobId        String
+  /// Optional parent for shallow hierarchy (e.g. Structural → Area A). One level intended.
+  parentId     String?
+  name         String
+  description  String?
+  status       JobWorkPackageStatus @default(NOT_STARTED)
+  sortOrder    Int                  @default(0)
+  notes        String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job          Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  parent       JobWorkPackage?      @relation("JobWorkPackageTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     JobWorkPackage[]     @relation("JobWorkPackageTree")
+  fabricationItems JobFabricationItem[]
+  milestones   JobMilestone[]
+  documentRecords JobDocumentRecord[]
+  rfiLinks     JobRfiWorkPackage[]
+  directiveLinks JobDirectiveWorkPackage[]
+  changeLinks  JobChangeWorkPackage[]
+
+  @@index([workspaceId, jobId, sortOrder])
+  @@index([jobId, parentId])
+  @@index([workspaceId, status])
+}
+
+/// Operational schedule event for a Job (or a Work Package within it).
+/// plannedDate/actualDate are date-only semantics stored as UTC midnight DateTime
+/// (same convention as Job.startDate). OVERDUE is derived, not persisted.
+/// Does not auto-update JobWorkPackage.status. Distinct from CalendarEvent.
+model JobMilestone {
+  id            String             @id @default(cuid())
+  workspaceId   String
+  jobId         String
+  /// Null = Job-level milestone. Non-null must belong to the same job.
+  workPackageId String?
+  type          JobMilestoneType   @default(GENERAL)
+  name          String
+  /// Calendar date (UTC midnight). Null = undated / date not set.
+  plannedDate   DateTime?
+  /// Calendar date (UTC midnight) when completed. Preserved separately from plannedDate.
+  actualDate    DateTime?
+  status        JobMilestoneStatus @default(OPEN)
+  notes         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job           Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// Restrict: package delete is blocked while milestones exist (service 409 + DB).
+  workPackage   JobWorkPackage?    @relation(fields: [workPackageId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, jobId, plannedDate])
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, workPackageId])
+}
+
+/// Project-document control metadata over an existing JobFile or EmailAttachment.
+/// Does NOT store or copy bytes. Source remains canonical. XOR: exactly one of
+/// jobFileId / emailAttachmentId (enforced in application).
+model JobDocumentRecord {
+  id                 String                     @id @default(cuid())
+  workspaceId        String
+  jobId              String
+  jobFileId          String?                    @unique
+  emailAttachmentId  String?                    @unique
+  documentType       JobDocumentRecordType      @default(OTHER)
+  documentNumber     String?
+  title              String?
+  revision           String?
+  /// Calendar date (UTC midnight) for the document issue/drawing date.
+  documentDate       DateTime?
+  workPackageId      String?
+  /// Only meaningful for SHOP_DRAWING / SUBMITTAL. Null otherwise.
+  submittalStatus    JobDocumentSubmittalStatus?
+  /// False when superseded by a newer controlled revision.
+  isCurrent          Boolean                    @default(true)
+  /// Points at the older record this one replaces (same job).
+  supersedesId       String?
+  notes              String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  workspace          Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobFile            JobFile?                   @relation(fields: [jobFileId], references: [id], onDelete: Cascade)
+  emailAttachment    EmailAttachment?           @relation(fields: [emailAttachmentId], references: [id], onDelete: Cascade)
+  workPackage        JobWorkPackage?            @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  supersedes         JobDocumentRecord?         @relation("DocumentRevision", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy       JobDocumentRecord[]        @relation("DocumentRevision")
+  rfiLinks           JobRfiDocument[]
+  directiveLinks     JobDirectiveDocument[]
+
+  @@index([workspaceId, jobId, documentType])
+  @@index([workspaceId, jobId, isCurrent])
+  @@index([jobId, workPackageId])
+  @@index([jobId, documentNumber])
+}
+
+/// Formal RFI / clarification workflow. Distinct from email subtype and RFI_DOCUMENT files.
+model JobRfi {
+  id                       String          @id @default(cuid())
+  workspaceId              String
+  jobId                    String
+  number                   String
+  subject                  String
+  question                 String?
+  status                   JobRfiStatus    @default(DRAFT)
+  submittedDate            DateTime?
+  responseDueDate          DateTime?
+  answeredDate             DateTime?
+  response                 String?
+  requestedByParticipantId String?
+  assignedToParticipantId  String?
+  notes                    String?
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+  workspace                Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                      Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requestedBy              JobParticipant? @relation("RfiRequestedBy", fields: [requestedByParticipantId], references: [id], onDelete: SetNull)
+  assignedTo               JobParticipant? @relation("RfiAssignedTo", fields: [assignedToParticipantId], references: [id], onDelete: SetNull)
+  workPackages             JobRfiWorkPackage[]
+  documents                JobRfiDocument[]
+  changes                  JobChange[]     @relation("ChangeSourceRfi")
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, number])
+  @@index([jobId, responseDueDate])
+}
+
+model JobRfiWorkPackage {
+  id            String         @id @default(cuid())
+  rfiId         String
+  workPackageId String
+  rfi           JobRfi         @relation(fields: [rfiId], references: [id], onDelete: Cascade)
+  workPackage   JobWorkPackage @relation(fields: [workPackageId], references: [id], onDelete: Cascade)
+
+  @@unique([rfiId, workPackageId])
+  @@index([workPackageId])
+}
+
+model JobRfiDocument {
+  id               String            @id @default(cuid())
+  rfiId            String
+  documentRecordId String
+  rfi              JobRfi            @relation(fields: [rfiId], references: [id], onDelete: Cascade)
+  documentRecord   JobDocumentRecord @relation(fields: [documentRecordId], references: [id], onDelete: Cascade)
+
+  @@unique([rfiId, documentRecordId])
+  @@index([documentRecordId])
+}
+
+/// Formal project directive (ASI / Bulletin / Addendum). Not an RFI.
+model JobDirective {
+  id          String             @id @default(cuid())
+  workspaceId String
+  jobId       String
+  type        JobDirectiveType
+  status      JobDirectiveStatus @default(ACTIVE)
+  number      String
+  title       String
+  issuedDate  DateTime?
+  summary     String?
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job         Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workPackages JobDirectiveWorkPackage[]
+  documents   JobDirectiveDocument[]
+  changes     JobChange[]        @relation("ChangeSourceDirective")
+
+  @@index([workspaceId, jobId, type])
+  @@index([jobId, number])
+}
+
+model JobDirectiveWorkPackage {
+  id            String         @id @default(cuid())
+  directiveId   String
+  workPackageId String
+  directive     JobDirective   @relation(fields: [directiveId], references: [id], onDelete: Cascade)
+  workPackage   JobWorkPackage @relation(fields: [workPackageId], references: [id], onDelete: Cascade)
+
+  @@unique([directiveId, workPackageId])
+  @@index([workPackageId])
+}
+
+model JobDirectiveDocument {
+  id               String            @id @default(cuid())
+  directiveId      String
+  documentRecordId String
+  directive        JobDirective      @relation(fields: [directiveId], references: [id], onDelete: Cascade)
+  documentRecord   JobDocumentRecord @relation(fields: [documentRecordId], references: [id], onDelete: Cascade)
+
+  @@unique([directiveId, documentRecordId])
+  @@index([documentRecordId])
+}
+
+/// Operational/commercial change. costImpact/sellImpact NULL = unknown; 0 = explicit zero.
+/// Does not mutate Job.totalCost, fabrication, milestones, or package status.
+model JobChange {
+  id                String          @id @default(cuid())
+  workspaceId       String
+  jobId             String
+  number            String
+  title             String
+  description       String?
+  type              JobChangeType   @default(SCOPE_CHANGE)
+  status            JobChangeStatus @default(IDENTIFIED)
+  sourceRfiId       String?
+  sourceDirectiveId String?
+  changeOrderId     String?
+  /// Internal cost impact. NULL = not priced; 0 = no cost impact.
+  costImpact        Decimal?        @db.Decimal(14, 2)
+  /// Customer/contract sell impact. NULL = not priced; 0 = no sell impact.
+  sellImpact        Decimal?        @db.Decimal(14, 2)
+  scheduleImpactDays Int?
+  scheduleImpactNote String?
+  identifiedDate    DateTime?
+  proposedDate      DateTime?
+  approvedDate      DateTime?
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job               Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sourceRfi         JobRfi?         @relation("ChangeSourceRfi", fields: [sourceRfiId], references: [id], onDelete: SetNull)
+  sourceDirective   JobDirective?   @relation("ChangeSourceDirective", fields: [sourceDirectiveId], references: [id], onDelete: SetNull)
+  /// Restrict: remove Changes from CO before deleting the CO.
+  changeOrder       JobChangeOrder? @relation(fields: [changeOrderId], references: [id], onDelete: Restrict)
+  workPackages      JobChangeWorkPackage[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, number])
+  @@index([changeOrderId])
+  @@index([sourceRfiId])
+  @@index([sourceDirectiveId])
+}
+
+model JobChangeWorkPackage {
+  id            String         @id @default(cuid())
+  changeId      String
+  workPackageId String
+  change        JobChange      @relation(fields: [changeId], references: [id], onDelete: Cascade)
+  workPackage   JobWorkPackage @relation(fields: [workPackageId], references: [id], onDelete: Cascade)
+
+  @@unique([changeId, workPackageId])
+  @@index([workPackageId])
+}
+
+/// Formal Change Order that may bundle multiple JobChanges.
+/// sellAmount is the approved CO value (may differ from sum of preliminary change pricing).
+model JobChangeOrder {
+  id            String               @id @default(cuid())
+  workspaceId   String
+  jobId         String
+  number        String
+  title         String?
+  status        JobChangeOrderStatus @default(DRAFT)
+  submittedDate DateTime?
+  approvedDate  DateTime?
+  /// Explicit approved/submitted CO sell amount. NULL = not set.
+  sellAmount    Decimal?             @db.Decimal(14, 2)
+  notes         String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job           Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  changes       JobChange[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, number])
+}
+
 /// A piece or assembly this job needs to fabricate.
 /// Total hours are quantity × estimatedHoursPerPiece and are not stored.
 model JobFabricationItem {
   id                      String   @id @default(cuid())
   workspaceId             String
   jobId                   String
+  /// Optional Work Package. Null = Unassigned. Same-job integrity enforced in services
+  /// (simple FK + SetNull — avoid composite SET NULL that would null required jobId).
+  workPackageId           String?
   name                    String
   quantity                Decimal  @db.Decimal(12, 2)
   estimatedHoursPerPiece  Decimal  @db.Decimal(10, 2)
@@ -852,8 +1365,10 @@ model JobFabricationItem {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   job                     Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workPackage             JobWorkPackage? @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, jobId, sortOrder])
+  @@index([jobId, workPackageId])
 }
 
 model JobDocumentFolder {
@@ -895,6 +1410,7 @@ model JobFile {
   workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   job               Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
   folder            JobDocumentFolder?     @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  documentRecord    JobDocumentRecord?
 
   @@unique([workspaceId, storageKey])
   @@index([workspaceId, jobId])
@@ -1100,6 +1616,7 @@ model EntityContact {
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   customer        Customer? @relation(fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   vendor          Vendor?   @relation(fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
+  jobParticipations JobParticipant[] @relation("JobParticipantContact")
 
   @@index([workspaceId, normalizedEmail])
   @@index([workspaceId, domain])
@@ -1449,6 +1966,7 @@ model EmailAttachment {
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   emailMessage          EmailMessage          @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
   relevanceClassifications InlineImageRelevanceClassification[]
+  documentRecord        JobDocumentRecord?
 
   @@unique([workspaceId, emailMessageId, providerAttachmentId])
   @@unique([workspaceId, storageKey])
@@ -1498,6 +2016,14 @@ model InlineImageRelevanceClassification {
   inputTokens        Int?
   outputTokens       Int?
   analyzedAt         DateTime                     @default(now())
+  /// Snapshot of the last non-human decision before a human correction (quality measurement).
+  priorRelevance     InlineImageRelevance?
+  priorNoiseReason   InlineImageNoiseReason?
+  priorMethod        InlineImageRelevanceMethod?
+  priorConfidence    Float?
+  priorEvidence      String?
+  correctedAt        DateTime?
+  correctedByUserId  String?
   createdAt          DateTime                     @default(now())
   updatedAt          DateTime                     @updatedAt
   workspace          Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1506,4 +2032,5 @@ model InlineImageRelevanceClassification {
   @@unique([workspaceId, emailAttachmentId, analyzerVersion])
   @@index([workspaceId, contentChecksum, analyzerVersion])
   @@index([workspaceId, relevance])
+  @@index([workspaceId, method, correctedAt])
 }

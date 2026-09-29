@@ -9,6 +9,7 @@ import {
   OVERVIEW_PARTY_LABELS,
   OVERVIEW_REMOVED_LABELS,
   partyLabel,
+  TOTAL_COST_DISPLAY_LABEL,
   totalEstimatedHours,
 } from "./job-overview-format";
 
@@ -28,12 +29,12 @@ describe("job overview formatting", () => {
     expect(formatOverviewDate("")).toBe("Not set");
   });
 
-  it("labels missing parties as not assigned", () => {
+  it("labels missing parties as not set", () => {
     expect(partyLabel("Mortenson")).toBe("Mortenson");
     expect(partyLabel("John Smith")).toBe("John Smith");
     expect(partyLabel("Nova Academy")).toBe("Nova Academy");
-    expect(partyLabel(null)).toBe("Not assigned");
-    expect(partyLabel("  ")).toBe("Not assigned");
+    expect(partyLabel(null)).toBe("Not set");
+    expect(partyLabel("  ")).toBe("Not set");
   });
 
   it("formats hours and quantities without extra decimals", () => {
@@ -49,14 +50,15 @@ describe("job overview formatting", () => {
   });
 
   it("uses the operational overview labels", () => {
-    expect(OVERVIEW_METRIC_LABELS).toEqual(["Total Cost", "Emails", "Open Tasks", "Estimated Hours"]);
-    expect(OVERVIEW_PARTY_LABELS).toEqual(["Estimator", "Contractor", "Client"]);
+    expect(OVERVIEW_METRIC_LABELS).toEqual(["Entered total", "Emails", "Open Tasks", "Estimated Hours"]);
+    expect(OVERVIEW_PARTY_LABELS).toEqual(["Estimator", "Project Manager", "Contractor", "Client"]);
+    expect(TOTAL_COST_DISPLAY_LABEL).toBe("Entered total");
     expect(OVERVIEW_REMOVED_LABELS).toEqual([
       "Emails (7d)",
       "Emails (30d)",
       "Completed Tasks",
       "Last Activity",
+      "Created",
     ]);
   });
-
 });

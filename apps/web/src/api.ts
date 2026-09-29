@@ -1633,6 +1633,31 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  correctInlineImageRelevance: (
+    workspaceId: string,
+    emailAttachmentId: string,
+    body: {
+      relevance: 'RELEVANT' | 'NOISE'
+      noiseReason?:
+        | 'LOGO'
+        | 'ICON'
+        | 'SIGNATURE_GRAPHIC'
+        | 'DECORATIVE'
+        | 'TRACKING_PIXEL'
+        | 'BADGE'
+        | 'REPEATED_BRANDING'
+        | 'OTHER_NOISE'
+        | null
+    }
+  ) =>
+    request<{ classification: InlineImageRelevanceInfo }>(
+      `/workspaces/${workspaceId}/inline-image-relevance/${emailAttachmentId}/correct`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }
+    ),
+
   listWorkerJobs: (query: {
     status?: string
     queue?: string
@@ -1905,14 +1930,185 @@ export const api = {
   getJobTasks: (workspaceId: string, jobId: string) =>
     request<{ tasks: JobTask[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks`),
 
+  listJobParticipants: (workspaceId: string, jobId: string) =>
+    request<{ participants: JobParticipant[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/participants`
+    ),
+
+  searchJobParticipantCandidates: (workspaceId: string, q: string, limit?: number) => {
+    const p = new URLSearchParams({ q })
+    if (limit) p.set('limit', String(limit))
+    return request<ParticipantCandidateBucket>(
+      `/workspaces/${workspaceId}/jobs/participant-candidates?${p}`
+    )
+  },
+
+  createJobParticipant: (
+    workspaceId: string,
+    jobId: string,
+    body: {
+      role: JobParticipantRole
+      userId?: string | null
+      customerId?: string | null
+      vendorId?: string | null
+      contactId?: string | null
+      isPrimary?: boolean
+      title?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ participant: JobParticipant }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/participants`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  updateJobParticipant: (
+    workspaceId: string,
+    jobId: string,
+    participantId: string,
+    body: {
+      role?: JobParticipantRole
+      isPrimary?: boolean
+      title?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ participant: JobParticipant }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/participants/${participantId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  deleteJobParticipant: (workspaceId: string, jobId: string, participantId: string) =>
+    request<void>(`/workspaces/${workspaceId}/jobs/${jobId}/participants/${participantId}`, {
+      method: 'DELETE',
+    }),
+
+  getJobScope: (workspaceId: string, jobId: string) =>
+    request<JobScopePayload>(`/workspaces/${workspaceId}/jobs/${jobId}/scope`),
+
+  createJobWorkPackage: (
+    workspaceId: string,
+    jobId: string,
+    body: {
+      name: string
+      description?: string | null
+      status?: JobWorkPackageStatus
+      parentId?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ workPackage: JobWorkPackage } & JobScopePayload>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/work-packages`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  updateJobWorkPackage: (
+    workspaceId: string,
+    jobId: string,
+    packageId: string,
+    body: {
+      name?: string
+      description?: string | null
+      status?: JobWorkPackageStatus
+      parentId?: string | null
+      notes?: string | null
+      sortOrder?: number
+    }
+  ) =>
+    request<{ workPackage: JobWorkPackage } & JobScopePayload>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/work-packages/${packageId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  deleteJobWorkPackage: (workspaceId: string, jobId: string, packageId: string) =>
+    request<JobScopePayload>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/work-packages/${packageId}`,
+      { method: 'DELETE' }
+    ),
+
+  reorderJobWorkPackages: (workspaceId: string, jobId: string, orderedIds: string[]) =>
+    request<JobScopePayload>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/work-packages/reorder`,
+      { method: 'PUT', body: JSON.stringify({ orderedIds }) }
+    ),
+
+  assignFabricationItemWorkPackage: (
+    workspaceId: string,
+    jobId: string,
+    itemId: string,
+    workPackageId: string | null
+  ) =>
+    request<JobScopePayload>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/fabrication-items/${itemId}/work-package`,
+      { method: 'PATCH', body: JSON.stringify({ workPackageId }) }
+    ),
+
+  getJobMilestones: (workspaceId: string, jobId: string) =>
+    request<{ milestones: JobMilestone[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/milestones`),
+
+  createJobMilestone: (
+    workspaceId: string,
+    jobId: string,
+    body: {
+      type?: JobMilestoneType
+      name?: string | null
+      plannedDate?: string | null
+      workPackageId?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ milestone: JobMilestone; milestones: JobMilestone[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/milestones`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  updateJobMilestone: (
+    workspaceId: string,
+    jobId: string,
+    milestoneId: string,
+    body: {
+      type?: JobMilestoneType
+      name?: string
+      plannedDate?: string | null
+      actualDate?: string | null
+      workPackageId?: string | null
+      notes?: string | null
+      status?: JobMilestoneStatus
+    }
+  ) =>
+    request<{ milestone: JobMilestone; milestones: JobMilestone[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/milestones/${milestoneId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  deleteJobMilestone: (workspaceId: string, jobId: string, milestoneId: string) =>
+    request<{ milestones: JobMilestone[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/milestones/${milestoneId}`,
+      { method: 'DELETE' }
+    ),
+
   getJobDocuments: (
     workspaceId: string,
     jobId: string,
     params?: {
       type?: 'ALL' | 'IMAGES' | 'PDF' | 'SPREADSHEETS' | 'DOCUMENTS' | 'OTHER';
-      sort?: 'newest' | 'oldest';
+      sort?: 'newest' | 'oldest' | 'name' | 'type' | 'documentDate';
       page?: number;
       pageSize?: number;
+      imageRelevance?: 'ALL' | 'RELEVANT' | 'NOISE' | 'UNCERTAIN' | 'NOT_ANALYZED';
+      docCategory?:
+        | 'ALL'
+        | 'DRAWINGS'
+        | 'SHOP_SUBMITTALS'
+        | 'RFIS'
+        | 'ASI_BULLETIN_ADDENDUM'
+        | 'CONTRACTS_POS'
+        | 'CHANGE_ORDERS'
+        | 'INVOICES'
+        | 'DELIVERY'
+        | 'OTHER';
+      controlState?: 'ALL' | 'CURRENT' | 'SUPERSEDED' | 'UNCLASSIFIED';
+      q?: string;
     }
   ) => {
     const p = new URLSearchParams();
@@ -1920,14 +2116,125 @@ export const api = {
     if (params?.sort) p.set('sort', params.sort);
     if (params?.page) p.set('page', String(params.page));
     if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    if (params?.imageRelevance && params.imageRelevance !== 'ALL') {
+      p.set('imageRelevance', params.imageRelevance);
+    }
+    if (params?.docCategory && params.docCategory !== 'ALL') {
+      p.set('docCategory', params.docCategory);
+    }
+    if (params?.controlState && params.controlState !== 'ALL') {
+      p.set('controlState', params.controlState);
+    }
+    if (params?.q?.trim()) p.set('q', params.q.trim());
     const qs = p.toString();
     return request<{
       files: JobLibraryFile[];
       documents: JobDocument[];
       pagination: { page: number; pageSize: number; totalCount: number; totalPages: number };
-      filters: { type: string; sort: string };
+      filters: {
+        type: string;
+        sort: string;
+        imageRelevance?: string;
+        docCategory?: string;
+        controlState?: string;
+        q?: string | null;
+      };
+      imageRelevanceCounts?: {
+        all: number;
+        relevant: number;
+        noise: number;
+        uncertain: number;
+        notAnalyzed: number;
+      };
     }>(`/workspaces/${workspaceId}/jobs/${jobId}/documents${qs ? `?${qs}` : ''}`);
   },
+
+  upsertJobDocumentControl: (
+    workspaceId: string,
+    jobId: string,
+    body: {
+      sourceType: 'EMAIL_ATTACHMENT' | 'JOB_UPLOAD'
+      sourceId: string
+      documentType: JobDocumentRecordType
+      documentNumber?: string | null
+      title?: string | null
+      revision?: string | null
+      documentDate?: string | null
+      workPackageId?: string | null
+      submittalStatus?: JobDocumentSubmittalStatus | null
+      supersedesId?: string | null
+      notes?: string | null
+      isCurrent?: boolean
+    }
+  ) =>
+    request<{ control: JobDocumentControl }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/document-control`,
+      { method: 'PUT', body: JSON.stringify(body) }
+    ),
+
+  clearJobDocumentControl: (workspaceId: string, jobId: string, recordId: string) =>
+    request<void>(`/workspaces/${workspaceId}/jobs/${jobId}/document-control/${recordId}`, {
+      method: 'DELETE',
+    }),
+
+  listJobRfis: (workspaceId: string, jobId: string) =>
+    request<{ rfis: JobRfi[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/rfis`),
+
+  createJobRfi: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ rfi: JobRfi }>(`/workspaces/${workspaceId}/jobs/${jobId}/rfis`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobRfi: (workspaceId: string, jobId: string, rfiId: string, body: Record<string, unknown>) =>
+    request<{ rfi: JobRfi }>(`/workspaces/${workspaceId}/jobs/${jobId}/rfis/${rfiId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  listJobDirectives: (workspaceId: string, jobId: string) =>
+    request<{ directives: JobDirective[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/directives`),
+
+  createJobDirective: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ directive: JobDirective }>(`/workspaces/${workspaceId}/jobs/${jobId}/directives`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  listJobChanges: (workspaceId: string, jobId: string) =>
+    request<{ changes: JobChange[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/changes`),
+
+  createJobChange: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ change: JobChange }>(`/workspaces/${workspaceId}/jobs/${jobId}/changes`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobChange: (workspaceId: string, jobId: string, changeId: string, body: Record<string, unknown>) =>
+    request<{ change: JobChange }>(`/workspaces/${workspaceId}/jobs/${jobId}/changes/${changeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  listJobChangeOrders: (workspaceId: string, jobId: string) =>
+    request<{ changeOrders: JobChangeOrder[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/change-orders`),
+
+  createJobChangeOrder: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ changeOrder: JobChangeOrder }>(`/workspaces/${workspaceId}/jobs/${jobId}/change-orders`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobChangeOrder: (
+    workspaceId: string,
+    jobId: string,
+    changeOrderId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ changeOrder: JobChangeOrder }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/change-orders/${changeOrderId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
 
   previewTaskBulkDelete: (
     workspaceId: string,
@@ -2419,6 +2726,80 @@ export interface JobLookup {
   customerName?: string | null;
 }
 
+export interface InlineImageRelevanceInfo {
+  emailAttachmentId: string;
+  relevance: 'RELEVANT' | 'NOISE' | 'UNCERTAIN';
+  noiseReason:
+    | 'LOGO'
+    | 'ICON'
+    | 'SIGNATURE_GRAPHIC'
+    | 'DECORATIVE'
+    | 'TRACKING_PIXEL'
+    | 'BADGE'
+    | 'REPEATED_BRANDING'
+    | 'OTHER_NOISE'
+    | null;
+  confidence: number;
+  method: string;
+  analyzerVersion: string;
+  evidence: string;
+  analyzedAt: string;
+  correctedAt: string | null;
+  priorRelevance: 'RELEVANT' | 'NOISE' | 'UNCERTAIN' | null;
+  priorMethod: string | null;
+}
+
+export interface JobDocumentControl {
+  id: string
+  jobId: string
+  sourceType: 'EMAIL_ATTACHMENT' | 'JOB_UPLOAD'
+  jobFileId: string | null
+  emailAttachmentId: string | null
+  documentType: JobDocumentRecordType
+  documentTypeLabel: string
+  documentNumber: string | null
+  title: string | null
+  revision: string | null
+  documentDate: string | null
+  workPackageId: string | null
+  workPackageName: string | null
+  submittalStatus: JobDocumentSubmittalStatus | null
+  submittalStatusLabel: string | null
+  isCurrent: boolean
+  supersedesId: string | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type JobDocumentRecordType =
+  | 'OTHER'
+  | 'ARCHITECTURAL_DRAWING'
+  | 'STRUCTURAL_DRAWING'
+  | 'CIVIL_DRAWING'
+  | 'SPECIFICATION'
+  | 'SHOP_DRAWING'
+  | 'SUBMITTAL'
+  | 'RFI_DOCUMENT'
+  | 'ASI'
+  | 'BULLETIN'
+  | 'ADDENDUM'
+  | 'PROPOSAL_QUOTE'
+  | 'PURCHASE_ORDER'
+  | 'CONTRACT'
+  | 'CHANGE_ORDER'
+  | 'INVOICE'
+  | 'DELIVERY_DOCUMENT'
+
+export type JobDocumentSubmittalStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'APPROVED_AS_NOTED'
+  | 'REVISE_AND_RESUBMIT'
+  | 'REJECTED'
+
 export interface JobLibraryFile {
   id: string;
   filename: string;
@@ -2433,6 +2814,10 @@ export interface JobLibraryFile {
   sender: string | null;
   folderId: string | null;
   previewable: boolean;
+  /** Present for email-attachment images when analyzed. Never implies deletion/hiding. */
+  imageRelevance?: InlineImageRelevanceInfo | null;
+  /** Project document-control metadata. Null = Unclassified. */
+  control?: JobDocumentControl | null;
 }
 
 export interface BiddingProject {
@@ -2457,6 +2842,211 @@ export interface JobFabricationItem {
   estimatedHoursPerPiece: number;
   totalHours: number;
   sortOrder: number;
+  workPackageId?: string | null;
+}
+
+export type JobWorkPackageStatus =
+  | 'NOT_STARTED'
+  | 'DETAILING'
+  | 'AWAITING_APPROVAL'
+  | 'FIELD_MEASURE'
+  | 'READY_FOR_FABRICATION'
+  | 'FABRICATING'
+  | 'READY_TO_SHIP'
+  | 'DELIVERED'
+  | 'INSTALLING'
+  | 'COMPLETE'
+  | 'ON_HOLD'
+
+export interface JobWorkPackage {
+  id: string
+  jobId: string
+  parentId: string | null
+  name: string
+  description: string | null
+  status: JobWorkPackageStatus
+  statusLabel: string
+  sortOrder: number
+  notes: string | null
+  itemCount: number
+  totalQuantity: number
+  estimatedHours: number
+  childCount: number
+  nextMilestone?: {
+    id: string
+    name: string
+    type: string
+    typeLabel: string
+    plannedDate: string | null
+    overdue: boolean
+  } | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobWorkPackageSummary {
+  total: number
+  byStatus: Array<{ status: JobWorkPackageStatus; label: string; count: number }>
+  active: Array<{ id: string; name: string; status: JobWorkPackageStatus; statusLabel: string }>
+}
+
+export type JobMilestoneType =
+  | 'GENERAL'
+  | 'SHOP_DRAWINGS'
+  | 'SUBMITTAL'
+  | 'APPROVAL'
+  | 'FIELD_MEASURE'
+  | 'MATERIAL_REQUIRED'
+  | 'MATERIAL_ORDERED'
+  | 'MATERIAL_EXPECTED'
+  | 'FABRICATION_START'
+  | 'FABRICATION_COMPLETE'
+  | 'READY_TO_SHIP'
+  | 'DELIVERY'
+  | 'INSTALLATION_START'
+  | 'INSTALLATION_COMPLETE'
+  | 'PROJECT_COMPLETE'
+
+export type JobMilestoneStatus = 'OPEN' | 'COMPLETE' | 'CANCELLED'
+
+export interface JobMilestone {
+  id: string
+  jobId: string
+  workPackageId: string | null
+  workPackageName: string | null
+  type: JobMilestoneType
+  typeLabel: string
+  name: string
+  plannedDate: string | null
+  actualDate: string | null
+  status: JobMilestoneStatus
+  overdue: boolean
+  daysOverdue: number | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobScheduleSummary {
+  upcoming: Array<{
+    id: string
+    name: string
+    typeLabel: string
+    plannedDate: string
+    workPackageName: string | null
+  }>
+  overdue: Array<{
+    id: string
+    name: string
+    typeLabel: string
+    plannedDate: string
+    workPackageName: string | null
+    daysOverdue: number
+  }>
+  upcomingCount: number
+  overdueCount: number
+  undatedOpenCount: number
+}
+
+export interface JobChangesSummary {
+  openRfiCount: number
+  overdueRfiCount: number
+  proposedChangeCount: number
+  proposedSellImpact: string | null
+  pendingChangeOrderCount: number
+}
+
+export interface JobRfi {
+  id: string
+  jobId: string
+  number: string
+  subject: string
+  question: string | null
+  status: 'DRAFT' | 'OPEN' | 'ANSWERED' | 'CLOSED' | 'CANCELLED'
+  submittedDate: string | null
+  responseDueDate: string | null
+  answeredDate: string | null
+  response: string | null
+  overdue: boolean
+  requestedBy: { id: string; role: string; name: string } | null
+  assignedTo: { id: string; role: string; name: string } | null
+  workPackages: Array<{ id: string; name: string }>
+  documents: Array<{ id: string; documentNumber: string | null; title: string | null; documentType: string }>
+  changes: Array<{ id: string; number: string; title: string; status: string }>
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobDirective {
+  id: string
+  jobId: string
+  type: 'ASI' | 'BULLETIN' | 'ADDENDUM' | 'OTHER'
+  status: 'ACTIVE' | 'VOID'
+  number: string
+  title: string
+  issuedDate: string | null
+  summary: string | null
+  notes: string | null
+  workPackages: Array<{ id: string; name: string }>
+  documents: Array<{ id: string; documentNumber: string | null; title: string | null; documentType: string }>
+  changes: Array<{ id: string; number: string; title: string; status: string }>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobChange {
+  id: string
+  jobId: string
+  number: string
+  title: string
+  description: string | null
+  type: string
+  status: 'IDENTIFIED' | 'PRICING' | 'PROPOSED' | 'APPROVED' | 'REJECTED' | 'VOID'
+  sourceRfi: { id: string; number: string; subject: string } | null
+  sourceDirective: { id: string; number: string; title: string; type: string } | null
+  changeOrder: { id: string; number: string; status: string } | null
+  costImpact: string | null
+  sellImpact: string | null
+  scheduleImpactDays: number | null
+  scheduleImpactNote: string | null
+  identifiedDate: string | null
+  proposedDate: string | null
+  approvedDate: string | null
+  workPackages: Array<{ id: string; name: string }>
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobChangeOrder {
+  id: string
+  jobId: string
+  number: string
+  title: string | null
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'VOID'
+  submittedDate: string | null
+  approvedDate: string | null
+  sellAmount: string | null
+  notes: string | null
+  changes: Array<{
+    id: string
+    number: string
+    title: string
+    status: string
+    sellImpact: string | null
+    costImpact: string | null
+  }>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobScopePayload {
+  packages: JobWorkPackage[]
+  items: JobFabricationItem[]
+  unassignedItems: JobFabricationItem[]
+  estimatedHours: number
+  summary: JobWorkPackageSummary
 }
 
 export interface JobSummary {
@@ -2484,9 +3074,6 @@ export interface JobSummary {
 export interface JobDetail extends JobSummary {
   notes: string | null;
   externalRef: string | null;
-  completedTaskCount?: number;
-  recentEmails7d?: number;
-  recentEmails30d?: number;
   attachmentCount: number;
   totalCost: string | null;
   estimatedHours: number | null;
@@ -2497,8 +3084,74 @@ export interface JobDetail extends JobSummary {
   clientCustomerId: string | null;
   clientName: string | null;
   fabricationItems: JobFabricationItem[];
+  projectManager?: JobParticipant | null;
+  participants?: JobParticipant[];
+  workPackageSummary?: JobWorkPackageSummary | null;
+  scheduleSummary?: JobScheduleSummary | null;
+  changesSummary?: JobChangesSummary | null;
   members: Array<{ id: string; userId: string; name: string | null; email: string; role: string | null; createdAt: string }>;
   aliases: Array<{ id: string; alias: string; normalizedAlias: string }>;
+}
+
+export type JobParticipantRole =
+  | 'PROJECT_MANAGER'
+  | 'ESTIMATOR'
+  | 'GENERAL_CONTRACTOR'
+  | 'CLIENT'
+  | 'OWNER'
+  | 'ARCHITECT'
+  | 'ENGINEER'
+  | 'DETAILER'
+  | 'ERECTOR'
+  | 'SUPPLIER'
+  | 'OTHER'
+
+export type JobParticipantPartyType = 'USER' | 'CUSTOMER' | 'VENDOR' | 'CONTACT'
+
+export interface JobParticipant {
+  id: string
+  jobId: string
+  role: JobParticipantRole
+  partyType: JobParticipantPartyType
+  isPrimary: boolean
+  title: string | null
+  notes: string | null
+  name: string | null
+  organizationName: string | null
+  email: string | null
+  phone: string | null
+  userId: string | null
+  customerId: string | null
+  vendorId: string | null
+  contactId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ParticipantCandidateBucket {
+  users: Array<{ id: string; name: string | null; email: string; partyType: 'USER' }>
+  customers: Array<{
+    id: string
+    name: string
+    email: string | null
+    phone: string | null
+    partyType: 'CUSTOMER'
+  }>
+  vendors: Array<{
+    id: string
+    name: string
+    email: string | null
+    phone: string | null
+    partyType: 'VENDOR'
+  }>
+  contacts: Array<{
+    id: string
+    name: string | null
+    email: string | null
+    phone: string | null
+    organizationName: string | null
+    partyType: 'CONTACT'
+  }>
 }
 
 export interface JobImportPreviewRow {

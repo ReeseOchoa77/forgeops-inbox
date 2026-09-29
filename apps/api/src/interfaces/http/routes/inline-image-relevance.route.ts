@@ -1,15 +1,21 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
+  INLINE_IMAGE_NOISE_REASONS,
   INLINE_IMAGE_RELEVANCE_ANALYZER_VERSION,
   inlineImageCandidateWhere,
 } from "@forgeops/ai";
 import {
   QueueNames,
   buildInlineImageRelevanceJobId,
+  isInlineImageAiAnalyzeEnabled,
   type InlineImageRelevanceJobPayload,
 } from "@forgeops/shared";
 
+import {
+  correctInlineImageRelevance,
+  InlineImageRelevanceCorrectError,
+} from "../../../application/services/inline-image-relevance-correct.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -29,9 +35,21 @@ const paramsSchema = z.object({
   workspaceId: z.string().min(1),
 });
 
+const attachmentParamsSchema = z.object({
+  workspaceId: z.string().min(1),
+  emailAttachmentId: z.string().min(1),
+});
+
 const analyzeBody = z
   .object({
     force: z.boolean().optional(),
+  })
+  .strict();
+
+const correctBody = z
+  .object({
+    relevance: z.enum(["RELEVANT", "NOISE"]),
+    noiseReason: z.enum(INLINE_IMAGE_NOISE_REASONS).nullable().optional(),
   })
   .strict();
 
@@ -56,6 +74,13 @@ export function registerInlineImageRelevanceRoutes(app: FastifyInstance): void {
   app.post(
     "/api/v1/workspaces/:workspaceId/inline-image-relevance/analyze",
     async (request, reply) => {
+      if (!isInlineImageAiAnalyzeEnabled()) {
+        return reply.code(503).send({
+          message:
+            "Inline image AI analysis is paused. Existing classifications remain available for review.",
+          paused: true,
+        });
+      }
       const params = paramsSchema.parse(request.params);
       const body = analyzeBody.parse(request.body ?? {});
       const session = await getSessionFromRequest(request);
@@ -117,6 +142,50 @@ export function registerInlineImageRelevanceRoutes(app: FastifyInstance): void {
         classified: summary.classified,
       });
       return reply.send({ jobId, summary });
+    }
+  );
+
+  // Human review: authoritative relevance row. Never deletes/hides attachment bytes.
+  app.post(
+    "/api/v1/workspaces/:workspaceId/inline-image-relevance/:emailAttachmentId/correct",
+    async (request, reply) => {
+      const params = attachmentParamsSchema.parse(request.params);
+      const body = correctBody.parse(request.body ?? {});
+      const session = await getSessionFromRequest(request);
+      if (!session) return reply.code(401).send({ message: "Authentication required" });
+      const membership = await requireWorkspaceMembership(
+        app.services.prisma,
+        session.userId,
+        params.workspaceId
+      );
+      if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
+      if (!hasMinRole(membership.role, "MEMBER")) {
+        return reply.code(403).send({ message: "MEMBER or above required" });
+      }
+
+      try {
+        const classification = await correctInlineImageRelevance(app.services.prisma, {
+          workspaceId: params.workspaceId,
+          emailAttachmentId: params.emailAttachmentId,
+          relevance: body.relevance,
+          noiseReason: body.noiseReason ?? null,
+          userId: session.userId,
+        });
+        request.log.info({
+          event: "inline-image-relevance-human-corrected",
+          workspaceId: params.workspaceId,
+          emailAttachmentId: params.emailAttachmentId,
+          relevance: classification.relevance,
+          noiseReason: classification.noiseReason,
+          priorRelevance: classification.priorRelevance,
+        });
+        return reply.send({ classification });
+      } catch (error) {
+        if (error instanceof InlineImageRelevanceCorrectError) {
+          return reply.code(error.statusCode).send({ message: error.message });
+        }
+        throw error;
+      }
     }
   );
 }

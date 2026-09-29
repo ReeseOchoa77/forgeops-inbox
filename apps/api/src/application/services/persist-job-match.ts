@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 import type { JobMatchEvidence, JobMatchResult } from "@forgeops/shared";
-import { isProtectedJobAssignment, tasksForEmailJobLink } from "@forgeops/shared";
+import {
+  isJobMatcherAutoAssignEnabled,
+  isProtectedJobAssignment,
+  tasksForEmailJobLink,
+} from "@forgeops/shared";
 
 export function isManualJobAssignment(existing: {
   jobAssignmentIsManual?: boolean | null;
@@ -42,7 +46,9 @@ export type JobMatchPersistenceFields = {
 
 /**
  * Build dual-persistence payloads from a JobMatcherService result.
- * Returns null when a protected assignment must be preserved (caller skips overwrite).
+ * Returns null when:
+ * - a protected assignment must be preserved, OR
+ * - JOB_MATCHER_AUTO_ASSIGN_ENABLED is off (default freeze).
  */
 export function buildJobMatchPersistence(
   match: JobMatchResult,
@@ -52,6 +58,9 @@ export function buildJobMatchPersistence(
     jobAssignmentSource?: string | null;
   } | null
 ): JobMatchPersistenceFields | null {
+  if (!isJobMatcherAutoAssignEnabled()) {
+    return null;
+  }
   if (existing && isProtectedJobAssignment(existing)) {
     return null;
   }
@@ -86,7 +95,7 @@ export function buildJobMatchPersistence(
 
 /**
  * Apply JobMatcher result to Classification + EmailMessage in one place.
- * No-ops when manual assignment is protected.
+ * No-ops when manual/verified assignment is protected, or when auto-assign is frozen.
  */
 export async function persistJobMatchResult(
   tx: {
@@ -131,7 +140,11 @@ export async function persistJobMatchResult(
 
   if (!fields) {
     if (taskLink) await tx.task.updateMany(taskLink);
-    return { applied: false, preservedManual: true, jobId };
+    return {
+      applied: false,
+      preservedManual: Boolean(input.existing && isProtectedJobAssignment(input.existing)),
+      jobId,
+    };
   }
 
   await Promise.all([

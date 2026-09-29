@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { INLINE_IMAGE_RELEVANCE_ANALYZER_VERSION } from "@forgeops/ai";
 import {
   classifyJobFileType,
   includeEmailAttachmentInJobLibrary,
@@ -14,8 +15,35 @@ import {
 import { presentFabricationItem, totalEstimatedHours } from "../../../application/services/job-fabrication.js";
 import { buildJobListWhere, jobListOrderBy } from "../../../application/services/job-list-query.js";
 import { deleteScopedEmailMessages } from "../../../application/services/clear-inbox.js";
+import { serializeRelevanceRow } from "../../../application/services/inline-image-relevance-correct.js";
+import {
+  listJobParticipants,
+  pickPrimaryProjectManager,
+} from "../../../application/services/job-participants.js";
+import {
+  buildWorkPackageDtos,
+  buildWorkPackageSummary,
+} from "../../../application/services/job-work-packages.js";
+import { buildJobScheduleSummary } from "../../../application/services/job-milestones.js";
+import { buildChangesSummary } from "../../../application/services/job-change-management.js";
+import {
+  DOCUMENT_CATEGORY_FILTERS,
+  DOCUMENT_CONTROL_STATE_FILTERS,
+  documentMatchesCategory,
+  loadDocumentControlsForSources,
+  type DocumentCategoryFilter,
+  type DocumentControlStateFilter,
+} from "../../../application/services/job-document-records.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
+
+const IMAGE_RELEVANCE_FILTERS = [
+  "ALL",
+  "RELEVANT",
+  "NOISE",
+  "UNCERTAIN",
+  "NOT_ANALYZED",
+] as const;
 
 const wsParams = z.object({ workspaceId: z.string().min(1) });
 const jobParams = z.object({ workspaceId: z.string().min(1), jobId: z.string().min(1) });
@@ -533,8 +561,10 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       emailCount,
       openTasks,
       overdueTasks,
-      completedTasks,
-      lastActivity,
+      participants,
+      workPackageSummary,
+      scheduleSummary,
+      changesSummary,
       nextDueTask,
       jobFileCount,
     ] = await Promise.all([
@@ -555,12 +585,27 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           dueAt: { lt: now },
         },
       }),
-      app.services.prisma.task.count({ where: { jobId, status: "DONE" } }),
-      app.services.prisma.jobActivityLog.findFirst({
-        where: { jobId },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      }),
+      listJobParticipants(app.services.prisma, { workspaceId, jobId }),
+      app.services.prisma.jobWorkPackage
+        .findMany({
+          where: { workspaceId, jobId },
+          select: {
+            id: true,
+            jobId: true,
+            parentId: true,
+            name: true,
+            description: true,
+            status: true,
+            sortOrder: true,
+            notes: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        })
+        .then((rows) => buildWorkPackageSummary(buildWorkPackageDtos(rows, []))),
+      buildJobScheduleSummary(app.services.prisma, { workspaceId, jobId, now }),
+      buildChangesSummary(app.services.prisma, { workspaceId, jobId, now }),
       app.services.prisma.task.findFirst({
         where: {
           jobId,
@@ -576,6 +621,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     ]);
     const aggregateMs = Math.round(performance.now() - tAgg);
     const userMap = new Map(users.map((u) => [u.id, u]));
+    const projectManager = pickPrimaryProjectManager(participants);
 
     const mappedMembers = job.members.map((m) => {
       const u = userMap.get(m.userId);
@@ -617,10 +663,13 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         emailCount,
         openTaskCount: openTasks,
         overdueTaskCount: overdueTasks,
-        completedTaskCount: completedTasks,
-        lastActivityAt: lastActivity?.createdAt?.toISOString() ?? null,
         nextDueDate: nextDueTask?.dueAt?.toISOString() ?? null,
         attachmentCount: jobFileCount,
+        projectManager,
+        participants,
+        workPackageSummary,
+        scheduleSummary,
+        changesSummary,
         members: mappedMembers,
         aliases: job.aliases.map((a) => ({
           id: a.id,
@@ -1267,9 +1316,16 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const query = z
       .object({
         type: z.enum(JOB_FILE_TYPE_FILTERS).optional().default("ALL"),
-        sort: z.enum(["newest", "oldest"]).optional().default("newest"),
+        sort: z
+          .enum(["newest", "oldest", "name", "type", "documentDate"])
+          .optional()
+          .default("newest"),
         page: z.coerce.number().int().positive().default(1),
         pageSize: z.coerce.number().int().positive().max(200).default(100),
+        imageRelevance: z.enum(IMAGE_RELEVANCE_FILTERS).optional().default("ALL"),
+        docCategory: z.enum(DOCUMENT_CATEGORY_FILTERS).optional().default("ALL"),
+        controlState: z.enum(DOCUMENT_CONTROL_STATE_FILTERS).optional().default("ALL"),
+        q: z.string().trim().max(200).optional(),
       })
       .parse(request.query ?? {});
 
@@ -1330,6 +1386,13 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       sender: string | null;
       folderId: string | null;
       previewable: boolean;
+      imageRelevance: ReturnType<typeof serializeRelevanceRow> | null;
+      control: Awaited<ReturnType<typeof loadDocumentControlsForSources>> extends Map<
+        string,
+        infer V
+      >
+        ? V | null
+        : null;
     };
 
     const libraryAttachments = attachments.filter((a) =>
@@ -1340,10 +1403,50 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       })
     );
 
+    // One batched relevance lookup for email-attachment images on this job (no N+1).
+    const imageAttachmentIds = libraryAttachments
+      .filter((a) => classifyJobFileType(a.mimeType, a.filename) === "IMAGES")
+      .map((a) => a.id);
+
+    const [relevanceRows, controlMap] = await Promise.all([
+      imageAttachmentIds.length === 0
+        ? Promise.resolve([])
+        : app.services.prisma.inlineImageRelevanceClassification.findMany({
+            where: {
+              workspaceId,
+              analyzerVersion: INLINE_IMAGE_RELEVANCE_ANALYZER_VERSION,
+              emailAttachmentId: { in: imageAttachmentIds },
+            },
+            select: {
+              emailAttachmentId: true,
+              relevance: true,
+              noiseReason: true,
+              confidence: true,
+              method: true,
+              analyzerVersion: true,
+              evidence: true,
+              analyzedAt: true,
+              correctedAt: true,
+              priorRelevance: true,
+              priorMethod: true,
+            },
+          }),
+      loadDocumentControlsForSources(app.services.prisma, {
+        workspaceId,
+        jobId,
+        jobFileIds: jobUploads.map((f) => f.id),
+        emailAttachmentIds: libraryAttachments.map((a) => a.id),
+      }),
+    ]);
+    const relevanceByAttachmentId = new Map(
+      relevanceRows.map((row) => [row.emailAttachmentId, serializeRelevanceRow(row)])
+    );
+
     const files: LibraryFile[] = [
       ...libraryAttachments.map((a) => {
         const date =
           a.emailMessage.receivedAt ?? a.emailMessage.sentAt ?? a.createdAt;
+        const fileType = classifyJobFileType(a.mimeType, a.filename);
         return {
           id: a.id,
           filename: a.filename,
@@ -1352,7 +1455,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           sizeBytes: a.sizeBytes,
           date: date.toISOString(),
           sourceType: "EMAIL_ATTACHMENT" as const,
-          fileType: classifyJobFileType(a.mimeType, a.filename),
+          fileType,
           emailId: a.emailMessage.id,
           emailSubject: a.emailMessage.subject,
           sender:
@@ -1361,6 +1464,9 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
             null,
           folderId: null,
           previewable: canPreviewFile({ filename: a.filename, contentType: a.mimeType }),
+          imageRelevance:
+            fileType === "IMAGES" ? relevanceByAttachmentId.get(a.id) ?? null : null,
+          control: controlMap.get(`EMAIL_ATTACHMENT:${a.id}`) ?? null,
         };
       }),
       ...jobUploads.map((f) => ({
@@ -1377,16 +1483,81 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         sender: null,
         folderId: f.folderId,
         previewable: canPreviewFile({ filename: f.filename, contentType: f.mimeType }),
+        imageRelevance: null,
+        control: controlMap.get(`JOB_UPLOAD:${f.id}`) ?? null,
       })),
     ];
 
     const typeFilter = query.type as JobFileTypeFilter;
-    const filtered =
+    const relevanceFilter = query.imageRelevance;
+    const docCategory = query.docCategory as DocumentCategoryFilter;
+    const controlState = query.controlState as DocumentControlStateFilter;
+    const search = query.q?.toLowerCase() ?? "";
+
+    let filtered =
       typeFilter === "ALL"
         ? files
         : files.filter((f) => f.fileType === typeFilter);
 
+    if (relevanceFilter !== "ALL") {
+      filtered = filtered.filter((f) => {
+        if (f.fileType !== "IMAGES" || f.sourceType !== "EMAIL_ATTACHMENT") return false;
+        if (relevanceFilter === "NOT_ANALYZED") return f.imageRelevance == null;
+        return f.imageRelevance?.relevance === relevanceFilter;
+      });
+    }
+
+    if (docCategory !== "ALL") {
+      filtered = filtered.filter((f) =>
+        documentMatchesCategory(f.control?.documentType, docCategory)
+      );
+    }
+
+    if (controlState === "UNCLASSIFIED") {
+      filtered = filtered.filter((f) => f.control == null);
+    } else if (controlState === "CURRENT") {
+      filtered = filtered.filter((f) => f.control?.isCurrent === true);
+    } else if (controlState === "SUPERSEDED") {
+      filtered = filtered.filter((f) => f.control != null && !f.control.isCurrent);
+    }
+
+    if (search) {
+      filtered = filtered.filter((f) => {
+        const hay = [
+          f.filename,
+          f.emailSubject,
+          f.sender,
+          f.control?.documentNumber,
+          f.control?.title,
+          f.control?.revision,
+          f.control?.documentTypeLabel,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(search);
+      });
+    }
+
     filtered.sort((a, b) => {
+      if (query.sort === "name") {
+        return a.filename.localeCompare(b.filename) || a.id.localeCompare(b.id);
+      }
+      if (query.sort === "type") {
+        const at = a.control?.documentTypeLabel ?? "Unclassified";
+        const bt = b.control?.documentTypeLabel ?? "Unclassified";
+        return at.localeCompare(bt) || a.filename.localeCompare(b.filename);
+      }
+      if (query.sort === "documentDate") {
+        const ad = a.control?.documentDate ?? "";
+        const bd = b.control?.documentDate ?? "";
+        if (ad !== bd) {
+          if (!ad) return 1;
+          if (!bd) return -1;
+          return ad < bd ? 1 : -1;
+        }
+        return a.filename.localeCompare(b.filename);
+      }
       const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
       return query.sort === "oldest" ? diff : -diff;
     });
@@ -1394,6 +1565,17 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const totalCount = filtered.length;
     const skip = (query.page - 1) * query.pageSize;
     const pageFiles = filtered.slice(skip, skip + query.pageSize);
+
+    const imageFiles = files.filter(
+      (f) => f.fileType === "IMAGES" && f.sourceType === "EMAIL_ATTACHMENT"
+    );
+    const imageRelevanceCounts = {
+      all: imageFiles.length,
+      relevant: imageFiles.filter((f) => f.imageRelevance?.relevance === "RELEVANT").length,
+      noise: imageFiles.filter((f) => f.imageRelevance?.relevance === "NOISE").length,
+      uncertain: imageFiles.filter((f) => f.imageRelevance?.relevance === "UNCERTAIN").length,
+      notAnalyzed: imageFiles.filter((f) => f.imageRelevance == null).length,
+    };
 
     // Backward-compatible `documents` = email attachments only (legacy shape).
     const documents = libraryAttachments.map((a) => ({
@@ -1417,7 +1599,15 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         totalCount,
         totalPages: Math.max(1, Math.ceil(totalCount / query.pageSize)),
       },
-      filters: { type: typeFilter, sort: query.sort },
+      filters: {
+        type: typeFilter,
+        sort: query.sort,
+        imageRelevance: relevanceFilter,
+        docCategory,
+        controlState,
+        q: query.q ?? null,
+      },
+      imageRelevanceCounts,
     });
   });
 
