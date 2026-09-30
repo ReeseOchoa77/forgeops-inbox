@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatFinancialMoney,
+  formatFinancialSignedMoney,
   formatHoursNumber,
   formatJobCost,
+  formatMarginPercent,
   formatOverviewDate,
   formatQuantity,
   lineEstimatedHours,
@@ -21,6 +24,15 @@ describe("job overview formatting", () => {
     expect(formatJobCost(null)).toBe("Not set");
     expect(formatJobCost("")).toBe("Not set");
     expect(formatJobCost(0)).toBe("$0");
+  });
+
+  it("distinguishes financial Unknown from $0 and signed CO adjustments", () => {
+    expect(formatFinancialMoney(null)).toBe("Unknown");
+    expect(formatFinancialMoney(0)).toBe("$0");
+    expect(formatFinancialSignedMoney(45000)).toBe("+$45,000");
+    expect(formatFinancialSignedMoney(-8500)).toMatch(/−\$8,500/);
+    expect(formatMarginPercent("25.50")).toBe("25.5%");
+    expect(formatMarginPercent(null)).toBe("Unknown");
   });
 
   it("formats the start date and leaves an empty date unset", () => {
@@ -50,10 +62,11 @@ describe("job overview formatting", () => {
   });
 
   it("uses the operational overview labels", () => {
-    expect(OVERVIEW_METRIC_LABELS).toEqual(["Entered total", "Emails", "Open Tasks", "Estimated Hours"]);
+    expect(OVERVIEW_METRIC_LABELS).toEqual(["Emails", "Open Tasks", "Estimated Hours"]);
     expect(OVERVIEW_PARTY_LABELS).toEqual(["Estimator", "Project Manager", "Contractor", "Client"]);
-    expect(TOTAL_COST_DISPLAY_LABEL).toBe("Entered total");
+    expect(TOTAL_COST_DISPLAY_LABEL).toBe("Legacy entered total");
     expect(OVERVIEW_REMOVED_LABELS).toEqual([
+      "Entered total",
       "Emails (7d)",
       "Emails (30d)",
       "Completed Tasks",

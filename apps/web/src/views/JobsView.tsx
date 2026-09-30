@@ -9,7 +9,6 @@ import {
   setCachedJobsList,
 } from '../jobs-list-cache'
 import { isCurrentJobsRequest, JOBS_SEARCH_DEBOUNCE_MS } from '../jobs-search'
-import { formatJobCost } from '../job-overview-format'
 import {
   getJobListSort,
   JOB_LIST_SORT_OPTIONS,
@@ -528,7 +527,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
             {job.customerName ?? '—'}
           </div>
           <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
-            <span>{formatJobCost(job.totalCost)}</span>
             <span>✉ {job.emailCount}</span>
             <span>☐ {job.openTaskCount} open</span>
             <span style={{ color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
@@ -564,7 +562,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
             <th style={stickyTh()}>Customer</th>
             <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
             {!hideExtraCols && <th style={thStyle('startDate')} onClick={() => handleSort('startDate')}>Start{sortIndicator('startDate')}</th>}
-            {!hideExtraCols && <th style={thStyle('totalCost')} onClick={() => handleSort('totalCost')}>Cost{sortIndicator('totalCost')}</th>}
             <th style={stickyTh({ textAlign: 'center' })}>Emails</th>
             <th style={stickyTh({ textAlign: 'center' })}>Open Tasks</th>
             <th style={stickyTh({ textAlign: 'center' })}>Overdue</th>
@@ -589,7 +586,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
               <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
               <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
               {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.startDate ? formatDate(job.startDate) : '—'}</td>}
-              {!hideExtraCols && <td style={{ padding: '10px 12px', fontSize: 12 }}>{job.totalCost == null ? '—' : formatJobCost(job.totalCost)}</td>}
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>

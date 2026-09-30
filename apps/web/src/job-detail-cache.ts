@@ -87,6 +87,18 @@ export function mergeJobDetailAfterUpdate(
     totalCost: updated.totalCost !== undefined
       ? (updated.totalCost == null ? null : String(updated.totalCost))
       : prev.totalCost,
+    originalContractValue: updated.originalContractValue !== undefined
+      ? (updated.originalContractValue == null ? null : String(updated.originalContractValue))
+      : prev.originalContractValue,
+    originalEstimatedCost: updated.originalEstimatedCost !== undefined
+      ? (updated.originalEstimatedCost == null ? null : String(updated.originalEstimatedCost))
+      : prev.originalEstimatedCost,
+    financialSnapshot: updated.financialSnapshot !== undefined
+      ? updated.financialSnapshot
+      : prev.financialSnapshot,
+    billingSnapshot: updated.billingSnapshot !== undefined
+      ? updated.billingSnapshot
+      : prev.billingSnapshot,
     estimatorUserId: updated.estimatorUserId !== undefined ? updated.estimatorUserId : prev.estimatorUserId,
     estimatorName: updated.estimatorName !== undefined
       ? updated.estimatorName
@@ -107,6 +119,12 @@ export function mergeJobDetailAfterUpdate(
         : prev.clientName,
     customerId: updated.customerId !== undefined ? updated.customerId : prev.customerId,
     customerName: updated.customerName ?? updated.customer?.name ?? prev.customerName,
+    siteName: updated.siteName !== undefined ? updated.siteName : prev.siteName,
+    siteAddress1: updated.siteAddress1 !== undefined ? updated.siteAddress1 : prev.siteAddress1,
+    siteAddress2: updated.siteAddress2 !== undefined ? updated.siteAddress2 : prev.siteAddress2,
+    siteCity: updated.siteCity !== undefined ? updated.siteCity : prev.siteCity,
+    siteState: updated.siteState !== undefined ? updated.siteState : prev.siteState,
+    sitePostalCode: updated.sitePostalCode !== undefined ? updated.sitePostalCode : prev.sitePostalCode,
     archivedAt: updated.archivedAt !== undefined ? updated.archivedAt : prev.archivedAt,
     members: Array.isArray(updated.members) ? updated.members : prev.members ?? [],
     aliases: Array.isArray(updated.aliases) ? updated.aliases : prev.aliases ?? [],
@@ -124,6 +142,10 @@ export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
     externalRef: null,
     attachmentCount: 0,
     totalCost: summary.totalCost ?? null,
+    originalContractValue: null,
+    originalEstimatedCost: null,
+    financialSnapshot: null,
+    billingSnapshot: null,
     estimatedHours: null,
     estimatorUserId: null,
     estimatorName: null,

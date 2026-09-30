@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api, type JobChange, type JobChangeOrder, type JobDirective, type JobRfi, type JobChangesSummary, type JobWorkPackage } from '../api'
 import { formatOverviewDate } from '../job-overview-format'
+import { parseNullableMoneyInput } from '../job-crm-ui'
+import {
+  JobCrmField,
+  JobCrmModal,
+  JobCrmPrimaryButton,
+  JobCrmSecondaryButton,
+  jobCrmInputStyle,
+} from '../components/JobCrmModal'
 
 type SubTab = 'rfis' | 'directives' | 'changes' | 'changeOrders'
 
@@ -48,6 +56,25 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [modal, setModal] = useState<
+    | null
+    | { type: 'createRfi' }
+    | { type: 'answerRfi'; rfi: JobRfi }
+    | { type: 'createDirective' }
+    | { type: 'createChange'; from?: { rfiId?: string; directiveId?: string } }
+    | { type: 'createCo' }
+  >(null)
+  const [rfiNumber, setRfiNumber] = useState('RFI-001')
+  const [rfiSubject, setRfiSubject] = useState('')
+  const [rfiResponse, setRfiResponse] = useState('')
+  const [directiveType, setDirectiveType] = useState<'ASI' | 'BULLETIN' | 'ADDENDUM' | 'OTHER'>('ASI')
+  const [directiveNumber, setDirectiveNumber] = useState('ASI-01')
+  const [directiveTitle, setDirectiveTitle] = useState('')
+  const [changeNumber, setChangeNumber] = useState('CH-001')
+  const [changeTitle, setChangeTitle] = useState('')
+  const [changeSell, setChangeSell] = useState('')
+  const [changeCost, setChangeCost] = useState('')
+  const [coNumber, setCoNumber] = useState('CO-01')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -77,15 +104,23 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
     void load()
   }, [load])
 
-  const createRfi = async () => {
-    const number = window.prompt('RFI number', 'RFI-001')
-    if (!number?.trim()) return
-    const subject = window.prompt('Subject')
-    if (!subject?.trim()) return
+  const openCreateRfi = () => {
+    setRfiNumber('RFI-001')
+    setRfiSubject('')
+    setModal({ type: 'createRfi' })
+  }
+
+  const submitCreateRfi = async () => {
+    if (!rfiNumber.trim() || !rfiSubject.trim()) return
     setBusy(true)
     setError(null)
     try {
-      await api.createJobRfi(workspaceId, jobId, { number: number.trim(), subject: subject.trim(), status: 'OPEN' })
+      await api.createJobRfi(workspaceId, jobId, {
+        number: rfiNumber.trim(),
+        subject: rfiSubject.trim(),
+        status: 'OPEN',
+      })
+      setModal(null)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create RFI')
@@ -94,12 +129,20 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
     }
   }
 
-  const answerRfi = async (rfi: JobRfi) => {
-    const response = window.prompt('Response', rfi.response ?? '')
-    if (response == null) return
+  const openAnswerRfi = (rfi: JobRfi) => {
+    setRfiResponse(rfi.response ?? '')
+    setModal({ type: 'answerRfi', rfi })
+  }
+
+  const submitAnswerRfi = async () => {
+    if (modal?.type !== 'answerRfi') return
     setBusy(true)
     try {
-      await api.updateJobRfi(workspaceId, jobId, rfi.id, { status: 'ANSWERED', response })
+      await api.updateJobRfi(workspaceId, jobId, modal.rfi.id, {
+        status: 'ANSWERED',
+        response: rfiResponse,
+      })
+      setModal(null)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to answer RFI')
@@ -120,20 +163,23 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
     }
   }
 
-  const createDirective = async () => {
-    const type = window.prompt('Type: ASI, BULLETIN, ADDENDUM, or OTHER', 'ASI')?.toUpperCase()
-    if (!type || !['ASI', 'BULLETIN', 'ADDENDUM', 'OTHER'].includes(type)) return
-    const number = window.prompt('Directive number', 'ASI-01')
-    if (!number?.trim()) return
-    const title = window.prompt('Title')
-    if (!title?.trim()) return
+  const openCreateDirective = () => {
+    setDirectiveType('ASI')
+    setDirectiveNumber('ASI-01')
+    setDirectiveTitle('')
+    setModal({ type: 'createDirective' })
+  }
+
+  const submitCreateDirective = async () => {
+    if (!directiveNumber.trim() || !directiveTitle.trim()) return
     setBusy(true)
     try {
       await api.createJobDirective(workspaceId, jobId, {
-        type: type as 'ASI' | 'BULLETIN' | 'ADDENDUM' | 'OTHER',
-        number: number.trim(),
-        title: title.trim(),
+        type: directiveType,
+        number: directiveNumber.trim(),
+        title: directiveTitle.trim(),
       })
+      setModal(null)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create directive')
@@ -142,24 +188,35 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
     }
   }
 
-  const createChange = async (from?: { rfiId?: string; directiveId?: string }) => {
-    const number = window.prompt('Change number', 'CH-001')
-    if (!number?.trim()) return
-    const title = window.prompt('Title')
-    if (!title?.trim()) return
-    const sellRaw = window.prompt('Sell impact (blank = not priced, 0 = zero)', '')
-    const costRaw = window.prompt('Cost impact (blank = not priced, 0 = zero)', '')
+  const openCreateChange = (from?: { rfiId?: string; directiveId?: string }) => {
+    setChangeNumber('CH-001')
+    setChangeTitle('')
+    setChangeSell('')
+    setChangeCost('')
+    setModal({ type: 'createChange', from })
+  }
+
+  const submitCreateChange = async () => {
+    if (modal?.type !== 'createChange') return
+    if (!changeNumber.trim() || !changeTitle.trim()) return
+    const sellImpact = parseNullableMoneyInput(changeSell)
+    const costImpact = parseNullableMoneyInput(changeCost)
+    if (sellImpact === undefined || costImpact === undefined) {
+      setError('Enter valid numbers for sell/cost impact, or leave blank for not priced.')
+      return
+    }
     setBusy(true)
     try {
       await api.createJobChange(workspaceId, jobId, {
-        number: number.trim(),
-        title: title.trim(),
+        number: changeNumber.trim(),
+        title: changeTitle.trim(),
         status: 'IDENTIFIED',
-        sourceRfiId: from?.rfiId ?? null,
-        sourceDirectiveId: from?.directiveId ?? null,
-        sellImpact: sellRaw === '' || sellRaw == null ? null : Number(sellRaw),
-        costImpact: costRaw === '' || costRaw == null ? null : Number(costRaw),
+        sourceRfiId: modal.from?.rfiId ?? null,
+        sourceDirectiveId: modal.from?.directiveId ?? null,
+        sellImpact,
+        costImpact,
       })
+      setModal(null)
       await load()
       setSub('changes')
     } catch (e) {
@@ -181,18 +238,23 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
     }
   }
 
-  const createCO = async () => {
-    const number = window.prompt('Change Order number', 'CO-01')
-    if (!number?.trim()) return
+  const openCreateCo = () => {
+    setCoNumber('CO-01')
+    setModal({ type: 'createCo' })
+  }
+
+  const submitCreateCo = async () => {
+    if (!coNumber.trim()) return
     const eligible = changes.filter((c) => !c.changeOrder && (c.status === 'APPROVED' || c.status === 'PROPOSED'))
     const ids = eligible.map((c) => c.id)
     setBusy(true)
     try {
       await api.createJobChangeOrder(workspaceId, jobId, {
-        number: number.trim(),
+        number: coNumber.trim(),
         changeIds: ids,
         status: 'DRAFT',
       })
+      setModal(null)
       await load()
       setSub('changeOrders')
     } catch (e) {
@@ -243,7 +305,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       {sub === 'rfis' && (
         <Section
           title="RFIs"
-          action={canEdit ? { label: '+ RFI', onClick: () => void createRfi(), disabled: busy } : undefined}
+          action={canEdit ? { label: '+ RFI', onClick: openCreateRfi, disabled: busy } : undefined}
         >
           {rfis.length === 0 ? (
             <Empty>No RFIs yet.</Empty>
@@ -263,12 +325,12 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
                 {canEdit && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {rfi.status === 'OPEN' && (
-                      <Btn onClick={() => void answerRfi(rfi)} disabled={busy}>Answer</Btn>
+                      <Btn onClick={() => openAnswerRfi(rfi)} disabled={busy}>Answer</Btn>
                     )}
                     {(rfi.status === 'ANSWERED' || rfi.status === 'OPEN') && (
                       <Btn onClick={() => void closeRfi(rfi)} disabled={busy}>Close</Btn>
                     )}
-                    <Btn onClick={() => void createChange({ rfiId: rfi.id })} disabled={busy}>Create Change</Btn>
+                    <Btn onClick={() => openCreateChange({ rfiId: rfi.id })} disabled={busy}>Create Change</Btn>
                   </div>
                 )}
               </Row>
@@ -280,7 +342,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       {sub === 'directives' && (
         <Section
           title="Directives"
-          action={canEdit ? { label: '+ Directive', onClick: () => void createDirective(), disabled: busy } : undefined}
+          action={canEdit ? { label: '+ Directive', onClick: openCreateDirective, disabled: busy } : undefined}
         >
           {directives.length === 0 ? (
             <Empty>No directives yet.</Empty>
@@ -298,7 +360,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
                   </div>
                 </div>
                 {canEdit && d.status === 'ACTIVE' && (
-                  <Btn onClick={() => void createChange({ directiveId: d.id })} disabled={busy}>Create Change</Btn>
+                  <Btn onClick={() => openCreateChange({ directiveId: d.id })} disabled={busy}>Create Change</Btn>
                 )}
               </Row>
             ))
@@ -309,7 +371,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       {sub === 'changes' && (
         <Section
           title="Changes"
-          action={canEdit ? { label: '+ Change', onClick: () => void createChange(), disabled: busy } : undefined}
+          action={canEdit ? { label: '+ Change', onClick: () => openCreateChange(), disabled: busy } : undefined}
         >
           {changes.length === 0 ? (
             <Empty>No changes yet.</Empty>
@@ -352,7 +414,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       {sub === 'changeOrders' && (
         <Section
           title="Change Orders"
-          action={canEdit ? { label: '+ Change Order', onClick: () => void createCO(), disabled: busy } : undefined}
+          action={canEdit ? { label: '+ Change Order', onClick: openCreateCo, disabled: busy } : undefined}
         >
           {changeOrders.length === 0 ? (
             <Empty>No change orders yet.</Empty>
@@ -400,6 +462,142 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       )}
       {/* packages available for future package pickers */}
       {packages.length === 0 ? null : null}
+
+      <JobCrmModal
+        title="New RFI"
+        open={modal?.type === 'createRfi'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setModal(null)} disabled={busy}>Cancel</JobCrmSecondaryButton>
+            <JobCrmPrimaryButton
+              onClick={() => void submitCreateRfi()}
+              disabled={busy || !rfiNumber.trim() || !rfiSubject.trim()}
+            >
+              Create
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="RFI number" required>
+          <input style={jobCrmInputStyle} value={rfiNumber} onChange={(e) => setRfiNumber(e.target.value)} />
+        </JobCrmField>
+        <JobCrmField label="Subject" required>
+          <input style={jobCrmInputStyle} value={rfiSubject} onChange={(e) => setRfiSubject(e.target.value)} />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobCrmModal
+        title="Answer RFI"
+        open={modal?.type === 'answerRfi'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setModal(null)} disabled={busy}>Cancel</JobCrmSecondaryButton>
+            <JobCrmPrimaryButton onClick={() => void submitAnswerRfi()} disabled={busy}>
+              Save response
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Response">
+          <textarea
+            style={{ ...jobCrmInputStyle, minHeight: 88, resize: 'vertical' }}
+            value={rfiResponse}
+            onChange={(e) => setRfiResponse(e.target.value)}
+          />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobCrmModal
+        title="New directive"
+        open={modal?.type === 'createDirective'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setModal(null)} disabled={busy}>Cancel</JobCrmSecondaryButton>
+            <JobCrmPrimaryButton
+              onClick={() => void submitCreateDirective()}
+              disabled={busy || !directiveNumber.trim() || !directiveTitle.trim()}
+            >
+              Create
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Type" required>
+          <select
+            style={jobCrmInputStyle}
+            value={directiveType}
+            onChange={(e) => setDirectiveType(e.target.value as typeof directiveType)}
+          >
+            <option value="ASI">ASI</option>
+            <option value="BULLETIN">Bulletin</option>
+            <option value="ADDENDUM">Addendum</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </JobCrmField>
+        <JobCrmField label="Directive number" required>
+          <input style={jobCrmInputStyle} value={directiveNumber} onChange={(e) => setDirectiveNumber(e.target.value)} />
+        </JobCrmField>
+        <JobCrmField label="Title" required>
+          <input style={jobCrmInputStyle} value={directiveTitle} onChange={(e) => setDirectiveTitle(e.target.value)} />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobCrmModal
+        title="New change"
+        open={modal?.type === 'createChange'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setModal(null)} disabled={busy}>Cancel</JobCrmSecondaryButton>
+            <JobCrmPrimaryButton
+              onClick={() => void submitCreateChange()}
+              disabled={busy || !changeNumber.trim() || !changeTitle.trim()}
+            >
+              Create
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Change number" required>
+          <input style={jobCrmInputStyle} value={changeNumber} onChange={(e) => setChangeNumber(e.target.value)} />
+        </JobCrmField>
+        <JobCrmField label="Title" required>
+          <input style={jobCrmInputStyle} value={changeTitle} onChange={(e) => setChangeTitle(e.target.value)} />
+        </JobCrmField>
+        <JobCrmField label="Sell impact" hint="Blank = not priced; 0 = zero">
+          <input style={jobCrmInputStyle} value={changeSell} onChange={(e) => setChangeSell(e.target.value)} />
+        </JobCrmField>
+        <JobCrmField label="Cost impact" hint="Blank = not priced; 0 = zero">
+          <input style={jobCrmInputStyle} value={changeCost} onChange={(e) => setChangeCost(e.target.value)} />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobCrmModal
+        title="New change order"
+        open={modal?.type === 'createCo'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setModal(null)} disabled={busy}>Cancel</JobCrmSecondaryButton>
+            <JobCrmPrimaryButton
+              onClick={() => void submitCreateCo()}
+              disabled={busy || !coNumber.trim()}
+            >
+              Create
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Change order number" required>
+          <input style={jobCrmInputStyle} value={coNumber} onChange={(e) => setCoNumber(e.target.value)} />
+        </JobCrmField>
+        <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>
+          Includes eligible proposed/approved changes not yet on a change order.
+        </p>
+      </JobCrmModal>
     </div>
   )
 }

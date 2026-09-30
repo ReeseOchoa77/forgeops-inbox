@@ -227,6 +227,82 @@ enum JobActivityAction {
   CHANGE_ORDER_CREATED
   CHANGE_ORDER_UPDATED
   CHANGE_ORDER_STATUS_CHANGED
+  PROCUREMENT_ITEM_CREATED
+  PROCUREMENT_ITEM_UPDATED
+  PROCUREMENT_ITEM_CANCELLED
+  PROCUREMENT_RECEIPT_RECORDED
+  PROCUREMENT_ITEM_COMPLETED
+  PURCHASE_ORDER_CREATED
+  PURCHASE_ORDER_UPDATED
+  PURCHASE_ORDER_ISSUED
+  PURCHASE_ORDER_CANCELLED
+  DELIVERY_CREATED
+  DELIVERY_UPDATED
+  DELIVERY_SHIPPED
+  DELIVERY_DELIVERED
+  DELIVERY_CANCELLED
+  DELIVERY_LINE_ADDED
+  DELIVERY_LINE_REMOVED
+  INSTALLATION_RECORDED
+  INSTALLATION_UPDATED
+  ORIGINAL_CONTRACT_VALUE_UPDATED
+  ORIGINAL_ESTIMATED_COST_UPDATED
+  INVOICE_CREATED
+  INVOICE_UPDATED
+  INVOICE_SUBMITTED
+  INVOICE_APPROVED
+  INVOICE_REJECTED
+  INVOICE_VOIDED
+  INVOICE_DELETED
+}
+
+/// Outbound fabricated product delivery (not procurement inbound receipt).
+enum JobShipmentStatus {
+  PLANNED
+  READY
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+/// Site erection/installation event. Distinct from delivery-to-site.
+enum JobInstallationEventType {
+  STARTED
+  PROGRESS
+  COMPLETED
+}
+
+/// Broad procurement taxonomy. Steel shapes belong in description, not enums.
+enum JobProcurementCategory {
+  MATERIAL
+  JOIST_DECK
+  HARDWARE
+  COATING
+  OUTSOURCED_FABRICATION
+  DETAILING
+  ENGINEERING
+  TESTING
+  OTHER
+}
+
+/// Where a procurement requirement sits in the buying/receiving workflow.
+enum JobProcurementItemStatus {
+  NEEDED
+  PRICING
+  READY_TO_ORDER
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+/// Commercial purchase order status. No AP/payment states.
+enum JobPurchaseOrderStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
 }
 
 /// Formal clarification request. Distinct from email subtype RFI_CLARIFICATION.
@@ -272,6 +348,16 @@ enum JobChangeStatus {
 
 /// Formal commercial Change Order that may bundle multiple Changes.
 enum JobChangeOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  VOID
+}
+
+/// Project billing invoice / pay-application record. Not AR/payment tracking.
+/// SUBMITTED = sent/issued to bill-to. No PAID states in Phase I.
+enum JobInvoiceStatus {
   DRAFT
   SUBMITTED
   APPROVED
@@ -425,6 +511,11 @@ model Workspace {
   jobDirectives        JobDirective[]
   jobChanges           JobChange[]
   jobChangeOrders      JobChangeOrder[]
+  jobProcurementItems  JobProcurementItem[]
+  jobPurchaseOrders    JobPurchaseOrder[]
+  jobShipments         JobShipment[]
+  jobInstallationRecords JobInstallationRecord[]
+  jobInvoices          JobInvoice[]
 }
 
 model User {
@@ -934,6 +1025,7 @@ model Customer {
   aliases         EntityAlias[]
   contacts        EntityContact[]
   jobParticipations JobParticipant[] @relation("JobParticipantCustomer")
+  billedInvoices    JobInvoice[]     @relation("JobInvoiceBillTo")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -961,6 +1053,8 @@ model Vendor {
   aliases         EntityAlias[]
   contacts        EntityContact[]
   jobParticipations JobParticipant[] @relation("JobParticipantVendor")
+  procurementItems  JobProcurementItem[]
+  purchaseOrders    JobPurchaseOrder[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -987,7 +1081,22 @@ model Job {
   bidDueAt              DateTime?
   /// Entered total cost for the job. Null means unknown, not zero.
   /// This is not derived from fabrication items.
+  /// Legacy / ambiguous — do not treat as contract value or estimated cost.
   totalCost             Decimal?   @db.Decimal(14, 2)
+  /// Canonical original sell/contract value before approved Change Orders.
+  /// NULL = unknown / not entered. 0 = explicit zero. Not backfilled from totalCost.
+  originalContractValue Decimal?   @db.Decimal(14, 2)
+  /// Canonical original internal cost estimate baseline.
+  /// NULL = unknown / not entered. 0 = explicit zero. Not derived from procurement or fab hours.
+  originalEstimatedCost Decimal?   @db.Decimal(14, 2)
+  /// Default project/site destination. Not a Customer billing address.
+  /// Shipment destination snapshots are independent historical copies.
+  siteName              String?
+  siteAddress1          String?
+  siteAddress2          String?
+  siteCity              String?
+  siteState             String?
+  sitePostalCode        String?
   /// Assigned estimator. Distinct from createdByUserId.
   estimatorUserId       String?
   /// General contractor, stored as an existing Customer. Distinct from client and from customerId.
@@ -1024,6 +1133,11 @@ model Job {
   directives            JobDirective[]
   changes               JobChange[]
   changeOrders          JobChangeOrder[]
+  procurementItems      JobProcurementItem[]
+  purchaseOrders        JobPurchaseOrder[]
+  shipments             JobShipment[]
+  installationRecords   JobInstallationRecord[]
+  invoices              JobInvoice[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -1062,6 +1176,7 @@ model JobParticipant {
   contact      EntityContact?          @relation("JobParticipantContact", fields: [contactId], references: [id], onDelete: Cascade)
   rfisRequested JobRfi[]               @relation("RfiRequestedBy")
   rfisAssigned  JobRfi[]               @relation("RfiAssignedTo")
+  installationRecords JobInstallationRecord[]
 
   @@unique([jobId, role, userId])
   @@unique([jobId, role, customerId])
@@ -1097,6 +1212,9 @@ model JobWorkPackage {
   rfiLinks     JobRfiWorkPackage[]
   directiveLinks JobDirectiveWorkPackage[]
   changeLinks  JobChangeWorkPackage[]
+  procurementItems JobProcurementItem[]
+  shipmentItems    JobShipmentItem[]
+  installationRecords JobInstallationRecord[]
 
   @@index([workspaceId, jobId, sortOrder])
   @@index([jobId, parentId])
@@ -1167,6 +1285,9 @@ model JobDocumentRecord {
   supersededBy       JobDocumentRecord[]        @relation("DocumentRevision")
   rfiLinks           JobRfiDocument[]
   directiveLinks     JobDirectiveDocument[]
+  purchaseOrders     JobPurchaseOrder[]
+  shipmentDocuments  JobShipmentDocument[]
+  invoices           JobInvoice[]
 
   @@index([workspaceId, jobId, documentType])
   @@index([workspaceId, jobId, isCurrent])
@@ -1306,6 +1427,7 @@ model JobChange {
   /// Restrict: remove Changes from CO before deleting the CO.
   changeOrder       JobChangeOrder? @relation(fields: [changeOrderId], references: [id], onDelete: Restrict)
   workPackages      JobChangeWorkPackage[]
+  procurementItems  JobProcurementItem[] @relation("ProcurementSourceChange")
 
   @@index([workspaceId, jobId, status])
   @@index([jobId, number])
@@ -1344,9 +1466,159 @@ model JobChangeOrder {
   workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   job           Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
   changes       JobChange[]
+  invoiceAllocations JobInvoiceChangeOrderAllocation[]
 
   @@index([workspaceId, jobId, status])
   @@index([jobId, number])
+}
+
+/// Project billing invoice / pay application. Explicit amount — not derived from deliveries.
+/// Does not track payments/AR. Does not mutate contract baselines or Change Orders.
+model JobInvoice {
+  id                 String           @id @default(cuid())
+  workspaceId        String
+  jobId              String
+  /// User-controlled invoice / app number (1027, INV-1027, APP-05, …).
+  invoiceNumber      String
+  billingPeriodStart DateTime?
+  billingPeriodEnd   DateTime?
+  /// Invoice / application date (UTC midnight date-only).
+  invoiceDate        DateTime
+  dueDate            DateTime?
+  status             JobInvoiceStatus @default(DRAFT)
+  /// Explicit billed amount. NULL allowed on DRAFT only (unknown). 0 = explicit zero.
+  amount             Decimal?         @db.Decimal(14, 2)
+  /// Optional bill-to Customer in the same workspace. Not auto-inferred from client/GC.
+  billToCustomerId   String?
+  /// Optional link to controlled JobDocumentRecord (typically INVOICE type).
+  documentRecordId   String?          @unique
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  billToCustomer     Customer?        @relation("JobInvoiceBillTo", fields: [workspaceId, billToCustomerId], references: [workspaceId, id], onDelete: SetNull)
+  documentRecord     JobDocumentRecord? @relation(fields: [documentRecordId], references: [id], onDelete: SetNull)
+  changeOrderAllocations JobInvoiceChangeOrderAllocation[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, invoiceNumber])
+  @@index([jobId, invoiceDate])
+  @@index([billToCustomerId])
+}
+
+/// Optional provenance: portion of an invoice attributed to a Change Order.
+/// amount NULL = linked without a known billed portion. Does not mutate CO.sellAmount.
+model JobInvoiceChangeOrderAllocation {
+  id             String         @id @default(cuid())
+  invoiceId      String
+  changeOrderId  String
+  amount         Decimal?       @db.Decimal(14, 2)
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  invoice        JobInvoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  changeOrder    JobChangeOrder @relation(fields: [changeOrderId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceId, changeOrderId])
+  @@index([changeOrderId])
+}
+
+/// Job procurement requirement — what is needed. Distinct from JobPurchaseOrder.
+/// One item → one optional Work Package (or Job-level). Multi-package coverage is via PO spanning items.
+/// Does not auto-mutate fabrication, milestones, package status, or Job.totalCost.
+model JobProcurementItem {
+  id               String                    @id @default(cuid())
+  workspaceId      String
+  jobId            String
+  /// Null = Job-level. Non-null must belong to the same job.
+  workPackageId    String?
+  category         JobProcurementCategory    @default(MATERIAL)
+  description      String
+  quantity         Decimal?                  @db.Decimal(14, 4)
+  /// Free-form unit (EA, FT, LB, TON, SQ_FT, LS, …). No conversion engine.
+  unit             String?
+  status           JobProcurementItemStatus  @default(NEEDED)
+  vendorId         String?
+  requiredDate     DateTime?
+  expectedDate     DateTime?
+  /// Convenience mirror of last full completion; partials live on JobProcurementReceipt.
+  receivedDate     DateTime?
+  /// Internal estimated cost. NULL = unknown; 0 = explicit zero. Not sell price.
+  estimatedCost    Decimal?                  @db.Decimal(14, 2)
+  /// Internal actual cost. NULL = unknown; 0 = explicit zero.
+  actualCost       Decimal?                  @db.Decimal(14, 2)
+  purchaseOrderId  String?
+  /// Optional provenance to a JobChange. Creating a Change does NOT auto-create procurement.
+  sourceChangeId   String?
+  notes            String?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  workspace        Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job              Job                       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workPackage      JobWorkPackage?           @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  vendor           Vendor?                   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  purchaseOrder    JobPurchaseOrder?         @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  sourceChange     JobChange?                @relation("ProcurementSourceChange", fields: [sourceChangeId], references: [id], onDelete: SetNull)
+  receipts         JobProcurementReceipt[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, workPackageId])
+  @@index([jobId, vendorId])
+  @@index([purchaseOrderId])
+  @@index([sourceChangeId])
+  @@index([jobId, requiredDate])
+  @@index([jobId, expectedDate])
+}
+
+/// Commercial purchase order to a supplier. May contain multiple JobProcurementItems across packages.
+/// amount is explicit (may include freight/tax/fees) — not forced equal to item cost sum.
+model JobPurchaseOrder {
+  id               String                 @id @default(cuid())
+  workspaceId      String
+  jobId            String
+  poNumber         String
+  vendorId         String?
+  status           JobPurchaseOrderStatus @default(DRAFT)
+  orderedDate      DateTime?
+  expectedDate     DateTime?
+  /// Explicit PO total. NULL = unknown. May differ from sum of item costs.
+  amount           Decimal?               @db.Decimal(14, 2)
+  /// Optional link to controlled JobDocumentRecord (typically PURCHASE_ORDER type).
+  documentRecordId String?
+  notes            String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job              Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  vendor           Vendor?                @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  documentRecord   JobDocumentRecord?     @relation(fields: [documentRecordId], references: [id], onDelete: SetNull)
+  items            JobProcurementItem[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, poNumber])
+  @@index([vendorId])
+  @@index([documentRecordId])
+}
+
+/// Partial/full receipt or completion event for a procurement item. Not warehouse inventory.
+model JobProcurementReceipt {
+  id                String             @id @default(cuid())
+  workspaceId       String
+  jobId             String
+  procurementItemId String
+  receivedDate      DateTime
+  /// Null when quantity is not applicable (services / LS).
+  quantityReceived  Decimal?           @db.Decimal(14, 4)
+  /// When true, marks the item fully received/complete regardless of quantity math.
+  marksComplete     Boolean            @default(false)
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  procurementItem   JobProcurementItem @relation(fields: [procurementItemId], references: [id], onDelete: Cascade)
+
+  @@index([procurementItemId, receivedDate])
+  @@index([workspaceId, jobId])
 }
 
 /// A piece or assembly this job needs to fabricate.
@@ -1366,9 +1638,114 @@ model JobFabricationItem {
   updatedAt               DateTime @updatedAt
   job                     Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
   workPackage             JobWorkPackage? @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  shipmentItems           JobShipmentItem[]
 
   @@index([workspaceId, jobId, sortOrder])
   @@index([jobId, workPackageId])
+}
+
+/// Outbound delivery of fabricated product to a project destination.
+/// Distinct from JobProcurementReceipt (inbound material/services).
+/// Does not mutate WorkPackage status, milestones, fabrication quantities, or Job.totalCost.
+model JobShipment {
+  id                   String            @id @default(cuid())
+  workspaceId          String
+  jobId                String
+  /// User-controlled ticket / delivery number (DEL-004, Load 3, …).
+  deliveryNumber       String
+  status               JobShipmentStatus @default(PLANNED)
+  plannedShipDate      DateTime?
+  actualShipDate       DateTime?
+  plannedDeliveryDate  DateTime?
+  actualDeliveryDate   DateTime?
+  /// Historical destination snapshot — not live-linked to Job site fields.
+  destinationName      String?
+  destinationAddress1  String?
+  destinationAddress2  String?
+  destinationCity      String?
+  destinationState     String?
+  destinationPostalCode String?
+  /// Lightweight carrier text — not a Carrier CRM model.
+  carrierName          String?
+  driverName           String?
+  truckNumber          String?
+  notes                String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  workspace            Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                  Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  items                JobShipmentItem[]
+  documents            JobShipmentDocument[]
+  installationRecords  JobInstallationRecord[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, deliveryNumber])
+  @@index([jobId, plannedDeliveryDate])
+  @@index([jobId, plannedShipDate])
+}
+
+/// Contents of an outbound delivery. Optional Scope links + always-stored description.
+/// FabricationItem quantity is never mutated by shipment lines.
+model JobShipmentItem {
+  id                String              @id @default(cuid())
+  workspaceId       String
+  jobId             String
+  shipmentId        String
+  workPackageId     String?
+  fabricationItemId String?
+  description       String
+  quantity          Decimal?            @db.Decimal(14, 4)
+  unit              String?
+  notes             String?
+  sortOrder         Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  shipment          JobShipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  /// SetNull preserves delivery history description when package is removed (service may Restrict delivered history).
+  workPackage       JobWorkPackage?     @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  /// SetNull: deleting fabrication scope does not erase shipment history.
+  fabricationItem   JobFabricationItem? @relation(fields: [fabricationItemId], references: [id], onDelete: SetNull)
+
+  @@index([shipmentId, sortOrder])
+  @@index([jobId, workPackageId])
+  @@index([fabricationItemId])
+}
+
+model JobShipmentDocument {
+  id               String            @id @default(cuid())
+  shipmentId       String
+  documentRecordId String
+  shipment         JobShipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  documentRecord   JobDocumentRecord @relation(fields: [documentRecordId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, documentRecordId])
+  @@index([documentRecordId])
+}
+
+/// Site erection/installation event. Distinct from delivery-to-site.
+/// Does not auto-mutate WorkPackage status or milestones.
+model JobInstallationRecord {
+  id            String                   @id @default(cuid())
+  workspaceId   String
+  jobId         String
+  workPackageId String?
+  shipmentId    String?
+  eventType     JobInstallationEventType @default(PROGRESS)
+  /// Calendar date (UTC midnight) of the installation event.
+  eventDate     DateTime
+  participantId String?
+  notes         String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  workspace     Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job           Job                      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workPackage   JobWorkPackage?          @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  shipment      JobShipment?             @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  participant   JobParticipant?          @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, jobId, eventDate])
+  @@index([jobId, workPackageId])
+  @@index([shipmentId])
 }
 
 model JobDocumentFolder {

@@ -25,10 +25,27 @@ import {
 } from '../job-detail-cache'
 import { invalidateJobsListCache } from '../jobs-list-cache'
 import { jobSettingsUpdateBody } from '../job-settings-payload'
-import { formatHoursNumber, formatJobCost, formatOverviewDate, partyLabel, TOTAL_COST_DISPLAY_LABEL } from '../job-overview-format'
+import { formatHoursNumber, formatOverviewDate, partyLabel, TOTAL_COST_DISPLAY_LABEL } from '../job-overview-format'
+import {
+  activityActionTab,
+  buildJobAttentionItems,
+  formatJobActivityAction,
+  formatStatusLabel,
+  JOB_CRM_MORE_TABS,
+  JOB_CRM_PRIMARY_TABS,
+  JOB_CRM_TABS,
+  readJobTabFromUrl,
+  writeJobTabToUrl,
+  type JobCrmTab,
+} from '../job-crm-ui'
+import { JobConfirmDialog } from '../components/JobCrmModal'
+import { FinancialOverviewSummary } from '../components/FinancialOverviewSummary'
 import { JobScopeView, WorkPackageOverviewSummary } from './JobScopeView'
 import { JobScheduleView, ScheduleOverviewSummary } from './JobScheduleView'
 import { JobChangesView, ChangesOverviewSummary } from './JobChangesView'
+import { JobProcurementView, ProcurementOverviewSummary } from './JobProcurementView'
+import { JobDeliveriesView, DeliveryOverviewSummary } from './JobDeliveriesView'
+import { JobBillingView } from './JobBillingView'
 import { JobDocumentControlForm, DocumentControlSummary } from '../components/JobDocumentControlForm'
 import { FilePreviewModal } from '../components/FilePreviewModal'
 import {
@@ -63,7 +80,7 @@ interface Props {
   initialJob?: JobSummary | null
 }
 
-type Tab = 'overview' | 'scope' | 'schedule' | 'changes' | 'emails' | 'tasks' | 'documents' | 'activity' | 'settings'
+type Tab = JobCrmTab
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   LEAD: { bg: '#e9ecef', color: '#495057' },
@@ -83,9 +100,9 @@ function StatusBadge({ status }: { status: string }) {
     <span style={{
       display: 'inline-block', padding: '3px 10px', borderRadius: 10,
       fontSize: 11, fontWeight: 600, background: style.bg, color: style.color,
-      textTransform: 'uppercase', letterSpacing: 0.3
+      letterSpacing: 0.2,
     }}>
-      {status.replace('_', ' ')}
+      {formatStatusLabel(status)}
     </span>
   )
 }
@@ -220,7 +237,21 @@ export function JobDetailView({
   const [refreshing, setRefreshing] = useState(false)
   const paintLoggedRef = useRef(false)
   const hasShellRef = useRef(job != null)
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTabState] = useState<Tab>(() => readJobTabFromUrl() ?? 'overview')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next)
+    writeJobTabToUrl(next)
+    setMoreOpen(false)
+  }, [])
+  const [confirmAction, setConfirmAction] = useState<null | {
+    title: string
+    message: string
+    confirmLabel: string
+    danger?: boolean
+    run: () => Promise<void>
+  }>(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [overviewEmails, setOverviewEmails] = useState<JobEmail[]>([])
   const [emailTotal, setEmailTotal] = useState(0)
@@ -297,6 +328,14 @@ export function JobDetailView({
   const [editTargetDate, setEditTargetDate] = useState('')
   const [editBidDue, setEditBidDue] = useState('')
   const [editTotalCost, setEditTotalCost] = useState('')
+  const [editOriginalContractValue, setEditOriginalContractValue] = useState('')
+  const [editOriginalEstimatedCost, setEditOriginalEstimatedCost] = useState('')
+  const [editSiteName, setEditSiteName] = useState('')
+  const [editSiteAddress1, setEditSiteAddress1] = useState('')
+  const [editSiteAddress2, setEditSiteAddress2] = useState('')
+  const [editSiteCity, setEditSiteCity] = useState('')
+  const [editSiteState, setEditSiteState] = useState('')
+  const [editSitePostalCode, setEditSitePostalCode] = useState('')
   const [editEstimatorId, setEditEstimatorId] = useState('')
   const [editContractorId, setEditContractorId] = useState('')
   const [editClientId, setEditClientId] = useState('')
@@ -324,6 +363,14 @@ export function JobDetailView({
     setEditTargetDate(j.targetCompletionDate?.split('T')[0] ?? '')
     setEditBidDue(j.bidDueAt?.split('T')[0] ?? '')
     setEditTotalCost(j.totalCost ?? '')
+    setEditOriginalContractValue(j.originalContractValue ?? '')
+    setEditOriginalEstimatedCost(j.originalEstimatedCost ?? '')
+    setEditSiteName(j.siteName ?? '')
+    setEditSiteAddress1(j.siteAddress1 ?? '')
+    setEditSiteAddress2(j.siteAddress2 ?? '')
+    setEditSiteCity(j.siteCity ?? '')
+    setEditSiteState(j.siteState ?? '')
+    setEditSitePostalCode(j.sitePostalCode ?? '')
     setEditEstimatorId(j.estimatorUserId ?? '')
     setEditContractorId(j.contractorCustomerId ?? '')
     setEditClientId(j.clientCustomerId ?? '')
@@ -614,9 +661,17 @@ export function JobDetailView({
         targetCompletionDate: editTargetDate,
         bidDueDate: editBidDue,
         totalCost: editTotalCost,
+        originalContractValue: editOriginalContractValue,
+        originalEstimatedCost: editOriginalEstimatedCost,
         estimatorUserId: editEstimatorId,
         contractorCustomerId: editContractorId,
         clientCustomerId: editClientId,
+        siteName: editSiteName,
+        siteAddress1: editSiteAddress1,
+        siteAddress2: editSiteAddress2,
+        siteCity: editSiteCity,
+        siteState: editSiteState,
+        sitePostalCode: editSitePostalCode,
       }))
       setJob((prev) => {
         if (!prev) return prev
@@ -632,11 +687,18 @@ export function JobDetailView({
     }
   }
 
-  const handleRemoveFromBidding = async () => {
-    if (!confirm('Remove this project from active bidding? The project, emails, and tasks stay. The status becomes Lead.')) return
-    await api.removeJobFromBidding(workspaceId, jobId)
-    invalidateJobDetailCache(workspaceId, jobId)
-    loadJob()
+  const handleRemoveFromBidding = () => {
+    setConfirmAction({
+      title: 'Remove from bidding',
+      message: 'Remove this project from active bidding? The project, emails, and tasks stay. The status becomes Lead.',
+      confirmLabel: 'Remove from bidding',
+      danger: true,
+      run: async () => {
+        await api.removeJobFromBidding(workspaceId, jobId)
+        invalidateJobDetailCache(workspaceId, jobId)
+        loadJob()
+      },
+    })
   }
 
   const handleArchive = async () => {
@@ -676,19 +738,20 @@ export function JobDetailView({
     setEmailTotal(total => Math.max(0, total - 1))
   }
 
-  const handleDeleteEmail = async (messageId: string) => {
-    if (
-      !confirm(
-        'Delete this email from ForgeOps?\n\n' +
-          'The job stays. Other emails on this job stay. This does not delete the message from Outlook.'
-      )
-    ) {
-      return
-    }
-    await api.deleteJobEmail(workspaceId, jobId, messageId)
-    setEmails(prev => prev.filter(e => e.id !== messageId))
-    setOverviewEmails(prev => prev.filter(e => e.id !== messageId))
-    setEmailTotal(total => Math.max(0, total - 1))
+  const handleDeleteEmail = (messageId: string) => {
+    setConfirmAction({
+      title: 'Delete email from ForgeOps',
+      message:
+        'Delete this email from ForgeOps? The job stays. Other emails on this job stay. This does not delete the message from Outlook.',
+      confirmLabel: 'Delete email',
+      danger: true,
+      run: async () => {
+        await api.deleteJobEmail(workspaceId, jobId, messageId)
+        setEmails((prev) => prev.filter((e) => e.id !== messageId))
+        setOverviewEmails((prev) => prev.filter((e) => e.id !== messageId))
+        setEmailTotal((total) => Math.max(0, total - 1))
+      },
+    })
   }
 
   const handleMoveEmail = async (messageId: string) => {
@@ -743,32 +806,46 @@ export function JobDetailView({
     }
   }
 
-  const handleDeleteFolder = async (folderId: string, name: string) => {
+  const handleDeleteFolder = (folderId: string, name: string) => {
     if (!canEdit) return
-    if (!confirm(`Delete folder “${name}” and everything inside it?`)) return
-    setFileBusy(true)
-    try {
-      await api.deleteJobFolder(workspaceId, jobId, folderId)
-      await loadJobFiles(currentFolderId)
-    } catch (e) {
-      setFileError(e instanceof Error ? e.message : 'Failed to delete folder')
-    } finally {
-      setFileBusy(false)
-    }
+    setConfirmAction({
+      title: 'Delete folder',
+      message: `Delete folder “${name}” and everything inside it? Files in this folder will be removed from the job library.`,
+      confirmLabel: 'Delete folder',
+      danger: true,
+      run: async () => {
+        setFileBusy(true)
+        try {
+          await api.deleteJobFolder(workspaceId, jobId, folderId)
+          await loadJobFiles(currentFolderId)
+        } catch (e) {
+          setFileError(e instanceof Error ? e.message : 'Failed to delete folder')
+        } finally {
+          setFileBusy(false)
+        }
+      },
+    })
   }
 
-  const handleDeleteFile = async (fileId: string, filename: string) => {
+  const handleDeleteFile = (fileId: string, filename: string) => {
     if (!canEdit) return
-    if (!confirm(`Delete “${filename}”?`)) return
-    setFileBusy(true)
-    try {
-      await api.deleteJobFile(workspaceId, jobId, fileId)
-      await loadJobFiles(currentFolderId)
-    } catch (e) {
-      setFileError(e instanceof Error ? e.message : 'Failed to delete file')
-    } finally {
-      setFileBusy(false)
-    }
+    setConfirmAction({
+      title: 'Delete file',
+      message: `Delete “${filename}” from this job’s document library? Structured document control metadata for this file will also be removed.`,
+      confirmLabel: 'Delete file',
+      danger: true,
+      run: async () => {
+        setFileBusy(true)
+        try {
+          await api.deleteJobFile(workspaceId, jobId, fileId)
+          await loadJobFiles(currentFolderId)
+        } catch (e) {
+          setFileError(e instanceof Error ? e.message : 'Failed to delete file')
+        } finally {
+          setFileBusy(false)
+        }
+      },
+    })
   }
 
   const handleMoveFileToRoot = async (fileId: string) => {
@@ -792,17 +869,16 @@ export function JobDetailView({
     return <div style={{ padding: 48, textAlign: 'center', color: '#888' }}>Job not found.</div>
   }
 
-  const tabs: Array<{ key: Tab; label: string }> = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'scope', label: 'Scope' },
-    { key: 'schedule', label: 'Schedule' },
-    { key: 'changes', label: 'Changes' },
-    { key: 'emails', label: 'Emails' },
-    { key: 'tasks', label: 'Tasks' },
-    { key: 'documents', label: 'Documents' },
-    { key: 'activity', label: 'Activity' },
-    { key: 'settings', label: 'Settings' },
-  ]
+  const primaryTabs = JOB_CRM_TABS.filter((t) => JOB_CRM_PRIMARY_TABS.includes(t.key))
+  const moreTabs = JOB_CRM_TABS.filter((t) => JOB_CRM_MORE_TABS.includes(t.key))
+  const tabInMore = JOB_CRM_MORE_TABS.includes(tab)
+  const attentionItems = buildJobAttentionItems({
+    overdueMilestoneCount: job.scheduleSummary?.overdueCount,
+    overdueRfiCount: job.changesSummary?.overdueRfiCount,
+    procurementAtRiskCount: job.procurementSummary?.atRiskCount,
+    lateDeliveryCount: job.deliverySummary?.lateCount,
+    billingExceedsKnownContract: job.billingSnapshot?.billingExceedsKnownContract,
+  })
 
   const filteredEmails = emailSearch
     ? emails.filter(e =>
@@ -880,11 +956,12 @@ export function JobDetailView({
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
-        {tabs.map(t => (
+      {/* Tabs — primary modules + More overflow for communication/system */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0, position: 'relative' }}>
+        {(isPhone ? JOB_CRM_TABS : primaryTabs).map((t) => (
           <button
             key={t.key}
+            type="button"
             onClick={() => setTab(t.key)}
             style={{
               padding: isPhone ? '10px 12px' : '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
@@ -897,11 +974,102 @@ export function JobDetailView({
             {t.label}
           </button>
         ))}
+        {!isPhone && (
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setMoreOpen((o) => !o)}
+              aria-expanded={moreOpen}
+              aria-haspopup="menu"
+              style={{
+                padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: tabInMore ? 600 : 400,
+                color: tabInMore ? '#1a1a2e' : '#6b7280',
+                borderBottom: tabInMore ? '2px solid #1a1a2e' : '2px solid transparent',
+                marginBottom: -1, whiteSpace: 'nowrap',
+              }}
+            >
+              More{tabInMore ? ` · ${JOB_CRM_TABS.find((t) => t.key === tab)?.label}` : ''} ▾
+            </button>
+            {moreOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 4,
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                  minWidth: 160,
+                  zIndex: 20,
+                  padding: 4,
+                }}
+              >
+                {moreTabs.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setTab(t.key)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      border: 'none',
+                      background: tab === t.key ? '#f3f4f6' : 'transparent',
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontWeight: tab === t.key ? 600 : 400,
+                      color: '#374151',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Overview Tab */}
+      {/* Overview Tab — attention → ops → commercial → parties → metrics */}
       {tab === 'overview' && (
         <div>
+          {attentionItems.length > 0 && (
+            <div style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#991b1b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                Needs attention ({attentionItems.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {attentionItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setTab(item.tab)}
+                    style={{
+                      textAlign: 'left',
+                      background: item.tone === 'danger' ? '#fef2f2' : '#fffbeb',
+                      border: '1px solid #f3f4f6',
+                      borderRadius: 6,
+                      padding: '8px 10px',
+                      fontSize: 13,
+                      color: item.tone === 'danger' ? '#b91c1c' : '#92400e',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {item.label} →
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {(job.description || job.externalRef || job.notes) && (
             <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
@@ -925,6 +1093,36 @@ export function JobDetailView({
             </div>
           )}
 
+          <WorkPackageOverviewSummary summary={job.workPackageSummary} />
+
+          <ScheduleOverviewSummary
+            summary={job.scheduleSummary}
+            onViewSchedule={() => setTab('schedule')}
+          />
+
+          <ChangesOverviewSummary
+            summary={job.changesSummary}
+            onViewChanges={() => setTab('changes')}
+          />
+
+          <ProcurementOverviewSummary
+            summary={job.procurementSummary}
+            onViewProcurement={() => setTab('procurement')}
+          />
+
+          <DeliveryOverviewSummary
+            summary={job.deliverySummary}
+            onViewDeliveries={() => setTab('deliveries')}
+          />
+
+          <FinancialOverviewSummary
+            snapshot={job.financialSnapshot}
+            billingSnapshot={job.billingSnapshot}
+            onViewChanges={() => setTab('changes')}
+            onViewProcurement={() => setTab('procurement')}
+            onViewBilling={() => setTab('billing')}
+          />
+
           <JobProjectParties
             workspaceId={workspaceId}
             jobId={jobId}
@@ -945,20 +1143,7 @@ export function JobDetailView({
             }}
           />
 
-          <WorkPackageOverviewSummary summary={job.workPackageSummary} />
-
-          <ScheduleOverviewSummary
-            summary={job.scheduleSummary}
-            onViewSchedule={() => setTab('schedule')}
-          />
-
-          <ChangesOverviewSummary
-            summary={job.changesSummary}
-            onViewChanges={() => setTab('changes')}
-          />
-
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(4, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
-            <MetricCard label={TOTAL_COST_DISPLAY_LABEL} value={formatJobCost(job.totalCost)} />
+          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
             <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
             <MetricCard
               label="Open Tasks"
@@ -1026,6 +1211,57 @@ export function JobDetailView({
             setJob((prev) => {
               if (!prev) return prev
               const next = { ...prev, changesSummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
+      )}
+
+      {tab === 'procurement' && (
+        <JobProcurementView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onSummaryChange={(procurementSummary) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, procurementSummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
+      )}
+
+      {tab === 'deliveries' && (
+        <JobDeliveriesView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onSummaryChange={(deliverySummary) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, deliverySummary }
+              setCachedJobDetail(workspaceId, jobId, next)
+              return next
+            })
+          }}
+        />
+      )}
+
+      {tab === 'billing' && (
+        <JobBillingView
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
+          isPhone={isPhone}
+          onSnapshotChange={(billingSnapshot) => {
+            setJob((prev) => {
+              if (!prev) return prev
+              const next = { ...prev, billingSnapshot }
               setCachedJobDetail(workspaceId, jobId, next)
               return next
             })
@@ -1885,8 +2121,30 @@ export function JobDetailView({
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13 }}>
                         <strong>{entry.actorName ?? entry.actorEmail ?? 'System'}</strong>{' '}
-                        <span style={{ color: '#374151' }}>{entry.action}</span>
-                        {entry.entityType && <span style={{ color: '#6b7280' }}> ({entry.entityType})</span>}
+                        {(() => {
+                          const targetTab = activityActionTab(entry.action)
+                          const label = formatJobActivityAction(entry.action)
+                          if (!targetTab || targetTab === 'activity') {
+                            return <span style={{ color: '#374151' }}>{label}</span>
+                          }
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setTab(targetTab)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 0,
+                                color: '#1565c0',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                fontSize: 13,
+                              }}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })()}
                       </div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{formatDateTime(entry.createdAt)}</div>
                     </div>
@@ -1946,10 +2204,72 @@ export function JobDetailView({
                 <input type="date" value={editBidDue} onChange={e => setEditBidDue(e.target.value)} disabled={!canEdit}
                   style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
               </div>
+              <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                  Project site
+                </div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 8, lineHeight: 1.4 }}>
+                  Default delivery destination. New deliveries can copy these fields; shipment destinations remain historical snapshots.
+                </div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Site name</label>
+                    <input value={editSiteName} onChange={e => setEditSiteName(e.target.value)} disabled={!canEdit} placeholder="Project / site"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Address</label>
+                    <input value={editSiteAddress1} onChange={e => setEditSiteAddress1(e.target.value)} disabled={!canEdit} placeholder="Address line 1"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, marginBottom: 6 }} />
+                    <input value={editSiteAddress2} onChange={e => setEditSiteAddress2(e.target.value)} disabled={!canEdit} placeholder="Address line 2"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '2fr 1fr 1fr', gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>City</label>
+                      <input value={editSiteCity} onChange={e => setEditSiteCity(e.target.value)} disabled={!canEdit}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>State</label>
+                      <input value={editSiteState} onChange={e => setEditSiteState(e.target.value)} disabled={!canEdit}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Postal</label>
+                      <input value={editSitePostalCode} onChange={e => setEditSitePostalCode(e.target.value)} disabled={!canEdit}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                  Financial baselines
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Original Contract Value</label>
+                    <input value={editOriginalContractValue} onChange={e => setEditOriginalContractValue(e.target.value)} disabled={!canEdit} placeholder="Unknown"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Original Estimated Cost</label>
+                    <input value={editOriginalEstimatedCost} onChange={e => setEditOriginalEstimatedCost(e.target.value)} disabled={!canEdit} placeholder="Unknown"
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, lineHeight: 1.4 }}>
+                  Revised contract, approved CO totals, and estimated margin are calculated — not editable here. Empty means unknown (not zero).
+                </div>
+              </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Entered total</label>
+                <label style={{ fontSize: 12, fontWeight: 500, color: '#9ca3af', display: 'block', marginBottom: 4 }}>{TOTAL_COST_DISPLAY_LABEL}</label>
                 <input value={editTotalCost} onChange={e => setEditTotalCost(e.target.value)} disabled={!canEdit} placeholder="Not set"
-                  style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13 }} />
+                  style={{ width: '100%', maxWidth: 240, padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, color: '#6b7280' }} />
+                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4, lineHeight: 1.4 }}>
+                  Ambiguous historical field — not used in the Financial snapshot.
+                </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr 1fr', gap: 12 }}>
                 <div>
@@ -2089,6 +2409,28 @@ export function JobDetailView({
           onClose={() => setFilePreview(null)}
         />
       )}
+      <JobConfirmDialog
+        open={confirmAction != null}
+        title={confirmAction?.title ?? ''}
+        message={confirmAction?.message ?? ''}
+        confirmLabel={confirmAction?.confirmLabel ?? 'Confirm'}
+        danger={confirmAction?.danger}
+        busy={confirmBusy}
+        onCancel={() => {
+          if (!confirmBusy) setConfirmAction(null)
+        }}
+        onConfirm={() => {
+          if (!confirmAction) return
+          setConfirmBusy(true)
+          void confirmAction
+            .run()
+            .catch(() => {})
+            .finally(() => {
+              setConfirmBusy(false)
+              setConfirmAction(null)
+            })
+        }}
+      />
     </div>
   )
 }

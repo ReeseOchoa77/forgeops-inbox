@@ -108,6 +108,10 @@ describe("job work packages", () => {
         estimatedHours: 20,
         childCount: 0,
         nextMilestone: null,
+        procurementItemCount: 0,
+        procurementAtRiskCount: 0,
+        deliveryCount: 0,
+        lastDeliveryDate: null,
         createdAt: "",
         updatedAt: "",
       },
@@ -126,6 +130,10 @@ describe("job work packages", () => {
         estimatedHours: 40,
         childCount: 0,
         nextMilestone: null,
+        procurementItemCount: 0,
+        procurementAtRiskCount: 0,
+        deliveryCount: 0,
+        lastDeliveryDate: null,
         createdAt: "",
         updatedAt: "",
       },
@@ -144,6 +152,10 @@ describe("job work packages", () => {
         estimatedHours: 0,
         childCount: 0,
         nextMilestone: null,
+        procurementItemCount: 0,
+        procurementAtRiskCount: 0,
+        deliveryCount: 0,
+        lastDeliveryDate: null,
         createdAt: "",
         updatedAt: "",
       },
@@ -345,6 +357,9 @@ describe("job work packages", () => {
       jobMilestone: {
         count: vi.fn().mockResolvedValue(0),
       },
+      jobShipmentItem: {
+        count: vi.fn().mockResolvedValue(0),
+      },
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
         fn({
           jobFabricationItem: { updateMany },
@@ -471,9 +486,23 @@ describe("job work packages", () => {
       jobMilestone: {
         findMany: vi.fn().mockResolvedValue([]),
       },
+      jobProcurementItem: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      jobShipmentItem: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     };
     const scope = await loadJobScope(prisma as never, { workspaceId: "ws", jobId: "job-1" });
-    expect(scope.packages[0]).toMatchObject({ itemCount: 1, estimatedHours: 40, nextMilestone: null });
+    expect(scope.packages[0]).toMatchObject({
+      itemCount: 1,
+      estimatedHours: 40,
+      nextMilestone: null,
+      procurementItemCount: 0,
+      procurementAtRiskCount: 0,
+      deliveryCount: 0,
+      lastDeliveryDate: null,
+    });
     expect(scope.unassignedItems).toHaveLength(1);
     expect(scope.unassignedItems[0]?.name).toBe("Ladder");
     expect(scope.estimatedHours).toBe(48);

@@ -7,6 +7,14 @@ import {
   type JobWorkPackageSummary,
 } from '../api'
 import { formatHoursNumber, formatOverviewDate, formatQuantity, totalEstimatedHours } from '../job-overview-format'
+import {
+  JobConfirmDialog,
+  JobCrmField,
+  JobCrmModal,
+  JobCrmPrimaryButton,
+  JobCrmSecondaryButton,
+  jobCrmInputStyle,
+} from '../components/JobCrmModal'
 
 const STATUS_OPTIONS: Array<{ value: JobWorkPackageStatus; label: string }> = [
   { value: 'NOT_STARTED', label: 'Not started' },
@@ -66,6 +74,8 @@ export function JobScopeView({
   const [packageParentId, setPackageParentId] = useState<string>('')
   const [addingItemFor, setAddingItemFor] = useState<string | 'unassigned' | null>(null)
   const [itemDraft, setItemDraft] = useState<Draft>(emptyDraft)
+  const [renameTarget, setRenameTarget] = useState<{ pkg: JobWorkPackage; name: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<JobWorkPackage | null>(null)
 
   const applyScope = useCallback((scope: {
     packages: JobWorkPackage[]
@@ -155,16 +165,19 @@ export function JobScopeView({
     }
   }
 
-  const renamePackage = async (pkg: JobWorkPackage) => {
-    const next = window.prompt('Rename work package', pkg.name)
-    if (next == null) return
-    const name = next.trim()
-    if (!name || name === pkg.name) return
+  const submitRename = async () => {
+    if (!renameTarget) return
+    const name = renameTarget.name.trim()
+    if (!name || name === renameTarget.pkg.name) {
+      setRenameTarget(null)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const res = await api.updateJobWorkPackage(workspaceId, jobId, pkg.id, { name })
+      const res = await api.updateJobWorkPackage(workspaceId, jobId, renameTarget.pkg.id, { name })
       applyScope(res)
+      setRenameTarget(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to rename package')
     } finally {
@@ -193,20 +206,22 @@ export function JobScopeView({
     }
   }
 
-  const removePackage = async (pkg: JobWorkPackage) => {
+  const openDeletePackage = (pkg: JobWorkPackage) => {
     if (pkg.childCount > 0) {
       setError('Move or delete child packages first.')
       return
     }
-    const msg = pkg.itemCount > 0
-      ? `Delete “${pkg.name}”? ${pkg.itemCount} fabrication item(s) will become Unassigned. Packages with milestones cannot be deleted.`
-      : `Delete “${pkg.name}”?`
-    if (!confirm(msg)) return
+    setDeleteTarget(pkg)
+  }
+
+  const confirmDeletePackage = async () => {
+    if (!deleteTarget) return
     setBusy(true)
     setError(null)
     try {
-      const res = await api.deleteJobWorkPackage(workspaceId, jobId, pkg.id)
+      const res = await api.deleteJobWorkPackage(workspaceId, jobId, deleteTarget.id)
       applyScope(res)
+      setDeleteTarget(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete package')
     } finally {
@@ -397,6 +412,26 @@ export function JobScopeView({
             <span style={{ fontSize: 11, color: '#6b7280' }}>
               {pkg.itemCount} item{pkg.itemCount === 1 ? '' : 's'} · {formatHoursNumber(pkg.estimatedHours)} hrs
             </span>
+            {(pkg.procurementItemCount ?? 0) > 0 && (
+              <span style={{
+                fontSize: 11,
+                color: (pkg.procurementAtRiskCount ?? 0) > 0 ? '#b91c1c' : '#6b7280',
+                fontWeight: (pkg.procurementAtRiskCount ?? 0) > 0 ? 600 : 400,
+              }}>
+                {pkg.procurementItemCount} procurement
+                {(pkg.procurementAtRiskCount ?? 0) > 0
+                  ? ` · ${pkg.procurementAtRiskCount} at risk`
+                  : ''}
+              </span>
+            )}
+            {(pkg.deliveryCount ?? 0) > 0 && (
+              <span style={{ fontSize: 11, color: '#6b7280' }}>
+                {pkg.deliveryCount} deliver{pkg.deliveryCount === 1 ? 'y' : 'ies'}
+                {pkg.lastDeliveryDate
+                  ? ` · Last ${formatOverviewDate(pkg.lastDeliveryDate)}`
+                  : ''}
+              </span>
+            )}
             {pkg.nextMilestone && (
               <span style={{
                 fontSize: 11,
@@ -414,7 +449,7 @@ export function JobScopeView({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void renamePackage(pkg)}
+                  onClick={() => setRenameTarget({ pkg, name: pkg.name })}
                   style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid #d0d5dd', background: '#fff', cursor: 'pointer' }}
                 >
                   Rename
@@ -451,7 +486,7 @@ export function JobScopeView({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void removePackage(pkg)}
+                  onClick={() => openDeletePackage(pkg)}
                   style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid #e5e7eb', color: '#b91c1c', background: '#fff', cursor: 'pointer' }}
                 >
                   Delete
@@ -584,6 +619,52 @@ export function JobScopeView({
         )}
         {renderItems(null)}
       </div>
+
+      <JobCrmModal
+        title="Rename work package"
+        open={renameTarget != null}
+        onClose={() => setRenameTarget(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setRenameTarget(null)} disabled={busy}>
+              Cancel
+            </JobCrmSecondaryButton>
+            <JobCrmPrimaryButton
+              onClick={() => void submitRename()}
+              disabled={busy || !renameTarget?.name.trim()}
+            >
+              Save
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Name" required>
+          <input
+            style={jobCrmInputStyle}
+            value={renameTarget?.name ?? ''}
+            onChange={(e) =>
+              setRenameTarget((prev) => (prev ? { ...prev, name: e.target.value } : prev))
+            }
+          />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobConfirmDialog
+        open={deleteTarget != null}
+        title="Delete work package"
+        message={
+          deleteTarget
+            ? deleteTarget.itemCount > 0
+              ? `Delete “${deleteTarget.name}”? ${deleteTarget.itemCount} fabrication item(s) will become Unassigned. Packages with milestones cannot be deleted.`
+              : `Delete “${deleteTarget.name}”?`
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        busy={busy}
+        onConfirm={() => void confirmDeletePackage()}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

@@ -1825,8 +1825,12 @@ export const api = {
   updateJob: (workspaceId: string, jobId: string, data: {
     name?: string; jobNumber?: string; status?: string; customerId?: string | null;
     description?: string; notes?: string; startDate?: string | null; targetCompletionDate?: string | null;
-    bidDueAt?: string | null; totalCost?: number | null; estimatorUserId?: string | null;
+    bidDueAt?: string | null; totalCost?: number | null;
+    originalContractValue?: number | null; originalEstimatedCost?: number | null;
+    estimatorUserId?: string | null;
     contractorCustomerId?: string | null; clientCustomerId?: string | null;
+    siteName?: string | null; siteAddress1?: string | null; siteAddress2?: string | null;
+    siteCity?: string | null; siteState?: string | null; sitePostalCode?: string | null;
   }) => request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`, {
     method: 'PUT', body: JSON.stringify(data)
   }),
@@ -2235,6 +2239,148 @@ export const api = {
       `/workspaces/${workspaceId}/jobs/${jobId}/change-orders/${changeOrderId}`,
       { method: 'PATCH', body: JSON.stringify(body) }
     ),
+
+  listJobProcurementItems: (workspaceId: string, jobId: string) =>
+    request<{ items: JobProcurementItem[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/procurement-items`
+    ),
+
+  createJobProcurementItem: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ item: JobProcurementItem }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/procurement-items`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  updateJobProcurementItem: (
+    workspaceId: string,
+    jobId: string,
+    itemId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ item: JobProcurementItem }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/procurement-items/${itemId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  recordJobProcurementReceipt: (
+    workspaceId: string,
+    jobId: string,
+    itemId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ item: JobProcurementItem }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/procurement-items/${itemId}/receipts`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listJobPurchaseOrders: (workspaceId: string, jobId: string) =>
+    request<{ purchaseOrders: JobPurchaseOrder[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/purchase-orders`
+    ),
+
+  createJobPurchaseOrder: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ purchaseOrder: JobPurchaseOrder }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/purchase-orders`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  updateJobPurchaseOrder: (
+    workspaceId: string,
+    jobId: string,
+    purchaseOrderId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ purchaseOrder: JobPurchaseOrder }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/purchase-orders/${purchaseOrderId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  listReferenceVendors: (workspaceId: string) =>
+    request<{ vendors: Array<{ id: string; name: string }> }>(
+      `/workspaces/${workspaceId}/reference/vendors`
+    ),
+
+  listJobDeliveries: (workspaceId: string, jobId: string) =>
+    request<{ deliveries: JobDelivery[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/deliveries`),
+
+  createJobDelivery: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ delivery: JobDelivery }>(`/workspaces/${workspaceId}/jobs/${jobId}/deliveries`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobDelivery: (
+    workspaceId: string,
+    jobId: string,
+    shipmentId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ delivery: JobDelivery }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/deliveries/${shipmentId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  addJobDeliveryItem: (
+    workspaceId: string,
+    jobId: string,
+    shipmentId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ delivery: JobDelivery }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/deliveries/${shipmentId}/items`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listJobInstallations: (workspaceId: string, jobId: string) =>
+    request<{ installations: JobInstallationRecord[] }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/installations`
+    ),
+
+  createJobInstallation: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ installation: JobInstallationRecord }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/installations`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listJobInvoices: (workspaceId: string, jobId: string) =>
+    request<{ invoices: JobInvoice[]; billingSnapshot: JobBillingSnapshot | null }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/invoices`
+    ),
+
+  createJobInvoice: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ invoice: JobInvoice }>(`/workspaces/${workspaceId}/jobs/${jobId}/invoices`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobInvoice: (
+    workspaceId: string,
+    jobId: string,
+    invoiceId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ invoice: JobInvoice }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/invoices/${invoiceId}`,
+      { method: 'PUT', body: JSON.stringify(body) }
+    ),
+
+  deleteJobInvoice: (workspaceId: string, jobId: string, invoiceId: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/jobs/${jobId}/invoices/${invoiceId}`, {
+      method: 'DELETE',
+    }),
+
+  getBillingPeriodEvidence: (
+    workspaceId: string,
+    jobId: string,
+    periodStart: string,
+    periodEnd: string
+  ) => {
+    const p = new URLSearchParams({ periodStart, periodEnd })
+    return request<{
+      deliveries: BillingPeriodDelivery[]
+      installations: BillingPeriodInstallation[]
+    }>(`/workspaces/${workspaceId}/jobs/${jobId}/billing-period-evidence?${p}`)
+  },
 
   previewTaskBulkDelete: (
     workspaceId: string,
@@ -2880,6 +3026,10 @@ export interface JobWorkPackage {
     plannedDate: string | null
     overdue: boolean
   } | null
+  procurementItemCount?: number
+  procurementAtRiskCount?: number
+  deliveryCount?: number
+  lastDeliveryDate?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -2954,6 +3104,283 @@ export interface JobChangesSummary {
   proposedChangeCount: number
   proposedSellImpact: string | null
   pendingChangeOrderCount: number
+}
+
+export interface JobProcurementSummary {
+  needsOrderingCount: number
+  atRiskCount: number
+  pastExpectedCount: number
+  orderedAmount: string | null
+}
+
+export interface JobDeliverySummary {
+  plannedCount: number
+  inTransitCount: number
+  lateCount: number
+  nextDelivery: {
+    id: string
+    deliveryNumber: string
+    plannedDeliveryDate: string | null
+    packageNames: string[]
+  } | null
+}
+
+export type JobInvoiceStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'VOID'
+
+export interface JobInvoiceChangeOrderAllocation {
+  id: string
+  changeOrderId: string
+  amount: string | null
+  notes: string | null
+  changeOrderNumber: string
+  changeOrderTitle: string | null
+  changeOrderStatus: string
+  changeOrderSellAmount: string | null
+}
+
+export interface JobInvoice {
+  id: string
+  jobId: string
+  invoiceNumber: string
+  billingPeriodStart: string | null
+  billingPeriodEnd: string | null
+  invoiceDate: string
+  dueDate: string | null
+  status: JobInvoiceStatus
+  amount: string | null
+  billToCustomerId: string | null
+  billToCustomerName: string | null
+  documentRecordId: string | null
+  documentRecord: {
+    id: string
+    documentType: string
+    documentNumber: string | null
+    title: string | null
+  } | null
+  notes: string | null
+  changeOrderAllocations: JobInvoiceChangeOrderAllocation[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobBillingSnapshot {
+  invoiceCount: number
+  draftInvoiceCount: number
+  draftInvoiceValue: string | null
+  submittedInvoiceValue: string | null
+  approvedInvoiceValue: string | null
+  totalBilled: string | null
+  totalBilledInvoiceCount: number
+  revisedContractValue: string | null
+  revisedContractValueComplete: boolean
+  remainingToBill: string | null
+  remainingToBillComplete: boolean
+  billingPercentOfRevisedContract: string | null
+  billingExceedsKnownContract: boolean
+  changeOrderBilled: Array<{
+    changeOrderId: string
+    number: string
+    approvedSellAmount: string | null
+    billedToDate: string | null
+    remainingUnbilled: string | null
+    remainingComplete: boolean
+  }>
+}
+
+export interface BillingPeriodDelivery {
+  id: string
+  deliveryNumber: string
+  actualDeliveryDate: string | null
+  status: string
+  packageNames: string[]
+  itemSummary: string
+}
+
+export interface BillingPeriodInstallation {
+  id: string
+  eventType: string
+  eventDate: string | null
+  workPackageName: string | null
+  notes: string | null
+}
+
+/** Canonical Phase H financial snapshot from the API (one calculation path). */
+export interface JobFinancialSnapshot {
+  originalContractValue: string | null
+  approvedChangeOrderValue: string | null
+  approvedChangeOrderKnownCount: number
+  approvedChangeOrderUnknownCount: number
+  revisedContractValue: string | null
+  revisedContractValueComplete: boolean
+  pendingProposedSellValue: string | null
+  pendingProposedSellUnknownCount: number
+  pendingChangeOrderValue: string | null
+  pendingChangeOrderUnknownCount: number
+  originalEstimatedCost: string | null
+  approvedChangeEstimatedCost: string | null
+  approvedChangeCostKnownCount: number
+  approvedChangeCostUnknownCount: number
+  currentEstimatedCost: string | null
+  currentEstimatedCostComplete: boolean
+  purchaseOrderCommittedValue: string | null
+  purchaseOrderCommittedKnownCount: number
+  purchaseOrderUnknownCount: number
+  knownProcurementActualCost: string | null
+  knownProcurementActualCount: number
+  estimatedGrossProfit: string | null
+  estimatedGrossMarginPercent: string | null
+  estimatedFabricationHours: number
+  legacyEnteredTotal: string | null
+}
+
+export type JobShipmentStatus = 'PLANNED' | 'READY' | 'IN_TRANSIT' | 'DELIVERED' | 'CANCELLED'
+
+export interface JobDelivery {
+  id: string
+  jobId: string
+  deliveryNumber: string
+  status: JobShipmentStatus
+  plannedShipDate: string | null
+  actualShipDate: string | null
+  plannedDeliveryDate: string | null
+  actualDeliveryDate: string | null
+  destinationName: string | null
+  destinationAddress1: string | null
+  destinationAddress2: string | null
+  destinationCity: string | null
+  destinationState: string | null
+  destinationPostalCode: string | null
+  carrierName: string | null
+  driverName: string | null
+  truckNumber: string | null
+  notes: string | null
+  packages: Array<{ id: string; name: string }>
+  lineCount: number
+  items: Array<{
+    id: string
+    workPackage: { id: string; name: string } | null
+    fabricationItem: { id: string; name: string; quantity: string | null } | null
+    description: string
+    quantity: string | null
+    unit: string | null
+    notes: string | null
+    sortOrder: number
+  }>
+  documents: Array<{
+    id: string
+    documentNumber: string | null
+    title: string | null
+    documentType: string
+  }>
+  risk: {
+    lateToShip: boolean
+    lateDelivery: boolean
+    atRisk: boolean
+  }
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobInstallationRecord {
+  id: string
+  jobId: string
+  eventType: 'STARTED' | 'PROGRESS' | 'COMPLETED'
+  eventDate: string | null
+  workPackage: { id: string; name: string } | null
+  shipment: { id: string; deliveryNumber: string; status: string } | null
+  participant: { id: string; role: string } | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type JobProcurementCategory =
+  | 'MATERIAL'
+  | 'JOIST_DECK'
+  | 'HARDWARE'
+  | 'COATING'
+  | 'OUTSOURCED_FABRICATION'
+  | 'DETAILING'
+  | 'ENGINEERING'
+  | 'TESTING'
+  | 'OTHER'
+
+export type JobProcurementItemStatus =
+  | 'NEEDED'
+  | 'PRICING'
+  | 'READY_TO_ORDER'
+  | 'ORDERED'
+  | 'PARTIALLY_RECEIVED'
+  | 'RECEIVED'
+  | 'CANCELLED'
+
+export interface JobProcurementItem {
+  id: string
+  jobId: string
+  workPackage: { id: string; name: string } | null
+  category: JobProcurementCategory
+  isService: boolean
+  description: string
+  quantity: string | null
+  unit: string | null
+  status: JobProcurementItemStatus
+  vendor: { id: string; name: string } | null
+  requiredDate: string | null
+  expectedDate: string | null
+  receivedDate: string | null
+  estimatedCost: string | null
+  actualCost: string | null
+  purchaseOrder: { id: string; poNumber: string; status: string } | null
+  sourceChange: { id: string; number: string; title: string } | null
+  quantityReceivedTotal: string | null
+  receipts: Array<{
+    id: string
+    receivedDate: string | null
+    quantityReceived: string | null
+    marksComplete: boolean
+    notes: string | null
+    createdAt: string
+  }>
+  risk: {
+    overdueToOrder: boolean
+    lateExpected: boolean
+    pastExpected: boolean
+    atRisk: boolean
+  }
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface JobPurchaseOrder {
+  id: string
+  jobId: string
+  poNumber: string
+  vendor: { id: string; name: string } | null
+  status: 'DRAFT' | 'ISSUED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'
+  orderedDate: string | null
+  expectedDate: string | null
+  amount: string | null
+  documentRecord: {
+    id: string
+    documentNumber: string | null
+    title: string | null
+    documentType: string
+  } | null
+  notes: string | null
+  items: Array<{
+    id: string
+    description: string
+    status: string
+    category: string
+    quantity: string | null
+    unit: string | null
+    workPackage: { id: string; name: string } | null
+    estimatedCost: string | null
+    actualCost: string | null
+  }>
+  createdAt: string
+  updatedAt: string
 }
 
 export interface JobRfi {
@@ -3076,6 +3503,8 @@ export interface JobDetail extends JobSummary {
   externalRef: string | null;
   attachmentCount: number;
   totalCost: string | null;
+  originalContractValue?: string | null;
+  originalEstimatedCost?: string | null;
   estimatedHours: number | null;
   estimatorUserId: string | null;
   estimatorName: string | null;
@@ -3089,6 +3518,16 @@ export interface JobDetail extends JobSummary {
   workPackageSummary?: JobWorkPackageSummary | null;
   scheduleSummary?: JobScheduleSummary | null;
   changesSummary?: JobChangesSummary | null;
+  procurementSummary?: JobProcurementSummary | null;
+  deliverySummary?: JobDeliverySummary | null;
+  financialSnapshot?: JobFinancialSnapshot | null;
+  billingSnapshot?: JobBillingSnapshot | null;
+  siteName?: string | null;
+  siteAddress1?: string | null;
+  siteAddress2?: string | null;
+  siteCity?: string | null;
+  siteState?: string | null;
+  sitePostalCode?: string | null;
   members: Array<{ id: string; userId: string; name: string | null; email: string; role: string | null; createdAt: string }>;
   aliases: Array<{ id: string; alias: string; normalizedAlias: string }>;
 }

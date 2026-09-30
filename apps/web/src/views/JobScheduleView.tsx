@@ -8,6 +8,14 @@ import {
   type JobWorkPackage,
 } from '../api'
 import { formatOverviewDate } from '../job-overview-format'
+import {
+  JobConfirmDialog,
+  JobCrmField,
+  JobCrmModal,
+  JobCrmPrimaryButton,
+  JobCrmSecondaryButton,
+  jobCrmInputStyle,
+} from '../components/JobCrmModal'
 
 const TYPE_OPTIONS: Array<{ value: JobMilestoneType; label: string }> = [
   { value: 'GENERAL', label: 'General' },
@@ -91,6 +99,11 @@ export function JobScheduleView({
   const [draftDate, setDraftDate] = useState('')
   const [draftPackageId, setDraftPackageId] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [completeTarget, setCompleteTarget] = useState<JobMilestone | null>(null)
+  const [completeDate, setCompleteDate] = useState(todayYmd())
+  const [confirmAction, setConfirmAction] = useState<
+    { type: 'cancel' | 'delete'; milestone: JobMilestone } | null
+  >(null)
 
   const apply = useCallback((list: JobMilestone[]) => {
     setMilestones(list)
@@ -161,21 +174,27 @@ export function JobScheduleView({
     }
   }
 
-  const complete = async (m: JobMilestone) => {
-    const actual = window.prompt('Actual completion date (YYYY-MM-DD)', todayYmd())
-    if (actual == null) return
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(actual.trim())) {
+  const openComplete = (m: JobMilestone) => {
+    setCompleteDate(todayYmd())
+    setCompleteTarget(m)
+  }
+
+  const submitComplete = async () => {
+    if (!completeTarget) return
+    const actual = completeDate.trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(actual)) {
       setError('Actual date must be YYYY-MM-DD')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const res = await api.updateJobMilestone(workspaceId, jobId, m.id, {
+      const res = await api.updateJobMilestone(workspaceId, jobId, completeTarget.id, {
         status: 'COMPLETE',
-        actualDate: actual.trim(),
+        actualDate: actual,
       })
       apply(res.milestones)
+      setCompleteTarget(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to complete milestone')
     } finally {
@@ -196,29 +215,26 @@ export function JobScheduleView({
     }
   }
 
-  const cancel = async (m: JobMilestone) => {
-    if (!confirm(`Cancel “${m.name}”?`)) return
+  const runConfirmAction = async () => {
+    if (!confirmAction) return
+    const { type, milestone: m } = confirmAction
     setBusy(true)
     setError(null)
     try {
-      const res = await api.updateJobMilestone(workspaceId, jobId, m.id, { status: 'CANCELLED' })
+      const res =
+        type === 'cancel'
+          ? await api.updateJobMilestone(workspaceId, jobId, m.id, { status: 'CANCELLED' })
+          : await api.deleteJobMilestone(workspaceId, jobId, m.id)
       apply(res.milestones)
+      setConfirmAction(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to cancel milestone')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const remove = async (m: JobMilestone) => {
-    if (!confirm(`Delete “${m.name}”?`)) return
-    setBusy(true)
-    setError(null)
-    try {
-      const res = await api.deleteJobMilestone(workspaceId, jobId, m.id)
-      apply(res.milestones)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete milestone')
+      setError(
+        e instanceof Error
+          ? e.message
+          : type === 'cancel'
+            ? 'Failed to cancel milestone'
+            : 'Failed to delete milestone'
+      )
     } finally {
       setBusy(false)
     }
@@ -376,10 +392,10 @@ export function JobScheduleView({
               onEdit={() => setEditingId(m.id)}
               onCancelEdit={() => setEditingId(null)}
               onSave={(patch) => void saveEdit(m, patch)}
-              onComplete={() => void complete(m)}
+              onComplete={() => openComplete(m)}
               onReopen={() => void reopen(m)}
-              onCancel={() => void cancel(m)}
-              onDelete={() => void remove(m)}
+              onCancel={() => setConfirmAction({ type: 'cancel', milestone: m })}
+              onDelete={() => setConfirmAction({ type: 'delete', milestone: m })}
             />
           ))}
         </Section>
@@ -403,10 +419,10 @@ export function JobScheduleView({
                   onEdit={() => setEditingId(m.id)}
                   onCancelEdit={() => setEditingId(null)}
                   onSave={(patch) => void saveEdit(m, patch)}
-                  onComplete={() => void complete(m)}
+                  onComplete={() => openComplete(m)}
                   onReopen={() => void reopen(m)}
-                  onCancel={() => void cancel(m)}
-                  onDelete={() => void remove(m)}
+                  onCancel={() => setConfirmAction({ type: 'cancel', milestone: m })}
+                  onDelete={() => setConfirmAction({ type: 'delete', milestone: m })}
                 />
               ))
             )}
@@ -425,10 +441,10 @@ export function JobScheduleView({
                   onEdit={() => setEditingId(m.id)}
                   onCancelEdit={() => setEditingId(null)}
                   onSave={(patch) => void saveEdit(m, patch)}
-                  onComplete={() => void complete(m)}
+                  onComplete={() => openComplete(m)}
                   onReopen={() => void reopen(m)}
-                  onCancel={() => void cancel(m)}
-                  onDelete={() => void remove(m)}
+                  onCancel={() => setConfirmAction({ type: 'cancel', milestone: m })}
+                  onDelete={() => setConfirmAction({ type: 'delete', milestone: m })}
                 />
               ))}
             </Section>
@@ -450,10 +466,10 @@ export function JobScheduleView({
               onEdit={() => setEditingId(m.id)}
               onCancelEdit={() => setEditingId(null)}
               onSave={(patch) => void saveEdit(m, patch)}
-              onComplete={() => void complete(m)}
+              onComplete={() => openComplete(m)}
               onReopen={() => void reopen(m)}
-              onCancel={() => void cancel(m)}
-              onDelete={() => void remove(m)}
+              onCancel={() => setConfirmAction({ type: 'cancel', milestone: m })}
+              onDelete={() => setConfirmAction({ type: 'delete', milestone: m })}
             />
           ))}
         </Section>
@@ -473,14 +489,56 @@ export function JobScheduleView({
               onEdit={() => setEditingId(m.id)}
               onCancelEdit={() => setEditingId(null)}
               onSave={(patch) => void saveEdit(m, patch)}
-              onComplete={() => void complete(m)}
+              onComplete={() => openComplete(m)}
               onReopen={() => void reopen(m)}
-              onCancel={() => void cancel(m)}
-              onDelete={() => void remove(m)}
+              onCancel={() => setConfirmAction({ type: 'cancel', milestone: m })}
+              onDelete={() => setConfirmAction({ type: 'delete', milestone: m })}
             />
           ))}
         </Section>
       )}
+
+      <JobCrmModal
+        title="Complete milestone"
+        open={completeTarget != null}
+        onClose={() => setCompleteTarget(null)}
+        footer={
+          <>
+            <JobCrmSecondaryButton onClick={() => setCompleteTarget(null)} disabled={busy}>
+              Cancel
+            </JobCrmSecondaryButton>
+            <JobCrmPrimaryButton onClick={() => void submitComplete()} disabled={busy}>
+              Complete
+            </JobCrmPrimaryButton>
+          </>
+        }
+      >
+        <JobCrmField label="Actual completion date" required hint="YYYY-MM-DD">
+          <input
+            type="date"
+            style={jobCrmInputStyle}
+            value={completeDate}
+            onChange={(e) => setCompleteDate(e.target.value)}
+          />
+        </JobCrmField>
+      </JobCrmModal>
+
+      <JobConfirmDialog
+        open={confirmAction != null}
+        title={confirmAction?.type === 'delete' ? 'Delete milestone' : 'Cancel milestone'}
+        message={
+          confirmAction
+            ? confirmAction.type === 'delete'
+              ? `Delete “${confirmAction.milestone.name}”?`
+              : `Cancel “${confirmAction.milestone.name}”?`
+            : ''
+        }
+        confirmLabel={confirmAction?.type === 'delete' ? 'Delete' : 'Cancel milestone'}
+        danger={confirmAction?.type === 'delete'}
+        busy={busy}
+        onConfirm={() => void runConfirmAction()}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   )
 }

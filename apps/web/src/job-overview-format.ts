@@ -1,6 +1,7 @@
-export const OVERVIEW_METRIC_LABELS = ["Entered total", "Emails", "Open Tasks", "Estimated Hours"] as const
+export const OVERVIEW_METRIC_LABELS = ["Emails", "Open Tasks", "Estimated Hours"] as const
 export const OVERVIEW_PARTY_LABELS = ["Estimator", "Project Manager", "Contractor", "Client"] as const
 export const OVERVIEW_REMOVED_LABELS = [
+  "Entered total",
   "Emails (7d)",
   "Emails (30d)",
   "Completed Tasks",
@@ -8,8 +9,11 @@ export const OVERVIEW_REMOVED_LABELS = [
   "Created",
 ] as const
 
-/** Conservative label — Job.totalCost semantics are ambiguous (not proven sell or cost). */
-export const TOTAL_COST_DISPLAY_LABEL = "Entered total"
+/**
+ * Conservative label — Job.totalCost semantics are ambiguous (not proven sell or cost).
+ * Prefer canonical Financial snapshot fields on Overview.
+ */
+export const TOTAL_COST_DISPLAY_LABEL = "Legacy entered total"
 
 export function formatJobCost(value: string | number | null | undefined): string {
   if (value == null || value === "") return "Not set"
@@ -22,6 +26,29 @@ export function formatJobCost(value: string | number | null | undefined): string
     minimumFractionDigits: hasCents ? 2 : 0,
     maximumFractionDigits: hasCents ? 2 : 0,
   }).format(amount)
+}
+
+/** Unknown (null) vs explicit $0.00 — never treat null as zero. */
+export function formatFinancialMoney(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "Unknown"
+  return formatJobCost(value)
+}
+
+export function formatFinancialSignedMoney(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "Unknown"
+  const amount = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(amount)) return "Unknown"
+  const formatted = formatJobCost(Math.abs(amount))
+  if (amount > 0) return `+${formatted}`
+  if (amount < 0) return `−${formatted.replace("$", "$")}`
+  return formatted
+}
+
+export function formatMarginPercent(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "Unknown"
+  const n = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(n)) return "Unknown"
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}%`
 }
 
 export function formatOverviewDate(iso: string | null | undefined): string {

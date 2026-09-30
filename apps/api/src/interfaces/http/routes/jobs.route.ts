@@ -26,6 +26,14 @@ import {
 } from "../../../application/services/job-work-packages.js";
 import { buildJobScheduleSummary } from "../../../application/services/job-milestones.js";
 import { buildChangesSummary } from "../../../application/services/job-change-management.js";
+import { buildProcurementSummary } from "../../../application/services/job-procurement.js";
+import { buildDeliverySummary } from "../../../application/services/job-deliveries.js";
+import {
+  buildJobFinancialSnapshot,
+  normalizeMoney as normalizeFinancialMoney,
+  moneyToString as financialMoneyToString,
+} from "../../../application/services/job-financials.js";
+import { buildBillingSnapshot } from "../../../application/services/job-billing.js";
 import {
   DOCUMENT_CATEGORY_FILTERS,
   DOCUMENT_CONTROL_STATE_FILTERS,
@@ -119,9 +127,19 @@ const updateJobSchema = z.object({
   targetCompletionDate: jobDateInput.nullable().optional(),
   bidDueAt: jobDateInput.nullable().optional(),
   totalCost: z.union([z.number().nonnegative().max(1_000_000_000_000), z.null()]).optional(),
+  /** Canonical sell baseline. Null = clear/unknown. Allows zero; negatives rejected for baseline. */
+  originalContractValue: z.union([z.number().min(0).max(1_000_000_000_000), z.null()]).optional(),
+  /** Canonical cost baseline estimate. Null = clear/unknown. Allows zero. */
+  originalEstimatedCost: z.union([z.number().min(0).max(1_000_000_000_000), z.null()]).optional(),
   estimatorUserId: z.string().nullable().optional(),
   contractorCustomerId: z.string().nullable().optional(),
   clientCustomerId: z.string().nullable().optional(),
+  siteName: z.string().max(200).nullable().optional(),
+  siteAddress1: z.string().max(200).nullable().optional(),
+  siteAddress2: z.string().max(200).nullable().optional(),
+  siteCity: z.string().max(100).nullable().optional(),
+  siteState: z.string().max(50).nullable().optional(),
+  sitePostalCode: z.string().max(20).nullable().optional(),
 });
 
 function activityJson(value: unknown): Prisma.InputJsonValue {
@@ -565,6 +583,9 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       workPackageSummary,
       scheduleSummary,
       changesSummary,
+      procurementSummary,
+      deliverySummary,
+      financialSnapshot,
       nextDueTask,
       jobFileCount,
     ] = await Promise.all([
@@ -606,6 +627,9 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         .then((rows) => buildWorkPackageSummary(buildWorkPackageDtos(rows, []))),
       buildJobScheduleSummary(app.services.prisma, { workspaceId, jobId, now }),
       buildChangesSummary(app.services.prisma, { workspaceId, jobId, now }),
+      buildProcurementSummary(app.services.prisma, { workspaceId, jobId, now }),
+      buildDeliverySummary(app.services.prisma, { workspaceId, jobId, now }),
+      buildJobFinancialSnapshot(app.services.prisma, { workspaceId, jobId }),
       app.services.prisma.task.findFirst({
         where: {
           jobId,
@@ -619,6 +643,13 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         where: { jobId, workspaceId, uploadStatus: "UPLOADED" },
       }),
     ]);
+    const billingSnapshot = financialSnapshot
+      ? await buildBillingSnapshot(app.services.prisma, {
+          workspaceId,
+          jobId,
+          financial: financialSnapshot,
+        })
+      : null;
     const aggregateMs = Math.round(performance.now() - tAgg);
     const userMap = new Map(users.map((u) => [u.id, u]));
     const projectManager = pickPrimaryProjectManager(participants);
@@ -650,6 +681,10 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         targetCompletionDate: job.targetCompletionDate?.toISOString() ?? null,
         bidDueAt: job.bidDueAt?.toISOString() ?? null,
         totalCost: job.totalCost == null ? null : job.totalCost.toString(),
+        originalContractValue:
+          job.originalContractValue == null ? null : job.originalContractValue.toString(),
+        originalEstimatedCost:
+          job.originalEstimatedCost == null ? null : job.originalEstimatedCost.toString(),
         estimatedHours: totalEstimatedHours(fabricationItems),
         estimatorUserId: job.estimatorUserId,
         estimatorName: job.estimator?.name ?? null,
@@ -657,6 +692,12 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         contractorName: job.contractor?.name ?? null,
         clientCustomerId: job.clientCustomerId,
         clientName: job.client?.name ?? null,
+        siteName: job.siteName,
+        siteAddress1: job.siteAddress1,
+        siteAddress2: job.siteAddress2,
+        siteCity: job.siteCity,
+        siteState: job.siteState,
+        sitePostalCode: job.sitePostalCode,
         fabricationItems,
         archivedAt: job.archivedAt?.toISOString() ?? null,
         createdAt: job.createdAt.toISOString(),
@@ -670,6 +711,10 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         workPackageSummary,
         scheduleSummary,
         changesSummary,
+        procurementSummary,
+        deliverySummary,
+        financialSnapshot,
+        billingSnapshot,
         members: mappedMembers,
         aliases: job.aliases.map((a) => ({
           id: a.id,
@@ -760,9 +805,30 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     if (body.targetCompletionDate !== undefined) data.targetCompletionDate = body.targetCompletionDate ? new Date(body.targetCompletionDate) : null;
     if (body.bidDueAt !== undefined) data.bidDueAt = body.bidDueAt ? new Date(body.bidDueAt) : null;
     if (body.totalCost !== undefined) data.totalCost = body.totalCost;
+    if (body.originalContractValue !== undefined) {
+      data.originalContractValue = normalizeFinancialMoney(body.originalContractValue);
+    }
+    if (body.originalEstimatedCost !== undefined) {
+      data.originalEstimatedCost = normalizeFinancialMoney(body.originalEstimatedCost);
+    }
     if (body.estimatorUserId !== undefined) data.estimatorUserId = body.estimatorUserId;
     if (body.contractorCustomerId !== undefined) data.contractorCustomerId = body.contractorCustomerId;
     if (body.clientCustomerId !== undefined) data.clientCustomerId = body.clientCustomerId;
+    if (body.siteName !== undefined) data.siteName = body.siteName?.trim() || null;
+    if (body.siteAddress1 !== undefined) data.siteAddress1 = body.siteAddress1?.trim() || null;
+    if (body.siteAddress2 !== undefined) data.siteAddress2 = body.siteAddress2?.trim() || null;
+    if (body.siteCity !== undefined) data.siteCity = body.siteCity?.trim() || null;
+    if (body.siteState !== undefined) data.siteState = body.siteState?.trim() || null;
+    if (body.sitePostalCode !== undefined) data.sitePostalCode = body.sitePostalCode?.trim() || null;
+
+    const contractChanged =
+      body.originalContractValue !== undefined &&
+      financialMoneyToString(existing.originalContractValue) !==
+        financialMoneyToString(body.originalContractValue === null ? null : body.originalContractValue);
+    const estimatedCostChanged =
+      body.originalEstimatedCost !== undefined &&
+      financialMoneyToString(existing.originalEstimatedCost) !==
+        financialMoneyToString(body.originalEstimatedCost === null ? null : body.originalEstimatedCost);
 
     const updated = await app.services.prisma.$transaction(async (tx) => {
       const job = await tx.job.update({
@@ -776,18 +842,61 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         },
       });
 
-      await tx.jobActivityLog.create({
-        data: {
-          jobId,
-          workspaceId,
-          actorUserId: auth.userId,
-          action: statusChanged ? "JOB_STATUS_CHANGED" : "JOB_UPDATED",
-          previousValue: statusChanged
-            ? ({ status: existing.status } as Prisma.InputJsonValue)
-            : Prisma.JsonNull,
-          newValue: activityJson(statusChanged ? { status: body.status } : data),
-        },
-      });
+      const nonFinancialKeys = Object.keys(data).filter(
+        (k) => k !== "originalContractValue" && k !== "originalEstimatedCost"
+      );
+      if (statusChanged || nonFinancialKeys.length > 0) {
+        const logData = Object.fromEntries(
+          Object.entries(data).filter(
+            ([k]) => k !== "originalContractValue" && k !== "originalEstimatedCost"
+          )
+        );
+        await tx.jobActivityLog.create({
+          data: {
+            jobId,
+            workspaceId,
+            actorUserId: auth.userId,
+            action: statusChanged ? "JOB_STATUS_CHANGED" : "JOB_UPDATED",
+            previousValue: statusChanged
+              ? ({ status: existing.status } as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+            newValue: activityJson(statusChanged ? { status: body.status } : logData),
+          },
+        });
+      }
+
+      if (contractChanged) {
+        await tx.jobActivityLog.create({
+          data: {
+            jobId,
+            workspaceId,
+            actorUserId: auth.userId,
+            action: "ORIGINAL_CONTRACT_VALUE_UPDATED",
+            previousValue: activityJson({
+              originalContractValue: financialMoneyToString(existing.originalContractValue),
+            }),
+            newValue: activityJson({
+              originalContractValue: financialMoneyToString(job.originalContractValue),
+            }),
+          },
+        });
+      }
+      if (estimatedCostChanged) {
+        await tx.jobActivityLog.create({
+          data: {
+            jobId,
+            workspaceId,
+            actorUserId: auth.userId,
+            action: "ORIGINAL_ESTIMATED_COST_UPDATED",
+            previousValue: activityJson({
+              originalEstimatedCost: financialMoneyToString(existing.originalEstimatedCost),
+            }),
+            newValue: activityJson({
+              originalEstimatedCost: financialMoneyToString(job.originalEstimatedCost),
+            }),
+          },
+        });
+      }
 
       return job;
     });
@@ -802,13 +911,23 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       request,
     });
 
+    const financialSnapshot = await buildJobFinancialSnapshot(app.services.prisma, {
+      workspaceId,
+      jobId,
+    });
+
     return reply.send({
       job: {
         ...updated,
         totalCost: updated.totalCost == null ? null : updated.totalCost.toString(),
+        originalContractValue:
+          updated.originalContractValue == null ? null : updated.originalContractValue.toString(),
+        originalEstimatedCost:
+          updated.originalEstimatedCost == null ? null : updated.originalEstimatedCost.toString(),
         estimatorName: updated.estimator?.name ?? null,
         contractorName: updated.contractor?.name ?? null,
         clientName: updated.client?.name ?? null,
+        financialSnapshot,
       },
     });
   });

@@ -9,6 +9,12 @@ import {
   nextMilestoneByPackage,
   type NextMilestoneDto,
 } from "./job-milestones.js";
+import { countProcurementByPackage } from "./job-procurement.js";
+import {
+  assertPackageDeletableForDeliveries,
+  countDeliveriesByPackage,
+  DeliveryError,
+} from "./job-deliveries.js";
 
 export const JOB_WORK_PACKAGE_STATUSES = [
   "NOT_STARTED",
@@ -67,6 +73,10 @@ export type WorkPackageDto = {
   estimatedHours: number;
   childCount: number;
   nextMilestone: NextMilestoneDto | null;
+  procurementItemCount: number;
+  procurementAtRiskCount: number;
+  deliveryCount: number;
+  lastDeliveryDate: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -147,6 +157,10 @@ export function buildWorkPackageDtos(
       estimatedHours: Math.round(agg.hours * 100) / 100,
       childCount: childCount.get(pkg.id) ?? 0,
       nextMilestone: null,
+      procurementItemCount: 0,
+      procurementAtRiskCount: 0,
+      deliveryCount: 0,
+      lastDeliveryDate: null,
       createdAt: pkg.createdAt.toISOString(),
       updatedAt: pkg.updatedAt.toISOString(),
     };
@@ -198,7 +212,7 @@ export async function loadJobScope(
   estimatedHours: number;
   summary: WorkPackageSummary;
 }> {
-  const [packages, itemRows, milestones] = await Promise.all([
+  const [packages, itemRows, milestones, procurementByPkg, deliveriesByPkg] = await Promise.all([
     prisma.jobWorkPackage.findMany({
       where: { workspaceId: input.workspaceId, jobId: input.jobId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -208,6 +222,8 @@ export async function loadJobScope(
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     }),
     listJobMilestones(prisma, input),
+    countProcurementByPackage(prisma, input),
+    countDeliveriesByPackage(prisma, input),
   ]);
 
   const items = itemRows.map(presentItem);
@@ -215,6 +231,12 @@ export async function loadJobScope(
   const nextByPkg = nextMilestoneByPackage(milestones);
   for (const pkg of packageDtos) {
     pkg.nextMilestone = nextByPkg.get(pkg.id) ?? null;
+    const proc = procurementByPkg.get(pkg.id);
+    pkg.procurementItemCount = proc?.itemCount ?? 0;
+    pkg.procurementAtRiskCount = proc?.atRiskCount ?? 0;
+    const del = deliveriesByPkg.get(pkg.id);
+    pkg.deliveryCount = del?.deliveryCount ?? 0;
+    pkg.lastDeliveryDate = del?.lastDeliveryDate ?? null;
   }
   const estimatedHours = items.reduce((sum, item) => sum + item.totalHours, 0);
 
@@ -437,6 +459,19 @@ export async function deleteWorkPackage(
       "Delete or reassign milestones on this package before deleting it",
       409
     );
+  }
+
+  try {
+    await assertPackageDeletableForDeliveries(prisma, {
+      workspaceId: input.workspaceId,
+      jobId: input.jobId,
+      packageId: input.packageId,
+    });
+  } catch (error) {
+    if (error instanceof DeliveryError) {
+      throw new JobWorkPackageError(error.message, error.statusCode);
+    }
+    throw error;
   }
 
   await prisma.$transaction(async (tx) => {

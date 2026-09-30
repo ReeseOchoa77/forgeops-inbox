@@ -79,4 +79,61 @@ describe('jobSettingsUpdateBody', () => {
       clientCustomerId: null,
     })
   })
+
+  it('sends site fields and clears blanks to null', () => {
+    expect(jobSettingsUpdateBody({
+      name: 'Nova Academy',
+      jobNumber: '26-184',
+      status: 'ACTIVE',
+      description: '',
+      notes: '',
+      startDate: '',
+      targetCompletionDate: '',
+      siteName: 'Nova Site',
+      siteAddress1: '100 Main',
+      siteAddress2: '',
+      siteCity: 'Denver',
+      siteState: 'CO',
+      sitePostalCode: '80202',
+    })).toMatchObject({
+      siteName: 'Nova Site',
+      siteAddress1: '100 Main',
+      siteAddress2: null,
+      siteCity: 'Denver',
+      siteState: 'CO',
+      sitePostalCode: '80202',
+    })
+  })
+
+  it('sends financial baselines and clears empty baselines to null (unknown)', () => {
+    expect(jobSettingsUpdateBody({
+      name: 'Nova Academy',
+      jobNumber: '26-184',
+      status: 'ACTIVE',
+      description: '',
+      notes: '',
+      startDate: '',
+      targetCompletionDate: '',
+      originalContractValue: '$1,200,000',
+      originalEstimatedCost: '900000',
+    })).toMatchObject({
+      originalContractValue: 1_200_000,
+      originalEstimatedCost: 900_000,
+    })
+
+    expect(jobSettingsUpdateBody({
+      name: 'Nova Academy',
+      jobNumber: '26-184',
+      status: 'ACTIVE',
+      description: '',
+      notes: '',
+      startDate: '',
+      targetCompletionDate: '',
+      originalContractValue: '',
+      originalEstimatedCost: '',
+    })).toMatchObject({
+      originalContractValue: null,
+      originalEstimatedCost: null,
+    })
+  })
 })

@@ -481,7 +481,7 @@ describe("job change management", () => {
     expect(service).not.toContain("JOB_MATCHER");
 
     const detail = readFileSync(resolve(here, "../../../web/src/views/JobDetailView.tsx"), "utf8");
-    expect(detail).toContain("key: 'changes'");
+    expect(detail).toContain("JOB_CRM_TABS");
     expect(detail).toContain("<JobChangesView");
     expect(detail).toContain("<ChangesOverviewSummary");
 
