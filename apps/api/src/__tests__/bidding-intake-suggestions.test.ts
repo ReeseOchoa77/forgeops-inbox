@@ -162,6 +162,93 @@ describe("bidding intake suggestions service", () => {
     expect(result?.projectNameSource).toBe("subject_cleanup");
   });
 
+  it("CoBeck Bid Invite filename → Prieto Battery (not full filename)", async () => {
+    const prisma = basePrisma({
+      subject: "Bid Invitation",
+      body: "CoBeck Construction invites you to submit a bid.",
+      attachments: [
+        {
+          filename: "CoBeck Bid Invite -Prieto Battery.pdf",
+          mimeType: "application/pdf",
+        },
+      ],
+    });
+    const result = await buildBiddingIntakeSuggestions({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+    expect(result?.projectName).toBe("Prieto Battery");
+    expect(result?.projectName).not.toMatch(/CoBeck|Bid Invite/i);
+    expect(result?.alternateProjectNames.join(" ")).not.toMatch(/Bid Invite/i);
+    expect(prisma.job.create).not.toHaveBeenCalled();
+    expect(prisma.entityAlias.createMany).not.toHaveBeenCalled();
+  });
+
+  it("multi-attachment semantic agreement → Prieto Battery", async () => {
+    const prisma = basePrisma({
+      subject: "ITB",
+      body: "Please review the attached bid documents.",
+      attachments: [
+        {
+          filename: "CoBeck Bid Invite - Prieto Battery.pdf",
+          mimeType: "application/pdf",
+        },
+        {
+          filename: "Prieto Battery Structural Drawings.pdf",
+          mimeType: "application/pdf",
+        },
+        {
+          filename: "Prieto Battery Specifications.pdf",
+          mimeType: "application/pdf",
+        },
+      ],
+    });
+    const result = await buildBiddingIntakeSuggestions({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+    expect(result?.projectName).toBe("Prieto Battery");
+  });
+
+  it("AI joint customer/project: company not left in projectName", async () => {
+    extractMock.mockResolvedValue({
+      projectName: "Prieto Battery",
+      alternateProjectNames: [],
+      bidDueDate: null,
+      customerCompanyName: "CoBeck Construction",
+    });
+    const prisma = basePrisma({
+      subject: "Bid Invitation",
+      body: "CoBeck Construction invites you to submit a bid for Prieto Battery.",
+      attachments: [
+        {
+          filename: "CoBeck Bid Invite -Prieto Battery.pdf",
+          mimeType: "application/pdf",
+        },
+      ],
+    });
+    const result = await buildBiddingIntakeSuggestions({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: "sk-test",
+    });
+    expect(result?.projectName).toBe("Prieto Battery");
+    expect(extractMock).toHaveBeenCalledTimes(1);
+    const aiInput = extractMock.mock.calls[0]?.[0] as {
+      pdfFilenames?: string[];
+    };
+    expect(aiInput.pdfFilenames).toEqual([
+      "CoBeck Bid Invite -Prieto Battery.pdf",
+    ]);
+    expect(prisma.job.create).not.toHaveBeenCalled();
+    expect(prisma.customer.create).not.toHaveBeenCalled();
+  });
+
   it("AI failure / missing key leaves customer blank", async () => {
     const prisma = basePrisma({
       subject: "Interesting steel package",
@@ -288,8 +375,9 @@ describe("bidding intake route / freeze / customer regression", () => {
     expect(routeSrc).toContain("USER_BID_ASSIGNMENT");
   });
 
-  it("UI protects dirty customer field and supports new-customer proposal", () => {
+  it("UI protects dirty project/customer fields; late AI cannot overwrite", () => {
     expect(dialogSrc).toContain("nameDirty");
+    expect(dialogSrc).toContain("!nameDirty.current && s.projectName");
     expect(dialogSrc).toContain("jobNumberDirty");
     expect(dialogSrc).toContain("bidDueDirty");
     expect(dialogSrc).toContain("customerDirty");

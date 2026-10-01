@@ -46,11 +46,16 @@ describe("bidding intake AI parse", () => {
     });
   });
 
-  it("prompt encodes PDF-first project priority and generic rejection", () => {
-    expect(biddingIntakeSystemPrompt).toContain("PDF filenames");
+  it("prompt encodes project-vs-document reasoning and generic rejection", () => {
+    expect(biddingIntakeSystemPrompt).toContain(
+      "identifying the construction PROJECT"
+    );
+    expect(biddingIntakeSystemPrompt).toContain("filename ≠ project name");
+    expect(biddingIntakeSystemPrompt).toContain("Prieto Battery");
     expect(biddingIntakeSystemPrompt).toContain("alternateProjectNames");
     expect(biddingIntakeSystemPrompt).toContain("A101.pdf");
     expect(biddingIntakeSystemPrompt).toContain("Structural Drawings.pdf");
     expect(biddingIntakeSystemPrompt).toContain("customerCompanyName");
+    expect(biddingIntakeSystemPrompt).toContain("DOCUMENT PURPOSE");
   });
 });

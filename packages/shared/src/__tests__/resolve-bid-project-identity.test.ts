@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeProjectAliases,
   extractProjectNameFromBody,
+  isCleanerProjectRefinement,
   resolveBidProjectIdentity,
+  stripCustomerFromProjectName,
 } from "../bidding/resolve-bid-project-identity.js";
 
 describe("resolveBidProjectIdentity", () => {
@@ -16,7 +18,6 @@ describe("resolveBidProjectIdentity", () => {
     });
     expect(r.projectNameSource).toBe("attachment");
     expect(r.projectName).toMatch(/EP Office Expansion/i);
-    // Subject cleanup is a meaningful alternate when not identical after normalize
     expect(
       r.alternateProjectNames.some((a) => /EP Office Expansion/i.test(a)) ||
         r.projectName?.includes("EP Office Expansion")
@@ -70,9 +71,80 @@ describe("resolveBidProjectIdentity", () => {
       pdfFilenames: ["Central Middle School Addition - Bid Set.pdf"],
       subject: "Invitation from Mortenson",
       bodyText: "Mortenson invites you to bid on Central Middle School Addition",
+      customerCompanyName: "Mortenson",
     });
     expect(r.projectName).toBe("Central Middle School Addition");
     expect(r.projectName).not.toMatch(/Mortenson/i);
+  });
+
+  it("CoBeck Bid Invite filename → Prieto Battery; company not in project", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: ["CoBeck Bid Invite -Prieto Battery.pdf"],
+      subject: "Bid Invitation",
+      bodyText:
+        "CoBeck Construction invites you to submit a bid for Prieto Battery.",
+      customerCompanyName: "CoBeck Construction",
+    });
+    expect(r.projectName).toBe("Prieto Battery");
+    expect(r.projectName).not.toMatch(/CoBeck/i);
+    expect(r.projectName).not.toMatch(/Bid Invite/i);
+    expect(r.alternateProjectNames.join(" ")).not.toMatch(/Bid Invite/i);
+  });
+
+  it("multi-attachment Prieto Battery agreement", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: [
+        "CoBeck Bid Invite - Prieto Battery.pdf",
+        "Prieto Battery Structural Drawings.pdf",
+        "Prieto Battery Specifications.pdf",
+      ],
+      subject: "ITB",
+      bodyText: "CoBeck Construction invites you…",
+      customerCompanyName: "CoBeck Construction",
+    });
+    expect(r.projectName).toBe("Prieto Battery");
+  });
+
+  it("CASE B subject: ITB - Central Middle School Addition with Mortenson files", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: [
+        "Mortenson - Bid Invite - Central Middle School Addition.pdf",
+        "Central Middle School - Architectural.pdf",
+        "Central Middle School - Structural.pdf",
+      ],
+      subject: "ITB - Central Middle School Addition",
+      bodyText: "",
+      customerCompanyName: "Mortenson",
+    });
+    expect(r.projectName).toMatch(/Central Middle School Addition/i);
+    expect(r.projectName).not.toMatch(/Mortenson/i);
+  });
+
+  it("CASE C: generic attachments defer to subject", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: ["A101.pdf", "S101.pdf", "Bid Form.pdf"],
+      subject: "Invitation to Bid - Garden City Elementary School",
+      bodyText: "",
+    });
+    expect(r.projectName).toBe("Garden City Elementary School");
+    expect(r.projectNameSource).toBe("subject_cleanup");
+  });
+
+  it("CASE D: North Loop canonical + Apts alias; not Greiner wrapper", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: [
+        "Greiner Construction ITB - North Loop Apartments.pdf",
+        "North Loop Apts - Structural Set.pdf",
+        "Addendum 01 - North Loop Apartments.pdf",
+      ],
+      subject: "Bid invite",
+      bodyText: "",
+      customerCompanyName: "Greiner Construction",
+    });
+    expect(r.projectName).toBe("North Loop Apartments");
+    expect(r.alternateProjectNames).toContain("North Loop Apts");
+    expect(r.alternateProjectNames.join(" ")).not.toMatch(/Greiner/i);
+    expect(r.alternateProjectNames.join(" ")).not.toMatch(/\bITB\b/i);
   });
 
   it("conflicting PDFs fall back to subject", () => {
@@ -86,6 +158,61 @@ describe("resolveBidProjectIdentity", () => {
     });
     expect(r.projectName).toBe("Alpha School");
     expect(r.projectNameSource).toBe("subject_cleanup");
+  });
+
+  it("conflicting PDFs: AI alone does not arbitrarily pick", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: [
+        "Project Alpha - Drawings.pdf",
+        "Project Beta - Drawings.pdf",
+      ],
+      subject: "Bid Invitation",
+      bodyText: "",
+      aiProjectName: "Project Alpha",
+    });
+    // Subject useless; conflict → null (conservative)
+    expect(r.projectName).toBeNull();
+  });
+
+  it("AI may refine noisy attachment into cleaner project core", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: ["CoBeck Bid Invite -Prieto Battery.pdf"],
+      subject: "Bid Invitation",
+      bodyText: "",
+      aiProjectName: "Prieto Battery",
+      customerCompanyName: "CoBeck Construction",
+    });
+    expect(r.projectName).toBe("Prieto Battery");
+  });
+
+  it("body resolves weak subject + generic attachments", () => {
+    const r = resolveBidProjectIdentity({
+      pdfFilenames: ["Bid Form.pdf", "Specifications.pdf"],
+      subject: "Invitation to Bid",
+      bodyText: "Project: Harborview Medical Pavilion",
+    });
+    expect(r.projectName).toBe("Harborview Medical Pavilion");
+    expect(r.projectNameSource).toBe("body");
+  });
+});
+
+describe("stripCustomerFromProjectName / isCleanerProjectRefinement", () => {
+  it("strips customer company from project", () => {
+    expect(
+      stripCustomerFromProjectName(
+        "CoBeck Construction - Prieto Battery",
+        "CoBeck Construction"
+      )
+    ).toBe("Prieto Battery");
+  });
+
+  it("detects cleaner AI refinement of wrapper filename", () => {
+    expect(
+      isCleanerProjectRefinement(
+        "Prieto Battery",
+        "CoBeck Bid Invite -Prieto Battery"
+      )
+    ).toBe(true);
   });
 });
 
@@ -106,5 +233,21 @@ describe("extractProjectNameFromBody / dedupeProjectAliases", () => {
         "",
       ])
     ).toEqual(["EP Office Expansion"]);
+  });
+
+  it("does not save raw document filename wrappers as aliases", () => {
+    expect(
+      dedupeProjectAliases("Prieto Battery", [
+        "CoBeck Bid Invite - Prieto Battery",
+        "Prieto Battery Project",
+        "Bid Invite",
+      ])
+    ).toEqual(["Prieto Battery Project"]);
+  });
+
+  it("allows credible shorthand alias", () => {
+    expect(
+      dedupeProjectAliases("North Loop Apartments", ["North Loop Apts"])
+    ).toEqual(["North Loop Apts"]);
   });
 });

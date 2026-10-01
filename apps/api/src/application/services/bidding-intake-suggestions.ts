@@ -93,6 +93,13 @@ export async function buildBiddingIntakeSuggestions(input: {
 
   const attachmentEvidence = extractProjectIdentityFromPdfFilenames(pdfFilenames);
   const subjectDeterministic = suggestBidProjectNameFromSubject(subject);
+  // Only pass a high-confidence attachment hint to AI — never a noisy compound filename.
+  const attachmentHintForAi =
+    attachmentEvidence.projectName &&
+    !attachmentEvidence.ambiguous &&
+    !attachmentEvidence.conflicting
+      ? attachmentEvidence.projectName
+      : null;
 
   const jobRows = await input.prisma.job.findMany({
     where: { workspaceId: input.workspaceId, jobNumber: { not: null } },
@@ -114,6 +121,7 @@ export async function buildBiddingIntakeSuggestions(input: {
   let aiAlternateProjectNames: string[] = [];
 
   // One AI call when configured — project + alternates + bid due + customer.
+  // All relevant PDF filenames are passed together; never one call per attachment.
   if (input.openaiApiKey?.trim()) {
     const client = createOpenAIClient({ apiKey: input.openaiApiKey.trim() });
     const extractor = new OpenAIBiddingIntakeExtractor(
@@ -124,7 +132,7 @@ export async function buildBiddingIntakeSuggestions(input: {
       subject,
       cleanBody: body,
       deterministicProjectName: subjectDeterministic,
-      deterministicAttachmentProjectName: attachmentEvidence.projectName,
+      deterministicAttachmentProjectName: attachmentHintForAi,
       pdfFilenames,
       senderEmail: message.senderEmail,
       senderName: message.senderName,
@@ -138,12 +146,19 @@ export async function buildBiddingIntakeSuggestions(input: {
     rawCustomerCompany = ai.customerCompanyName;
   }
 
+  // Sanitize customer first so project resolution can jointly strip contractor prefixes.
+  const sanitizedCompanyPreview = sanitizeBiddingCustomerCompanyName({
+    companyName: rawCustomerCompany,
+    projectName: aiProjectName ?? attachmentHintForAi ?? subjectDeterministic,
+  });
+
   const identity = resolveBidProjectIdentity({
     pdfFilenames,
     subject,
     bodyText: body,
     aiProjectName,
     aiAlternateProjectNames,
+    customerCompanyName: sanitizedCompanyPreview,
   });
 
   const sanitizedCompany = sanitizeBiddingCustomerCompanyName({
