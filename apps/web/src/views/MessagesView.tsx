@@ -6,6 +6,7 @@ import {
   setCachedInboxList,
   INBOX_DEFAULT_LIST_FILTER_KEY,
 } from '../inbox-list-cache'
+import { inboxListQueryKey, isSameInboxListQuery } from '../inbox-list-query'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
 import { InboxExcludeFilter } from '../components/InboxExcludeFilter'
 import { AttachmentActionMenu } from '../components/AttachmentActionMenu'
@@ -284,10 +285,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [hasMore, setHasMore] = useState(() => initialCache?.hasMore ?? true)
   const [loading, setLoading] = useState(() => !initialCache)
   const [loadingMore, setLoadingMore] = useState(false)
-  /** Soft refresh: keep existing rows visible while filters refetch. */
+  /**
+   * Soft refresh only for SAME query revalidation (keep rows).
+   * Query-context changes clear rows and use hard loading instead.
+   */
   const [refreshing, setRefreshing] = useState(false)
   const usefulPaintLoggedRef = useRef(false)
   const requestSeqRef = useRef(0)
+  /** Active list query identity — rejects stale responses / decides soft vs replace. */
+  const activeQueryKeyRef = useRef(
+    initialCache ? inboxListQueryKey({ businessCategory: 'BUSINESS' }) : ''
+  )
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
@@ -445,6 +453,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     append: boolean,
     opts?: { soft?: boolean }
   ) => {
+    const requestKey = inboxListQueryKey(filters)
     if (pageNum === 1 && !append) {
       if (opts?.soft) setRefreshing(true)
       else setLoading(true)
@@ -478,11 +487,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         performance.clearMeasures('inboxMessagesRequestMs')
       } catch { /* ignore */ }
 
+      // Drop stale responses (superseded request OR query context changed).
       if (seq !== requestSeqRef.current) return
+      if (requestKey !== activeQueryKeyRef.current) return
 
       if (append) {
+        // Same query + next page only
+        if (requestKey !== activeQueryKeyRef.current) return
         setMessages(prev => [...prev, ...r.messages])
       } else {
+        // Empty arrays are authoritative — always replace for this query.
         setMessages(r.messages)
       }
       setTotalCount(r.pagination.totalCount)
@@ -496,9 +510,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         filters.businessCategory === 'BUSINESS' &&
         !filters.sentOnly &&
         !filters.unreadOnly &&
+        !filters.unclassifiedOnly &&
         !filters.search &&
         !filters.jobId &&
-        !filters.category
+        !filters.category &&
+        !filters.dateRange
       if (isDefaultBusiness) {
         setCachedInboxList(workspaceId, connectionId, INBOX_DEFAULT_LIST_FILTER_KEY, {
           messages: r.messages,
@@ -507,8 +523,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           page: pageNum,
         })
       }
+    } catch {
+      // Leave list empty/loading for the active query — never keep another tab's rows.
     } finally {
-      if (seq === requestSeqRef.current) {
+      if (seq === requestSeqRef.current && requestKey === activeQueryKeyRef.current) {
         setLoading(false)
         setLoadingMore(false)
         setRefreshing(false)
@@ -579,6 +597,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setExcludeBusinessTypeGroups([])
     setMassDeleteMode(false)
 
+    const defaultFilters = { businessCategory: 'BUSINESS' as const }
+    activeQueryKeyRef.current = inboxListQueryKey(defaultFilters)
+
     const cached = getCachedInboxList(workspaceId, connectionId)
     if (cached && cached.messages.length > 0) {
       setMessages(cached.messages)
@@ -586,13 +607,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setHasMore(cached.hasMore)
       setTotalCount(cached.totalCount)
       setLoading(false)
-      // Soft revalidate — keep rows visible.
-      void loadPage(1, { businessCategory: 'BUSINESS' }, false, { soft: true })
+      // Soft revalidate same Business query — keep cached rows visible.
+      void loadPage(1, defaultFilters, false, { soft: true })
     } else {
       setMessages([])
       setLoading(true)
-      void loadPage(1, { businessCategory: 'BUSINESS' }, false)
+      void loadPage(1, defaultFilters, false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on mailbox change
   }, [workspaceId, connectionId])
 
   const sentOnly = readFilter === 'sent'
@@ -604,11 +626,21 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       return
     }
     const filters = buildFilters()
+    const sameQuery = isSameInboxListQuery(activeQueryKeyRef.current, filters)
+    activeQueryKeyRef.current = inboxListQueryKey(filters)
     setPage(1)
     setHasMore(true)
     setTotalCount(null)
-    // Soft refresh: keep prior rows visible until the new page arrives.
-    loadPage(1, filters, false, { soft: true })
+    if (sameQuery) {
+      // Same identity (e.g. softRefreshList): keep rows while revalidating.
+      void loadPage(1, filters, false, { soft: true })
+    } else {
+      // New tab/filter context: never render the previous query's emails.
+      setMessages([])
+      setRefreshing(false)
+      void loadPage(1, filters, false, { soft: false })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
   }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups])
 
   useEffect(() => {
@@ -619,11 +651,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
-    if (!el || loadingMore || !hasMore) return
+    if (!el || loadingMore || !hasMore || loading || refreshing) return
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
-      loadPage(page + 1, buildFilters(), true)
+      const filters = buildFilters()
+      // Only append when still on the same query identity.
+      if (inboxListQueryKey(filters) !== activeQueryKeyRef.current) return
+      loadPage(page + 1, filters, true)
     }
-  }, [page, buildFilters, hasMore, loadingMore, loadPage])
+  }, [page, buildFilters, hasMore, loadingMore, loading, refreshing, loadPage])
 
   const handleTrash = async (messageId: string, isTrashed: boolean) => {
     const msg = messages.find(m => m.id === messageId)
@@ -706,7 +741,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   const softRefreshList = useCallback(() => {
-    void loadPage(1, buildFilters(), false, { soft: true })
+    const filters = buildFilters()
+    // Revalidate current query only — do not clear rows for same identity.
+    activeQueryKeyRef.current = inboxListQueryKey(filters)
+    void loadPage(1, filters, false, { soft: true })
   }, [loadPage, buildFilters])
 
   const formatRetryNotice = (r: {
@@ -1437,45 +1475,56 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         })}
       </div>
 
-      {/* Global direction chips (All/Unread/Read/Sent). Sent omits Business/Personal category. */}
+      {/* Compact mail + date filters (same readFilter / dateRange semantics as former pills). */}
       {inboxTab !== 'TRASH' && (
-        <div style={{ display: 'flex', gap: 10, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-            {([['', 'All'], ['unread', 'Unread'], ['read', 'Read'], ['sent', 'Sent']] as const).map(([key, label]) => (
-              <button key={key || 'all'} onClick={() => selectDirectionFilter(key as ReadFilter)} style={{
-                padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-                border: readFilter === key ? '1px solid #1a1a2e' : '1px solid #ddd',
-                background: readFilter === key ? '#1a1a2e' : '#fff',
-                color: readFilter === key ? '#fff' : '#666', cursor: 'pointer'
-              }}>{label}</button>
-            ))}
-          </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select
+            data-testid="inbox-mail-filter"
+            aria-label="Mail filter"
+            value={readFilter}
+            onChange={(e) => selectDirectionFilter(e.target.value as ReadFilter)}
+            style={{
+              padding: '4px 8px',
+              fontSize: 12,
+              fontWeight: 500,
+              borderRadius: 6,
+              border: '1px solid #ddd',
+              background: '#fff',
+              color: '#374151',
+              cursor: 'pointer',
+              outline: 'none',
+              maxWidth: 140,
+            }}
+          >
+            <option value="">All mail</option>
+            <option value="unread">Unread</option>
+            <option value="read">Read</option>
+            <option value="sent">Sent</option>
+          </select>
 
-          <span style={{ color: '#ddd' }}>|</span>
-
-          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-            {([['', 'All dates'], ['TODAY', 'Today'], ['WEEK', 'This week'], ['MONTH', 'This month']] as const).map(
-              ([key, label]) => (
-                <button
-                  key={key || 'all-dates'}
-                  type="button"
-                  onClick={() => setDateRange(key)}
-                  style={{
-                    padding: '3px 10px',
-                    fontSize: 11,
-                    fontWeight: 500,
-                    borderRadius: 12,
-                    border: dateRange === key ? '1px solid #1a1a2e' : '1px solid #ddd',
-                    background: dateRange === key ? '#1a1a2e' : '#fff',
-                    color: dateRange === key ? '#fff' : '#666',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            )}
-          </div>
+          <select
+            data-testid="inbox-date-filter"
+            aria-label="Date filter"
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value as '' | 'TODAY' | 'WEEK' | 'MONTH')}
+            style={{
+              padding: '4px 8px',
+              fontSize: 12,
+              fontWeight: 500,
+              borderRadius: 6,
+              border: '1px solid #ddd',
+              background: '#fff',
+              color: '#374151',
+              cursor: 'pointer',
+              outline: 'none',
+              maxWidth: 150,
+            }}
+          >
+            <option value="">All dates</option>
+            <option value="TODAY">Today</option>
+            <option value="WEEK">This week</option>
+            <option value="MONTH">This month</option>
+          </select>
 
           {showBusinessChrome && (
             <>
@@ -1503,30 +1552,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
               <span style={{ color: '#ddd' }}>|</span>
 
-              {/* Job filter — type-to-search like row assign picker */}
+              {/* Job filter — type-to-search; includes No job (jobId=unassigned) */}
               <JobFilterSelect
                 workspaceId={workspaceId}
                 value={jobFilter}
                 onChange={setJobFilter}
               />
-
-              <button
-                type="button"
-                onClick={() => setJobFilter(jobFilter === 'unassigned' ? '' : 'unassigned')}
-                title="Only emails that are not assigned to a job"
-                style={{
-                  padding: '3px 10px',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  borderRadius: 12,
-                  border: jobFilter === 'unassigned' ? '1px solid #1a1a2e' : '1px solid #ddd',
-                  background: jobFilter === 'unassigned' ? '#1a1a2e' : '#fff',
-                  color: jobFilter === 'unassigned' ? '#fff' : '#666',
-                  cursor: 'pointer',
-                }}
-              >
-                No job
-              </button>
 
               <span style={{ color: '#ddd' }}>|</span>
 

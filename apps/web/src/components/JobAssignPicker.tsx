@@ -288,7 +288,7 @@ export function JobFilterSelect({
       : value === 'assigned'
         ? 'Any job'
         : value === 'unassigned'
-          ? 'Unassigned'
+          ? 'No job'
           : selectedJob
             ? `${selectedJob.name}${selectedJob.jobNumber ? ` (#${selectedJob.jobNumber})` : ''}`
             : 'Job…'
@@ -378,7 +378,7 @@ export function JobFilterSelect({
                   onClick={() => pick('assigned')}
                 />
                 <JobFilterRow
-                  label="Unassigned"
+                  label="No job"
                   active={value === 'unassigned'}
                   onClick={() => pick('unassigned')}
                 />

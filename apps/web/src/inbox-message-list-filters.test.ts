@@ -90,7 +90,7 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     });
   });
 
-  it("No job filter sends jobId=unassigned", () => {
+  it("No job filter sends jobId=unassigned (same as former Unassigned option)", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "ALL_BUSINESS",
@@ -101,6 +101,34 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       businessCategory: "BUSINESS",
       jobId: "unassigned",
     });
+  });
+
+  it("No job combines with Unread + This week", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "unread",
+        dateRange: "WEEK",
+        timezone: "UTC",
+        jobFilter: "unassigned",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      unreadOnly: true,
+      dateRange: "WEEK",
+      timezone: "UTC",
+      jobId: "unassigned",
+    });
+  });
+
+  it("All Jobs clears job filter (empty jobFilter omits jobId)", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        jobFilter: "",
+      })
+    ).not.toHaveProperty("jobId");
   });
 
   it("Business subtype + job only apply when not Sent", () => {
@@ -164,6 +192,46 @@ describe("buildInboxMessageListFilters — global Sent", () => {
       search: "clmsg123",
       searchIn: "id",
     });
+  });
+
+  it("Unread + This week compose without resetting either filter", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "unread",
+        dateRange: "WEEK",
+        timezone: "America/Chicago",
+      })
+    ).toMatchObject({
+      businessCategory: "BUSINESS",
+      unreadOnly: true,
+      dateRange: "WEEK",
+      timezone: "America/Chicago",
+    });
+  });
+
+  it("All mail / Read / All dates produce no unreadOnly or dateRange params", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        dateRange: "",
+      })
+    ).not.toHaveProperty("unreadOnly");
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "read",
+        dateRange: "",
+      })
+    ).not.toHaveProperty("unreadOnly");
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+        dateRange: "",
+      })
+    ).not.toHaveProperty("dateRange");
   });
 
   it("dateRange + timezone compose with Business and Unclassified", () => {

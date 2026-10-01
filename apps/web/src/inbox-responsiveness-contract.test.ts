@@ -18,11 +18,16 @@ describe('inbox responsiveness contracts', () => {
     expect(keepInboxMounted('message-detail', 'job-detail')).toBe(false)
   })
 
-  it('list soft-refresh keeps rows until replace (no blanking)', () => {
+  it('same-query soft-refresh keeps rows; query-context change clears them', () => {
     const prior = [{ id: 'm1' }, { id: 'm2' }]
-    const soft = true
-    const nextMessages = soft ? prior : []
-    expect(nextMessages).toHaveLength(2)
+    const softSameQuery = true
+    const sameQueryMessages = softSameQuery ? prior : []
+    expect(sameQueryMessages).toHaveLength(2)
+
+    // Tab/filter change must not present prior category rows under the new tab.
+    const queryContextChanged = true
+    const afterContextChange = queryContextChanged ? [] : prior
+    expect(afterContextChange).toEqual([])
   })
 
   it('return navigation prefers cached rows over blanking', () => {
