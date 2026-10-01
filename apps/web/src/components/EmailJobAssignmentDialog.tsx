@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ApiRequestError, api, type CustomerSummary, type JobLookup } from '../api'
-import { isBidsEstimatingSubtype, suggestBidProjectNameFromSubject, suggestedBidName } from '../bidding-display'
+import { suggestBidProjectNameFromSubject, suggestedBidName } from '../bidding-display'
 import { JobAssignPicker } from './JobAssignPicker'
 
 type CurrentJob = {
@@ -14,6 +14,7 @@ type Props = {
   workspaceId: string
   messageId: string
   subject: string | null
+  /** @deprecated unused — kept optional so callers need not change. */
   businessTypeKey?: string | null
   currentJob?: CurrentJob | null
   suggestedJobName?: string | null
@@ -34,7 +35,6 @@ export function EmailJobAssignmentDialog({
   workspaceId,
   messageId,
   subject,
-  businessTypeKey,
   currentJob,
   suggestedJobName,
   initialMode = 'assign',
@@ -326,11 +326,6 @@ export function EmailJobAssignmentDialog({
                 Currently assigned to <strong>{currentJob.name}</strong>
                 {currentJob.jobNumber ? ` (#${currentJob.jobNumber})` : ''}
                 {currentJob.status ? ` · ${currentJob.status}` : ''}
-              </div>
-            )}
-            {isBidsEstimatingSubtype(businessTypeKey) && (
-              <div style={{ fontSize: 12, color: '#1d4ed8', background: '#eff6ff', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
-                Classified as bidding-related. You can assign an existing Job or create a new Bidding Job.
               </div>
             )}
             <button

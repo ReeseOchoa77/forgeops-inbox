@@ -1397,9 +1397,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                     >
                       {clickedMessage.job ? 'Change job…' : 'Assign job…'}
                     </button>
-                    {clickedMessage.job?.status === 'BIDDING' && (
-                      <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
-                    )}
                   </>
                 )}
               </div>

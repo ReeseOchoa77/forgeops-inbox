@@ -8,6 +8,7 @@ import {
   formatOverviewDate,
   formatQuantity,
   lineEstimatedHours,
+  JOB_OVERVIEW_SECTION_ORDER,
   OVERVIEW_METRIC_LABELS,
   OVERVIEW_PARTY_LABELS,
   OVERVIEW_REMOVED_LABELS,
@@ -73,5 +74,12 @@ describe("job overview formatting", () => {
       "Last Activity",
       "Created",
     ]);
+  });
+
+  it("places headline metrics first in Overview section order", () => {
+    expect(JOB_OVERVIEW_SECTION_ORDER[0]).toBe("headline_metrics");
+    expect(JOB_OVERVIEW_SECTION_ORDER.indexOf("headline_metrics")).toBeLessThan(
+      JOB_OVERVIEW_SECTION_ORDER.indexOf("work_packages")
+    );
   });
 });

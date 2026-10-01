@@ -1,5 +1,21 @@
 export const OVERVIEW_METRIC_LABELS = ["Emails", "Open Tasks", "Estimated Hours"] as const
 export const OVERVIEW_PARTY_LABELS = ["Estimator", "Project Manager", "Contractor", "Client"] as const
+/**
+ * Job Overview section order under the tab nav.
+ * Headline metrics must be first — see JobDetailView overview tab.
+ */
+export const JOB_OVERVIEW_SECTION_ORDER = [
+  "headline_metrics",
+  "attention",
+  "project_summary",
+  "work_packages",
+  "schedule",
+  "changes",
+  "procurement",
+  "deliveries",
+  "financial",
+  "parties",
+] as const
 export const OVERVIEW_REMOVED_LABELS = [
   "Entered total",
   "Emails (7d)",

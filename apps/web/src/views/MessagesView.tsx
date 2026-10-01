@@ -970,9 +970,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {m.job ? formatJobPrimaryLabel(m.job, 22) : 'Unassigned'}
             </button>
           )}
-          {showBusinessChrome && m.job?.status === 'BIDDING' && (
-            <span style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
-          )}
         </div>
 
         {SHOW_INBOX_SUGGESTED_RESPONSE && showBusinessChrome && m.classification?.priority === 'LOW' && (() => {
@@ -1159,9 +1156,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           >
             {m.job ? formatJobPrimaryLabel(m.job, 24) : 'Unassigned'}
           </button>
-          {m.job?.status === 'BIDDING' && (
-            <div style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8', marginTop: 4 }}>Active bid</div>
-          )}
         </td>
       )}
       {showUnclassifiedChrome && !isTablet && (

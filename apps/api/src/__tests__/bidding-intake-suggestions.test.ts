@@ -310,6 +310,12 @@ describe("bidding intake route / freeze / customer regression", () => {
     expect(inboxSrc).toContain("Unassigned");
   });
 
+  it("Inbox Job assignment does not render redundant Active bid tag", () => {
+    expect(inboxSrc).not.toMatch(/>\s*Active bid\s*</);
+    expect(inboxSrc).toContain("formatJobPrimaryLabel");
+    expect(inboxSrc).toContain("setAssignmentTarget");
+  });
+
   it("Inbox uses compact MailboxCategoryDot instead of Biz/Pers pills", () => {
     expect(inboxSrc).toContain("MailboxCategoryDot");
     expect(inboxSrc).toContain("INBOX_ACTIONS_COLUMN_WIDTH_PX");

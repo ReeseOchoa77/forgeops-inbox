@@ -1074,9 +1074,31 @@ export function JobDetailView({
         )}
       </div>
 
-      {/* Overview Tab — attention → ops → commercial → parties → metrics */}
+      {/* Overview Tab — headline metrics → attention → ops → commercial → parties */}
       {tab === 'overview' && (
         <div>
+          <div
+            data-testid="job-overview-headline-metrics"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(3, minmax(0, 1fr))',
+              gap: 12,
+              marginBottom: 12,
+            }}
+          >
+            <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
+            <MetricCard
+              label="Open Tasks"
+              value={job.openTaskCount.toLocaleString('en-US')}
+              hint={job.overdueTaskCount > 0 ? `${job.overdueTaskCount} overdue` : undefined}
+              accent={job.openTaskCount > 0 ? '#2563eb' : undefined}
+            />
+            <MetricCard
+              label="Estimated Hours"
+              value={job.estimatedHours == null ? 'Not set' : formatHoursNumber(job.estimatedHours)}
+            />
+          </div>
+
           {attentionItems.length > 0 && (
             <div style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 8, padding: 16, marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#991b1b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
@@ -1179,20 +1201,6 @@ export function JobDetailView({
               })
             }}
           />
-
-          <div style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 12 }}>
-            <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
-            <MetricCard
-              label="Open Tasks"
-              value={job.openTaskCount.toLocaleString('en-US')}
-              hint={job.overdueTaskCount > 0 ? `${job.overdueTaskCount} overdue` : undefined}
-              accent={job.openTaskCount > 0 ? '#2563eb' : undefined}
-            />
-            <MetricCard
-              label="Estimated Hours"
-              value={job.estimatedHours == null ? 'Not set' : formatHoursNumber(job.estimatedHours)}
-            />
-          </div>
         </div>
       )}
 
