@@ -48,7 +48,8 @@ function businessPipeline(
     confidence: number;
     recommendedOwner: string | null;
     dueDate: string | null;
-  }>
+  }>,
+  businessType = "RFI_CLARIFICATION"
 ) {
   return {
     candidates: null,
@@ -80,7 +81,7 @@ function businessPipeline(
       reasons: [],
     },
     businessSubtype: {
-      businessType: "RFI_CLARIFICATION",
+      businessType,
       businessTypeConfidence: 0.9,
       reasons: [],
     },
@@ -216,6 +217,106 @@ describe("persistNativeClassificationResult taskMode", () => {
     expect(deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["ai-old"] } },
     });
+  });
+
+  it("REGENERATE + BID_OPPORTUNITY bid-deadline-only email writes zero Tasks", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
+    const upsert = vi.fn();
+    const findMany = vi.fn().mockResolvedValue([
+      { id: "ai-old", sourceTaskKey: "native:0:submit-bid:abcd1234" },
+    ]);
+    const prisma = {
+      emailMessage: {
+        findFirst: vi.fn().mockResolvedValue({
+          ...baseMessage(),
+          subject: "Invitation to Bid — Garden City Elementary",
+        }),
+      },
+      job: { findFirst: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn().mockResolvedValue({
+        classificationId: "cls1",
+        mailboxCategory: "BUSINESS",
+        priority: "MEDIUM",
+      }),
+      task: { deleteMany, upsert, findMany },
+    };
+
+    const result = await persistNativeClassificationResult({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      inboxConnectionId: "c1",
+      emailMessageId: "m1",
+      pipeline: businessPipeline(
+        [
+          {
+            title: "Submit bid for Garden City Elementary",
+            description: "Bids due October 15",
+            confidence: 0.95,
+            recommendedOwner: null,
+            dueDate: "2026-10-15T00:00:00.000Z",
+          },
+        ],
+        "BID_OPPORTUNITY"
+      ) as never,
+      taskMode: "REGENERATE",
+    });
+
+    expect(result.tasksWritten).toBe(0);
+    expect(upsert).not.toHaveBeenCalled();
+    // Empty regenerated set removes prior classifier Tasks.
+    expect(deleteMany).toHaveBeenCalled();
+  });
+
+  it("REGENERATE + mixed bid email keeps only the distinct action Task", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 0 });
+    const upsert = vi.fn().mockResolvedValue({});
+    const findMany = vi.fn().mockResolvedValue([]);
+    const prisma = {
+      emailMessage: {
+        findFirst: vi.fn().mockResolvedValue({
+          ...baseMessage(),
+          subject: "Invitation to Bid — Garden City",
+        }),
+      },
+      job: { findFirst: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn().mockResolvedValue({
+        classificationId: "cls1",
+        mailboxCategory: "BUSINESS",
+        priority: "MEDIUM",
+      }),
+      task: { deleteMany, upsert, findMany },
+    };
+
+    const result = await persistNativeClassificationResult({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      inboxConnectionId: "c1",
+      emailMessageId: "m1",
+      pipeline: businessPipeline(
+        [
+          {
+            title: "Submit bid",
+            description: "Bid due October 15",
+            confidence: 0.9,
+            recommendedOwner: null,
+            dueDate: "2026-10-15T00:00:00.000Z",
+          },
+          {
+            title: "Confirm intent to bid",
+            description: "Please confirm by October 5",
+            confidence: 0.92,
+            recommendedOwner: null,
+            dueDate: "2026-10-05T00:00:00.000Z",
+          },
+        ],
+        "BID_OPPORTUNITY"
+      ) as never,
+      taskMode: "REGENERATE",
+    });
+
+    expect(result.tasksWritten).toBe(1);
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0]![0].create.title).toBe("Confirm intent to bid");
   });
 
   it("production path without taskMode leaves BUSINESS empty-task set untouched", async () => {

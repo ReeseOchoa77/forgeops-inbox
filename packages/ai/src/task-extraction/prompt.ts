@@ -11,6 +11,11 @@ export interface TaskExtractionEmailInput {
   attachmentNames?: string[] | undefined;
   summary?: string | undefined;
   containsActionRequest: boolean;
+  /**
+   * When present (e.g. BID_OPPORTUNITY / BID_UPDATE), treat the opportunity's
+   * own bid/proposal submission deadline as metadata — not an ordinary Task.
+   */
+  businessTypeKey?: string | null | undefined;
 }
 
 export interface ExtractedTask {
@@ -34,11 +39,26 @@ STRICT RULES:
 - Do NOT create tasks for: purely informational messages, vague suggestions, email signatures, marketing statements, or automatic notices that require no action.
 - If the email requires no action, return an empty tasks array.
 - NEVER invent deadlines, owners, meetings, approval steps, legal review, or internal procedures. Only include a dueDate or recommendedOwner if it is explicitly stated in the email; otherwise use null.
+- A deadline alone does NOT automatically imply a Task.
+
+BIDDING OPPORTUNITIES (critical):
+- When Business Type is BID_OPPORTUNITY or BID_UPDATE (or the email is clearly an invitation to bid / ITB / RFP opportunity), the deadline for submitting the bid, proposal, quote, or pricing for that opportunity is OPPORTUNITY METADATA — not an ordinary Task.
+- Do NOT create tasks such as: "Submit bid", "Submit proposal", "Provide pricing", "Bid due", "Proposal due", "Complete bid", or "Respond to ITB" merely because the invitation has a submission deadline.
+- Unpursued bid invitations must not flood the Tasks list. The shop decides later via Add to Bidding whether to pursue the opportunity.
+- DO create Tasks for DISTINCT actions beyond submitting the opportunity itself, when explicitly requested, for example:
+  - Confirm intent / participation to bid
+  - RSVP for a pre-bid meeting or walkthrough
+  - Submit bidder questions / RFIs by a stated date
+  - Submit a substitution request
+  - Provide insurance certificates or other documents for a walkthrough
+- Mixed emails: keep the distinct action Task(s); omit the bid-submission Task.
+- BID_UPDATE that only extends/changes the bid deadline: return an empty tasks array (do not create "Update bid" / "Submit bid").
+- ESTIMATE_QUOTE and other non-ITB subtypes: normal task rules apply. Do not suppress legitimate quote/contract work merely because words like quote, pricing, or estimate appear.
 
 TASK FIELDS:
-- title: short imperative summary of the action.
+- title: short imperative summary of the DISTINCT action (not the project name, not "Bid opportunity", not "Bid deadline").
 - description: one or two sentences grounded in the email text.
-- dueDate: ISO 8601 datetime (e.g. "2026-09-02T00:00:00.000Z") when an explicit calendar deadline is stated in the email; otherwise null. Never invent dates, never return relative phrases ("ASAP", "Friday", "end of week"), and never guess.
+- dueDate: ISO 8601 datetime (e.g. "2026-09-02T00:00:00.000Z") when an explicit calendar deadline for THAT action is stated; otherwise null. Never invent dates, never return relative phrases ("ASAP", "Friday", "end of week"), and never guess. Do not attach the opportunity's bid submission deadline to an unrelated Task.
 - recommendedOwner: a person explicitly named as responsible in the email, otherwise null.
 - confidence: number 0..1 for how clearly the email supports this task.
 
@@ -93,6 +113,9 @@ export function buildTaskExtractionUserPrompt(
     `Sender Email: ${input.senderEmail}`,
     `Sender Domain: ${input.senderDomain ?? ""}`,
     "",
+    "Business Type:",
+    input.businessTypeKey?.trim() || "(unknown)",
+    "",
     "Clean Body:",
     input.cleanBody,
     "",
@@ -105,7 +128,7 @@ export function buildTaskExtractionUserPrompt(
     "Contains Action Request:",
     JSON.stringify(input.containsActionRequest === true),
     "",
-    "Extract concrete action tasks only (max 5). Return the structured tasks result only.",
+    "Extract concrete action tasks only (max 5). For bidding opportunities, omit bid-submission deadline tasks; keep only distinct actionable work. Return the structured tasks result only.",
   ].join("\n");
 }
 

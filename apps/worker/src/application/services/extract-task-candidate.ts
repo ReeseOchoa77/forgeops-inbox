@@ -1,3 +1,4 @@
+import { isBidSubmissionOpportunityTask } from "@forgeops/shared";
 import type { ClassifiedEmail, ExtractedTaskCandidate, NormalizedEmail } from "./email-analysis.schemas.js";
 import { extractedTaskCandidateSchema } from "./email-analysis.schemas.js";
 
@@ -168,6 +169,18 @@ export const extractTaskCandidate = (input: {
     return null;
   }
 
+  const title = inferTaskTitle(input.email);
+  const summary = inferTaskSummary(input.email);
+  // Invitation-to-bid emails must not become ordinary Tasks via the heuristic path.
+  if (
+    isBidSubmissionOpportunityTask(
+      { title, description: summary },
+      { subject: input.email.normalizedSubject ?? input.email.subject }
+    )
+  ) {
+    return null;
+  }
+
   const dueAt = parseExplicitDueDate(input.email, input.now ?? new Date());
   const assigneeGuess = guessAssignee(input.email, input.members);
   const confidence = Math.min(
@@ -180,8 +193,8 @@ export const extractTaskCandidate = (input: {
   const requiresReview = confidence < input.taskThreshold;
 
   return extractedTaskCandidateSchema.parse({
-    title: inferTaskTitle(input.email),
-    summary: inferTaskSummary(input.email),
+    title,
+    summary,
     assigneeGuess,
     dueAt,
     priority: input.classification.priority,

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { clearInboxMessageWhere } from "../application/services/clear-inbox.js";
 import {
@@ -12,6 +15,11 @@ import {
   statusAfterRemoveFromBidding,
   threadJobConflicts,
 } from "../application/services/bidding.js";
+
+const biddingRoute = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../interfaces/http/routes/bidding.route.ts"),
+  "utf8"
+);
 
 const now = new Date("2026-09-24T15:00:00.000Z");
 
@@ -36,6 +44,20 @@ describe("add to bidding", () => {
       jobAssignmentIsManual: true,
     });
   });
+
+  it("does not create a Submit bid Task from Add to Bidding", () => {
+    expect(biddingRoute).toContain("tasksForEmailJobLink");
+    expect(biddingRoute).toContain("task.updateMany");
+    expect(biddingRoute).not.toMatch(/task\.create\b/);
+    expect(biddingRoute).not.toMatch(/Submit bid/i);
+  });
+
+  it("creates Customer only via resolveOrCreate inside from-email transaction", () => {
+    expect(biddingRoute).toContain("resolveOrCreateBiddingCustomer");
+    expect(biddingRoute).toContain("customerName");
+    expect(biddingRoute).toContain("customerId: resolved.customerId");
+  });
+
 
   it("does not treat the same job as a conflict", () => {
     expect(

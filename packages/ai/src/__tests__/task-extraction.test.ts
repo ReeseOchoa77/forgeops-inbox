@@ -2,9 +2,29 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OpenAITaskExtractor } from "../task-extraction/extractor.js";
 import { parseTaskExtractionResult } from "../task-extraction/parse.js";
+import {
+  buildTaskExtractionUserPrompt,
+  taskExtractionSystemPrompt,
+} from "../task-extraction/prompt.js";
 import { StructuredOutputValidationError } from "../openai/responses-json.js";
 
 describe("task extraction contract", () => {
+  it("prompt separates bidding opportunity deadlines from ordinary Tasks", () => {
+    expect(taskExtractionSystemPrompt).toMatch(/BIDDING OPPORTUNITIES/i);
+    expect(taskExtractionSystemPrompt).toMatch(/OPPORTUNITY METADATA/i);
+    expect(taskExtractionSystemPrompt).toMatch(/Confirm intent/i);
+    expect(taskExtractionSystemPrompt).toMatch(/Do NOT create tasks such as:.*"Submit bid"/i);
+    const user = buildTaskExtractionUserPrompt({
+      normalizedSubject: "ITB Garden City",
+      senderEmail: "gc@example.com",
+      cleanBody: "Bids due October 15.",
+      containsActionRequest: true,
+      businessTypeKey: "BID_OPPORTUNITY",
+    });
+    expect(user).toContain("Business Type:");
+    expect(user).toContain("BID_OPPORTUNITY");
+  });
+
   it("enforces max 5 tasks", () => {
     const tasks = Array.from({ length: 6 }, (_, i) => ({
       title: `Task ${i}`,

@@ -1872,6 +1872,23 @@ export const api = {
     }>(`/workspaces/${workspaceId}/bidding${qs ? `?${qs}` : ''}`)
   },
 
+  getBiddingIntakeSuggestions: (workspaceId: string, messageId: string) =>
+    request<{
+      suggestions: {
+        projectName: string | null
+        projectNameSource: 'subject_cleanup' | 'ai' | null
+        jobNumber: string | null
+        bidDueAt: string | null
+        bidDueSource: 'deterministic' | 'ai' | null
+        customer: {
+          status: 'NONE' | 'EXISTING' | 'AMBIGUOUS' | 'NEW'
+          customerId: string | null
+          customerName: string | null
+          candidates: Array<{ id: string; name: string; score: number }>
+        }
+      }
+    }>(`/workspaces/${workspaceId}/bidding/intake-suggestions?messageId=${encodeURIComponent(messageId)}`),
+
   addEmailToBidding: (workspaceId: string, data: {
     messageId: string
     action: 'use_job' | 'create'
@@ -1879,6 +1896,8 @@ export const api = {
     name?: string
     jobNumber?: string | null
     customerId?: string | null
+    /** Proposed new company — created only on Add to Bidding confirm after re-resolve. */
+    customerName?: string | null
     bidDueAt?: string | null
     confirmMove?: boolean
   }) => request<{

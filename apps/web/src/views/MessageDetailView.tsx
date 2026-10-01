@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
-import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type JobLookup, type StoredAttachment, type ConnectionSummary } from '../api'
+import { api, type ThreadMessage, type ThreadDetail, type AttachmentMeta, type StoredAttachment, type ConnectionSummary } from '../api'
 import { PriorityBadge } from '../components/Badges'
 import {
-  JobAssignPicker,
   formatJobPrimaryLabel,
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { ComposeEditor, type ComposeSendPayload } from '../components/ComposeEditor'
-import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
-import { isBidsEstimatingSubtype } from '../bidding-display'
+import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
 import {
   AttachmentActionMenu,
   CopyAllAttachmentsButton,
@@ -898,11 +896,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  const [selectedJobId, setSelectedJobId] = useState('')
-  const [jobBusy, setJobBusy] = useState(false)
-  const [jobError, setJobError] = useState<string | null>(null)
-  const [jobPickerOpen, setJobPickerOpen] = useState(false)
-  const [biddingOpen, setBiddingOpen] = useState(false)
+  const [jobAssignOpen, setJobAssignOpen] = useState(false)
 
   const [reclassifyBusy, setReclassifyBusy] = useState(false)
   const emailDebugLoggedForId = useRef<string | null>(null)
@@ -935,8 +929,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
 
     setComposeMode(null)
     setSendResult(null)
-    setJobError(null)
-    setJobPickerOpen(false)
+    setJobAssignOpen(false)
     setMobilePanel('none')
     emailDebugLoggedForId.current = null
 
@@ -945,9 +938,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
       setCachedThread(workspaceId, connectionId, messageId, td)
       // Mark-read ONLY for the intentionally opened inbox message — never for sidebar selection.
       api.markAsRead(workspaceId, connectionId, messageId).catch(() => {})
-      const clickedMsg = td.messages.find(m => m.id === messageId)
-      if (clickedMsg?.job?.id) setSelectedJobId(clickedMsg.job.id)
-      else setSelectedJobId('')
       const lastMsg = td.messages[td.messages.length - 1]
       setReadingMessageId(lastMsg?.id ?? messageId)
       setLoading(false)
@@ -1200,40 +1190,6 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
     }
   }
 
-  const handleAssignJob = async (job: JobLookup) => {
-    if (!clickedMessage) return
-    setJobBusy(true)
-    setJobError(null)
-    try {
-      await api.assignEmailToJob(workspaceId, job.id, { messageId: clickedMessage.id })
-      const td = await loadThread()
-      setThreadData(td)
-      setSelectedJobId(job.id)
-      setJobPickerOpen(false)
-    } catch (e) {
-      setJobError(e instanceof Error ? e.message : 'Failed to assign job')
-    } finally {
-      setJobBusy(false)
-    }
-  }
-
-  const handleRemoveJob = async () => {
-    if (!clickedMessage?.job) return
-    setJobBusy(true)
-    setJobError(null)
-    try {
-      await api.removeEmailFromJob(workspaceId, clickedMessage.job!.id, clickedMessage.id)
-      const td = await loadThread()
-      setThreadData(td)
-      setSelectedJobId('')
-      setJobPickerOpen(false)
-    } catch (e) {
-      setJobError(e instanceof Error ? e.message : 'Failed to remove job')
-    } finally {
-      setJobBusy(false)
-    }
-  }
-
   const handleReclassify = async (newCategory: 'BUSINESS' | 'PERSONAL') => {
     if (!clickedMessage) return
     setReclassifyBusy(true)
@@ -1429,54 +1385,21 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
                         {jobSourceLabel(clickedMessage.jobAssignmentSource ?? null, clickedMessage.jobAssignmentIsManual ?? false)}
                       </span>
                     )}
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        type="button"
-                        disabled={jobBusy}
-                        onClick={() => setJobPickerOpen(v => !v)}
-                        style={{
-                          padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
-                          minHeight: 32, background: '#fff', cursor: jobBusy ? 'not-allowed' : 'pointer',
-                          fontWeight: 500,
-                        }}
-                      >
-                        {clickedMessage.job ? 'Change job…' : 'Assign job…'}
-                      </button>
-                      {clickedMessage.job?.status === 'BIDDING' ? (
-                        <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
-                      ) : isBidsEstimatingSubtype(clickedMessage.classification?.businessTypeKey) ? (
-                        <button
-                          type="button"
-                          onClick={() => setBiddingOpen(true)}
-                          style={{
-                            marginLeft: 8, padding: '4px 10px', fontSize: 12, borderRadius: 5,
-                            border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8',
-                            minHeight: 32, cursor: 'pointer', fontWeight: 650,
-                          }}
-                        >
-                          Add to Bidding
-                        </button>
-                      ) : null}
-                      {jobPickerOpen && (
-                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 40, marginTop: 4 }}>
-                          <JobAssignPicker
-                            workspaceId={workspaceId}
-                            selectedJobId={clickedMessage.job?.id ?? selectedJobId}
-                            disabled={jobBusy}
-                            variant="dropdown"
-                            onSelect={(job) => void handleAssignJob(job)}
-                            onRemove={
-                              clickedMessage.job
-                                ? () => void handleRemoveJob()
-                                : undefined
-                            }
-                            removeLabel="Remove job"
-                            onClose={() => setJobPickerOpen(false)}
-                          />
-                        </div>
-                      )}
-                    </div>
-                    {jobError && <span style={{ fontSize: 12, color: '#c62828' }}>{jobError}</span>}
+                    <button
+                      type="button"
+                      aria-label={clickedMessage.job ? 'Change Job assignment' : 'Assign email to Job'}
+                      onClick={() => setJobAssignOpen(true)}
+                      style={{
+                        padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid #ddd',
+                        minHeight: 32, background: '#fff', cursor: 'pointer',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {clickedMessage.job ? 'Change job…' : 'Assign job…'}
+                    </button>
+                    {clickedMessage.job?.status === 'BIDDING' && (
+                      <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 650, color: '#1d4ed8' }}>Active bid</span>
+                    )}
                   </>
                 )}
               </div>
@@ -1623,8 +1546,8 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
           />
         </div>
       )}
-      {biddingOpen && clickedMessage && (
-        <AddToBiddingDialog
+      {jobAssignOpen && clickedMessage && (
+        <EmailJobAssignmentDialog
           workspaceId={workspaceId}
           messageId={clickedMessage.id}
           subject={clickedMessage.subject}
@@ -1636,9 +1559,17 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
             jobNumber: clickedMessage.job.jobNumber,
           } : null}
           suggestedJobName={clickedMessage.suggestedJob?.name ?? null}
-          onClose={() => setBiddingOpen(false)}
-          onDone={() => {
-            setBiddingOpen(false)
+          onClose={() => setJobAssignOpen(false)}
+          onAssigned={() => {
+            setJobAssignOpen(false)
+            void loadThread().then(setThreadData).catch(() => {})
+          }}
+          onRemoved={() => {
+            setJobAssignOpen(false)
+            void loadThread().then(setThreadData).catch(() => {})
+          }}
+          onCreated={() => {
+            setJobAssignOpen(false)
             void loadThread().then(setThreadData).catch(() => {})
           }}
         />

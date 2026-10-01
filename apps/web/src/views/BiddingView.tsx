@@ -73,7 +73,7 @@ export function BiddingView({ workspaceId, onOpenBid, breakpoint }: Props) {
           <div style={{ color: '#6b7280', fontSize: 13 }}>Loading bids…</div>
         ) : bids.length === 0 ? (
           <div style={{ color: '#6b7280', fontSize: 13, padding: '24px 0' }}>
-            No active bids. Open an email and choose Add to Bidding when you decide to pursue a project.
+            No active bids. Open an email, click Unassigned, and choose Create new job when you decide to pursue a project.
           </div>
         ) : (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>

@@ -7,16 +7,22 @@ export function formatJobPrimaryLabel(job: Pick<JobLookup, 'name' | 'jobNumber'>
   return `${name.slice(0, Math.max(1, maxLen - 1))}…`
 }
 
-export function formatJobSecondaryLabel(job: Pick<JobLookup, 'jobNumber' | 'customerName'>): string {
+export function formatJobSecondaryLabel(
+  job: Pick<JobLookup, 'jobNumber' | 'customerName'> & { status?: string | null }
+): string {
   const parts: string[] = []
   if (job.jobNumber) parts.push(`#${job.jobNumber}`)
+  if (job.status) parts.push(job.status)
   if (job.customerName) parts.push(job.customerName)
   return parts.join(' · ')
 }
 
-export function formatJobTooltip(job: Pick<JobLookup, 'name' | 'jobNumber' | 'customerName'>): string {
+export function formatJobTooltip(
+  job: Pick<JobLookup, 'name' | 'jobNumber' | 'customerName'> & { status?: string | null }
+): string {
   const bits = [job.name]
   if (job.jobNumber) bits.push(`#${job.jobNumber}`)
+  if (job.status) bits.push(job.status)
   if (job.customerName) bits.push(job.customerName)
   return bits.filter(Boolean).join(' — ')
 }

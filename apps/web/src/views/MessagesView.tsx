@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type JobLookup, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
+import { api, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
 import { buildInboxMessageListFilters, type InboxBusinessTypeGroup } from '../inbox-message-list-filters'
 import {
   getCachedInboxList,
@@ -18,13 +18,16 @@ import {
   type PreviewFile,
 } from '../file-preview'
 import {
-  JobAssignPicker,
   JobFilterSelect,
   formatJobPrimaryLabel,
   formatJobTooltip,
 } from '../components/JobAssignPicker'
-import { AddToBiddingDialog } from '../components/AddToBiddingDialog'
-import { isBidsEstimatingSubtype } from '../bidding-display'
+import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
+import {
+  INBOX_ACTIONS_COLUMN_WIDTH_PX,
+  MailboxCategoryDot,
+  inboxDateCellStyle,
+} from '../components/MailboxCategoryDot'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 
@@ -301,10 +304,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       : 'UTC'
 
   const [autoResponseStatus, setAutoResponseStatus] = useState<Record<string, AutoResponseStatus>>({})
-  const [jobPickerOpen, setJobPickerOpen] = useState<string | null>(null)
   const [attachmentPickerOpen, setAttachmentPickerOpen] = useState<string | null>(null)
-  const [jobAssigning, setJobAssigning] = useState(false)
-  const [biddingTarget, setBiddingTarget] = useState<MessageSummary | null>(null)
+  const [assignmentTarget, setAssignmentTarget] = useState<MessageSummary | null>(null)
   const [deletingAllPersonal, setDeletingAllPersonal] = useState(false)
   /** When on, clicking a list row trashes it instead of opening the email. */
   const [massDeleteMode, setMassDeleteMode] = useState(false)
@@ -313,47 +314,27 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [reclassifyNotice, setReclassifyNotice] = useState<string | null>(null)
   const massDeletingIds = useRef<Set<string>>(new Set())
 
-  const handleAssignJob = async (messageId: string, job: JobLookup) => {
-    setJobAssigning(true)
-    try {
-      await api.assignEmailToJob(workspaceId, job.id, { messageId })
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === messageId
-            ? {
-                ...m,
-                job: {
-                  id: job.id,
-                  jobNumber: job.jobNumber,
-                  name: job.name,
-                  status: job.status,
-                },
-                suggestedJob: null,
-              }
-            : m
-        )
-      )
-      setJobPickerOpen(null)
-    } catch { /* */ }
-    finally { setJobAssigning(false) }
-  }
-
   useEffect(() => {
-    if (!jobPickerOpen && !attachmentPickerOpen) return
-    const close = () => {
-      setJobPickerOpen(null)
-      setAttachmentPickerOpen(null)
-    }
+    if (!attachmentPickerOpen) return
+    const close = () => setAttachmentPickerOpen(null)
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
-  }, [jobPickerOpen, attachmentPickerOpen])
+  }, [attachmentPickerOpen])
 
-  const handleRemoveJob = async (messageId: string, jobId: string) => {
-    try {
-      await api.removeEmailFromJob(workspaceId, jobId, messageId)
-      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, job: undefined } : m))
-      setJobPickerOpen(null)
-    } catch { /* */ }
+  const applyJobToMessage = (messageId: string, job: { id: string; name: string; jobNumber: string | null; status: string } | null) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              job: job
+                ? { id: job.id, jobNumber: job.jobNumber, name: job.name, status: job.status }
+                : undefined,
+              suggestedJob: job ? null : m.suggestedJob,
+            }
+          : m
+      )
+    )
   }
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -911,7 +892,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               messageId={m.id}
               open={attachmentPickerOpen === m.id}
               onToggle={() => {
-                setJobPickerOpen(null)
                 setAttachmentPickerOpen(attachmentPickerOpen === m.id ? null : m.id)
               }}
             />
@@ -967,27 +947,27 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <PriorityBadge priority={m.classification.priority} />
           )}
           {showBusinessChrome && (
-            m.job ? (
-              <span style={{
-                fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
-                background: '#e0f2f1', color: '#00695c', whiteSpace: 'nowrap'
-              }} title={formatJobTooltip(m.job)}>
-                {formatJobPrimaryLabel(m.job, 22)}
-              </span>
-            ) : (
-              <span style={{
-                fontSize: 10, fontWeight: 500, padding: '1px 7px', borderRadius: 10,
-                background: '#f0f0f0', color: '#999', whiteSpace: 'nowrap'
-              }}>Unassigned</span>
-            )
-          )}
-          {showBusinessChrome && !isViewer && m.job?.status !== 'BIDDING' && isBidsEstimatingSubtype(m.classification?.businessTypeKey) && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
-              style={{ fontSize: 10, fontWeight: 650, padding: '1px 7px', borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer' }}
+              disabled={isViewer}
+              aria-label={m.job ? 'Change Job assignment' : 'Assign email to Job'}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (isViewer) return
+                setAssignmentTarget(m)
+              }}
+              title={m.job ? formatJobTooltip(m.job) : 'Assign email to Job'}
+              style={{
+                fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
+                border: 'none',
+                background: m.job ? '#e0f2f1' : '#f0f0f0',
+                color: m.job ? '#00695c' : '#999',
+                whiteSpace: 'nowrap',
+                cursor: isViewer ? 'default' : 'pointer',
+                maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
+              }}
             >
-              Add to Bidding
+              {m.job ? formatJobPrimaryLabel(m.job, 22) : 'Unassigned'}
             </button>
           )}
           {showBusinessChrome && m.job?.status === 'BIDDING' && (
@@ -1014,14 +994,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         })()}
 
         {!isViewer && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: 4, marginTop: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
             {(inboxTab === 'PERSONAL' || showUnclassifiedChrome) && (
-              <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
-                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', minHeight: 28 }}>Biz</button>
+              <MailboxCategoryDot
+                category="BUSINESS"
+                onClick={() => void handleReclassify(m.id, 'BUSINESS')}
+              />
             )}
             {(showBusinessChrome || showUnclassifiedChrome) && (
-              <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
-                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', minHeight: 28 }}>Pers</button>
+              <MailboxCategoryDot
+                category="PERSONAL"
+                onClick={() => void handleReclassify(m.id, 'PERSONAL')}
+              />
             )}
             {showUnclassifiedChrome && (
               <button
@@ -1105,7 +1089,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               messageId={m.id}
               open={attachmentPickerOpen === m.id}
               onToggle={() => {
-                setJobPickerOpen(null)
                 setAttachmentPickerOpen(attachmentPickerOpen === m.id ? null : m.id)
               }}
             />
@@ -1154,49 +1137,30 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </td>
       )}
       {showBusinessChrome && !isTablet && (
-        <td style={{ padding: '7px 12px', position: 'relative' }} onClick={e => e.stopPropagation()}>
-          <span
+        <td style={{ padding: '7px 12px' }} onClick={e => e.stopPropagation()}>
+          <button
+            type="button"
+            disabled={isViewer}
+            aria-label={m.job ? 'Change Job assignment' : 'Assign email to Job'}
             onClick={(e) => {
               e.stopPropagation()
               if (isViewer) return
-              setJobPickerOpen(jobPickerOpen === m.id ? null : m.id)
+              setAssignmentTarget(m)
             }}
+            title={m.job ? formatJobTooltip(m.job) : 'Assign email to Job'}
             style={{
               fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
+              border: 'none',
               background: m.job ? '#e0f2f1' : '#f0f0f0',
               color: m.job ? '#00695c' : '#999',
               whiteSpace: 'nowrap', cursor: isViewer ? 'default' : 'pointer',
               maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block',
             }}
-            title={m.job ? formatJobTooltip(m.job) : 'Click to assign a job'}
           >
             {m.job ? formatJobPrimaryLabel(m.job, 24) : 'Unassigned'}
-          </span>
-          {m.job?.status === 'BIDDING' ? (
+          </button>
+          {m.job?.status === 'BIDDING' && (
             <div style={{ fontSize: 10, fontWeight: 650, color: '#1d4ed8', marginTop: 4 }}>Active bid</div>
-          ) : !isViewer && isBidsEstimatingSubtype(m.classification?.businessTypeKey) ? (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setBiddingTarget(m) }}
-              style={{ display: 'block', marginTop: 4, padding: 0, border: 'none', background: 'none', color: '#1d4ed8', fontSize: 11, fontWeight: 650, cursor: 'pointer' }}
-            >
-              Add to Bidding
-            </button>
-          ) : null}
-          {jobPickerOpen === m.id && (
-            <JobAssignPicker
-              workspaceId={workspaceId}
-              selectedJobId={m.job?.id}
-              disabled={jobAssigning}
-              onSelect={(job) => void handleAssignJob(m.id, job)}
-              onRemove={
-                m.job
-                  ? () => void handleRemoveJob(m.id, m.job!.id)
-                  : undefined
-              }
-              removeLabel={m.job ? `Remove from ${m.job.name}` : undefined}
-              onClose={() => setJobPickerOpen(null)}
-            />
           )}
         </td>
       )}
@@ -1230,10 +1194,18 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             : <span style={{ color: '#ddd', fontSize: 12 }}>—</span>}
         </td>
       )}
-      <td style={{ padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap', color: '#999' }}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
-      <td style={{ padding: '7px 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+      <td style={inboxDateCellStyle}>{formatDate(m.receivedAt ?? m.sentAt)}</td>
+      <td
+        style={{
+          padding: '7px 4px',
+          textAlign: 'right',
+          width: showUnclassifiedChrome ? undefined : INBOX_ACTIONS_COLUMN_WIDTH_PX,
+          whiteSpace: 'nowrap',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
         {!isViewer && (
-          <div style={{ display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ display: 'inline-flex', gap: 0, justifyContent: 'flex-end', alignItems: 'center' }}>
             {showUnclassifiedChrome && (
               <input
                 type="checkbox"
@@ -1241,16 +1213,20 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 onChange={() => toggleReclassifySelect(m.id)}
                 title="Select for reclassify"
                 aria-label="Select for reclassify"
-                style={{ marginRight: 4 }}
+                style={{ marginRight: 2 }}
               />
             )}
             {(inboxTab === 'PERSONAL' || showUnclassifiedChrome) && (
-              <button title="Mark Business" onClick={() => handleReclassify(m.id, 'BUSINESS')}
-                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #bbdefb', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer' }}>Biz</button>
+              <MailboxCategoryDot
+                category="BUSINESS"
+                onClick={() => void handleReclassify(m.id, 'BUSINESS')}
+              />
             )}
             {(showBusinessChrome || showUnclassifiedChrome) && (
-              <button title="Mark Personal" onClick={() => handleReclassify(m.id, 'PERSONAL')}
-                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #e1bee7', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer' }}>Pers</button>
+              <MailboxCategoryDot
+                category="PERSONAL"
+                onClick={() => void handleReclassify(m.id, 'PERSONAL')}
+              />
             )}
             {showUnclassifiedChrome && (
               <button
@@ -1266,7 +1242,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 Retry
               </button>
             )}
-            <span style={{ width: 12 }} />
             {inboxTab !== 'TRASH' ? (
               <button title="Trash" onClick={() => handleTrash(m.id, false)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#bbb', padding: 2, fontWeight: 500 }}>✕</button>
@@ -1616,8 +1591,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
                   {showUnclassifiedChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Status</th>}
                   {showBusinessChrome && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
-                  <th style={{ padding: '8px 12px', fontWeight: 600 }}>Date</th>
-                  <th style={{ padding: '8px 6px', width: 64 }}></th>
+                  <th style={{ padding: '8px 14px 8px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>Date</th>
+                  <th style={{
+                    padding: '8px 4px',
+                    width: showUnclassifiedChrome ? undefined : INBOX_ACTIONS_COLUMN_WIDTH_PX,
+                  }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -1629,28 +1607,31 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         )}
       </div>
-      {biddingTarget && (
-        <AddToBiddingDialog
+      {assignmentTarget && (
+        <EmailJobAssignmentDialog
           workspaceId={workspaceId}
-          messageId={biddingTarget.id}
-          subject={biddingTarget.subject}
-          businessTypeKey={biddingTarget.classification?.businessTypeKey}
-          currentJob={biddingTarget.job ? {
-            id: biddingTarget.job.id,
-            name: biddingTarget.job.name,
-            status: biddingTarget.job.status,
-            jobNumber: biddingTarget.job.jobNumber,
+          messageId={assignmentTarget.id}
+          subject={assignmentTarget.subject}
+          businessTypeKey={assignmentTarget.classification?.businessTypeKey}
+          currentJob={assignmentTarget.job ? {
+            id: assignmentTarget.job.id,
+            name: assignmentTarget.job.name,
+            status: assignmentTarget.job.status,
+            jobNumber: assignmentTarget.job.jobNumber,
           } : null}
-          suggestedJobName={biddingTarget.suggestedJob?.name ?? null}
-          onClose={() => setBiddingTarget(null)}
-          onDone={(job) => {
-            const messageId = biddingTarget.id
-            setMessages((prev) => prev.map((row) => row.id === messageId ? {
-              ...row,
-              job: { id: job.id, name: job.name, jobNumber: job.jobNumber, status: job.status },
-              suggestedJob: null,
-            } : row))
-            setBiddingTarget(null)
+          suggestedJobName={assignmentTarget.suggestedJob?.name ?? null}
+          onClose={() => setAssignmentTarget(null)}
+          onAssigned={(job) => {
+            applyJobToMessage(assignmentTarget.id, job)
+            setAssignmentTarget(null)
+          }}
+          onRemoved={() => {
+            applyJobToMessage(assignmentTarget.id, null)
+            setAssignmentTarget(null)
+          }}
+          onCreated={(job) => {
+            applyJobToMessage(assignmentTarget.id, job)
+            setAssignmentTarget(null)
           }}
         />
       )}

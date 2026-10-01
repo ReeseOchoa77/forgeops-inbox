@@ -12,6 +12,7 @@ import {
   applyConfirmedJobAssociationOverride,
   decideMailboxCategoryFlagsCumulative,
   decideMailboxPriority,
+  filterOutBidSubmissionTasks,
   type ConfirmedWorkspaceJob,
   type FlagsCumulativeClassifierResult,
   type PriorityDecisionPayload,
@@ -219,6 +220,7 @@ export async function runNativeClassificationPipeline(
       skippedStages.push("taskExtractionModelCall");
       tasks = [];
     } else {
+      const businessTypeKey = businessSubtype?.businessType ?? null;
       const taskResult = await deps.taskExtractor.extract({
         normalizedSubject,
         senderName: input.senderName,
@@ -228,8 +230,13 @@ export async function runNativeClassificationPipeline(
         attachmentNames,
         summary: semanticSignals.summary,
         containsActionRequest: semanticSignals.containsActionRequest,
+        businessTypeKey,
       });
-      tasks = taskResult.tasks;
+      // Defense-in-depth: bid submission deadline ≠ ordinary Task.
+      tasks = filterOutBidSubmissionTasks(taskResult.tasks, {
+        businessTypeKey,
+        subject: normalizedSubject,
+      });
     }
   }
 

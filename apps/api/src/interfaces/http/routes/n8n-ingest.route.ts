@@ -1,5 +1,14 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { normalizeEmail, mergeClassificationEvidenceForPersist, buildClassificationWriteLog, normalizeTaskDueAt, resolveTaskSourceDate, safeDateOrNull, isBlockedByInboxClearedAt } from "@forgeops/shared";
+import {
+  normalizeEmail,
+  mergeClassificationEvidenceForPersist,
+  buildClassificationWriteLog,
+  normalizeTaskDueAt,
+  resolveTaskSourceDate,
+  safeDateOrNull,
+  isBlockedByInboxClearedAt,
+  filterOutBidSubmissionTasks,
+} from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -558,8 +567,13 @@ async function upsertTasks(
     sentAt: messageSourceDate,
   });
 
-  for (let i = 0; i < body.analysis.tasks.length; i++) {
-    const task = body.analysis.tasks[i]!;
+  const filteredTasks = filterOutBidSubmissionTasks(body.analysis.tasks, {
+    businessTypeKey: body.analysis.businessType ?? null,
+    subject: body.email.subject,
+  });
+
+  for (let i = 0; i < filteredTasks.length; i++) {
+    const task = filteredTasks[i]!;
     const taskKey = generateTaskKey(messageId, task.title, i);
     incomingKeys.add(taskKey);
     const taskRequiresReview = task.confidence < TASK_REVIEW_THRESHOLD;

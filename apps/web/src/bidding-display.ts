@@ -8,15 +8,56 @@ export function isBidsEstimatingSubtype(businessTypeKey: string | null | undefin
   return Boolean(businessTypeKey && BIDS_ESTIMATING_SUBTYPES.has(businessTypeKey))
 }
 
-export function suggestedBidName(subject: string | null | undefined, jobName?: string | null): string {
-  if (jobName?.trim()) return jobName.trim().slice(0, 300)
-  let cleaned = (subject ?? '').trim()
+const REPLY_PREFIX = /^(?:re|fw|fwd)\s*:\s*/i
+
+const INVITATION_PREFIXES: RegExp[] = [
+  /^invitation\s+to\s+bid\s*[-–—:]\s*/i,
+  /^invite\s+to\s+bid\s*[-–—:]\s*/i,
+  /^itb\s*[-–—:]\s*/i,
+  /^bid\s+invitation\s*[-–—:]\s*/i,
+  /^request\s+for\s+(?:bid|proposal|quote)\s*[-–—:]\s*/i,
+  /^rf[bpq]\s*[-–—:]\s*/i,
+  /^reminder\s+to\s+submit\s+your\s+bids?\s+for\s+/i,
+  /^reminder\s+to\s+submit\s+(?:your\s+)?(?:bid|pricing|proposal)\s+for\s+/i,
+  /^reminder\s*[-–—:]\s*/i,
+  /^please\s+submit\s+(?:your\s+)?(?:bid|pricing|proposal)\s+for\s+/i,
+]
+
+function stripReplyPrefixes(subject: string): string {
+  let cleaned = subject.trim()
   let previous = ''
   while (cleaned !== previous) {
     previous = cleaned
-    cleaned = cleaned.replace(/^(?:re|fw|fwd)\s*:\s*/i, '').trim()
+    cleaned = cleaned.replace(REPLY_PREFIX, '').trim()
   }
+  return cleaned
+}
+
+function stripBidInvitationPrefixes(subject: string): string {
+  let cleaned = subject.trim()
+  let previous = ''
+  while (cleaned !== previous) {
+    previous = cleaned
+    for (const pattern of INVITATION_PREFIXES) {
+      cleaned = cleaned.replace(pattern, '').trim()
+    }
+  }
+  return cleaned
+}
+
+/** Deterministic project name from email subject (Create new bid prefill). */
+export function suggestBidProjectNameFromSubject(subject: string | null | undefined): string {
+  const raw = (subject ?? '').trim()
+  if (!raw) return ''
+  let cleaned = stripReplyPrefixes(raw)
+  cleaned = stripBidInvitationPrefixes(cleaned)
+  cleaned = cleaned.replace(/\s+/g, ' ').trim()
   return cleaned.slice(0, 300)
+}
+
+export function suggestedBidName(subject: string | null | undefined, jobName?: string | null): string {
+  if (jobName?.trim()) return jobName.trim().slice(0, 300)
+  return suggestBidProjectNameFromSubject(subject)
 }
 
 export function formatBidDue(iso: string | null, now = new Date()): {

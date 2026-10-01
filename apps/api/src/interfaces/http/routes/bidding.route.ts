@@ -16,6 +16,11 @@ import {
   type BiddingDueFilter,
   type BiddingSort,
 } from "../../../application/services/bidding.js";
+import {
+  buildBiddingIntakeSuggestions,
+  suggestNextJobNumberForWorkspace,
+} from "../../../application/services/bidding-intake-suggestions.js";
+import { resolveOrCreateBiddingCustomer } from "../../../application/services/resolve-bidding-customer.js";
 
 const wsParams = z.object({ workspaceId: z.string().min(1) });
 const jobParams = z.object({
@@ -203,6 +208,31 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
     });
   });
 
+  /**
+   * AI-assisted Add to Bidding form prep (Create new bid).
+   * Suggestions only — never creates a Job or assigns EmailMessage.jobId.
+   */
+  app.get("/api/v1/workspaces/:workspaceId/bidding/intake-suggestions", async (request, reply) => {
+    const { workspaceId } = wsParams.parse(request.params);
+    const query = z
+      .object({ messageId: z.string().min(1) })
+      .parse(request.query);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+
+    const suggestions = await buildBiddingIntakeSuggestions({
+      prisma: app.services.prisma,
+      workspaceId,
+      messageId: query.messageId,
+      openaiApiKey: app.services.env.OPENAI_API_KEY ?? null,
+      openaiModel: app.services.env.OPENAI_TASK_MODEL ?? null,
+    });
+    if (!suggestions) {
+      return reply.code(404).send({ message: "Email not found" });
+    }
+    return reply.send({ suggestions });
+  });
+
   app.post("/api/v1/workspaces/:workspaceId/bidding/from-email", async (request, reply) => {
     const { workspaceId } = wsParams.parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);
@@ -218,6 +248,8 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
         name: z.string().min(1).max(300).optional(),
         jobNumber: z.string().max(100).nullable().optional(),
         customerId: z.string().nullable().optional(),
+        /** Proposed new company name — created only on confirm after re-resolve. */
+        customerName: z.string().max(200).nullable().optional(),
         bidDueAt: bidDate.nullable().optional(),
         confirmMove: z.boolean().optional(),
       })
@@ -264,20 +296,25 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
       if (body.jobNumber) {
         const numberTaken = await app.services.prisma.job.findFirst({
           where: { workspaceId, jobNumber: body.jobNumber },
-          select: { id: true },
+          select: { id: true, name: true, jobNumber: true },
         });
         if (numberTaken) {
-          return reply.code(409).send({ message: "A job with this job number already exists" });
+          const suggestedJobNumber = await suggestNextJobNumberForWorkspace(
+            app.services.prisma,
+            workspaceId
+          );
+          return reply.code(409).send({
+            code: "JOB_NUMBER_TAKEN",
+            message: `Job number ${body.jobNumber} is already in use. Choose a different number.`,
+            cause: {
+              jobId: numberTaken.id,
+              name: numberTaken.name,
+              jobNumber: numberTaken.jobNumber,
+              suggestedJobNumber,
+            },
+          });
         }
       }
-      if (body.customerId) {
-        const customer = await app.services.prisma.customer.findFirst({
-          where: { id: body.customerId, workspaceId },
-          select: { id: true },
-        });
-        if (!customer) return reply.code(400).send({ message: "Customer not found" });
-      }
-
       const createConflicts = threadJobConflicts(
         threadMessages.map((row) => ({
           jobId: row.jobId,
@@ -297,19 +334,35 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
         });
       }
 
+      if (body.customerId) {
+        const customer = await app.services.prisma.customer.findFirst({
+          where: { id: body.customerId, workspaceId },
+          select: { id: true },
+        });
+        if (!customer) {
+          return reply.code(400).send({ message: "Customer not found" });
+        }
+      }
+
       const created = await app.services.prisma.$transaction(async (tx) => {
+        const resolved = await resolveOrCreateBiddingCustomer(tx, {
+          workspaceId,
+          customerId: body.customerId ?? null,
+          customerName: body.customerName ?? null,
+        });
+
         const job = await tx.job.create({
           data: {
             workspaceId,
             name,
             normalizedName: normalized,
             jobNumber: body.jobNumber?.trim() || null,
-            customerId: body.customerId ?? null,
+            customerId: resolved.customerId,
             status: ACTIVE_BID_STATUS,
             bidDueAt: bidDueAt ?? null,
             createdByUserId: auth.userId,
           },
-          select: { id: true, name: true, jobNumber: true, status: true },
+          select: { id: true, name: true, jobNumber: true, status: true, customerId: true },
         });
         await tx.emailMessage.updateMany({
           where: { workspaceId, threadId: message.threadId },

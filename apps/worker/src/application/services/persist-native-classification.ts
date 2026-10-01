@@ -8,6 +8,7 @@ import {
   buildJobCandidateMarker,
   classifierGeneratedTasksForMessageWhere,
   extractPrismaClientDiagnostic,
+  filterOutBidSubmissionTasks,
   formatClassificationFailureMessage,
   isJobMatcherAutoAssignEnabled,
   mapN8nPriorityToStored,
@@ -116,7 +117,11 @@ export async function persistNativeClassificationResult(input: {
   let decision = input.pipeline.mailboxDecision;
   const subtype = input.pipeline.businessSubtype;
   const entities = input.pipeline.entities;
-  const tasks = input.pipeline.tasks;
+  // Defense-in-depth: never persist bid-submission opportunity Tasks.
+  const tasks = filterOutBidSubmissionTasks(input.pipeline.tasks, {
+    businessTypeKey: input.pipeline.businessSubtype?.businessType ?? null,
+    subject: message.subject,
+  });
   const priorityDecision = input.pipeline.priorityDecision;
   const storedPriority = mapN8nPriorityToStored(priorityDecision.priority);
   let mailboxCategory = decision.mailboxCategory;

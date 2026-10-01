@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatBidDue, isBidsEstimatingSubtype, suggestedBidName } from './bidding-display'
+import {
+  formatBidDue,
+  isBidsEstimatingSubtype,
+  suggestBidProjectNameFromSubject,
+  suggestedBidName,
+} from './bidding-display'
 
 describe('isBidsEstimatingSubtype', () => {
   it('matches only Bids & Estimating subtypes', () => {
@@ -11,13 +16,43 @@ describe('isBidsEstimatingSubtype', () => {
   })
 })
 
+describe('suggestBidProjectNameFromSubject', () => {
+  it('strips invitation / ITB / reminder wrappers', () => {
+    expect(
+      suggestBidProjectNameFromSubject(
+        'Invitation to Bid - Garden City Elementary School'
+      )
+    ).toBe('Garden City Elementary School')
+    expect(suggestBidProjectNameFromSubject('ITB: Beltline Building #2')).toBe(
+      'Beltline Building #2'
+    )
+    expect(
+      suggestBidProjectNameFromSubject(
+        'Reminder to submit your Bid for Forte - EP Office Expansion'
+      )
+    ).toBe('Forte - EP Office Expansion')
+  })
+
+  it('strips RE/FW then invitation boilerplate', () => {
+    expect(
+      suggestBidProjectNameFromSubject('RE: Fwd: Invitation to Bid - Nova Academy')
+    ).toBe('Nova Academy')
+  })
+
+  it('keeps plain project subjects', () => {
+    expect(suggestBidProjectNameFromSubject('Beltline Stair C')).toBe('Beltline Stair C')
+  })
+})
+
 describe('suggestedBidName', () => {
   it('prefers an existing project name over the subject', () => {
     expect(suggestedBidName('RE: Nova Academy pricing', 'Nova Academy')).toBe('Nova Academy')
   })
 
   it('strips reply prefixes from the subject', () => {
-    expect(suggestedBidName('RE: Fwd: Nova Academy Structural Steel')).toBe('Nova Academy Structural Steel')
+    expect(suggestedBidName('RE: Fwd: Nova Academy Structural Steel')).toBe(
+      'Nova Academy Structural Steel'
+    )
   })
 })
 
