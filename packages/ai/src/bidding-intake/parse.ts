@@ -28,6 +28,24 @@ function asYmd(value: unknown): string | null {
   return s;
 }
 
+function asStringArray(value: unknown): string[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const t = item.trim().slice(0, 300);
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 export function parseBiddingIntakeResult(
   value: unknown
 ): BiddingIntakeExtractionResult {
@@ -41,6 +59,12 @@ export function parseBiddingIntakeResult(
   if (value.projectName != null && projectName == null && value.projectName !== null) {
     issues.push("projectName must be a string or null");
   }
+  if (
+    value.alternateProjectNames != null &&
+    !Array.isArray(value.alternateProjectNames)
+  ) {
+    issues.push("alternateProjectNames must be an array");
+  }
   const bidDueDate = asYmd(value.bidDueDate);
   const customerCompanyName = asNullableString(value.customerCompanyName);
   if (
@@ -53,8 +77,12 @@ export function parseBiddingIntakeResult(
   if (issues.length > 0) {
     throw new StructuredOutputValidationError("biddingIntake", issues);
   }
+  const alternateProjectNames = asStringArray(value.alternateProjectNames).filter(
+    (a) => a.toLowerCase() !== (projectName ?? "").toLowerCase()
+  );
   return {
     projectName: projectName ? projectName.slice(0, 300) : null,
+    alternateProjectNames,
     bidDueDate,
     customerCompanyName: customerCompanyName
       ? customerCompanyName.slice(0, 200)

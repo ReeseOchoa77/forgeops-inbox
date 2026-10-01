@@ -42,3 +42,5 @@ export * from "./bidding/suggest-next-job-number.js";
 export * from "./bidding/extract-bid-due-date.js";
 export * from "./bidding/filter-bid-submission-tasks.js";
 export * from "./bidding/sanitize-bidding-customer-name.js";
+export * from "./bidding/extract-project-name-from-attachments.js";
+export * from "./bidding/resolve-bid-project-identity.js";

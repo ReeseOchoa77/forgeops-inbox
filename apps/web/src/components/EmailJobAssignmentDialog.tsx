@@ -72,6 +72,8 @@ export function EmailJobAssignmentDialog({
   const bidDueDirty = useRef(false)
   const customerDirty = useRef(false)
   const suggestionsLoadedFor = useRef<string | null>(null)
+  /** Credible alternates from intake — persisted as JOB aliases only on Create Job. */
+  const alternateProjectNamesRef = useRef<string[]>([])
 
   useEffect(() => {
     if (mode !== 'create') return
@@ -98,9 +100,16 @@ export function EmailJobAssignmentDialog({
       .then((res) => {
         if (cancelled) return
         const s = res.suggestions
+        alternateProjectNamesRef.current = Array.isArray(s.alternateProjectNames)
+          ? s.alternateProjectNames
+          : []
         if (!nameDirty.current && s.projectName) {
           setName(s.projectName)
-          setNameHint('Suggested from email')
+          setNameHint(
+            s.projectNameSource === 'attachment'
+              ? 'Suggested from drawing filename'
+              : 'Suggested from email'
+          )
         }
         if (!jobNumberDirty.current && s.jobNumber) {
           setJobNumber(s.jobNumber)
@@ -243,6 +252,7 @@ export function EmailJobAssignmentDialog({
           jobNumber: jobNumber.trim() || null,
           customerId: createCustomerId,
           customerName: createCustomerName,
+          alternateProjectNames: alternateProjectNamesRef.current,
           bidDueAt: bidDue || null,
         } : {}),
         ...((extra?.confirmMove ?? confirmMove) ? { confirmMove: true } : {}),

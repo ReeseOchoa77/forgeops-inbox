@@ -4,9 +4,12 @@ import {
 } from "@forgeops/ai";
 import {
   extractBidDueDateDeterministic,
+  extractProjectIdentityFromPdfFilenames,
+  resolveBidProjectIdentity,
   sanitizeBiddingCustomerCompanyName,
   suggestBidProjectNameFromSubject,
   suggestNextJobNumberFromList,
+  type BidProjectNameSource,
 } from "@forgeops/shared";
 import type { PrismaClient } from "@prisma/client";
 
@@ -18,7 +21,8 @@ import {
 
 export type BiddingIntakeSuggestions = {
   projectName: string | null;
-  projectNameSource: "subject_cleanup" | "ai" | null;
+  projectNameSource: BidProjectNameSource;
+  alternateProjectNames: string[];
   jobNumber: string | null;
   bidDueAt: string | null;
   bidDueSource: "deterministic" | "ai" | null;
@@ -31,8 +35,8 @@ export type BiddingIntakeSuggestions = {
 };
 
 /**
- * Prepare Add-to-Bidding form suggestions. Never creates a Job, Customer,
- * or EmailMessage.jobId assignment.
+ * Prepare Add-to-Bidding / Create Job form suggestions. Never creates a Job,
+ * Customer, EntityAlias, or EmailMessage.jobId assignment.
  */
 export async function buildBiddingIntakeSuggestions(input: {
   prisma: PrismaClient;
@@ -60,6 +64,11 @@ export async function buildBiddingIntakeSuggestions(input: {
           subject: true,
         },
       },
+      attachments: {
+        where: { isInline: false },
+        select: { filename: true, mimeType: true },
+        take: 40,
+      },
     },
   });
   if (!message) return null;
@@ -74,7 +83,16 @@ export async function buildBiddingIntakeSuggestions(input: {
     message.bodyText?.trim() ||
     "";
 
-  const deterministicName = suggestBidProjectNameFromSubject(subject);
+  const pdfFilenames = (message.attachments ?? [])
+    .filter(
+      (a) =>
+        /\.pdf$/i.test(a.filename) ||
+        a.mimeType?.toLowerCase() === "application/pdf"
+    )
+    .map((a) => a.filename);
+
+  const attachmentEvidence = extractProjectIdentityFromPdfFilenames(pdfFilenames);
+  const subjectDeterministic = suggestBidProjectNameFromSubject(subject);
 
   const jobRows = await input.prisma.job.findMany({
     where: { workspaceId: input.workspaceId, jobNumber: { not: null } },
@@ -84,9 +102,6 @@ export async function buildBiddingIntakeSuggestions(input: {
     jobRows.map((r) => r.jobNumber)
   );
 
-  let projectName = deterministicName;
-  let projectNameSource: BiddingIntakeSuggestions["projectNameSource"] =
-    deterministicName ? "subject_cleanup" : null;
   let bidDueAt = extractBidDueDateDeterministic({
     subject,
     bodyText: body,
@@ -95,8 +110,10 @@ export async function buildBiddingIntakeSuggestions(input: {
     ? "deterministic"
     : null;
   let rawCustomerCompany: string | null = null;
+  let aiProjectName: string | null = null;
+  let aiAlternateProjectNames: string[] = [];
 
-  // One AI call when configured — project refine + bid due + customer company.
+  // One AI call when configured — project + alternates + bid due + customer.
   if (input.openaiApiKey?.trim()) {
     const client = createOpenAIClient({ apiKey: input.openaiApiKey.trim() });
     const extractor = new OpenAIBiddingIntakeExtractor(
@@ -106,7 +123,9 @@ export async function buildBiddingIntakeSuggestions(input: {
     const ai = await extractor.extract({
       subject,
       cleanBody: body,
-      deterministicProjectName: deterministicName,
+      deterministicProjectName: subjectDeterministic,
+      deterministicAttachmentProjectName: attachmentEvidence.projectName,
+      pdfFilenames,
       senderEmail: message.senderEmail,
       senderName: message.senderName,
     });
@@ -114,24 +133,22 @@ export async function buildBiddingIntakeSuggestions(input: {
       bidDueAt = ai.bidDueDate;
       bidDueSource = "ai";
     }
-    if (!projectName && ai.projectName) {
-      projectName = ai.projectName;
-      projectNameSource = "ai";
-    } else if (
-      projectName &&
-      ai.projectName &&
-      ai.projectName !== projectName &&
-      /^(invitation|itb|bid invitation|reminder)/i.test(projectName)
-    ) {
-      projectName = ai.projectName;
-      projectNameSource = "ai";
-    }
+    aiProjectName = ai.projectName;
+    aiAlternateProjectNames = ai.alternateProjectNames;
     rawCustomerCompany = ai.customerCompanyName;
   }
 
+  const identity = resolveBidProjectIdentity({
+    pdfFilenames,
+    subject,
+    bodyText: body,
+    aiProjectName,
+    aiAlternateProjectNames,
+  });
+
   const sanitizedCompany = sanitizeBiddingCustomerCompanyName({
     companyName: rawCustomerCompany,
-    projectName,
+    projectName: identity.projectName,
   });
 
   let customer: BiddingIntakeSuggestions["customer"] = {
@@ -156,8 +173,9 @@ export async function buildBiddingIntakeSuggestions(input: {
   }
 
   return {
-    projectName,
-    projectNameSource,
+    projectName: identity.projectName,
+    projectNameSource: identity.projectNameSource,
+    alternateProjectNames: identity.alternateProjectNames,
     jobNumber,
     bidDueAt,
     bidDueSource,

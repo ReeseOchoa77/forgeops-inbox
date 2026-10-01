@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { normalizeName, tasksForEmailJobLink } from "@forgeops/shared";
+import {
+  dedupeProjectAliases,
+  normalizeName,
+  tasksForEmailJobLink,
+} from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
@@ -250,6 +254,8 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
         customerId: z.string().nullable().optional(),
         /** Proposed new company name — created only on confirm after re-resolve. */
         customerName: z.string().max(200).nullable().optional(),
+        /** Credible alternate project names — persisted as JOB EntityAlias only on confirm. */
+        alternateProjectNames: z.array(z.string().max(300)).max(10).optional(),
         bidDueAt: bidDate.nullable().optional(),
         confirmMove: z.boolean().optional(),
       })
@@ -364,6 +370,22 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
           },
           select: { id: true, name: true, jobNumber: true, status: true, customerId: true },
         });
+
+        const aliases = dedupeProjectAliases(name, body.alternateProjectNames ?? []);
+        if (aliases.length > 0) {
+          await tx.entityAlias.createMany({
+            data: aliases.map((alias) => ({
+              workspaceId,
+              entityType: "JOB" as const,
+              jobId: job.id,
+              alias,
+              normalizedAlias: normalizeName(alias),
+              source: "REVIEW" as const,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
         await tx.emailMessage.updateMany({
           where: { workspaceId, threadId: message.threadId },
           data: {
@@ -385,7 +407,11 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
             workspaceId,
             actorUserId: auth.userId,
             action: "JOB_CREATED",
-            newValue: { status: ACTIVE_BID_STATUS, threadId: message.threadId },
+            newValue: {
+              status: ACTIVE_BID_STATUS,
+              threadId: message.threadId,
+              aliasCount: aliases.length,
+            },
           },
         });
         return job;

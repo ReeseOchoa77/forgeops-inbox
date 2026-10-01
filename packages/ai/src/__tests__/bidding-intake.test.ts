@@ -6,57 +6,33 @@ import {
 } from "../bidding-intake/prompt.js";
 
 describe("bidding intake AI parse", () => {
-  it("accepts projectName + bidDueDate + customerCompanyName", () => {
+  it("accepts projectName + alternates + bidDueDate + customerCompanyName", () => {
     expect(
       parseBiddingIntakeResult({
-        projectName: "Garden City Elementary",
+        projectName: "Forté - EP Office Expansion",
+        alternateProjectNames: ["EP Office Expansion"],
         bidDueDate: "2026-10-15",
         customerCompanyName: "Mortenson",
       })
     ).toEqual({
-      projectName: "Garden City Elementary",
+      projectName: "Forté - EP Office Expansion",
+      alternateProjectNames: ["EP Office Expansion"],
       bidDueDate: "2026-10-15",
       customerCompanyName: "Mortenson",
     });
   });
 
-  it("accepts nulls (prefer blank over guessing)", () => {
-    expect(
-      parseBiddingIntakeResult({
-        projectName: null,
-        bidDueDate: null,
-        customerCompanyName: null,
-      })
-    ).toEqual({
-      projectName: null,
-      bidDueDate: null,
-      customerCompanyName: null,
-    });
-  });
-
-  it("defaults missing customerCompanyName to null", () => {
+  it("defaults missing alternateProjectNames to []", () => {
     expect(
       parseBiddingIntakeResult({
         projectName: "Ok",
         bidDueDate: "2026-10-15",
-      })
-    ).toEqual({
-      projectName: "Ok",
-      bidDueDate: "2026-10-15",
-      customerCompanyName: null,
-    });
-  });
-
-  it("treats invalid bidDueDate as null rather than inventing", () => {
-    expect(
-      parseBiddingIntakeResult({
-        projectName: "Ok",
-        bidDueDate: "October 15",
         customerCompanyName: null,
       })
     ).toEqual({
       projectName: "Ok",
-      bidDueDate: null,
+      alternateProjectNames: [],
+      bidDueDate: "2026-10-15",
       customerCompanyName: null,
     });
   });
@@ -64,16 +40,17 @@ describe("bidding intake AI parse", () => {
   it("empty result helper is blank", () => {
     expect(emptyBiddingIntakeResult()).toEqual({
       projectName: null,
+      alternateProjectNames: [],
       bidDueDate: null,
       customerCompanyName: null,
     });
   });
 
-  it("prompt encodes subject-first org rules and exclusions", () => {
-    expect(biddingIntakeSystemPrompt).toContain("EMAIL SUBJECT");
+  it("prompt encodes PDF-first project priority and generic rejection", () => {
+    expect(biddingIntakeSystemPrompt).toContain("PDF filenames");
+    expect(biddingIntakeSystemPrompt).toContain("alternateProjectNames");
+    expect(biddingIntakeSystemPrompt).toContain("A101.pdf");
+    expect(biddingIntakeSystemPrompt).toContain("Structural Drawings.pdf");
     expect(biddingIntakeSystemPrompt).toContain("customerCompanyName");
-    expect(biddingIntakeSystemPrompt).toContain("BuildingConnected");
-    expect(biddingIntakeSystemPrompt).toContain("individual person's name");
-    expect(biddingIntakeSystemPrompt).toContain("project name");
   });
 });

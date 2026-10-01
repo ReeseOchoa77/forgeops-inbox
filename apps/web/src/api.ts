@@ -1876,7 +1876,8 @@ export const api = {
     request<{
       suggestions: {
         projectName: string | null
-        projectNameSource: 'subject_cleanup' | 'ai' | null
+        projectNameSource: 'attachment' | 'subject_cleanup' | 'body' | 'ai' | null
+        alternateProjectNames: string[]
         jobNumber: string | null
         bidDueAt: string | null
         bidDueSource: 'deterministic' | 'ai' | null
@@ -1898,6 +1899,8 @@ export const api = {
     customerId?: string | null
     /** Proposed new company — created only on Add to Bidding confirm after re-resolve. */
     customerName?: string | null
+    /** Credible alternate project names — JOB EntityAlias only on confirm. */
+    alternateProjectNames?: string[]
     bidDueAt?: string | null
     confirmMove?: boolean
   }) => request<{

@@ -58,6 +58,13 @@ describe("add to bidding", () => {
     expect(biddingRoute).toContain("customerId: resolved.customerId");
   });
 
+  it("persists JOB EntityAlias alternates only inside from-email create", () => {
+    expect(biddingRoute).toContain("alternateProjectNames");
+    expect(biddingRoute).toContain("entityAlias.createMany");
+    expect(biddingRoute).toContain('entityType: "JOB"');
+    expect(biddingRoute).toContain("dedupeProjectAliases");
+  });
+
 
   it("does not treat the same job as a conflict", () => {
     expect(

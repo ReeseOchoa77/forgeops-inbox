@@ -44,6 +44,7 @@ function basePrisma(overrides?: {
   body?: string;
   customers?: Array<{ id: string; name: string; normalizedName: string }>;
   jobNumbers?: string[];
+  attachments?: Array<{ filename: string; mimeType: string }>;
 }) {
   const subject =
     overrides?.subject ?? "Invitation to Bid - Garden City Elementary School";
@@ -63,6 +64,7 @@ function basePrisma(overrides?: {
           normalizedSubject: subject,
           subject,
         },
+        attachments: overrides?.attachments ?? [],
       }),
     },
     job: {
@@ -81,6 +83,7 @@ function basePrisma(overrides?: {
     },
     entityAlias: {
       findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn(),
     },
   };
 }
@@ -103,6 +106,7 @@ describe("bidding intake suggestions service", () => {
     expect(result).toEqual({
       projectName: "Garden City Elementary School",
       projectNameSource: "subject_cleanup",
+      alternateProjectNames: [],
       jobNumber: "26-201",
       bidDueAt: "2026-10-15",
       bidDueSource: "deterministic",
@@ -115,6 +119,47 @@ describe("bidding intake suggestions service", () => {
     });
     expect(prisma.job.create).not.toHaveBeenCalled();
     expect(prisma.customer.create).not.toHaveBeenCalled();
+    expect(prisma.entityAlias.createMany).not.toHaveBeenCalled();
+  });
+
+  it("uses drawing PDF filename over subject and keeps subject alternate", async () => {
+    const prisma = basePrisma({
+      subject: "ITB - EP Office Expansion",
+      body: "Please bid.",
+      attachments: [
+        {
+          filename: "Forte - EP Office Expansion - Architectural Drawings.pdf",
+          mimeType: "application/pdf",
+        },
+      ],
+    });
+
+    const result = await buildBiddingIntakeSuggestions({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+
+    expect(result?.projectNameSource).toBe("attachment");
+    expect(result?.projectName).toBe("Forte - EP Office Expansion");
+    expect(result?.alternateProjectNames).toContain("EP Office Expansion");
+    expect(prisma.entityAlias.createMany).not.toHaveBeenCalled();
+  });
+
+  it("ignores generic A101.pdf for project name", async () => {
+    const prisma = basePrisma({
+      subject: "Invitation to Bid - Garden City Elementary School",
+      attachments: [{ filename: "A101.pdf", mimeType: "application/pdf" }],
+    });
+    const result = await buildBiddingIntakeSuggestions({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+    expect(result?.projectName).toBe("Garden City Elementary School");
+    expect(result?.projectNameSource).toBe("subject_cleanup");
   });
 
   it("AI failure / missing key leaves customer blank", async () => {
@@ -148,6 +193,7 @@ describe("bidding intake suggestions service", () => {
   it("AI company resolves to existing Customer; never creates Customer", async () => {
     extractMock.mockResolvedValue({
       projectName: null,
+      alternateProjectNames: [],
       bidDueDate: null,
       customerCompanyName: "Mortenson",
     });
@@ -183,6 +229,7 @@ describe("bidding intake suggestions service", () => {
   it("AI new company proposes NEW without persisting", async () => {
     extractMock.mockResolvedValue({
       projectName: "Project Alpha",
+      alternateProjectNames: [],
       bidDueDate: "2026-11-02",
       customerCompanyName: "Northland Construction",
     });
@@ -208,6 +255,7 @@ describe("bidding intake suggestions service", () => {
   it("rejects project-name / person / platform as Customer", async () => {
     extractMock.mockResolvedValue({
       projectName: null,
+      alternateProjectNames: [],
       bidDueDate: null,
       customerCompanyName: "Garden City Elementary School",
     });
@@ -228,6 +276,9 @@ describe("bidding intake route / freeze / customer regression", () => {
     expect(routeSrc).toContain("buildBiddingIntakeSuggestions");
     expect(routeSrc).toContain("resolveOrCreateBiddingCustomer");
     expect(routeSrc).toContain("customerName");
+    expect(routeSrc).toContain("alternateProjectNames");
+    expect(routeSrc).toContain("entityAlias.createMany");
+    expect(routeSrc).toContain("dedupeProjectAliases");
     expect(routeSrc).toContain("JOB_NUMBER_TAKEN");
   });
 
