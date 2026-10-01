@@ -1927,6 +1927,10 @@ export const api = {
       method: 'POST', body: JSON.stringify({})
     }),
 
+  /** Permanent Job delete — OWNER only. Does not delete emails/customers/vendors. */
+  deleteJob: (workspaceId: string, jobId: string) =>
+    request<void>(`/workspaces/${workspaceId}/jobs/${jobId}`, { method: 'DELETE' }),
+
   assignEmailToJob: (workspaceId: string, jobId: string, data: { messageId?: string; threadId?: string }) =>
     request<{ status: string }>(`/workspaces/${workspaceId}/jobs/${jobId}/emails`, {
       method: 'POST', body: JSON.stringify(data)

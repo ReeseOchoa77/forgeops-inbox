@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 type Props = {
   title: string
@@ -211,6 +211,9 @@ type ConfirmProps = {
   confirmLabel: string
   danger?: boolean
   busy?: boolean
+  /** When set, user must type this exact phrase before Confirm enables. */
+  confirmPhrase?: string
+  confirmPhraseHint?: string
   onConfirm: () => void
   onCancel: () => void
 }
@@ -222,9 +225,19 @@ export function JobConfirmDialog({
   confirmLabel,
   danger,
   busy,
+  confirmPhrase,
+  confirmPhraseHint,
   onConfirm,
   onCancel,
 }: ConfirmProps) {
+  const [phrase, setPhrase] = useState('')
+  useEffect(() => {
+    if (!open) setPhrase('')
+  }, [open])
+
+  const phraseOk = !confirmPhrase || phrase.trim() === confirmPhrase
+  const canConfirm = phraseOk && !busy
+
   return (
     <JobCrmModal
       title={title}
@@ -235,13 +248,31 @@ export function JobConfirmDialog({
           <JobCrmSecondaryButton onClick={onCancel} disabled={busy}>
             Cancel
           </JobCrmSecondaryButton>
-          <JobCrmPrimaryButton onClick={onConfirm} disabled={busy} danger={danger}>
+          <JobCrmPrimaryButton onClick={onConfirm} disabled={!canConfirm} danger={danger}>
             {busy ? 'Working…' : confirmLabel}
           </JobCrmPrimaryButton>
         </>
       }
     >
-      <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.5 }}>{message}</p>
+      <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+        {message}
+      </p>
+      {confirmPhrase ? (
+        <div style={{ marginTop: 14 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>
+            {confirmPhraseHint ?? `Type ${confirmPhrase} to confirm`}
+          </label>
+          <input
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+            style={jobCrmInputStyle}
+            placeholder={confirmPhrase}
+          />
+        </div>
+      ) : null}
     </JobCrmModal>
   )
 }

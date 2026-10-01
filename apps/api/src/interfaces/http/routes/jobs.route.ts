@@ -42,8 +42,11 @@ import {
   type DocumentCategoryFilter,
   type DocumentControlStateFilter,
 } from "../../../application/services/job-document-records.js";
+import { deleteWorkspaceJob } from "../../../application/services/delete-workspace-job.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 
 const IMAGE_RELEVANCE_FILTERS = [
   "ALL",
@@ -71,6 +74,32 @@ async function requireAuth(
 
 function canEdit(workspaceRole: string): boolean {
   return workspaceRole === "OWNER" || workspaceRole === "EDITOR";
+}
+
+function canPermanentlyDeleteJob(role: string, workspaceRole: string): boolean {
+  // Prefer Membership.role OWNER (frontend convention); also accept workspaceRole OWNER.
+  return role === "OWNER" || workspaceRole === "OWNER";
+}
+
+function localAttachmentRoot(): string {
+  return process.env.ATTACHMENT_STORAGE_PATH?.trim() || join(process.cwd(), "data", "attachments");
+}
+
+async function bestEffortDeleteJobFileStorage(
+  app: FastifyInstance,
+  storageKey: string | null | undefined
+): Promise<void> {
+  if (!storageKey) return;
+  try {
+    const storage = app.services.attachmentStorage;
+    if (storage.configured) await storage.delete(storageKey);
+    else {
+      const fullPath = join(localAttachmentRoot(), storageKey);
+      if (existsSync(fullPath)) unlinkSync(fullPath);
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 async function loadJobWithTenantCheck(
@@ -1026,6 +1055,46 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     });
 
     return reply.send({ job });
+  });
+
+  // 6b. DELETE /api/v1/workspaces/:workspaceId/jobs/:jobId — Permanent Job delete (OWNER)
+  app.delete("/api/v1/workspaces/:workspaceId/jobs/:jobId", async (request, reply) => {
+    const { workspaceId, jobId } = jobParams.parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+    if (!canPermanentlyDeleteJob(auth.role, auth.workspaceRole)) {
+      return reply.code(403).send({
+        message: "Owner permission required to permanently delete a Job",
+      });
+    }
+
+    const result = await deleteWorkspaceJob(app.services.prisma, {
+      workspaceId,
+      jobId,
+    });
+    if (!result.ok) {
+      return reply.code(404).send({ message: "Job not found" });
+    }
+
+    for (const storageKey of result.storageKeys) {
+      await bestEffortDeleteJobFileStorage(app, storageKey);
+    }
+
+    await app.services.auditEventLogger.log({
+      workspaceId,
+      actorUserId: auth.userId,
+      entityType: "JOB",
+      entityId: jobId,
+      action: "job.deleted",
+      metadata: {
+        name: result.job.name,
+        jobNumber: result.job.jobNumber,
+        status: result.job.status,
+      },
+      request,
+    });
+
+    return reply.code(204).send();
   });
 
   // 7. POST /api/v1/workspaces/:workspaceId/jobs/:jobId/emails — Assign email to job

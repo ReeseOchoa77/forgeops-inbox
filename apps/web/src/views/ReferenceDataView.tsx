@@ -154,6 +154,7 @@ export function ReferenceDataView({
   initialTab,
 }: Props) {
   const isViewer = userRole === 'VIEWER'
+  const canPermanentlyDeleteJobs = userRole === 'OWNER'
   const [tab, setTab] = useState<ReferenceDataTab>(() => {
     if (initialTab && isReferenceDataTab(initialTab)) return initialTab
     return readStoredReferenceTab() ?? 'customers'
@@ -244,6 +245,10 @@ export function ReferenceDataView({
   const handleDelete = async (t: ReferenceDataTab, item: Record<string, unknown>) => {
     const id = item.id as string | undefined
     if (!id || isViewer) return
+    if (t === 'jobs' && !canPermanentlyDeleteJobs) {
+      setError('Owner permission required to permanently delete a Job')
+      return
+    }
     const label = deleteLabel(t, item)
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
 
@@ -275,7 +280,11 @@ export function ReferenceDataView({
 
   const items = (data[tab] ?? []) as Array<Record<string, unknown>>
   const showEntityTable = tab !== 'senders' && tab !== 'documents'
-  const canDeleteTab = !isViewer && tab !== 'imports' && tab !== 'senders'
+  const canDeleteTab =
+    !isViewer &&
+    tab !== 'imports' &&
+    tab !== 'senders' &&
+    !(tab === 'jobs' && !canPermanentlyDeleteJobs)
 
   return (
     <div>

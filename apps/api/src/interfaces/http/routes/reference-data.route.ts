@@ -13,7 +13,7 @@ import {
   JOB_MATCHER_VERSION
 } from "@forgeops/shared";
 
-import { releaseFoldersForDeletedJob } from "../../../application/services/release-folder-job-match.js";
+import { deleteWorkspaceJob } from "../../../application/services/delete-workspace-job.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -261,40 +261,19 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     const params = z.object({ workspaceId: z.string().min(1), jobId: z.string().min(1) }).parse(request.params);
     const auth = await requireAuth(app, request, reply, params.workspaceId);
     if (!auth) return;
-    if (!requireEditor(auth.role)) {
-      return reply.code(403).send({ message: "Edit permission required" });
+    // Permanent Job delete is OWNER-only (same policy as Job Settings → Delete Job).
+    if (auth.role !== "OWNER") {
+      return reply.code(403).send({ message: "Owner permission required to delete a Job" });
     }
 
-    const existing = await app.services.prisma.job.findFirst({
-      where: { id: params.jobId, workspaceId: params.workspaceId },
-      select: { id: true, name: true, jobNumber: true },
+    const result = await deleteWorkspaceJob(app.services.prisma, {
+      workspaceId: params.workspaceId,
+      jobId: params.jobId,
     });
-    if (!existing) return reply.code(404).send({ message: "Job not found" });
+    if (!result.ok) return reply.code(404).send({ message: "Job not found" });
 
-    const files = await app.services.prisma.jobFile.findMany({
-      where: { workspaceId: params.workspaceId, jobId: params.jobId },
-      select: { storageKey: true },
-    });
-
-    // Composite FKs cannot ON DELETE SET NULL (workspaceId is required). Clear refs first.
-    await app.services.prisma.$transaction(async (tx) => {
-      await tx.classification.updateMany({
-        where: { workspaceId: params.workspaceId, jobId: params.jobId },
-        data: { jobId: null },
-      });
-      await tx.task.updateMany({
-        where: { workspaceId: params.workspaceId, jobId: params.jobId },
-        data: { jobId: null },
-      });
-      await releaseFoldersForDeletedJob(tx, params.workspaceId, params.jobId);
-      await tx.entityAlias.deleteMany({
-        where: { workspaceId: params.workspaceId, jobId: params.jobId },
-      });
-      await tx.job.delete({ where: { id: params.jobId } });
-    });
-
-    for (const file of files) {
-      await bestEffortDeleteStorage(app, file.storageKey);
+    for (const storageKey of result.storageKeys) {
+      await bestEffortDeleteStorage(app, storageKey);
     }
 
     await app.services.auditEventLogger.log({
@@ -303,7 +282,7 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
       entityType: "JOB",
       entityId: params.jobId,
       action: "reference.job_deleted",
-      metadata: { name: existing.name, jobNumber: existing.jobNumber },
+      metadata: { name: result.job.name, jobNumber: result.job.jobNumber },
       request,
     });
 

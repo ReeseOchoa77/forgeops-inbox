@@ -44,12 +44,26 @@ describe("release folder matches when a job is deleted", () => {
 
   it("clears matches on job delete and repairs already-orphaned folders when the list loads", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const deleteRoute = readFileSync(
+    const deleteService = readFileSync(
+      resolve(here, "../application/services/delete-workspace-job.ts"),
+      "utf8",
+    );
+    expect(deleteService).toContain("releaseFoldersForDeletedJob(tx, workspaceId, jobId)");
+    expect(deleteService).toContain("emailMessage.updateMany");
+
+    const referenceRoute = readFileSync(
       resolve(here, "../interfaces/http/routes/reference-data.route.ts"),
       "utf8",
     );
-    expect(deleteRoute).toContain("releaseFoldersForDeletedJob(tx, params.workspaceId, params.jobId)");
-    expect(deleteRoute).not.toContain("data: { matchedJobId: null }");
+    expect(referenceRoute).toContain("deleteWorkspaceJob");
+    expect(referenceRoute).toContain('auth.role !== "OWNER"');
+
+    const jobsRoute = readFileSync(
+      resolve(here, "../interfaces/http/routes/jobs.route.ts"),
+      "utf8",
+    );
+    expect(jobsRoute).toContain("deleteWorkspaceJob");
+    expect(jobsRoute).toContain('app.delete("/api/v1/workspaces/:workspaceId/jobs/:jobId"');
 
     const listRoute = readFileSync(
       resolve(here, "../interfaces/http/routes/folder-discovery.route.ts"),

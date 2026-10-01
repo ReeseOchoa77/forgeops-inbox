@@ -4,11 +4,35 @@ import {
   buildJobAttentionItems,
   formatJobActivityAction,
   formatStatusLabel,
+  JOB_CRM_MORE_TABS,
+  JOB_CRM_PRIMARY_TABS,
+  JOB_CRM_REQUIRED_TABS,
+  JOB_CRM_TABS,
   parseNullableMoneyInput,
   readJobTabFromUrl,
 } from './job-crm-ui'
 
 describe('job CRM UI helpers', () => {
+  it('lists every Job tab inline with no More overflow', () => {
+    expect(JOB_CRM_REQUIRED_TABS).toEqual(JOB_CRM_TABS.map((t) => t.key))
+    expect(JOB_CRM_PRIMARY_TABS).toEqual(JOB_CRM_REQUIRED_TABS)
+    expect(JOB_CRM_MORE_TABS).toEqual([])
+    expect(JOB_CRM_TABS.map((t) => t.key)).toEqual([
+      'overview',
+      'emails',
+      'documents',
+      'tasks',
+      'scope',
+      'schedule',
+      'changes',
+      'procurement',
+      'deliveries',
+      'billing',
+      'activity',
+      'settings',
+    ])
+  })
+
   it('maps activity enums to readable labels', () => {
     expect(formatJobActivityAction('WORK_PACKAGE_CREATED')).toBe('Work package created')
     expect(formatJobActivityAction('INVOICE_SUBMITTED')).toBe('Invoice submitted')

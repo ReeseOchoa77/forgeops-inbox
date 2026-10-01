@@ -31,8 +31,6 @@ import {
   buildJobAttentionItems,
   formatJobActivityAction,
   formatStatusLabel,
-  JOB_CRM_MORE_TABS,
-  JOB_CRM_PRIMARY_TABS,
   JOB_CRM_TABS,
   readJobTabFromUrl,
   writeJobTabToUrl,
@@ -238,20 +236,21 @@ export function JobDetailView({
   const paintLoggedRef = useRef(false)
   const hasShellRef = useRef(job != null)
   const [tab, setTabState] = useState<Tab>(() => readJobTabFromUrl() ?? 'overview')
-  const [moreOpen, setMoreOpen] = useState(false)
   const setTab = useCallback((next: Tab) => {
     setTabState(next)
     writeJobTabToUrl(next)
-    setMoreOpen(false)
   }, [])
   const [confirmAction, setConfirmAction] = useState<null | {
     title: string
     message: string
     confirmLabel: string
     danger?: boolean
+    confirmPhrase?: string
+    confirmPhraseHint?: string
     run: () => Promise<void>
   }>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [emails, setEmails] = useState<JobEmail[]>([])
   const [overviewEmails, setOverviewEmails] = useState<JobEmail[]>([])
   const [emailTotal, setEmailTotal] = useState(0)
@@ -352,6 +351,7 @@ export function JobDetailView({
   const [showMoveModal, setShowMoveModal] = useState<string | null>(null)
 
   const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
+  const canDeleteJob = userRole === 'OWNER'
 
   const patchCachedJob = useCallback((patch: Partial<JobDetail>) => {
     setJob((prev) => {
@@ -746,7 +746,36 @@ export function JobDetailView({
       await api.archiveJob(workspaceId, jobId)
     }
     invalidateJobDetailCache(workspaceId, jobId)
+    invalidateJobsListCache(workspaceId)
     loadJob()
+  }
+
+  const handleDeleteJob = () => {
+    if (!job || !canDeleteJob) return
+    setDeleteError(null)
+    const jobLabel = [job.jobNumber, job.name].filter(Boolean).join(' · ') || job.name
+    setConfirmAction({
+      title: 'Delete Job',
+      message:
+        `Permanently delete ${jobLabel}?\n\n` +
+        'This removes Job-owned project records (scope, schedule, changes, procurement, deliveries, billing, uploaded files, activity).\n\n' +
+        'Emails, Customers, Vendors, and other shared records are not deleted. Assigned emails become Unassigned.',
+      confirmLabel: 'Delete Job',
+      danger: true,
+      confirmPhrase: 'DELETE',
+      confirmPhraseHint: 'Type DELETE to confirm permanent deletion',
+      run: async () => {
+        try {
+          await api.deleteJob(workspaceId, jobId)
+          invalidateJobDetailCache(workspaceId, jobId)
+          invalidateJobsListCache(workspaceId)
+          onBack()
+        } catch (e) {
+          setDeleteError(e instanceof Error ? e.message : 'Could not delete Job')
+          throw e
+        }
+      },
+    })
   }
 
   const handleAddAlias = async () => {
@@ -906,9 +935,6 @@ export function JobDetailView({
     return <div style={{ padding: 48, textAlign: 'center', color: '#888' }}>Job not found.</div>
   }
 
-  const primaryTabs = JOB_CRM_TABS.filter((t) => JOB_CRM_PRIMARY_TABS.includes(t.key))
-  const moreTabs = JOB_CRM_TABS.filter((t) => JOB_CRM_MORE_TABS.includes(t.key))
-  const tabInMore = JOB_CRM_MORE_TABS.includes(tab)
   const attentionItems = buildJobAttentionItems({
     overdueMilestoneCount: job.scheduleSummary?.overdueCount,
     overdueRfiCount: job.changesSummary?.overdueRfiCount,
@@ -993,9 +1019,9 @@ export function JobDetailView({
         </div>
       </div>
 
-      {/* Tabs — primary modules + More overflow for communication/system */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0, position: 'relative' }}>
-        {(isPhone ? JOB_CRM_TABS : primaryTabs).map((t) => (
+      {/* Tabs — full Job module strip (scrolls horizontally when needed) */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
+        {JOB_CRM_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -1011,67 +1037,6 @@ export function JobDetailView({
             {t.label}
           </button>
         ))}
-        {!isPhone && (
-          <div style={{ position: 'relative', flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={() => setMoreOpen((o) => !o)}
-              aria-expanded={moreOpen}
-              aria-haspopup="menu"
-              style={{
-                padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
-                fontSize: 13, fontWeight: tabInMore ? 600 : 400,
-                color: tabInMore ? '#1a1a2e' : '#6b7280',
-                borderBottom: tabInMore ? '2px solid #1a1a2e' : '2px solid transparent',
-                marginBottom: -1, whiteSpace: 'nowrap',
-              }}
-            >
-              More{tabInMore ? ` · ${JOB_CRM_TABS.find((t) => t.key === tab)?.label}` : ''} ▾
-            </button>
-            {moreOpen && (
-              <div
-                role="menu"
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: 4,
-                  background: '#fff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 8,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                  minWidth: 160,
-                  zIndex: 20,
-                  padding: 4,
-                }}
-              >
-                {moreTabs.map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => setTab(t.key)}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      border: 'none',
-                      background: tab === t.key ? '#f3f4f6' : 'transparent',
-                      borderRadius: 6,
-                      fontSize: 13,
-                      fontWeight: tab === t.key ? 600 : 400,
-                      color: '#374151',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Overview Tab — headline metrics → attention → ops → commercial → parties */}
@@ -2382,17 +2347,52 @@ export function JobDetailView({
             )}
           </Card>
 
-          {/* Archive/Restore */}
-          {canEdit && (
+          {/* Archive / Delete */}
+          {(canEdit || canDeleteJob) && (
             <Card title="Danger Zone">
-              <button onClick={handleArchive}
-                style={{
-                  padding: '8px 16px', border: '1px solid #dc2626', borderRadius: 6,
-                  background: job.archivedAt ? '#fff' : '#fef2f2', color: '#dc2626',
-                  fontSize: 13, fontWeight: 600, cursor: 'pointer'
-                }}>
-                {job.archivedAt ? 'Restore Job' : 'Archive Job'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {canEdit && (
+                  <div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8, lineHeight: 1.45 }}>
+                      Archive hides the Job from active workflow but keeps history. Delete is permanent.
+                    </div>
+                    <button type="button" onClick={handleArchive}
+                      style={{
+                        padding: '8px 16px', border: '1px solid #dc2626', borderRadius: 6,
+                        background: job.archivedAt ? '#fff' : '#fef2f2', color: '#dc2626',
+                        fontSize: 13, fontWeight: 600, cursor: 'pointer'
+                      }}>
+                      {job.archivedAt ? 'Restore Job' : 'Archive Job'}
+                    </button>
+                  </div>
+                )}
+                {canDeleteJob && (
+                  <div style={{ borderTop: canEdit ? '1px solid #fee2e2' : undefined, paddingTop: canEdit ? 14 : 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 650, color: '#991b1b', marginBottom: 6 }}>
+                      Delete Job
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10, lineHeight: 1.45 }}>
+                      Permanently deletes this Job and its Job-owned project records. Emails, Customers,
+                      Vendors, and other shared records are not deleted.
+                    </div>
+                    {deleteError && (
+                      <div style={{ fontSize: 12, color: '#b42318', marginBottom: 8 }}>{deleteError}</div>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="job-settings-delete"
+                      onClick={handleDeleteJob}
+                      style={{
+                        padding: '8px 16px', border: '1px solid #991b1b', borderRadius: 6,
+                        background: '#991b1b', color: '#fff',
+                        fontSize: 13, fontWeight: 600, cursor: 'pointer'
+                      }}
+                    >
+                      Delete Job
+                    </button>
+                  </div>
+                )}
+              </div>
             </Card>
           )}
         </div>
@@ -2412,6 +2412,8 @@ export function JobDetailView({
         confirmLabel={confirmAction?.confirmLabel ?? 'Confirm'}
         danger={confirmAction?.danger}
         busy={confirmBusy}
+        confirmPhrase={confirmAction?.confirmPhrase}
+        confirmPhraseHint={confirmAction?.confirmPhraseHint}
         onCancel={() => {
           if (!confirmBusy) setConfirmAction(null)
         }}
@@ -2420,7 +2422,9 @@ export function JobDetailView({
           setConfirmBusy(true)
           void confirmAction
             .run()
-            .catch(() => {})
+            .catch(() => {
+              /* error surfaced via deleteError / caller */
+            })
             .finally(() => {
               setConfirmBusy(false)
               setConfirmAction(null)

@@ -19,37 +19,27 @@ export type JobCrmTab =
 
 export const JOB_CRM_TABS: Array<{ key: JobCrmTab; label: string; group: string }> = [
   { key: 'overview', label: 'Overview', group: 'core' },
+  { key: 'emails', label: 'Emails', group: 'communication' },
+  { key: 'documents', label: 'Documents', group: 'communication' },
+  { key: 'tasks', label: 'Tasks', group: 'communication' },
   { key: 'scope', label: 'Scope', group: 'core' },
   { key: 'schedule', label: 'Schedule', group: 'core' },
   { key: 'changes', label: 'Changes', group: 'operations' },
   { key: 'procurement', label: 'Procurement', group: 'operations' },
   { key: 'deliveries', label: 'Deliveries', group: 'operations' },
   { key: 'billing', label: 'Billing', group: 'commercial' },
-  { key: 'emails', label: 'Emails', group: 'communication' },
-  { key: 'tasks', label: 'Tasks', group: 'communication' },
-  { key: 'documents', label: 'Documents', group: 'communication' },
   { key: 'activity', label: 'Activity', group: 'system' },
   { key: 'settings', label: 'Settings', group: 'system' },
 ]
 
-/** Primary tabs always visible on narrow screens; rest under More. */
-export const JOB_CRM_PRIMARY_TABS: JobCrmTab[] = [
-  'overview',
-  'scope',
-  'schedule',
-  'changes',
-  'procurement',
-  'deliveries',
-  'billing',
-]
+/** Every Job CRM tab — ACTIVE and BIDDING Jobs must reach all of these. */
+export const JOB_CRM_REQUIRED_TABS: JobCrmTab[] = JOB_CRM_TABS.map((t) => t.key)
 
-export const JOB_CRM_MORE_TABS: JobCrmTab[] = [
-  'emails',
-  'tasks',
-  'documents',
-  'activity',
-  'settings',
-]
+/** All tabs render in the main strip (no More overflow). */
+export const JOB_CRM_PRIMARY_TABS: JobCrmTab[] = [...JOB_CRM_REQUIRED_TABS]
+
+/** @deprecated Kept empty — Job Detail lists every tab inline. */
+export const JOB_CRM_MORE_TABS: JobCrmTab[] = []
 
 const ACTIVITY_LABELS: Record<string, string> = {
   JOB_CREATED: 'Job created',
