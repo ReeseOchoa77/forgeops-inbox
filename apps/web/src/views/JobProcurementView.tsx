@@ -9,6 +9,12 @@ import {
 import { formatOverviewDate } from '../job-overview-format'
 import { parseNullableMoneyInput } from '../job-crm-ui'
 import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
+import {
   JobConfirmDialog,
   JobCrmField,
   JobCrmModal,
@@ -99,6 +105,7 @@ export function JobProcurementView({ workspaceId, jobId, canEdit, isPhone, onSum
   const [poNumber, setPoNumber] = useState('PO-001')
   const [poAmount, setPoAmount] = useState('')
   const [poIssueNow, setPoIssueNow] = useState(false)
+  const onSummaryChangeRef = useLatestRef(onSummaryChange)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -114,13 +121,13 @@ export function JobProcurementView({ workspaceId, jobId, canEdit, isPhone, onSum
       setOrders(o.purchaseOrders)
       setPackages(scope.packages)
       setVendors(vendorRes.vendors.map((v) => ({ id: v.id, name: v.name })))
-      onSummaryChange?.(rebuildProcurementSummary(i.items, o.purchaseOrders))
+      onSummaryChangeRef.current?.(rebuildProcurementSummary(i.items, o.purchaseOrders))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load procurement')
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, jobId, onSummaryChange])
+  }, [workspaceId, jobId])
 
   useEffect(() => {
     void load()
@@ -269,7 +276,11 @@ export function JobProcurementView({ workspaceId, jobId, canEdit, isPhone, onSum
   }
 
   if (loading) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading procurement…</div>
+    return <JobTabLoading label="Loading procurement…" />
+  }
+
+  if (jobTabShouldShowLoadError(loading, error, items.length > 0 || orders.length > 0)) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   const chip = (key: SubTab, label: string) => (

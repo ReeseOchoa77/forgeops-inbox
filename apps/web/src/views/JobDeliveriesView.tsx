@@ -9,6 +9,12 @@ import {
 } from '../api'
 import { formatOverviewDate } from '../job-overview-format'
 import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
+import {
   JobConfirmDialog,
   JobCrmField,
   JobCrmModal,
@@ -85,6 +91,7 @@ export function JobDeliveriesView({ workspaceId, jobId, canEdit, isPhone, onSumm
   const [lineQty, setLineQty] = useState('')
   const [installEventType, setInstallEventType] = useState<'STARTED' | 'PROGRESS' | 'COMPLETED'>('STARTED')
   const [installPackageId, setInstallPackageId] = useState('')
+  const onSummaryChangeRef = useLatestRef(onSummaryChange)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -99,13 +106,13 @@ export function JobDeliveriesView({ workspaceId, jobId, canEdit, isPhone, onSumm
       setInstallations(i.installations)
       setPackages(scope.packages)
       setFabItems(scope.items)
-      onSummaryChange?.(rebuildDeliverySummary(d.deliveries))
+      onSummaryChangeRef.current?.(rebuildDeliverySummary(d.deliveries))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load deliveries')
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, jobId, onSummaryChange])
+  }, [workspaceId, jobId])
 
   useEffect(() => {
     void load()
@@ -283,7 +290,11 @@ export function JobDeliveriesView({ workspaceId, jobId, canEdit, isPhone, onSumm
   }
 
   if (loading) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading deliveries…</div>
+    return <JobTabLoading label="Loading deliveries…" />
+  }
+
+  if (jobTabShouldShowLoadError(loading, error, deliveries.length > 0 || installations.length > 0)) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   const chip = (key: SubTab, label: string) => (

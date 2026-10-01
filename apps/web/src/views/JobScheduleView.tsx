@@ -9,6 +9,12 @@ import {
 } from '../api'
 import { formatOverviewDate } from '../job-overview-format'
 import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
+import {
   JobConfirmDialog,
   JobCrmField,
   JobCrmModal,
@@ -105,10 +111,12 @@ export function JobScheduleView({
     { type: 'cancel' | 'delete'; milestone: JobMilestone } | null
   >(null)
 
+  const onSummaryChangeRef = useLatestRef(onSummaryChange)
+
   const apply = useCallback((list: JobMilestone[]) => {
     setMilestones(list)
-    onSummaryChange?.(buildSummary(list))
-  }, [onSummaryChange])
+    onSummaryChangeRef.current?.(buildSummary(list))
+  }, [onSummaryChangeRef])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -260,7 +268,11 @@ export function JobScheduleView({
   }
 
   if (loading) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading schedule…</div>
+    return <JobTabLoading label="Loading schedule…" />
+  }
+
+  if (jobTabShouldShowLoadError(loading, error, milestones.length > 0)) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   const chip = (key: StatusFilter, label: string) => (

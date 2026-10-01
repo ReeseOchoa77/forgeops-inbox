@@ -139,6 +139,17 @@ export async function persistJobMatchResult(
   });
 
   if (!fields) {
+    if (input.match.selectedJobId && !isJobMatcherAutoAssignEnabled()) {
+      console.info({
+        event: "job-match-candidate-not-assigned",
+        emailMessageId: input.emailMessageId,
+        workspaceId: input.workspaceId,
+        candidateJobId: input.match.selectedJobId,
+        assignmentSource: input.match.assignmentSource,
+        confidence: input.match.confidence,
+        reason: "JOB_MATCHER_AUTO_ASSIGN_DISABLED",
+      });
+    }
     if (taskLink) await tx.task.updateMany(taskLink);
     return {
       applied: false,

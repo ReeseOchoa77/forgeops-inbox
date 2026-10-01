@@ -144,4 +144,60 @@ describe("persist-job-match", () => {
     expect(classificationUpdate).not.toHaveBeenCalled();
     expect(emailUpdate).not.toHaveBeenCalled();
   });
+
+  it("V1: high-confidence Job number match does not persist jobId when flag off", () => {
+    process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = "false";
+    expect(
+      buildJobMatchPersistence(strongMatch, {
+        jobId: null,
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: null,
+      })
+    ).toBeNull();
+  });
+
+  it("V1: AI_SUGGESTED / AI_AUTO_ASSIGNED matches do not persist when flag off", () => {
+    delete process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
+    const suggested: JobMatchResult = {
+      ...strongMatch,
+      assignmentSource: "AI_SUGGESTED",
+      confidence: 0.99,
+    };
+    const auto: JobMatchResult = {
+      ...strongMatch,
+      assignmentSource: "AI_AUTO_ASSIGNED",
+      confidence: 0.99,
+    };
+    expect(buildJobMatchPersistence(suggested, null)).toBeNull();
+    expect(buildJobMatchPersistence(auto, null)).toBeNull();
+  });
+
+  it("V1: probabilistic matcher cannot overwrite USER_ASSIGNED or VERIFIED_PROJECT_FOLDER", () => {
+    process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = "true";
+    expect(
+      buildJobMatchPersistence(strongMatch, {
+        jobId: "job-manual",
+        jobAssignmentIsManual: true,
+        jobAssignmentSource: "USER_ASSIGNED",
+      })
+    ).toBeNull();
+    expect(
+      buildJobMatchPersistence(strongMatch, {
+        jobId: "job-folder",
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "VERIFIED_PROJECT_FOLDER",
+      })
+    ).toBeNull();
+  });
+
+  it("admin escape hatch: flag true persists JOB_NUMBER_MATCH onto unassigned email", () => {
+    process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = "true";
+    const fields = buildJobMatchPersistence(strongMatch, {
+      jobId: null,
+      jobAssignmentIsManual: false,
+      jobAssignmentSource: null,
+    });
+    expect(fields?.emailMessage.jobId).toBe("job-new");
+    expect(fields?.emailMessage.jobAssignmentSource).toBe("JOB_NUMBER_MATCH");
+  });
 });

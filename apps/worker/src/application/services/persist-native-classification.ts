@@ -9,6 +9,7 @@ import {
   classifierGeneratedTasksForMessageWhere,
   extractPrismaClientDiagnostic,
   formatClassificationFailureMessage,
+  isJobMatcherAutoAssignEnabled,
   mapN8nPriorityToStored,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
@@ -19,7 +20,10 @@ import {
 } from "@forgeops/shared";
 
 import { buildNativeTaskPersistPayload } from "./native-task-persist-payload.js";
-import { persistJobMatchResult } from "./persist-job-match.js";
+import {
+  buildJobMatchPersistence,
+  persistJobMatchResult,
+} from "./persist-job-match.js";
 import { createJobMatcherService } from "./prisma-job-match-loader.js";
 import { normalizeEmailMessage } from "./normalize-email-message.js";
 
@@ -211,9 +215,19 @@ export async function persistNativeClassificationResult(input: {
     }
   }
 
-  // Feedback: JobMatcher-selected job is a confirmed association → BUSINESS.
-  // (Flags B/P runs before matching; this closes the loop without re-entering AI.)
-  if (jobMatch?.selectedJobId) {
+  // Feedback: JobMatcher may force BUSINESS ONLY when V1 auto-assign escape hatch
+  // would actually persist that job (flag ON + not protected). Candidates alone
+  // must never become confirmed Job association evidence.
+  const matcherWouldPersist =
+    jobMatch != null &&
+    isJobMatcherAutoAssignEnabled() &&
+    buildJobMatchPersistence(jobMatch, {
+      jobId: message.jobId,
+      jobAssignmentIsManual: message.jobAssignmentIsManual,
+      jobAssignmentSource: message.jobAssignmentSource,
+    }) != null;
+
+  if (jobMatch?.selectedJobId && matcherWouldPersist) {
     const matchedJob = await input.prisma.job.findFirst({
       where: {
         id: jobMatch.selectedJobId,
@@ -241,6 +255,7 @@ export async function persistNativeClassificationResult(input: {
       if (overridden.overridden) requiresReview = false;
     }
   }
+  // Candidate-without-assign logging happens in persistJobMatchResult (central gate).
 
   const jobCandidate = buildJobCandidateMarker({
     jobReferenceConfidence: signals.jobReferenceConfidence,

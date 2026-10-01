@@ -81,9 +81,10 @@ export function confirmedJobAssociationDecisionEffect(
 }
 
 /**
- * Force BUSINESS when a valid workspace Job is already attached.
- * Does not create loops: callers apply once after flags (before PERSONAL skip)
- * and/or after JobMatcher assigns a jobId.
+ * Force BUSINESS when a confirmed (authoritative) workspace Job is attached.
+ * Callers must only pass USER_ASSIGNED / VERIFIED_PROJECT_FOLDER associations
+ * (or JobMatcher results that were actually persisted via the admin escape hatch).
+ * Probabilistic candidates must not call this helper.
  */
 export function applyConfirmedJobAssociationOverride(
   decision: FlagsCumulativeClassifierResult,

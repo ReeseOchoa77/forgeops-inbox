@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { rebuildDeliverySummary } from './views/JobDeliveriesView'
 import type { JobDelivery } from './api'
+import { jobTabShouldShowLoadError, jobTabViewState } from './job-tab-async-state'
 
 describe('job deliveries UX helpers', () => {
+  it('zero deliveries is empty success summary, not a load failure', () => {
+    expect(rebuildDeliverySummary([])).toEqual({
+      plannedCount: 0,
+      inTransitCount: 0,
+      lateCount: 0,
+      nextDelivery: null,
+    })
+    expect(jobTabViewState(false, null)).toBe('success')
+    expect(jobTabShouldShowLoadError(false, null, false)).toBe(false)
+  })
+
+  it('API failure settles to error UI, not permanent loading', () => {
+    expect(jobTabViewState(false, 'Failed to load deliveries')).toBe('error')
+    expect(jobTabShouldShowLoadError(false, 'Failed to load deliveries', false)).toBe(true)
+    expect(jobTabShouldShowLoadError(true, null, false)).toBe(false)
+  })
+
   it('rebuilds Overview aggregates from delivery rows', () => {
     const deliveries = [
       {

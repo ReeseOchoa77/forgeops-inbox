@@ -8,6 +8,12 @@ import {
 } from '../api'
 import { formatHoursNumber, formatOverviewDate, formatQuantity, totalEstimatedHours } from '../job-overview-format'
 import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
+import {
   JobConfirmDialog,
   JobCrmField,
   JobCrmModal,
@@ -77,6 +83,9 @@ export function JobScopeView({
   const [renameTarget, setRenameTarget] = useState<{ pkg: JobWorkPackage; name: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<JobWorkPackage | null>(null)
 
+  const onEstimatedHoursChangeRef = useLatestRef(onEstimatedHoursChange)
+  const onSummaryChangeRef = useLatestRef(onSummaryChange)
+
   const applyScope = useCallback((scope: {
     packages: JobWorkPackage[]
     items: JobFabricationItem[]
@@ -85,9 +94,9 @@ export function JobScopeView({
   }) => {
     setPackages(scope.packages)
     setItems(scope.items)
-    onEstimatedHoursChange?.(scope.estimatedHours)
-    onSummaryChange?.(scope.summary)
-  }, [onEstimatedHoursChange, onSummaryChange])
+    onEstimatedHoursChangeRef.current?.(scope.estimatedHours)
+    onSummaryChangeRef.current?.(scope.summary)
+  }, [onEstimatedHoursChangeRef, onSummaryChangeRef])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -511,7 +520,11 @@ export function JobScopeView({
   }
 
   if (loading) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading scope…</div>
+    return <JobTabLoading label="Loading scope…" />
+  }
+
+  if (jobTabShouldShowLoadError(loading, error, packages.length > 0 || items.length > 0)) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   const unassigned = itemsByPackage.get(null) ?? []

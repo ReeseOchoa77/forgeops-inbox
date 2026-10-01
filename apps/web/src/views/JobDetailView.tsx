@@ -353,6 +353,43 @@ export function JobDetailView({
 
   const canEdit = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MEMBER'
 
+  const patchCachedJob = useCallback((patch: Partial<JobDetail>) => {
+    setJob((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, ...patch }
+      setCachedJobDetail(workspaceId, jobId, next)
+      return next
+    })
+  }, [workspaceId, jobId])
+
+  const onScopeEstimatedHoursChange = useCallback((estimatedHours: number) => {
+    patchCachedJob({ estimatedHours })
+  }, [patchCachedJob])
+
+  const onWorkPackageSummaryChange = useCallback((workPackageSummary: NonNullable<JobDetail['workPackageSummary']>) => {
+    patchCachedJob({ workPackageSummary })
+  }, [patchCachedJob])
+
+  const onScheduleSummaryChange = useCallback((scheduleSummary: NonNullable<JobDetail['scheduleSummary']>) => {
+    patchCachedJob({ scheduleSummary })
+  }, [patchCachedJob])
+
+  const onChangesSummaryChange = useCallback((changesSummary: NonNullable<JobDetail['changesSummary']>) => {
+    patchCachedJob({ changesSummary })
+  }, [patchCachedJob])
+
+  const onProcurementSummaryChange = useCallback((procurementSummary: NonNullable<JobDetail['procurementSummary']>) => {
+    patchCachedJob({ procurementSummary })
+  }, [patchCachedJob])
+
+  const onDeliverySummaryChange = useCallback((deliverySummary: NonNullable<JobDetail['deliverySummary']>) => {
+    patchCachedJob({ deliverySummary })
+  }, [patchCachedJob])
+
+  const onBillingSnapshotChange = useCallback((billingSnapshot: JobDetail['billingSnapshot']) => {
+    patchCachedJob({ billingSnapshot })
+  }, [patchCachedJob])
+
   const applyJobToEditForm = (j: JobDetail) => {
     setEditName(j.name)
     setEditJobNumber(j.jobNumber ?? '')
@@ -1165,22 +1202,8 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onEstimatedHoursChange={(estimatedHours) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, estimatedHours }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
-          onSummaryChange={(workPackageSummary) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, workPackageSummary }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onEstimatedHoursChange={onScopeEstimatedHoursChange}
+          onSummaryChange={onWorkPackageSummaryChange}
         />
       )}
 
@@ -1190,14 +1213,7 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onSummaryChange={(scheduleSummary) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, scheduleSummary }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onSummaryChange={onScheduleSummaryChange}
         />
       )}
 
@@ -1207,14 +1223,7 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onSummaryChange={(changesSummary) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, changesSummary }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onSummaryChange={onChangesSummaryChange}
         />
       )}
 
@@ -1224,14 +1233,7 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onSummaryChange={(procurementSummary) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, procurementSummary }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onSummaryChange={onProcurementSummaryChange}
         />
       )}
 
@@ -1241,14 +1243,7 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onSummaryChange={(deliverySummary) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, deliverySummary }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onSummaryChange={onDeliverySummaryChange}
         />
       )}
 
@@ -1258,14 +1253,7 @@ export function JobDetailView({
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onSnapshotChange={(billingSnapshot) => {
-            setJob((prev) => {
-              if (!prev) return prev
-              const next = { ...prev, billingSnapshot }
-              setCachedJobDetail(workspaceId, jobId, next)
-              return next
-            })
-          }}
+          onSnapshotChange={onBillingSnapshotChange}
         />
       )}
 

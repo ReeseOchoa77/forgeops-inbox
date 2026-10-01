@@ -3,6 +3,12 @@ import { api, type JobChange, type JobChangeOrder, type JobDirective, type JobRf
 import { formatOverviewDate } from '../job-overview-format'
 import { parseNullableMoneyInput } from '../job-crm-ui'
 import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
+import {
   JobCrmField,
   JobCrmModal,
   JobCrmPrimaryButton,
@@ -75,6 +81,7 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
   const [changeSell, setChangeSell] = useState('')
   const [changeCost, setChangeCost] = useState('')
   const [coNumber, setCoNumber] = useState('CO-01')
+  const onSummaryChangeRef = useLatestRef(onSummaryChange)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -92,13 +99,13 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
       setChanges(c.changes)
       setChangeOrders(co.changeOrders)
       setPackages(scope.packages)
-      onSummaryChange?.(rebuildSummary(r.rfis, c.changes, co.changeOrders))
+      onSummaryChangeRef.current?.(rebuildSummary(r.rfis, c.changes, co.changeOrders))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load changes')
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, jobId, onSummaryChange])
+  }, [workspaceId, jobId])
 
   useEffect(() => {
     void load()
@@ -265,7 +272,17 @@ export function JobChangesView({ workspaceId, jobId, canEdit, isPhone, onSummary
   }
 
   if (loading) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading changes…</div>
+    return <JobTabLoading label="Loading changes…" />
+  }
+
+  if (
+    jobTabShouldShowLoadError(
+      loading,
+      error,
+      rfis.length > 0 || directives.length > 0 || changes.length > 0 || changeOrders.length > 0
+    )
+  ) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   const chip = (key: SubTab, label: string) => (

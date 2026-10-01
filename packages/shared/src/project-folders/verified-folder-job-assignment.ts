@@ -29,6 +29,21 @@ export function isProtectedJobAssignment(existing: {
   );
 }
 
+/**
+ * Email Agent V1: Job ownership that may force BUSINESS and is treated as
+ * confirmed association (not a probabilistic candidate).
+ *
+ * Only USER_ASSIGNED (incl. jobAssignmentIsManual) and VERIFIED_PROJECT_FOLDER.
+ * Legacy AI_AUTO_ASSIGNED / AI_SUGGESTED / JOB_NUMBER_MATCH rows may still have
+ * EmailMessage.jobId, but they are NOT confirmed for classification overrides.
+ */
+export function isAuthoritativeEmailJobAssignment(existing: {
+  jobAssignmentIsManual?: boolean | null;
+  jobAssignmentSource?: string | null;
+}): boolean {
+  return isProtectedJobAssignment(existing);
+}
+
 export type VerifiedFolderJobAssignOutcome =
   | "assigned"
   | "unchanged"

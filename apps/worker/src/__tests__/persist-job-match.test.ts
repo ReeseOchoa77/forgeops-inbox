@@ -124,4 +124,32 @@ describe("persist-job-match", () => {
     delete process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
     expect(buildJobMatchPersistence(strongMatch, null)).toBeNull();
   });
+
+  it("V1: VERIFIED_PROJECT_FOLDER and USER_ASSIGNED cannot be overwritten even with flag on", () => {
+    process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED = "true";
+    expect(
+      buildJobMatchPersistence(strongMatch, {
+        jobId: "job-folder",
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "VERIFIED_PROJECT_FOLDER",
+      })
+    ).toBeNull();
+    expect(
+      buildJobMatchPersistence(strongMatch, {
+        jobId: "job-manual",
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "USER_ASSIGNED",
+      })
+    ).toBeNull();
+  });
+
+  it("V1: AI_SUGGESTED candidate does not persist when flag absent", () => {
+    delete process.env.JOB_MATCHER_AUTO_ASSIGN_ENABLED;
+    expect(
+      buildJobMatchPersistence(
+        { ...strongMatch, assignmentSource: "AI_SUGGESTED" },
+        { jobId: null, jobAssignmentIsManual: false, jobAssignmentSource: null }
+      )
+    ).toBeNull();
+  });
 });

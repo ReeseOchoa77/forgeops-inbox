@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isManualJobAssignment,
+  isAuthoritativeEmailJobAssignment,
   isProtectedJobAssignment,
   resolveVerifiedFolderJobAssignment,
   VERIFIED_PROJECT_FOLDER_SOURCE,
@@ -73,5 +74,38 @@ describe("verified folder job assignment conflict policy", () => {
         jobAssignmentSource: VERIFIED_PROJECT_FOLDER_SOURCE,
       })
     ).toBe(true);
+  });
+
+  it("V1 authoritative confirmed Job = USER_ASSIGNED / VERIFIED only", () => {
+    expect(
+      isAuthoritativeEmailJobAssignment({
+        jobAssignmentIsManual: true,
+        jobAssignmentSource: "USER_ASSIGNED",
+      })
+    ).toBe(true);
+    expect(
+      isAuthoritativeEmailJobAssignment({
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: VERIFIED_PROJECT_FOLDER_SOURCE,
+      })
+    ).toBe(true);
+    expect(
+      isAuthoritativeEmailJobAssignment({
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "AI_AUTO_ASSIGNED",
+      })
+    ).toBe(false);
+    expect(
+      isAuthoritativeEmailJobAssignment({
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "AI_SUGGESTED",
+      })
+    ).toBe(false);
+    expect(
+      isAuthoritativeEmailJobAssignment({
+        jobAssignmentIsManual: false,
+        jobAssignmentSource: "JOB_NUMBER_MATCH",
+      })
+    ).toBe(false);
   });
 });

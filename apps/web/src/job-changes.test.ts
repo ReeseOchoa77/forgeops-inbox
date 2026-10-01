@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { moneyLabel, rebuildSummary } from './views/JobChangesView'
 import type { JobChange, JobChangeOrder, JobRfi } from './api'
+import { jobTabShouldShowLoadError, jobTabViewState } from './job-tab-async-state'
 
 describe('job changes UX helpers', () => {
+  it('zero records rebuild empty success summary', () => {
+    expect(rebuildSummary([], [], [])).toEqual({
+      openRfiCount: 0,
+      overdueRfiCount: 0,
+      proposedChangeCount: 0,
+      proposedSellImpact: null,
+      pendingChangeOrderCount: 0,
+    })
+    expect(jobTabViewState(false, null)).toBe('success')
+    expect(jobTabShouldShowLoadError(false, 'Failed to load changes', false)).toBe(true)
+  })
+
   it('shows Not priced for unknown money and currency for zero/amounts', () => {
     expect(moneyLabel(null)).toBe('Not priced')
     expect(moneyLabel(undefined)).toBe('Not priced')

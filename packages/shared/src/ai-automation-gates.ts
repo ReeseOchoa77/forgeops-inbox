@@ -3,6 +3,7 @@
  * Infrastructure stays in place; these flags stop automatic / accidental runs.
  *
  * Defaults are OFF (frozen). Set env to "true" or "1" to re-enable.
+ * Missing / empty / "false" / "0" / any other value = disabled (safe default).
  */
 
 function envFlagEnabled(name: string): boolean {
@@ -13,14 +14,21 @@ function envFlagEnabled(name: string): boolean {
 }
 
 /**
- * When false (default), JobMatcher results are NOT written to EmailMessage.jobId
- * or Classification.jobId. Code paths that call persistJobMatchResult no-op.
+ * Email Agent V1 — automatic Email → Job assignment freeze.
  *
- * Unaffected (authoritative / manual):
- * - USER_ASSIGNED (Jobs API, bidding assign)
- * - VERIFIED_PROJECT_FOLDER (project-folder email analyze)
+ * When false (default), JobMatcher / classifier / n8n / reclassify results are
+ * NOT written to EmailMessage.jobId or Classification.jobId via
+ * persistJobMatchResult. Candidate computation may still run for evidence.
  *
- * JobMatcher library, candidates APIs, and evidence history remain available.
+ * Authoritative paths (always allowed; not gated by this flag):
+ * - USER_ASSIGNED — manual Assign Job / bidding assign / move
+ * - VERIFIED_PROJECT_FOLDER — verified Outlook Project Folder analyze
+ *
+ * Escape hatch: set JOB_MATCHER_AUTO_ASSIGN_ENABLED=true|1 to re-enable
+ * probabilistic persistence (AI_AUTO_ASSIGNED / AI_SUGGESTED / JOB_NUMBER_MATCH).
+ * Production/default must remain OFF.
+ *
+ * JobMatcher library, candidates APIs, and historical match data remain available.
  */
 export function isJobMatcherAutoAssignEnabled(): boolean {
   return envFlagEnabled("JOB_MATCHER_AUTO_ASSIGN_ENABLED");

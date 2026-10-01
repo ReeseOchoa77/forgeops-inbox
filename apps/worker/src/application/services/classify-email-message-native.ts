@@ -14,6 +14,7 @@ import {
 import {
   buildClassificationWriteLog,
   extractDomain,
+  isAuthoritativeEmailJobAssignment,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
@@ -178,6 +179,7 @@ export async function classifyEmailMessageNative(
         bodyText: true,
         attachmentMetadata: true,
         jobId: true,
+        jobAssignmentIsManual: true,
         jobAssignmentSource: true,
         threadId: true,
         job: {
@@ -203,10 +205,17 @@ export async function classifyEmailMessageNative(
       throw new Error(`EmailMessage not found: ${payload.emailMessageId}`);
     }
 
-    const confirmedJobAssociation = resolveConfirmedWorkspaceJob({
-      workspaceId: payload.workspaceId,
-      job: message.job,
-    });
+    // V1: only USER_ASSIGNED / VERIFIED_PROJECT_FOLDER are confirmed Job ownership.
+    // Probabilistic / legacy AI_* / JOB_NUMBER_MATCH jobIds must not force BUSINESS.
+    const confirmedJobAssociation = isAuthoritativeEmailJobAssignment({
+      jobAssignmentIsManual: message.jobAssignmentIsManual,
+      jobAssignmentSource: message.jobAssignmentSource,
+    })
+      ? resolveConfirmedWorkspaceJob({
+          workspaceId: payload.workspaceId,
+          job: message.job,
+        })
+      : null;
 
     // No custom baseURL is passed — SDK default endpoint (api.openai.com).
     // API key is trimmed inside createOpenAIClient (centralized).

@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { moneyLabel, rebuildProcurementSummary } from './views/JobProcurementView'
 import type { JobProcurementItem, JobPurchaseOrder } from './api'
+import { jobTabShouldShowLoadError, jobTabViewState } from './job-tab-async-state'
 
 describe('job procurement UX helpers', () => {
+  it('zero records rebuild empty success summary', () => {
+    expect(rebuildProcurementSummary([], [])).toEqual({
+      needsOrderingCount: 0,
+      atRiskCount: 0,
+      pastExpectedCount: 0,
+      orderedAmount: null,
+    })
+    expect(jobTabViewState(false, null)).toBe('success')
+    expect(jobTabShouldShowLoadError(false, 'Failed to load procurement', false)).toBe(true)
+  })
+
   it('shows Not priced for unknown money and currency for zero', () => {
     expect(moneyLabel(null)).toBe('Not priced')
     expect(moneyLabel('0.00')).toMatch(/\$0/)

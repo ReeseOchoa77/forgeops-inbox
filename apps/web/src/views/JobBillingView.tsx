@@ -10,6 +10,12 @@ import {
 } from '../api'
 import { formatFinancialMoney, formatMarginPercent } from '../job-financial-format'
 import { formatOverviewDate } from '../job-overview-format'
+import {
+  JobTabLoadError,
+  JobTabLoading,
+  jobTabShouldShowLoadError,
+} from '../job-tab-async-state'
+import { useLatestRef } from '../use-latest-ref'
 import { JobConfirmDialog } from '../components/JobCrmModal'
 
 type Props = {
@@ -88,6 +94,7 @@ export function JobBillingView({ workspaceId, jobId, canEdit, isPhone, onSnapsho
     installations: BillingPeriodInstallation[]
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<JobInvoice | null>(null)
+  const onSnapshotChangeRef = useLatestRef(onSnapshotChange)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -100,7 +107,7 @@ export function JobBillingView({ workspaceId, jobId, canEdit, isPhone, onSnapsho
       ])
       setInvoices(inv.invoices)
       setSnapshot(inv.billingSnapshot)
-      onSnapshotChange?.(inv.billingSnapshot)
+      onSnapshotChangeRef.current?.(inv.billingSnapshot)
       setChangeOrders(cos.changeOrders.filter((c) => c.status === 'APPROVED' || c.status === 'SUBMITTED'))
       setCustomers(parties.customers)
     } catch (e) {
@@ -108,7 +115,7 @@ export function JobBillingView({ workspaceId, jobId, canEdit, isPhone, onSnapsho
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, jobId, onSnapshotChange])
+  }, [workspaceId, jobId])
 
   useEffect(() => {
     void load()
@@ -218,7 +225,11 @@ export function JobBillingView({ workspaceId, jobId, canEdit, isPhone, onSnapsho
   }
 
   if (loading) {
-    return <div style={{ padding: 24, color: '#6b7280', fontSize: 13 }}>Loading billing…</div>
+    return <JobTabLoading label="Loading billing…" />
+  }
+
+  if (jobTabShouldShowLoadError(loading, error, invoices.length > 0 || snapshot != null)) {
+    return <JobTabLoadError message={error!} onRetry={() => void load()} />
   }
 
   return (
