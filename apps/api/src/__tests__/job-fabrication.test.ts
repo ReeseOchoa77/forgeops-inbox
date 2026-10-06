@@ -79,18 +79,21 @@ describe("fabrication scope", () => {
     const headerAndOverview = overview.slice(overview.indexOf("{job.name}"), overview.indexOf("tab === 'emails'"));
     expect(headerAndOverview).toContain("StatusBadge");
     expect(headerAndOverview).toContain(">Start</span>");
-    expect(headerAndOverview).toContain("TOTAL_COST_DISPLAY_LABEL");
     expect(headerAndOverview).toContain('label="Emails"');
     expect(headerAndOverview).toContain('label="Open Tasks"');
     expect(headerAndOverview).toContain('label="Estimated Hours"');
     expect(headerAndOverview).toContain('label="Estimator"');
-    expect(headerAndOverview).toContain('label="Contractor"');
-    expect(headerAndOverview).toContain('label="Client"');
+    expect(headerAndOverview).toContain('label="Customer"');
+    expect(headerAndOverview).not.toContain('label="Contractor"');
+    expect(headerAndOverview).not.toContain('label="Client"');
     expect(headerAndOverview).toContain("<WorkPackageOverviewSummary");
     expect(headerAndOverview).toContain("<ScheduleOverviewSummary");
     expect(headerAndOverview).toContain("<JobScopeView");
     expect(headerAndOverview).toContain("<JobScheduleView");
     expect(headerAndOverview).not.toContain("<JobFabricationScope");
+    // Legacy total lives in Settings, not the header party strip
+    expect(overview).toContain("TOTAL_COST_DISPLAY_LABEL");
+    expect(headerAndOverview).not.toContain("TOTAL_COST_DISPLAY_LABEL");
     for (const removed of ["Emails (7d)", "Emails (30d)", "Completed Tasks", "Last Activity", 'title="Team"', "Created:"]) {
       expect(headerAndOverview).not.toContain(removed);
     }

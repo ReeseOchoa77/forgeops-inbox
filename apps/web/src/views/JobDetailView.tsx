@@ -336,8 +336,8 @@ export function JobDetailView({
   const [editSiteState, setEditSiteState] = useState('')
   const [editSitePostalCode, setEditSitePostalCode] = useState('')
   const [editEstimatorId, setEditEstimatorId] = useState('')
-  const [editContractorId, setEditContractorId] = useState('')
-  const [editClientId, setEditClientId] = useState('')
+  /** Single Customer UI — persists to both contractorCustomerId and clientCustomerId. */
+  const [editCustomerId, setEditCustomerId] = useState('')
   const [partyMembers, setPartyMembers] = useState<Array<{ id: string; name: string | null; email: string }>>([])
   const [partyCustomers, setPartyCustomers] = useState<Array<{ id: string; name: string }>>([])
   const [newAlias, setNewAlias] = useState('')
@@ -409,8 +409,7 @@ export function JobDetailView({
     setEditSiteState(j.siteState ?? '')
     setEditSitePostalCode(j.sitePostalCode ?? '')
     setEditEstimatorId(j.estimatorUserId ?? '')
-    setEditContractorId(j.contractorCustomerId ?? '')
-    setEditClientId(j.clientCustomerId ?? '')
+    setEditCustomerId(j.contractorCustomerId ?? j.clientCustomerId ?? '')
   }
 
   const loadJob = useCallback(async () => {
@@ -701,8 +700,8 @@ export function JobDetailView({
         originalContractValue: editOriginalContractValue,
         originalEstimatedCost: editOriginalEstimatedCost,
         estimatorUserId: editEstimatorId,
-        contractorCustomerId: editContractorId,
-        clientCustomerId: editClientId,
+        contractorCustomerId: editCustomerId,
+        clientCustomerId: editCustomerId,
         siteName: editSiteName,
         siteAddress1: editSiteAddress1,
         siteAddress2: editSiteAddress2,
@@ -1006,7 +1005,7 @@ export function JobDetailView({
         <div style={{
           marginTop: 12,
           display: 'grid',
-          gridTemplateColumns: isPhone ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))',
+          gridTemplateColumns: isPhone ? '1fr 1fr' : 'repeat(3, minmax(0, 1fr))',
           gap: 8,
         }}>
           <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
@@ -1014,8 +1013,10 @@ export function JobDetailView({
             label="Project Manager"
             value={partyLabel(job.projectManager?.name ?? null)}
           />
-          <PartyCard label="Contractor" value={partyLabel(job.contractorName)} />
-          <PartyCard label="Client" value={partyLabel(job.clientName)} />
+          <PartyCard
+            label="Customer"
+            value={partyLabel(job.contractorName ?? job.clientName)}
+          />
         </div>
       </div>
 
@@ -2232,7 +2233,7 @@ export function JobDetailView({
                   Ambiguous historical field — not used in the Financial snapshot.
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Estimator</label>
                   <select value={editEstimatorId} onChange={e => setEditEstimatorId(e.target.value)} disabled={!canEdit}
@@ -2244,18 +2245,8 @@ export function JobDetailView({
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Contractor</label>
-                  <select value={editContractorId} onChange={e => setEditContractorId(e.target.value)} disabled={!canEdit}
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
-                    <option value="">Not assigned</option>
-                    {partyCustomers.map(customer => (
-                      <option key={customer.id} value={customer.id}>{customer.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Client</label>
-                  <select value={editClientId} onChange={e => setEditClientId(e.target.value)} disabled={!canEdit}
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Customer</label>
+                  <select value={editCustomerId} onChange={e => setEditCustomerId(e.target.value)} disabled={!canEdit}
                     style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff' }}>
                     <option value="">Not assigned</option>
                     {partyCustomers.map(customer => (

@@ -10,8 +10,8 @@ import { partyLabel } from '../job-overview-format'
 const ROLE_LABELS: Record<JobParticipantRole, string> = {
   PROJECT_MANAGER: 'Project Manager',
   ESTIMATOR: 'Estimator',
-  GENERAL_CONTRACTOR: 'General Contractor',
-  CLIENT: 'Client',
+  GENERAL_CONTRACTOR: 'Customer',
+  CLIENT: 'Customer',
   OWNER: 'Owner',
   ARCHITECT: 'Architect',
   ENGINEER: 'Engineer',
@@ -21,7 +21,10 @@ const ROLE_LABELS: Record<JobParticipantRole, string> = {
   OTHER: 'Other',
 }
 
-const ROLE_OPTIONS = Object.entries(ROLE_LABELS) as Array<[JobParticipantRole, string]>
+/** Hide duplicate CLIENT option — Customer uses GENERAL_CONTRACTOR. */
+const ROLE_OPTIONS = (Object.entries(ROLE_LABELS) as Array<[JobParticipantRole, string]>).filter(
+  ([role]) => role !== 'CLIENT',
+)
 
 const rowStyle: React.CSSProperties = {
   display: 'grid',

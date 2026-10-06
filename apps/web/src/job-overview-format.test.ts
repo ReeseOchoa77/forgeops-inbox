@@ -64,7 +64,7 @@ describe("job overview formatting", () => {
 
   it("uses the operational overview labels", () => {
     expect(OVERVIEW_METRIC_LABELS).toEqual(["Emails", "Open Tasks", "Estimated Hours"]);
-    expect(OVERVIEW_PARTY_LABELS).toEqual(["Estimator", "Project Manager", "Contractor", "Client"]);
+    expect(OVERVIEW_PARTY_LABELS).toEqual(["Estimator", "Project Manager", "Customer"]);
     expect(TOTAL_COST_DISPLAY_LABEL).toBe("Legacy entered total");
     expect(OVERVIEW_REMOVED_LABELS).toEqual([
       "Entered total",
