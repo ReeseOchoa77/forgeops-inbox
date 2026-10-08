@@ -2,13 +2,33 @@
  * Suggest the next Job.jobNumber for a workspace.
  * Suggestion only — does not reserve or create a Job.
  *
+ * ============================================================
+ * CANONICAL V1 NUMBERING RULE
+ * ============================================================
+ *
+ * NEXT = highest valid CURRENTLY EXISTING Job.jobNumber + 1
+ *
+ * Source of truth: the current Job table only.
+ *
+ * - Hard-deleted Jobs are gone → they do NOT reserve numbers.
+ *   Example: existing 3000,3001,3002 → delete 3002 → suggest 3002.
+ * - Deleting a non-max Job does NOT fill internal gaps.
+ *   Example: 3000..3003, delete 3001 → still suggest 3004.
+ * - Archived Jobs still EXIST → they count toward the maximum.
+ * - Status does not matter (LEAD / BIDDING / ACTIVE / ARCHIVED / …).
+ *
+ * Do NOT use AuditEvent, JobActivityLog, EntityAlias history, email history,
+ * AI, or any cached historical maximum as a numbering floor.
+ *
  * Supported sequential formats (highest wins within its kind):
  * - Plain digits: "2148" → "2149"
  * - Year-prefix sequence: "26-200" → "26-201" (zero-padded to match width)
  *
+ * Prefer year-prefix when any yy-seq numbers exist (shop convention).
  * Non-numeric / special values (e.g. "J-1000", "ALT-A") are ignored for max.
- * All statuses and archived jobs should be included by the caller — uniqueness
- * is workspace-scoped in application code.
+ *
+ * Callers must pass job numbers from currently existing Job rows only
+ * (all statuses / archived included; hard-deleted absent).
  */
 
 export type ParsedSequentialJobNumber =
@@ -48,7 +68,8 @@ function compareYySeq(
 }
 
 /**
- * Pure suggestion from an in-memory list of existing job numbers.
+ * Pure suggestion from an in-memory list of CURRENT Job.jobNumber values.
+ * Pass only numbers from existing Job rows (post-delete list excludes deleted).
  */
 export function suggestNextJobNumberFromList(
   jobNumbers: ReadonlyArray<string | null | undefined>
@@ -84,4 +105,18 @@ export function suggestNextJobNumberFromList(
   }
 
   return null;
+}
+
+/**
+ * Prisma `where` for Job rows that participate in next-number suggestion.
+ * No archivedAt / status filter — existence only. Hard-deleted rows are absent.
+ */
+export function workspaceJobNumbersForSuggestionWhere(workspaceId: string): {
+  workspaceId: string;
+  AND: Array<{ jobNumber: { not: null } } | { jobNumber: { not: string } }>;
+} {
+  return {
+    workspaceId,
+    AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
+  };
 }

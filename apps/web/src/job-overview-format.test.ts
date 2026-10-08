@@ -13,6 +13,7 @@ import {
   OVERVIEW_PARTY_LABELS,
   OVERVIEW_REMOVED_LABELS,
   partyLabel,
+  jobHeaderContractDisplay,
   TOTAL_COST_DISPLAY_LABEL,
   totalEstimatedHours,
 } from "./job-overview-format";
@@ -34,6 +35,22 @@ describe("job overview formatting", () => {
     expect(formatFinancialSignedMoney(-8500)).toMatch(/−\$8,500/);
     expect(formatMarginPercent("25.50")).toBe("25.5%");
     expect(formatMarginPercent(null)).toBe("Unknown");
+  });
+
+  it("header Contract prefers revised over original", () => {
+    expect(
+      jobHeaderContractDisplay({
+        originalContractValue: "100000",
+        financialSnapshot: { revisedContractValue: "125000" },
+      })
+    ).toBe("$125,000");
+    expect(
+      jobHeaderContractDisplay({
+        originalContractValue: "100000",
+        financialSnapshot: null,
+      })
+    ).toBe("$100,000");
+    expect(jobHeaderContractDisplay({})).toBe("Unknown");
   });
 
   it("formats the start date and leaves an empty date unset", () => {

@@ -79,6 +79,16 @@ export function formatOverviewDate(iso: string | null | undefined): string {
   })
 }
 
+/** Header Contract: prefer revised (live) value, else original baseline. */
+export function jobHeaderContractDisplay(job: {
+  originalContractValue?: string | null
+  financialSnapshot?: { revisedContractValue?: string | null } | null
+}): string {
+  return formatFinancialMoney(
+    job.financialSnapshot?.revisedContractValue ?? job.originalContractValue
+  )
+}
+
 export function formatHoursNumber(value: number): string {
   const rounded = Math.round(value * 10) / 10
   if (Number.isInteger(rounded)) return rounded.toLocaleString("en-US")

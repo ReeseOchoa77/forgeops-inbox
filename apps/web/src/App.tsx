@@ -26,6 +26,9 @@ import {
   pickDefaultInboxConnectionId,
 } from './mailbox-selection'
 import { prefetchInboxList } from './inbox-list-cache'
+import { shouldShowDevelopmentIndicator } from './app-env'
+
+const SHOW_DEV_INDICATOR = shouldShowDevelopmentIndicator(import.meta.env)
 
 type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
@@ -554,11 +557,30 @@ export default function App() {
     <>
       <div className="sidebar-brand" style={effectiveCollapsed && !forDrawer ? { padding: '16px 0 10px', textAlign: 'center', fontSize: 18 } : undefined}>
         {effectiveCollapsed && !forDrawer ? (
-          <span style={{ fontSize: 18 }}>&#9993;</span>
+          <span style={{ fontSize: 18 }} title={SHOW_DEV_INDICATOR ? 'Development' : undefined}>&#9993;</span>
         ) : (
           <>
             <span style={{ fontSize: 16, marginRight: 6 }}>&#9993;</span>
             ForgeOps
+            {SHOW_DEV_INDICATOR && (
+              <span
+                data-testid="dev-env-indicator"
+                style={{
+                  marginLeft: 8,
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  color: '#9aa3b2',
+                  border: '1px solid rgba(154,163,178,0.45)',
+                  borderRadius: 3,
+                  padding: '1px 5px',
+                  verticalAlign: 'middle',
+                }}
+              >
+                Development
+              </span>
+            )}
           </>
         )}
       </div>
@@ -760,15 +782,10 @@ export default function App() {
               </div>
             )}
 
-            {page === 'inbox' && connections.length > 0 && currentRole !== 'VIEWER' && (
-              <button className="btn btn-sm btn-primary" onClick={openCompose}>
-                Compose
-              </button>
-            )}
           </div>
         )}
 
-        {/* Phone-only topbar extras (connection selector, compose) */}
+        {/* Phone-only topbar extras (connection selector) */}
         {isPhone && connections.length > 0 && ['inbox', 'tasks', 'review', 'message-detail'].includes(page) && (
           <div style={{ padding: '6px 12px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: 8, alignItems: 'center' }}>
             <select
@@ -786,11 +803,6 @@ export default function App() {
                 </option>
               ))}
             </select>
-            {page === 'inbox' && connections.length > 0 && currentRole !== 'VIEWER' && (
-              <button className="btn btn-sm btn-primary" onClick={openCompose}>
-                Compose
-              </button>
-            )}
           </div>
         )}
 
@@ -850,6 +862,7 @@ export default function App() {
                     ? selectedMessageId
                     : null
                 }
+                onCompose={connections.length > 0 ? openCompose : undefined}
               />
             </div>
           )}

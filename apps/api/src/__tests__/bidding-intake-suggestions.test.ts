@@ -120,6 +120,40 @@ describe("bidding intake suggestions service", () => {
     expect(prisma.job.create).not.toHaveBeenCalled();
     expect(prisma.customer.create).not.toHaveBeenCalled();
     expect(prisma.entityAlias.createMany).not.toHaveBeenCalled();
+    // Job numbers come only from live Job.jobNumber rows (no status / history filter).
+    expect(prisma.job.findMany).toHaveBeenCalledWith({
+      where: {
+        workspaceId: "ws",
+        AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
+      },
+      select: { jobNumber: true },
+    });
+  });
+
+  it("reuses highest deleted job number; archived/status rows still count", async () => {
+    // Live set after deleting former max 26-200: only 26-199 remains → suggest 26-200.
+    const afterDeleteHighest = basePrisma({
+      jobNumbers: ["26-199"],
+    });
+    const reuse = await buildBiddingIntakeSuggestions({
+      prisma: afterDeleteHighest as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+    expect(reuse?.jobNumber).toBe("26-200");
+
+    // Archived / BIDDING / ACTIVE all exist → max 3002 → suggest 3003 (not history 4000).
+    const withArchiveAndStatuses = basePrisma({
+      jobNumbers: ["3000", "3001", "3002"],
+    });
+    const next = await buildBiddingIntakeSuggestions({
+      prisma: withArchiveAndStatuses as never,
+      workspaceId: "ws",
+      messageId: "msg-1",
+      openaiApiKey: null,
+    });
+    expect(next?.jobNumber).toBe("3003");
   });
 
   it("uses drawing PDF filename over subject and keeps subject alternate", async () => {

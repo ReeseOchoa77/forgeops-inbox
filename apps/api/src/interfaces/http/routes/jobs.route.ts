@@ -10,7 +10,16 @@ import {
   tasksForEmailJobLink,
   JOB_FILE_TYPE_FILTERS,
   normalizeName,
+  buildOperationalTasksWhere,
+  taskListOrderBy,
+  BUSINESS_SUBTYPE_KEYS,
   type JobFileTypeFilter,
+  type TaskStatusFilter,
+  type TaskDueFilter,
+  type TaskPriorityFilter,
+  type TaskSourceFilter,
+  type TaskEmailClassificationFilter,
+  type TaskSort,
 } from "@forgeops/shared";
 import { presentFabricationItem, totalEstimatedHours } from "../../../application/services/job-fabrication.js";
 import { buildJobListWhere, jobListOrderBy } from "../../../application/services/job-list-query.js";
@@ -34,6 +43,7 @@ import {
   moneyToString as financialMoneyToString,
 } from "../../../application/services/job-financials.js";
 import { buildBillingSnapshot } from "../../../application/services/job-billing.js";
+import { buildRfqSummary } from "../../../application/services/job-rfqs.js";
 import {
   DOCUMENT_CATEGORY_FILTERS,
   DOCUMENT_CONTROL_STATE_FILTERS,
@@ -598,11 +608,43 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const now = new Date();
     const memberUserIds = job.members.map((m) => m.userId);
     const fabricationItems = job.fabricationItems.map(presentFabricationItem);
+    const isBidding = job.status === "BIDDING";
 
     const tAgg = performance.now();
-    // Users + metrics in ONE parallel wave (was sequential users then aggregates).
-    // Skip expensive emailAttachment join — Documents tab loads its own library.
-    // Prefer cheap JobFile count for Attachments metric.
+    // BIDDING: skip Schedule / Procurement / Deliveries / Billing aggregates (hidden modules).
+    const emptySchedule = {
+      upcoming: [] as Array<{
+        id: string;
+        name: string;
+        typeLabel: string;
+        plannedDate: string;
+        workPackageName: string | null;
+      }>,
+      overdue: [] as Array<{
+        id: string;
+        name: string;
+        typeLabel: string;
+        plannedDate: string;
+        workPackageName: string | null;
+        daysOverdue: number;
+      }>,
+      upcomingCount: 0,
+      overdueCount: 0,
+      undatedOpenCount: 0,
+    };
+    const emptyProcurement = {
+      needsOrderingCount: 0,
+      atRiskCount: 0,
+      pastExpectedCount: 0,
+      orderedAmount: null as string | null,
+    };
+    const emptyDelivery = {
+      plannedCount: 0,
+      inTransitCount: 0,
+      lateCount: 0,
+      nextDelivery: null as null,
+    };
+
     const [
       users,
       emailCount,
@@ -615,6 +657,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       procurementSummary,
       deliverySummary,
       financialSnapshot,
+      rfqSummary,
       nextDueTask,
       jobFileCount,
     ] = await Promise.all([
@@ -654,11 +697,20 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
         })
         .then((rows) => buildWorkPackageSummary(buildWorkPackageDtos(rows, []))),
-      buildJobScheduleSummary(app.services.prisma, { workspaceId, jobId, now }),
+      isBidding
+        ? Promise.resolve(emptySchedule)
+        : buildJobScheduleSummary(app.services.prisma, { workspaceId, jobId, now }),
       buildChangesSummary(app.services.prisma, { workspaceId, jobId, now }),
-      buildProcurementSummary(app.services.prisma, { workspaceId, jobId, now }),
-      buildDeliverySummary(app.services.prisma, { workspaceId, jobId, now }),
-      buildJobFinancialSnapshot(app.services.prisma, { workspaceId, jobId }),
+      isBidding
+        ? Promise.resolve(emptyProcurement)
+        : buildProcurementSummary(app.services.prisma, { workspaceId, jobId, now }),
+      isBidding
+        ? Promise.resolve(emptyDelivery)
+        : buildDeliverySummary(app.services.prisma, { workspaceId, jobId, now }),
+      isBidding
+        ? Promise.resolve(null)
+        : buildJobFinancialSnapshot(app.services.prisma, { workspaceId, jobId }),
+      buildRfqSummary(app.services.prisma, { workspaceId, jobId }),
       app.services.prisma.task.findFirst({
         where: {
           jobId,
@@ -672,13 +724,14 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         where: { jobId, workspaceId, uploadStatus: "UPLOADED" },
       }),
     ]);
-    const billingSnapshot = financialSnapshot
-      ? await buildBillingSnapshot(app.services.prisma, {
-          workspaceId,
-          jobId,
-          financial: financialSnapshot,
-        })
-      : null;
+    const billingSnapshot =
+      !isBidding && financialSnapshot
+        ? await buildBillingSnapshot(app.services.prisma, {
+            workspaceId,
+            jobId,
+            financial: financialSnapshot,
+          })
+        : null;
     const aggregateMs = Math.round(performance.now() - tAgg);
     const userMap = new Map(users.map((u) => [u.id, u]));
     const projectManager = pickPrimaryProjectManager(participants);
@@ -744,6 +797,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         deliverySummary,
         financialSnapshot,
         billingSnapshot,
+        rfqSummary,
         members: mappedMembers,
         aliases: job.aliases.map((a) => ({
           id: a.id,
@@ -1471,24 +1525,156 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const existing = await loadJobWithTenantCheck(app, reply, jobId, workspaceId);
     if (!existing) return;
 
-    const tasks = await app.services.prisma.task.findMany({
-      where: { jobId, workspaceId },
-      orderBy: [{ status: "asc" }, { dueAt: "asc" }, { createdAt: "desc" }],
-      select: {
-        id: true,
-        title: true,
-        summary: true,
-        description: true,
-        dueAt: true,
-        priority: true,
-        status: true,
-        assigneeUserId: true,
-        completedAt: true,
-        createdAt: true,
-      },
+    const query = z
+      .object({
+        statusFilter: z.enum(["OPEN", "COMPLETED", "ALL"]).optional().default("OPEN"),
+        due: z
+          .enum(["ALL", "OVERDUE", "TODAY", "WEEK", "MONTH", "NONE"])
+          .optional()
+          .default("ALL"),
+        priority: z
+          .enum(["ALL", "LOW", "NORMAL", "HIGH", "URGENT"])
+          .optional()
+          .default("ALL"),
+        source: z.enum(["ALL", "EMAIL", "MANUAL"]).optional().default("ALL"),
+        emailClassification: z
+          .enum(["ALL", "BUSINESS", "PERSONAL", "UNCLASSIFIED"])
+          .optional()
+          .default("ALL"),
+        businessTypeKey: z.enum(BUSINESS_SUBTYPE_KEYS).optional(),
+        sender: z.string().trim().max(200).optional(),
+        sort: z
+          .enum(["DUE_DATE", "NEWEST", "OLDEST", "PRIORITY"])
+          .optional()
+          .default("DUE_DATE"),
+        timezone: z.string().min(1).max(80).optional(),
+        page: z.coerce.number().int().positive().default(1),
+        pageSize: z.coerce.number().int().positive().max(100).default(50),
+      })
+      .parse(request.query ?? {});
+
+    const where = buildOperationalTasksWhere({
+      workspaceId,
+      jobId,
+      // Job scope already implies association — still exclude unassigned bidding
+      // orphans that somehow have Task.jobId set incorrectly? Prefer include all
+      // tasks for this Job.jobId so BIDDING Job workflow works.
+      excludeUnassignedBidding: false,
+      status: query.statusFilter as TaskStatusFilter,
+      due: query.due as TaskDueFilter,
+      priority: query.priority as TaskPriorityFilter,
+      source: query.source as TaskSourceFilter,
+      emailClassification:
+        query.emailClassification as TaskEmailClassificationFilter,
+      ...(query.businessTypeKey
+        ? { businessTypeKey: query.businessTypeKey }
+        : {}),
+      ...(query.sender ? { sender: query.sender } : {}),
+      timezone: query.timezone || "UTC",
     });
 
-    return reply.send({ tasks });
+    const skip = (query.page - 1) * query.pageSize;
+    const [totalCount, tasks] = await Promise.all([
+      app.services.prisma.task.count({ where }),
+      app.services.prisma.task.findMany({
+        where,
+        orderBy: taskListOrderBy(query.sort as TaskSort),
+        skip,
+        take: query.pageSize,
+        select: {
+          id: true,
+          title: true,
+          summary: true,
+          description: true,
+          dueAt: true,
+          priority: true,
+          status: true,
+          assigneeUserId: true,
+          completedAt: true,
+          createdAt: true,
+          sourceMessageId: true,
+          sourceMessage: {
+            select: {
+              id: true,
+              subject: true,
+              senderName: true,
+              senderEmail: true,
+              sentAt: true,
+              receivedAt: true,
+              mailboxCategory: true,
+              priority: true,
+              jobId: true,
+              job: { select: { id: true, jobNumber: true, name: true } },
+              inboxConnectionId: true,
+              classifications: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: { businessTypeKey: true },
+              },
+            },
+          },
+          classification: { select: { businessTypeKey: true } },
+        },
+      }),
+    ]);
+
+    const toApiPriority = (p: string | null | undefined) =>
+      p === "MEDIUM" ? "NORMAL" : p ?? null;
+
+    return reply.send({
+      tasks: tasks.map((t) => {
+        const msg = t.sourceMessage;
+        const subtype =
+          t.classification?.businessTypeKey ??
+          msg?.classifications[0]?.businessTypeKey ??
+          null;
+        return {
+          id: t.id,
+          title: t.title,
+          summary: t.summary,
+          description: t.description,
+          dueAt: t.dueAt?.toISOString() ?? null,
+          priority: toApiPriority(t.priority) ?? "NORMAL",
+          status: t.status,
+          assigneeUserId: t.assigneeUserId,
+          completedAt: t.completedAt?.toISOString() ?? null,
+          createdAt: t.createdAt.toISOString(),
+          sourceEmail: msg
+            ? {
+                id: msg.id,
+                subject: msg.subject,
+                senderName: msg.senderName,
+                senderAddress: msg.senderEmail,
+                sentAt: msg.sentAt?.toISOString() ?? null,
+                receivedAt: msg.receivedAt?.toISOString() ?? null,
+                mailboxCategory: msg.mailboxCategory ?? null,
+                businessSubtype: subtype,
+                priority: toApiPriority(msg.priority),
+                jobId: msg.jobId ?? msg.job?.id ?? null,
+                jobNumber: msg.job?.jobNumber ?? null,
+                jobName: msg.job?.name ?? null,
+                inboxConnectionId: msg.inboxConnectionId ?? null,
+              }
+            : null,
+        };
+      }),
+      pagination: {
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount,
+        totalPages: totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize),
+      },
+      filters: {
+        statusFilter: query.statusFilter,
+        due: query.due,
+        priority: query.priority,
+        source: query.source,
+        emailClassification: query.emailClassification,
+        businessTypeKey: query.businessTypeKey ?? null,
+        sender: query.sender ?? null,
+        sort: query.sort,
+      },
+    });
   });
 
   // 12. GET /api/v1/workspaces/:workspaceId/jobs/:jobId/documents

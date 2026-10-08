@@ -254,6 +254,10 @@ enum JobActivityAction {
   INVOICE_REJECTED
   INVOICE_VOIDED
   INVOICE_DELETED
+  RFQ_CREATED
+  RFQ_UPDATED
+  RFQ_STATUS_CHANGED
+  RFQ_DELETED
 }
 
 /// Outbound fabricated product delivery (not procurement inbound receipt).
@@ -439,6 +443,15 @@ enum JobWorkPackageStatus {
   ON_HOLD
 }
 
+/// Estimating RFQ lifecycle (Request for Quote) — distinct from RFI and Procurement PO.
+enum JobRfqStatus {
+  DRAFT
+  REQUESTED
+  RECEIVED
+  DECLINED
+  CANCELLED
+}
+
 /// Project-team role on a Job. Complements estimatorUserId / contractorCustomerId / clientCustomerId.
 enum JobParticipantRole {
   PROJECT_MANAGER
@@ -505,6 +518,7 @@ model Workspace {
   calendarEvents       CalendarEvent[]
   jobParticipants      JobParticipant[]
   jobWorkPackages      JobWorkPackage[]
+  jobRfqs              JobRfq[]
   jobMilestones        JobMilestone[]
   jobDocumentRecords   JobDocumentRecord[]
   jobRfis              JobRfi[]
@@ -787,6 +801,7 @@ model EmailMessage {
   classifications  Classification[]
   tasks            Task[]        @relation("TaskSourceMessage")
   attachments      EmailAttachment[]
+  linkedRfqs       JobRfq[]      @relation("JobRfqEmail")
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -1055,6 +1070,7 @@ model Vendor {
   jobParticipations JobParticipant[] @relation("JobParticipantVendor")
   procurementItems  JobProcurementItem[]
   purchaseOrders    JobPurchaseOrder[]
+  jobRfqs           JobRfq[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -1138,6 +1154,7 @@ model Job {
   shipments             JobShipment[]
   installationRecords   JobInstallationRecord[]
   invoices              JobInvoice[]
+  rfqs                  JobRfq[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -1215,10 +1232,62 @@ model JobWorkPackage {
   procurementItems JobProcurementItem[]
   shipmentItems    JobShipmentItem[]
   installationRecords JobInstallationRecord[]
+  rfqs                JobRfq[]
 
   @@index([workspaceId, jobId, sortOrder])
   @@index([jobId, parentId])
   @@index([workspaceId, status])
+}
+
+/// Estimating Request for Quote (outside pricing). Distinct from RFI and Procurement PO.
+/// quotedAmount NULL = unknown / not entered; 0 = explicit zero. Does not roll into Job cost fields.
+model JobRfq {
+  id              String       @id @default(cuid())
+  workspaceId     String
+  jobId           String
+  vendorId        String?
+  /// Optional link to bid-scope category (JobWorkPackage used as hierarchy during BIDDING).
+  workPackageId   String?
+  /// Optional manual link to a related EmailMessage (no auto-inference).
+  emailMessageId  String?
+  title           String
+  description     String?
+  status          JobRfqStatus @default(DRAFT)
+  /// Calendar date (UTC midnight).
+  requestedDate   DateTime?
+  dueDate         DateTime?
+  receivedDate    DateTime?
+  quotedAmount    Decimal?     @db.Decimal(14, 2)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job             Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  vendor          Vendor?      @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  workPackage     JobWorkPackage? @relation(fields: [workPackageId], references: [id], onDelete: SetNull)
+  emailMessage    EmailMessage? @relation("JobRfqEmail", fields: [emailMessageId], references: [id], onDelete: SetNull)
+  documents       JobRfqDocument[]
+
+  @@index([workspaceId, jobId, status])
+  @@index([jobId, vendorId])
+  @@index([jobId, workPackageId])
+  @@index([emailMessageId])
+}
+
+/// Links an existing JobDocumentRecord to an RFQ. Does not copy/move binaries.
+model JobRfqDocument {
+  id               String            @id @default(cuid())
+  workspaceId      String
+  jobId            String
+  rfqId            String
+  documentRecordId String
+  createdAt        DateTime          @default(now())
+  rfq              JobRfq            @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  documentRecord   JobDocumentRecord @relation(fields: [documentRecordId], references: [id], onDelete: Cascade)
+
+  @@unique([rfqId, documentRecordId])
+  @@index([jobId, rfqId])
+  @@index([documentRecordId])
 }
 
 /// Operational schedule event for a Job (or a Work Package within it).
@@ -1288,6 +1357,7 @@ model JobDocumentRecord {
   purchaseOrders     JobPurchaseOrder[]
   shipmentDocuments  JobShipmentDocument[]
   invoices           JobInvoice[]
+  rfqLinks           JobRfqDocument[]
 
   @@index([workspaceId, jobId, documentType])
   @@index([workspaceId, jobId, isCurrent])

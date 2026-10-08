@@ -1,5 +1,9 @@
 # Deployment: Vercel + Railway
 
+> **Environment safety & workflow:** see [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md).
+> Implementation complete ≠ production deployed. Set `APP_ENV=production` on Railway;
+> use `APP_ENV=development` + localhost DB/Redis for local work.
+
 **Target architecture:**
 
 ```
@@ -74,11 +78,13 @@ The `api` CNAME value comes from Railway after you deploy the API service and ad
 
 ### 2f. Run migrations
 
-In the Railway API service shell (or via `railway run`):
+In the Railway API service shell (or via `railway run`), with `APP_ENV=production`:
 
 ```bash
-npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+npm run db:migrate:deploy
 ```
+
+(Equivalent guarded path: `npx prisma migrate deploy --schema packages/db/prisma/schema.prisma` after confirming `APP_ENV=production`.)
 
 ### 2g. Seed admin access
 
@@ -122,6 +128,7 @@ Edit the seed file first to set your admin email if different from `24rochoa@gma
 ### Railway: API Service
 
 ```
+APP_ENV=production
 NODE_ENV=production
 HOST=0.0.0.0
 
@@ -138,13 +145,13 @@ GOOGLE_INBOX_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connection
 SESSION_COOKIE_SECRET=<generate: openssl rand -hex 32>
 TOKEN_ENCRYPTION_SECRET=<generate: openssl rand -hex 32>
 
-DEV_ENABLE_BOOTSTRAP_ROUTES=true
+DEV_ENABLE_BOOTSTRAP_ROUTES=false
 DEV_AUTO_CREATE_WORKSPACE_ON_LOGIN=false
 
 # Optional Outlook
 OUTLOOK_CLIENT_ID=<from Azure AD>
 OUTLOOK_CLIENT_SECRET=<from Azure AD>
-OUTLOOK_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/google/callback
+OUTLOOK_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/outlook/callback
 OUTLOOK_TENANT_ID=common
 ```
 
@@ -152,10 +159,12 @@ Notes:
 - Do NOT set `API_PORT` — Railway injects `PORT` automatically and the API reads it
 - `FRONTEND_URL` must be the exact Vercel domain with `https://`
 - `SESSION_COOKIE_SECRET` and `TOKEN_ENCRYPTION_SECRET` must be strong random values
+- Bootstrap routes are forced off when `APP_ENV=production` regardless of the DEV_* flags
 
 ### Railway: Worker Service
 
 ```
+APP_ENV=production
 NODE_ENV=production
 
 DATABASE_URL=<same as API>

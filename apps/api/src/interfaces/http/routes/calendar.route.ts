@@ -1,5 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import {
+  activeBiddingJobBidDueWhere,
+  calendarIneligibleBiddingTaskWhere,
+  formatBidDueCalendarTitle,
+} from "@forgeops/shared";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
@@ -101,7 +106,10 @@ function serializeEvent(e: {
 }
 
 /**
- * Calendar MVP: ForgeOps-native events + Task.dueAt aggregation.
+ * Calendar MVP:
+ * - ForgeOps-native CalendarEvent rows
+ * - Task.dueAt aggregation (bidding eligibility via source EmailMessage.jobId)
+ * - Synthetic Bid Due from Job.status=BIDDING + Job.bidDueAt (canonical)
  * Google/Microsoft calendar sync is intentionally not wired (scopes not expanded).
  */
 export const registerCalendarRoutes = async (
@@ -121,7 +129,10 @@ export const registerCalendarRoutes = async (
         return reply.code(400).send({ message: "Invalid from/to range" });
       }
 
-      const [events, tasks] = await Promise.all([
+      // Single Prisma NOT clause — relation filters, no per-Task email N+1.
+      const biddingTaskExclude = calendarIneligibleBiddingTaskWhere();
+
+      const [events, tasks, biddingJobs] = await Promise.all([
         app.services.prisma.calendarEvent.findMany({
           where: {
             workspaceId,
@@ -140,6 +151,7 @@ export const registerCalendarRoutes = async (
             dueAt: { gte: from, lt: to },
             status: { notIn: ["CANCELLED"] },
             dismissedAt: null,
+            NOT: biddingTaskExclude,
           },
           orderBy: { dueAt: "asc" },
           select: {
@@ -152,6 +164,19 @@ export const registerCalendarRoutes = async (
             jobId: true,
             sourceMessageId: true,
             job: { select: { id: true, name: true, jobNumber: true } },
+          },
+        }),
+        app.services.prisma.job.findMany({
+          where: {
+            ...activeBiddingJobBidDueWhere(workspaceId),
+            bidDueAt: { gte: from, lt: to },
+          },
+          orderBy: { bidDueAt: "asc" },
+          select: {
+            id: true,
+            name: true,
+            jobNumber: true,
+            bidDueAt: true,
           },
         }),
       ]);
@@ -181,6 +206,24 @@ export const registerCalendarRoutes = async (
             : null,
           taskStatus: t.status,
           taskPriority: t.priority,
+        })),
+        bidDueItems: biddingJobs.map((j) => ({
+          id: `bid-due:${j.id}`,
+          title: formatBidDueCalendarTitle(j.name),
+          description: null,
+          startAt: j.bidDueAt!.toISOString(),
+          endAt: null,
+          allDay: true,
+          type: "BID_DUE" as const,
+          source: "JOB_BID_DUE" as const,
+          linkedJobId: j.id,
+          linkedTaskId: null,
+          linkedEmailMessageId: null,
+          linkedJob: {
+            id: j.id,
+            name: j.name,
+            jobNumber: j.jobNumber,
+          },
         })),
       });
     }

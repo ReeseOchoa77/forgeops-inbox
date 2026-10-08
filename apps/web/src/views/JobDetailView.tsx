@@ -25,14 +25,16 @@ import {
 } from '../job-detail-cache'
 import { invalidateJobsListCache } from '../jobs-list-cache'
 import { jobSettingsUpdateBody } from '../job-settings-payload'
-import { formatHoursNumber, formatOverviewDate, partyLabel, TOTAL_COST_DISPLAY_LABEL } from '../job-overview-format'
+import { formatHoursNumber, formatOverviewDate, jobHeaderContractDisplay, partyLabel, TOTAL_COST_DISPLAY_LABEL } from '../job-overview-format'
 import {
   activityActionTab,
   buildJobAttentionItems,
   formatJobActivityAction,
   formatStatusLabel,
-  JOB_CRM_TABS,
+  isBiddingJobStatus,
+  jobCrmTabsForStatus,
   readJobTabFromUrl,
+  resolveJobTabForStatus,
   writeJobTabToUrl,
   type JobCrmTab,
 } from '../job-crm-ui'
@@ -44,7 +46,11 @@ import { JobChangesView, ChangesOverviewSummary } from './JobChangesView'
 import { JobProcurementView, ProcurementOverviewSummary } from './JobProcurementView'
 import { JobDeliveriesView, DeliveryOverviewSummary } from './JobDeliveriesView'
 import { JobBillingView } from './JobBillingView'
+import { JobRfqsView, RfqOverviewSummary } from './JobRfqsView'
 import { JobDocumentControlForm, DocumentControlSummary } from '../components/JobDocumentControlForm'
+import { TaskListRow, taskFilterSelectStyle } from '../components/TaskListRow'
+import { BUSINESS_SUBTYPE_FILTER_OPTIONS } from '@forgeops/shared/business-subtypes'
+import type { TaskListFilters } from '../api'
 import { FilePreviewModal } from '../components/FilePreviewModal'
 import {
   InlineImageRelevanceActions,
@@ -240,6 +246,15 @@ export function JobDetailView({
     setTabState(next)
     writeJobTabToUrl(next)
   }, [])
+  const visibleTabs = jobCrmTabsForStatus(job?.status)
+  const bidding = isBiddingJobStatus(job?.status)
+
+  // Deep-link safety: invalid tab for this lifecycle → Overview
+  useEffect(() => {
+    if (!job) return
+    const resolved = resolveJobTabForStatus(tab, job.status)
+    if (resolved !== tab) setTab(resolved)
+  }, [job, tab, setTab])
   const [confirmAction, setConfirmAction] = useState<null | {
     title: string
     message: string
@@ -264,6 +279,16 @@ export function JobDetailView({
   const emailsHasMoreRef = useRef(false)
   const emailLoadGenRef = useRef(0)
   const [tasks, setTasks] = useState<JobTask[]>([])
+  const [tasksLoading, setTasksLoading] = useState(false)
+  const [tasksError, setTasksError] = useState<string | null>(null)
+  const [taskStatusFilter, setTaskStatusFilter] = useState<'OPEN' | 'COMPLETED' | 'ALL'>('OPEN')
+  const [taskDue, setTaskDue] = useState<TaskListFilters['due']>('ALL')
+  const [taskPriority, setTaskPriority] = useState<TaskListFilters['priority']>('ALL')
+  const [taskSource, setTaskSource] = useState<TaskListFilters['source']>('ALL')
+  const [taskSubtype, setTaskSubtype] = useState('')
+  const [taskSender, setTaskSender] = useState('')
+  const [taskSenderDraft, setTaskSenderDraft] = useState('')
+  const taskFilterSelect = taskFilterSelectStyle()
   const [libraryFiles, setLibraryFiles] = useState<JobLibraryFile[]>([])
   const [libraryTotal, setLibraryTotal] = useState(0)
   const [fileTypeFilter, setFileTypeFilter] = useState<
@@ -568,10 +593,52 @@ export function JobDetailView({
   }, [tab, emails.length, emailsHasMore, loadMoreEmails])
 
   useEffect(() => {
-    if (tab === 'tasks') {
-      api.getJobTasks(workspaceId, jobId).then(r => setTasks(r.tasks)).catch(() => {})
+    if (tab !== 'tasks') return
+    let cancelled = false
+    setTasks([])
+    setTasksLoading(true)
+    setTasksError(null)
+    const timezone =
+      typeof Intl !== 'undefined'
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        : 'UTC'
+    api
+      .getJobTasks(workspaceId, jobId, {
+        statusFilter: taskStatusFilter,
+        due: taskDue,
+        priority: taskPriority,
+        source: taskSource,
+        ...(taskSubtype ? { businessTypeKey: taskSubtype } : {}),
+        ...(taskSender ? { sender: taskSender } : {}),
+        timezone,
+        pageSize: 100,
+      })
+      .then((r) => {
+        if (cancelled) return
+        setTasks(r.tasks)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setTasks([])
+        setTasksError(e instanceof Error ? e.message : 'Failed to load tasks')
+      })
+      .finally(() => {
+        if (!cancelled) setTasksLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
-  }, [tab, workspaceId, jobId])
+  }, [
+    tab,
+    workspaceId,
+    jobId,
+    taskStatusFilter,
+    taskDue,
+    taskPriority,
+    taskSource,
+    taskSubtype,
+    taskSender,
+  ])
 
   const loadJobFiles = useCallback(async (folderId: string | null = null) => {
     setFilesLoading(true)
@@ -935,6 +1002,9 @@ export function JobDetailView({
   }
 
   const attentionItems = buildJobAttentionItems({
+    status: job.status,
+    bidDueAt: job.bidDueAt,
+    outstandingRfqCount: job.rfqSummary?.outstandingCount,
     overdueMilestoneCount: job.scheduleSummary?.overdueCount,
     overdueRfiCount: job.changesSummary?.overdueRfiCount,
     procurementAtRiskCount: job.procurementSummary?.atRiskCount,
@@ -952,9 +1022,7 @@ export function JobDetailView({
 
   const members = job.members ?? []
   const aliases = job.aliases ?? []
-  const openTasks = tasks.filter(t => t.status === 'OPEN' || t.status === 'IN_PROGRESS' || t.status === 'BLOCKED')
-  const completedTasks = tasks.filter(t => t.status === 'DONE')
-  const cancelledTasks = tasks.filter(t => t.status === 'CANCELLED')
+  // Overview metrics use job.openTaskCount from detail payload — not local task list.
 
   return (
     <div style={{ padding: isPhone ? 12 : 24 }}>
@@ -987,42 +1055,79 @@ export function JobDetailView({
           {refreshing && <span style={{ fontSize: 11, color: '#9ca3af' }}>Updating…</span>}
         </div>
         <div style={{ marginTop: 10, display: 'flex', gap: isPhone ? 10 : 20, flexWrap: 'wrap', fontSize: 13, color: '#374151' }}>
-          <span>
-            <span style={{ color: '#6b7280' }}>Start</span>{' '}
-            <strong>{formatOverviewDate(job.startDate)}</strong>
-          </span>
-          <span>
-            <span style={{ color: '#6b7280' }}>Target</span>{' '}
-            <strong>{formatOverviewDate(job.targetCompletionDate)}</strong>
-          </span>
-          {job.status === 'BIDDING' && (
-            <span>
-              <span style={{ color: '#6b7280' }}>Bid due</span>{' '}
-              <strong>{formatOverviewDate(job.bidDueAt)}</strong>
-            </span>
+          {bidding ? (
+            <>
+              <span>
+                <span style={{ color: '#6b7280' }}>Bid due</span>{' '}
+                <strong>{formatOverviewDate(job.bidDueAt)}</strong>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Estimator</span>{' '}
+                <strong>{partyLabel(job.estimatorName)}</strong>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Customer</span>{' '}
+                <strong>{partyLabel(job.contractorName ?? job.clientName)}</strong>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Contract</span>{' '}
+                <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {jobHeaderContractDisplay(job)}
+                </strong>
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                <span style={{ color: '#6b7280' }}>Start</span>{' '}
+                <strong>{formatOverviewDate(job.startDate)}</strong>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Target</span>{' '}
+                <strong>{formatOverviewDate(job.targetCompletionDate)}</strong>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Contract</span>{' '}
+                <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {jobHeaderContractDisplay(job)}
+                </strong>
+              </span>
+            </>
           )}
         </div>
         <div style={{
           marginTop: 12,
           display: 'grid',
-          gridTemplateColumns: isPhone ? '1fr 1fr' : 'repeat(3, minmax(0, 1fr))',
+          gridTemplateColumns: isPhone ? '1fr 1fr' : bidding ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))',
           gap: 8,
         }}>
-          <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
-          <PartyCard
-            label="Project Manager"
-            value={partyLabel(job.projectManager?.name ?? null)}
-          />
-          <PartyCard
-            label="Customer"
-            value={partyLabel(job.contractorName ?? job.clientName)}
-          />
+          {bidding ? (
+            <>
+              <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
+              <PartyCard
+                label="Customer"
+                value={partyLabel(job.contractorName ?? job.clientName)}
+              />
+            </>
+          ) : (
+            <>
+              <PartyCard label="Estimator" value={partyLabel(job.estimatorName)} />
+              <PartyCard
+                label="Project Manager"
+                value={partyLabel(job.projectManager?.name ?? null)}
+              />
+              <PartyCard
+                label="Customer"
+                value={partyLabel(job.contractorName ?? job.clientName)}
+              />
+            </>
+          )}
         </div>
       </div>
 
-      {/* Tabs — full Job module strip (scrolls horizontally when needed) */}
+      {/* Tabs — lifecycle-aware strip */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e5e7eb', marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch' as never, flexShrink: 0 }}>
-        {JOB_CRM_TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -1047,22 +1152,39 @@ export function JobDetailView({
             data-testid="job-overview-headline-metrics"
             style={{
               display: 'grid',
-              gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(3, minmax(0, 1fr))',
+              gridTemplateColumns: isPhone ? 'repeat(2, 1fr)' : 'repeat(4, minmax(0, 1fr))',
               gap: 12,
               marginBottom: 12,
             }}
           >
             <MetricCard label="Emails" value={job.emailCount.toLocaleString('en-US')} />
             <MetricCard
+              label="Documents"
+              value={(job.attachmentCount ?? 0).toLocaleString('en-US')}
+            />
+            <MetricCard
               label="Open Tasks"
               value={job.openTaskCount.toLocaleString('en-US')}
               hint={job.overdueTaskCount > 0 ? `${job.overdueTaskCount} overdue` : undefined}
               accent={job.openTaskCount > 0 ? '#2563eb' : undefined}
             />
-            <MetricCard
-              label="Estimated Hours"
-              value={job.estimatedHours == null ? 'Not set' : formatHoursNumber(job.estimatedHours)}
-            />
+            {bidding ? (
+              <MetricCard
+                label="RFQs"
+                value={(job.rfqSummary?.totalCount ?? 0).toLocaleString('en-US')}
+                hint={
+                  (job.rfqSummary?.outstandingCount ?? 0) > 0
+                    ? `${job.rfqSummary?.outstandingCount} outstanding`
+                    : undefined
+                }
+                accent={(job.rfqSummary?.outstandingCount ?? 0) > 0 ? '#b45309' : undefined}
+              />
+            ) : (
+              <MetricCard
+                label="Estimated Hours"
+                value={job.estimatedHours == null ? 'Not set' : formatHoursNumber(job.estimatedHours)}
+              />
+            )}
           </div>
 
           {attentionItems.length > 0 && (
@@ -1095,11 +1217,19 @@ export function JobDetailView({
             </div>
           )}
 
-          {(job.description || job.externalRef || job.notes) && (
+          {(job.description || job.externalRef || job.notes || bidding) && (
             <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                Project summary
+                {bidding ? 'Bid information' : 'Project summary'}
               </div>
+              {bidding && (
+                <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 8, marginBottom: job.description || job.notes ? 10 : 0, fontSize: 13 }}>
+                  <div><span style={{ color: '#6b7280' }}>Bid due</span> · <strong>{formatOverviewDate(job.bidDueAt)}</strong></div>
+                  <div><span style={{ color: '#6b7280' }}>Estimator</span> · <strong>{partyLabel(job.estimatorName)}</strong></div>
+                  <div><span style={{ color: '#6b7280' }}>Customer</span> · <strong>{partyLabel(job.contractorName ?? job.clientName)}</strong></div>
+                  <div><span style={{ color: '#6b7280' }}>Contract</span> · <strong>{jobHeaderContractDisplay(job)}</strong></div>
+                </div>
+              )}
               {job.description && (
                 <div style={{ fontSize: 13, color: '#374151', whiteSpace: 'pre-wrap', marginBottom: job.externalRef || job.notes ? 10 : 0 }}>
                   {job.description}
@@ -1118,36 +1248,62 @@ export function JobDetailView({
             </div>
           )}
 
-          <WorkPackageOverviewSummary summary={job.workPackageSummary} />
+          {bidding ? (
+            <>
+              <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Bid scope
+                  </div>
+                  <button type="button" onClick={() => setTab('scope')} style={{ fontSize: 12, background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', padding: 0 }}>
+                    Open Scope →
+                  </button>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: 13, color: '#6b7280' }}>
+                  {(job.workPackageSummary?.total ?? 0) > 0
+                    ? `${job.workPackageSummary?.total} scope categor${job.workPackageSummary?.total === 1 ? 'y' : 'ies'} — what we are pricing.`
+                    : 'No bid scope categories yet. Use Scope to organize Structural Steel, Stairs, Rails, Joists/Deck, etc.'}
+                </p>
+              </div>
+              <RfqOverviewSummary
+                summary={job.rfqSummary}
+                onViewRfqs={() => setTab('rfqs')}
+              />
+              <ChangesOverviewSummary
+                summary={job.changesSummary}
+                onViewChanges={() => setTab('changes')}
+              />
+            </>
+          ) : (
+            <>
+              <WorkPackageOverviewSummary summary={job.workPackageSummary} />
+              <ScheduleOverviewSummary
+                summary={job.scheduleSummary}
+                onViewSchedule={() => setTab('schedule')}
+              />
+              <ChangesOverviewSummary
+                summary={job.changesSummary}
+                onViewChanges={() => setTab('changes')}
+              />
+              <ProcurementOverviewSummary
+                summary={job.procurementSummary}
+                onViewProcurement={() => setTab('procurement')}
+              />
+              <DeliveryOverviewSummary
+                summary={job.deliverySummary}
+                onViewDeliveries={() => setTab('deliveries')}
+              />
+              <FinancialOverviewSummary
+                snapshot={job.financialSnapshot}
+                billingSnapshot={job.billingSnapshot}
+                onViewChanges={() => setTab('changes')}
+                onViewProcurement={() => setTab('procurement')}
+                onViewBilling={() => setTab('billing')}
+              />
+            </>
+          )}
 
-          <ScheduleOverviewSummary
-            summary={job.scheduleSummary}
-            onViewSchedule={() => setTab('schedule')}
-          />
-
-          <ChangesOverviewSummary
-            summary={job.changesSummary}
-            onViewChanges={() => setTab('changes')}
-          />
-
-          <ProcurementOverviewSummary
-            summary={job.procurementSummary}
-            onViewProcurement={() => setTab('procurement')}
-          />
-
-          <DeliveryOverviewSummary
-            summary={job.deliverySummary}
-            onViewDeliveries={() => setTab('deliveries')}
-          />
-
-          <FinancialOverviewSummary
-            snapshot={job.financialSnapshot}
-            billingSnapshot={job.billingSnapshot}
-            onViewChanges={() => setTab('changes')}
-            onViewProcurement={() => setTab('procurement')}
-            onViewBilling={() => setTab('billing')}
-          />
-
+          {!bidding && (
           <JobProjectParties
             workspaceId={workspaceId}
             jobId={jobId}
@@ -1167,21 +1323,39 @@ export function JobDetailView({
               })
             }}
           />
+          )}
         </div>
       )}
 
       {tab === 'scope' && (
-        <JobScopeView
+        <div>
+          {bidding && (
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 13, color: '#1e3a8a' }}>
+              <strong>Bid scope</strong> — organize what you are pricing (Structural Steel, Stairs, Rails, Joists/Deck, …).
+              Fabrication production items stay available after the Job becomes Active; award does not auto-convert bid scope.
+            </div>
+          )}
+          <JobScopeView
+            workspaceId={workspaceId}
+            jobId={jobId}
+            canEdit={canEdit}
+            isPhone={isPhone}
+            onEstimatedHoursChange={onScopeEstimatedHoursChange}
+            onSummaryChange={onWorkPackageSummaryChange}
+          />
+        </div>
+      )}
+
+      {tab === 'rfqs' && (
+        <JobRfqsView
           workspaceId={workspaceId}
           jobId={jobId}
           canEdit={canEdit}
           isPhone={isPhone}
-          onEstimatedHoursChange={onScopeEstimatedHoursChange}
-          onSummaryChange={onWorkPackageSummaryChange}
         />
       )}
 
-      {tab === 'schedule' && (
+      {tab === 'schedule' && !bidding && (
         <JobScheduleView
           workspaceId={workspaceId}
           jobId={jobId}
@@ -1201,7 +1375,7 @@ export function JobDetailView({
         />
       )}
 
-      {tab === 'procurement' && (
+      {tab === 'procurement' && !bidding && (
         <JobProcurementView
           workspaceId={workspaceId}
           jobId={jobId}
@@ -1211,7 +1385,7 @@ export function JobDetailView({
         />
       )}
 
-      {tab === 'deliveries' && (
+      {tab === 'deliveries' && !bidding && (
         <JobDeliveriesView
           workspaceId={workspaceId}
           jobId={jobId}
@@ -1221,7 +1395,7 @@ export function JobDetailView({
         />
       )}
 
-      {tab === 'billing' && (
+      {tab === 'billing' && !bidding && (
         <JobBillingView
           workspaceId={workspaceId}
           jobId={jobId}
@@ -1361,92 +1535,131 @@ export function JobDetailView({
         </div>
       )}
 
-      {/* Tasks Tab */}
+      {/* Tasks Tab — Job is implicit scope; no Job selector */}
       {tab === 'tasks' && (
         <div>
-          {tasks.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>No tasks linked to this job.</div>
-          ) : (
-            <div>
-              {openTasks.length > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Open ({openTasks.length})</div>
-                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <thead>
-                        <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Title</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Status</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Priority</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Due</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {openTasks.map(task => (
-                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '10px 12px', fontWeight: 500 }}>{task.title}</td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{
-                                padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500,
-                                background: task.status === 'IN_PROGRESS' ? '#dbeafe' : task.status === 'BLOCKED' ? '#fef9c3' : '#f3f4f6',
-                                color: task.status === 'IN_PROGRESS' ? '#1d4ed8' : task.status === 'BLOCKED' ? '#a16207' : '#374151'
-                              }}>
-                                {task.status}
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              {/* TEMP: hide priority tag visually */}
-                            </td>
-                            <td style={{ padding: '10px 12px', fontSize: 12, color: task.dueAt && new Date(task.dueAt) < new Date() ? '#dc2626' : '#6b7280' }}>
-                              {formatDate(task.dueAt)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              {completedTasks.length > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>Completed ({completedTasks.length})</div>
-                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <tbody>
-                        {completedTasks.map(task => (
-                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '10px 12px', fontWeight: 500, color: '#6b7280', textDecoration: 'line-through' }}>{task.title}</td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: '#dcfce7', color: '#16a34a' }}>DONE</span>
-                            </td>
-                            <td style={{ padding: '10px 12px', fontSize: 12, color: '#6b7280' }}>{formatDate(task.createdAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              {cancelledTasks.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#6b7280', marginBottom: 8 }}>Cancelled ({cancelledTasks.length})</div>
-                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <tbody>
-                        {cancelledTasks.map(task => (
-                          <tr key={task.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '10px 12px', fontWeight: 500, color: '#9ca3af', textDecoration: 'line-through' }}>{task.title}</td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: '#f3f4f6', color: '#6b7280' }}>CANCELLED</span>
-                            </td>
-                            <td style={{ padding: '10px 12px', fontSize: 12, color: '#9ca3af' }}>{formatDate(task.createdAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+          <div
+            role="toolbar"
+            aria-label="Job task filters"
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}
+          >
+            <select
+              aria-label="Status"
+              value={taskStatusFilter}
+              onChange={(e) => setTaskStatusFilter(e.target.value as typeof taskStatusFilter)}
+              style={taskFilterSelect}
+            >
+              <option value="OPEN">Open</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="ALL">All statuses</option>
+            </select>
+            <select
+              aria-label="Due date"
+              value={taskDue}
+              onChange={(e) => setTaskDue(e.target.value as typeof taskDue)}
+              style={taskFilterSelect}
+            >
+              <option value="ALL">All dates</option>
+              <option value="OVERDUE">Overdue</option>
+              <option value="TODAY">Today</option>
+              <option value="WEEK">This week</option>
+              <option value="MONTH">This month</option>
+              <option value="NONE">No due date</option>
+            </select>
+            <select
+              aria-label="Priority"
+              value={taskPriority}
+              onChange={(e) => setTaskPriority(e.target.value as typeof taskPriority)}
+              style={taskFilterSelect}
+            >
+              <option value="ALL">All priorities</option>
+              <option value="LOW">Low</option>
+              <option value="NORMAL">Normal</option>
+              <option value="HIGH">High</option>
+              <option value="URGENT">Urgent</option>
+            </select>
+            <select
+              aria-label="Source"
+              value={taskSource}
+              onChange={(e) => setTaskSource(e.target.value as typeof taskSource)}
+              style={taskFilterSelect}
+            >
+              <option value="ALL">All sources</option>
+              <option value="EMAIL">Email-generated</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+            <select
+              aria-label="Business subtype"
+              value={taskSubtype}
+              onChange={(e) => setTaskSubtype(e.target.value)}
+              style={{ ...taskFilterSelect, maxWidth: 220 }}
+            >
+              <option value="">All subtypes</option>
+              {BUSINESS_SUBTYPE_FILTER_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                setTaskSender(taskSenderDraft.trim())
+              }}
+              style={{ display: 'flex', gap: 4 }}
+            >
+              <input
+                aria-label="Sender"
+                placeholder="Sender…"
+                value={taskSenderDraft}
+                onChange={(e) => setTaskSenderDraft(e.target.value)}
+                style={{ ...taskFilterSelect, width: 140 }}
+              />
+              <button type="submit" style={{ padding: '6px 10px', fontSize: 12 }}>
+                Search
+              </button>
+            </form>
+          </div>
+
+          {tasksLoading && (
+            <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>
+              Loading tasks…
+            </div>
+          )}
+          {!tasksLoading && tasksError && (
+            <div style={{ textAlign: 'center', padding: 48 }}>
+              <div style={{ color: '#c62828', marginBottom: 8 }}>{tasksError}</div>
+              <button
+                type="button"
+                onClick={() => setTaskSender((s) => `${s}`)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {!tasksLoading && !tasksError && tasks.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 48, color: '#888', fontSize: 14 }}>
+              No tasks match these filters for this Job.
+            </div>
+          )}
+          {!tasksLoading && !tasksError && tasks.length > 0 && (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+              {tasks.map((task) => (
+                <TaskListRow
+                  key={task.id}
+                  title={task.title}
+                  status={task.status}
+                  priority={task.priority}
+                  dueAt={task.dueAt}
+                  sourceEmail={task.sourceEmail}
+                  onOpenEmail={
+                    onOpenMessage && task.sourceEmail?.inboxConnectionId
+                      ? (id) =>
+                          onOpenMessage(id, task.sourceEmail!.inboxConnectionId!)
+                      : undefined
+                  }
+                />
+              ))}
             </div>
           )}
         </div>

@@ -9,6 +9,7 @@ import {
   sanitizeBiddingCustomerCompanyName,
   suggestBidProjectNameFromSubject,
   suggestNextJobNumberFromList,
+  workspaceJobNumbersForSuggestionWhere,
   type BidProjectNameSource,
 } from "@forgeops/shared";
 import type { PrismaClient } from "@prisma/client";
@@ -101,8 +102,11 @@ export async function buildBiddingIntakeSuggestions(input: {
       ? attachmentEvidence.projectName
       : null;
 
+  // Job number: CURRENT Job table only (all statuses + archived). Hard-deleted
+  // Jobs are absent and do not reserve numbers. Never AuditEvent / EntityAlias /
+  // AI / historical max.
   const jobRows = await input.prisma.job.findMany({
-    where: { workspaceId: input.workspaceId, jobNumber: { not: null } },
+    where: workspaceJobNumbersForSuggestionWhere(input.workspaceId),
     select: { jobNumber: true },
   });
   const jobNumber = suggestNextJobNumberFromList(
@@ -198,13 +202,17 @@ export async function buildBiddingIntakeSuggestions(input: {
   };
 }
 
-/** DB-backed next job number suggestion (no reservation). */
+/**
+ * DB-backed next job number suggestion (no reservation).
+ * Reads only Job.jobNumber from currently existing rows — deleted Jobs do not
+ * participate. Prefer this over any cached / historical maximum.
+ */
 export async function suggestNextJobNumberForWorkspace(
   prisma: PrismaClient,
   workspaceId: string
 ): Promise<string | null> {
   const jobRows = await prisma.job.findMany({
-    where: { workspaceId, jobNumber: { not: null } },
+    where: workspaceJobNumbersForSuggestionWhere(workspaceId),
     select: { jobNumber: true },
   });
   return suggestNextJobNumberFromList(jobRows.map((r) => r.jobNumber));

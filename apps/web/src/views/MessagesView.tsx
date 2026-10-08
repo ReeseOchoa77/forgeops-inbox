@@ -243,6 +243,7 @@ interface Props {
   breakpoint?: Breakpoint
   /** When set (detail open from Inbox), mark that row read locally without refetch. */
   openedMessageId?: string | null
+  onCompose?: () => void
 }
 
 const PAGE_SIZE = 30
@@ -265,7 +266,7 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
 type ReadFilter = '' | 'unread' | 'read' | 'sent'
 type PriorityKey = 'LOW' | 'NORMAL' | 'HIGH'
 
-export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop', openedMessageId = null }: Props) {
+export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop', openedMessageId = null, onCompose }: Props) {
   const isViewer = userRole === 'VIEWER'
   const isAllMailboxes = isAllMailboxesConnectionId(connectionId)
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
@@ -1368,13 +1369,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {'\uD83D\uDDD1'}
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 5, overflow: 'hidden', background: '#fff' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fff', flex: isPhone ? '1 1 180px' : '0 1 auto', minWidth: isPhone ? 0 : undefined }}>
             <select
               value={searchIn}
               onChange={e => setSearchIn(e.target.value as 'all' | 'sender' | 'id')}
               aria-label="Search in"
               style={{
-                padding: '5px 6px 5px 8px', fontSize: 12, border: 'none', borderRight: '1px solid #eee',
+                padding: '6px 6px 6px 10px', fontSize: 12, border: 'none', borderRight: '1px solid #eee',
                 background: '#fafafa', color: '#555', cursor: 'pointer', outline: 'none',
               }}
             >
@@ -1394,11 +1395,39 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{
-                padding: '5px 10px', border: 'none', fontSize: 13, outline: 'none',
-                width: isPhone ? 140 : searchIn === 'id' ? 260 : 200, background: 'transparent',
+                padding: '6px 12px', border: 'none', fontSize: 13, outline: 'none',
+                width: isPhone ? '100%' : searchIn === 'id' ? 360 : 320,
+                minWidth: isPhone ? 120 : undefined,
+                background: 'transparent',
               }}
             />
           </div>
+          {onCompose && !isViewer && (
+            <button
+              type="button"
+              onClick={onCompose}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: '7px 18px',
+                fontSize: 13,
+                fontWeight: 600,
+                letterSpacing: '0.01em',
+                borderRadius: 6,
+                border: 'none',
+                background: '#1a1a1a',
+                color: '#fff',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
+                flexShrink: 0,
+              }}
+            >
+              Compose
+            </button>
+          )}
         </div>
       </div>
 

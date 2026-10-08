@@ -210,6 +210,24 @@ export const registerWebhookRoutes = async (
         return reply.code(404).send({ message: "Connection not found or not active" });
       }
 
+      const env = app.services.env;
+
+      // Localhost cannot receive Microsoft Graph / Gmail push callbacks.
+      // Development uses manual sync / historical import. Never let local boot
+      // create/replace Graph subscriptions that could interfere with production.
+      if (
+        env.APP_ENV === "development" &&
+        env.ALLOW_DEV_GRAPH_WEBHOOKS !== true
+      ) {
+        return reply.code(200).send({
+          status: "skipped",
+          reason: "development_graph_webhooks_disabled",
+          hint:
+            "Local development uses polling / manual sync / historical import. " +
+            "Set ALLOW_DEV_GRAPH_WEBHOOKS=true only with an intentional public tunnel.",
+        });
+      }
+
       if (!shouldRegisterNativePush(connection)) {
         return reply.code(200).send({
           status: "skipped",
@@ -220,7 +238,6 @@ export const registerWebhookRoutes = async (
       }
 
       const refreshToken = app.services.tokenCipher.decrypt(connection.encryptedRefreshToken);
-      const env = app.services.env;
 
       try {
         if (connection.provider === "GMAIL") {
@@ -284,9 +301,10 @@ export const registerWebhookRoutes = async (
           const tokens = await tokenRes.json() as { access_token: string };
 
           const webhookUrl = `${env.FRONTEND_URL.replace(/\/$/, "").replace("://", "://api.")}/api/v1/webhooks/outlook`;
-          const apiBase = env.NODE_ENV === "production"
-            ? webhookUrl
-            : `${env.FRONTEND_URL}/api/v1/webhooks/outlook`;
+          const apiBase =
+            env.APP_ENV === "production"
+              ? webhookUrl
+              : `http://localhost:${env.API_PORT}/api/v1/webhooks/outlook`;
 
           const subRes = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
             method: "POST",

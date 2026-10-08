@@ -575,10 +575,49 @@ export interface ClassificationInspection {
   availableStages: string[];
 }
 
+export interface TaskSourceEmail {
+  id: string;
+  subject: string | null;
+  senderName: string | null;
+  senderAddress: string;
+  sentAt: string | null;
+  receivedAt: string | null;
+  mailboxCategory: string | null;
+  businessSubtype: string | null;
+  priority: string | null;
+  jobId: string | null;
+  jobNumber: string | null;
+  jobName: string | null;
+  inboxConnectionId?: string | null;
+}
+
 export interface TaskListItem {
   task: TaskSummary;
-  sourceMessage: { id: string; subject: string | null; senderEmail: string; receivedAt: string | null } | null;
+  sourceMessage: {
+    id: string;
+    subject: string | null;
+    senderEmail: string;
+    receivedAt: string | null;
+  } | null;
+  /** Canonical provenance DTO — prefer over sourceMessage for UI. */
+  sourceEmail?: TaskSourceEmail | null;
   classification: Classification | null;
+}
+
+export type TaskListFilters = {
+  statusFilter?: 'OPEN' | 'COMPLETED' | 'ALL'
+  due?: 'ALL' | 'OVERDUE' | 'TODAY' | 'WEEK' | 'MONTH' | 'NONE'
+  priority?: 'ALL' | 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
+  source?: 'ALL' | 'EMAIL' | 'MANUAL'
+  emailClassification?: 'ALL' | 'BUSINESS' | 'PERSONAL' | 'UNCLASSIFIED'
+  businessTypeKey?: string
+  sender?: string
+  direction?: 'ALL' | 'INCOMING' | 'SENT'
+  jobId?: string
+  sort?: 'DUE_DATE' | 'NEWEST' | 'OLDEST' | 'PRIORITY'
+  /** Legacy sourceDate window */
+  dateRange?: 'TODAY' | 'WEEK' | 'MONTH'
+  timezone?: string
 }
 
 export interface ApprovedAccessEntry {
@@ -709,9 +748,26 @@ export interface CalendarTaskDueItem {
   taskPriority?: string;
 }
 
+/** Synthesized from Job.status=BIDDING + Job.bidDueAt (canonical active-bid deadline). */
+export interface CalendarBidDueItem {
+  id: string;
+  title: string;
+  description: string | null;
+  startAt: string;
+  endAt: null;
+  allDay: true;
+  type: 'BID_DUE';
+  source: 'JOB_BID_DUE';
+  linkedJobId: string;
+  linkedTaskId: null;
+  linkedEmailMessageId: null;
+  linkedJob: CalendarJobBadge;
+}
+
 export type CalendarFeedItem =
   | (CalendarEventItem & { kind: 'event' })
-  | (CalendarTaskDueItem & { kind: 'task' });
+  | (CalendarTaskDueItem & { kind: 'task' })
+  | (CalendarBidDueItem & { kind: 'bid_due' });
 
 export const api = {
   getSession: () => request<SessionResponse>('/auth/session'),
@@ -1205,14 +1261,23 @@ export const api = {
     connectionId: string,
     page = 1,
     pageSize = 25,
-    filters?: {
-      dateRange?: 'TODAY' | 'WEEK' | 'MONTH'
-      timezone?: string
-    }
+    filters?: TaskListFilters
   ) => {
     const p = new URLSearchParams()
     p.set('page', String(page))
     p.set('pageSize', String(pageSize))
+    if (filters?.statusFilter) p.set('statusFilter', filters.statusFilter)
+    if (filters?.due && filters.due !== 'ALL') p.set('due', filters.due)
+    if (filters?.priority && filters.priority !== 'ALL') p.set('priority', filters.priority)
+    if (filters?.source && filters.source !== 'ALL') p.set('source', filters.source)
+    if (filters?.emailClassification && filters.emailClassification !== 'ALL') {
+      p.set('emailClassification', filters.emailClassification)
+    }
+    if (filters?.businessTypeKey) p.set('businessTypeKey', filters.businessTypeKey)
+    if (filters?.sender) p.set('sender', filters.sender)
+    if (filters?.direction && filters.direction !== 'ALL') p.set('direction', filters.direction)
+    if (filters?.jobId) p.set('jobId', filters.jobId)
+    if (filters?.sort) p.set('sort', filters.sort)
     if (filters?.dateRange) p.set('dateRange', filters.dateRange)
     if (filters?.timezone) p.set('timezone', filters.timezone)
     return request<{
@@ -1492,6 +1557,7 @@ export const api = {
       to: string;
       events: CalendarEventItem[];
       taskDueItems: CalendarTaskDueItem[];
+      bidDueItems: CalendarBidDueItem[];
     }>(
       `/workspaces/${workspaceId}/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
     ),
@@ -1957,8 +2023,31 @@ export const api = {
       `/workspaces/${workspaceId}/jobs/${jobId}/emails?page=${page}&pageSize=${pageSize}`
     ),
 
-  getJobTasks: (workspaceId: string, jobId: string) =>
-    request<{ tasks: JobTask[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks`),
+  getJobTasks: (
+    workspaceId: string,
+    jobId: string,
+    filters?: TaskListFilters & { page?: number; pageSize?: number }
+  ) => {
+    const p = new URLSearchParams()
+    if (filters?.page) p.set('page', String(filters.page))
+    if (filters?.pageSize) p.set('pageSize', String(filters.pageSize))
+    if (filters?.statusFilter) p.set('statusFilter', filters.statusFilter)
+    if (filters?.due && filters.due !== 'ALL') p.set('due', filters.due)
+    if (filters?.priority && filters.priority !== 'ALL') p.set('priority', filters.priority)
+    if (filters?.source && filters.source !== 'ALL') p.set('source', filters.source)
+    if (filters?.emailClassification && filters.emailClassification !== 'ALL') {
+      p.set('emailClassification', filters.emailClassification)
+    }
+    if (filters?.businessTypeKey) p.set('businessTypeKey', filters.businessTypeKey)
+    if (filters?.sender) p.set('sender', filters.sender)
+    if (filters?.sort) p.set('sort', filters.sort)
+    if (filters?.timezone) p.set('timezone', filters.timezone)
+    const q = p.toString()
+    return request<{
+      tasks: JobTask[]
+      pagination?: { page: number; pageSize: number; totalCount: number; totalPages: number }
+    }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks${q ? `?${q}` : ''}`)
+  },
 
   listJobParticipants: (workspaceId: string, jobId: string) =>
     request<{ participants: JobParticipant[] }>(
@@ -2270,6 +2359,31 @@ export const api = {
     request<{ items: JobProcurementItem[] }>(
       `/workspaces/${workspaceId}/jobs/${jobId}/procurement-items`
     ),
+
+  listJobRfqs: (workspaceId: string, jobId: string) =>
+    request<{ rfqs: JobRfq[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/rfqs`),
+
+  createJobRfq: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
+    request<{ rfq: JobRfq }>(`/workspaces/${workspaceId}/jobs/${jobId}/rfqs`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateJobRfq: (
+    workspaceId: string,
+    jobId: string,
+    rfqId: string,
+    body: Record<string, unknown>
+  ) =>
+    request<{ rfq: JobRfq }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/rfqs/${rfqId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  deleteJobRfq: (workspaceId: string, jobId: string, rfqId: string) =>
+    request<void>(`/workspaces/${workspaceId}/jobs/${jobId}/rfqs/${rfqId}`, {
+      method: 'DELETE',
+    }),
 
   createJobProcurementItem: (workspaceId: string, jobId: string, body: Record<string, unknown>) =>
     request<{ item: JobProcurementItem }>(
@@ -3151,6 +3265,38 @@ export interface JobDeliverySummary {
   } | null
 }
 
+export type JobRfqStatus = 'DRAFT' | 'REQUESTED' | 'RECEIVED' | 'DECLINED' | 'CANCELLED'
+
+export interface JobRfqSummary {
+  totalCount: number
+  draftCount: number
+  requestedCount: number
+  receivedCount: number
+  outstandingCount: number
+}
+
+export interface JobRfq {
+  id: string
+  workspaceId: string
+  jobId: string
+  vendorId: string | null
+  vendorName: string | null
+  workPackageId: string | null
+  workPackageName: string | null
+  emailMessageId: string | null
+  title: string
+  description: string | null
+  status: JobRfqStatus
+  requestedDate: string | null
+  dueDate: string | null
+  receivedDate: string | null
+  quotedAmount: string | null
+  notes: string | null
+  documentRecordIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export type JobInvoiceStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'VOID'
 
 export interface JobInvoiceChangeOrderAllocation {
@@ -3548,6 +3694,7 @@ export interface JobDetail extends JobSummary {
   deliverySummary?: JobDeliverySummary | null;
   financialSnapshot?: JobFinancialSnapshot | null;
   billingSnapshot?: JobBillingSnapshot | null;
+  rfqSummary?: JobRfqSummary | null;
   siteName?: string | null;
   siteAddress1?: string | null;
   siteAddress2?: string | null;
@@ -3696,11 +3843,16 @@ export interface JobStoredFile {
 export interface JobTask {
   id: string;
   title: string;
+  summary?: string | null;
+  description?: string | null;
   status: string;
   priority: string;
   dueAt: string | null;
-  assigneeGuess: string | null;
+  assigneeGuess?: string | null;
+  assigneeUserId?: string | null;
+  completedAt?: string | null;
   createdAt: string;
+  sourceEmail?: TaskSourceEmail | null;
 }
 
 export interface JobDocument {

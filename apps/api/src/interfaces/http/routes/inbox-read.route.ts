@@ -9,7 +9,21 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { getSessionFromRequest } from "../authentication.js";
-import { mapStoredPriorityToN8n, inboxDateRangeBounds, taskSourceDateRangeBounds } from "@forgeops/shared";
+import {
+  mapStoredPriorityToN8n,
+  inboxDateRangeBounds,
+  taskSourceDateRangeBounds,
+  buildOperationalTasksWhere,
+  taskListOrderBy,
+  BUSINESS_SUBTYPE_KEYS,
+  type TaskStatusFilter,
+  type TaskDueFilter,
+  type TaskPriorityFilter,
+  type TaskSourceFilter,
+  type TaskEmailClassificationFilter,
+  type TaskDirectionFilter,
+  type TaskSort,
+} from "@forgeops/shared";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = new Prisma.Decimal("0.75");
 
@@ -196,9 +210,28 @@ function suggestedJobSummary(
 const tasksListQuerySchema = paginationQuerySchema.extend({
   reviewOnly: booleanQueryWithDefaultFalseSchema,
   lowConfidenceOnly: booleanQueryWithDefaultFalseSchema,
+  /** Legacy exact TaskStatus. Prefer statusFilter for Open/Completed/All. */
   status: z.enum(taskStatusValues).optional(),
+  statusFilter: z.enum(["OPEN", "COMPLETED", "ALL"]).optional(),
+  due: z
+    .enum(["ALL", "OVERDUE", "TODAY", "WEEK", "MONTH", "NONE"])
+    .optional(),
+  priority: z
+    .enum(["ALL", "LOW", "NORMAL", "HIGH", "URGENT"])
+    .optional(),
+  source: z.enum(["ALL", "EMAIL", "MANUAL"]).optional(),
+  emailClassification: z
+    .enum(["ALL", "BUSINESS", "PERSONAL", "UNCLASSIFIED"])
+    .optional(),
+  businessTypeKey: z.enum(BUSINESS_SUBTYPE_KEYS).optional(),
+  sender: z.string().trim().max(200).optional(),
+  direction: z.enum(["ALL", "INCOMING", "SENT"]).optional(),
+  /** Job filter: concrete id, or "NONE" for tasks with no Job. */
+  jobId: z.string().min(1).max(100).optional(),
+  sort: z.enum(["DUE_DATE", "NEWEST", "OLDEST", "PRIORITY"]).optional(),
+  /** Legacy: filters Task.sourceDate (email timeline), not dueAt. */
   dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).optional(),
-  timezone: z.string().min(1).max(80).optional()
+  timezone: z.string().min(1).max(80).optional(),
 });
 
 const reviewListQuerySchema = paginationQuerySchema;
@@ -414,10 +447,28 @@ const taskListItemSchema = z.object({
       subject: z.string().nullable(),
       snippet: z.string().nullable(),
       senderEmail: z.string().email(),
-      receivedAt: z.string().datetime().nullable()
+      receivedAt: z.string().datetime().nullable(),
     })
     .nullable(),
-  classification: classificationSummarySchema.nullable()
+  /** Canonical email provenance DTO for Tasks UI (null for manual / orphan tasks). */
+  sourceEmail: z
+    .object({
+      id: z.string().min(1),
+      subject: z.string().nullable(),
+      senderName: z.string().nullable(),
+      senderAddress: z.string(),
+      sentAt: z.string().datetime().nullable(),
+      receivedAt: z.string().datetime().nullable(),
+      mailboxCategory: z.string().nullable(),
+      businessSubtype: z.string().nullable(),
+      priority: z.string().nullable(),
+      jobId: z.string().nullable(),
+      jobNumber: z.string().nullable(),
+      jobName: z.string().nullable(),
+      inboxConnectionId: z.string().nullable().optional(),
+    })
+    .nullable(),
+  classification: classificationSummarySchema.nullable(),
 });
 
 const connectionListResponseSchema = z.object({
@@ -479,16 +530,38 @@ const tasksListResponseSchema = z.object({
     reviewOnly: z.boolean(),
     lowConfidenceOnly: z.boolean(),
     status: z.enum(taskStatusValues).nullable(),
+    statusFilter: z.enum(["OPEN", "COMPLETED", "ALL"]).nullable().optional(),
+    due: z
+      .enum(["ALL", "OVERDUE", "TODAY", "WEEK", "MONTH", "NONE"])
+      .nullable()
+      .optional(),
+    priority: z
+      .enum(["ALL", "LOW", "NORMAL", "HIGH", "URGENT"])
+      .nullable()
+      .optional(),
+    source: z.enum(["ALL", "EMAIL", "MANUAL"]).nullable().optional(),
+    emailClassification: z
+      .enum(["ALL", "BUSINESS", "PERSONAL", "UNCLASSIFIED"])
+      .nullable()
+      .optional(),
+    businessTypeKey: z.string().nullable().optional(),
+    sender: z.string().nullable().optional(),
+    direction: z.enum(["ALL", "INCOMING", "SENT"]).nullable().optional(),
+    jobId: z.string().nullable().optional(),
+    sort: z
+      .enum(["DUE_DATE", "NEWEST", "OLDEST", "PRIORITY"])
+      .nullable()
+      .optional(),
     dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).nullable().optional(),
-    timezone: z.string().nullable().optional()
+    timezone: z.string().nullable().optional(),
   }),
   pagination: z.object({
     page: z.number().int().positive(),
     pageSize: z.number().int().positive(),
     totalCount: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative()
+    totalPages: z.number().int().nonnegative(),
   }),
-  tasks: z.array(taskListItemSchema)
+  tasks: z.array(taskListItemSchema),
 });
 
 const serializeDate = (value: Date | null | undefined): string | null =>
@@ -1167,23 +1240,48 @@ export const buildTasksWhere = (input: {
   reviewOnly: boolean;
   lowConfidenceOnly: boolean;
   status?: (typeof taskStatusValues)[number];
+  statusFilter?: TaskStatusFilter;
+  due?: TaskDueFilter;
+  priority?: TaskPriorityFilter;
+  source?: TaskSourceFilter;
+  emailClassification?: TaskEmailClassificationFilter;
+  businessTypeKey?: string;
+  sender?: string;
+  direction?: TaskDirectionFilter;
+  jobFilter?: string | "NONE";
+  connectionEmail?: string;
   taskThreshold: Prisma.Decimal;
   dateRange?: "TODAY" | "WEEK" | "MONTH";
   timezone?: string;
 }): Prisma.TaskWhereInput => {
-  const andConditions: Prisma.TaskWhereInput[] = [
-    {
-      workspaceId: input.workspaceId,
-      sourceThread: {
-        inboxConnectionId: input.inboxConnectionId
-      }
-    }
-  ];
+  const base = buildOperationalTasksWhere({
+    workspaceId: input.workspaceId,
+    inboxConnectionId: input.inboxConnectionId,
+    excludeUnassignedBidding: true,
+    ...(input.statusFilter ? { status: input.statusFilter } : {}),
+    ...(input.due ? { due: input.due } : {}),
+    ...(input.priority ? { priority: input.priority } : {}),
+    ...(input.source ? { source: input.source } : {}),
+    ...(input.emailClassification
+      ? { emailClassification: input.emailClassification }
+      : {}),
+    ...(input.businessTypeKey
+      ? { businessTypeKey: input.businessTypeKey }
+      : {}),
+    ...(input.sender ? { sender: input.sender } : {}),
+    ...(input.direction ? { direction: input.direction } : {}),
+    ...(input.jobFilter ? { jobFilter: input.jobFilter } : {}),
+    ...(input.connectionEmail
+      ? { connectionEmail: input.connectionEmail }
+      : {}),
+    timezone: input.timezone || "UTC",
+  });
 
-  if (input.status) {
-    andConditions.push({
-      status: input.status
-    });
+  const andConditions: Prisma.TaskWhereInput[] = [base];
+
+  // Legacy exact status still supported for review tooling.
+  if (input.status && !input.statusFilter) {
+    andConditions.push({ status: input.status });
   }
 
   if (input.reviewOnly) {
@@ -1191,19 +1289,20 @@ export const buildTasksWhere = (input: {
       OR: [
         { requiresReview: true },
         { reviewStatus: { in: ["PENDING", "IN_REVIEW"] } },
-        { confidence: { lt: input.taskThreshold } }
-      ]
+        { confidence: { lt: input.taskThreshold } },
+      ],
     });
   }
 
   if (input.lowConfidenceOnly) {
     andConditions.push({
       confidence: {
-        lt: input.taskThreshold
-      }
+        lt: input.taskThreshold,
+      },
     });
   }
 
+  // Legacy sourceDate window (email timeline) — distinct from dueAt filters.
   if (input.dateRange) {
     try {
       const bounds = taskSourceDateRangeBounds(
@@ -1213,8 +1312,8 @@ export const buildTasksWhere = (input: {
       andConditions.push({
         sourceDate: {
           gte: bounds.sourceAfter,
-          lt: bounds.sourceBefore
-        }
+          lt: bounds.sourceBefore,
+        },
       });
     } catch {
       // Invalid timezone — ignore date filter rather than 500
@@ -1222,7 +1321,7 @@ export const buildTasksWhere = (input: {
   }
 
   return {
-    AND: andConditions
+    AND: andConditions,
   };
 };
 
@@ -2748,25 +2847,47 @@ export const registerInboxReadRoutes = async (
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         ...(query.status ? { status: query.status } : {}),
+        ...(query.statusFilter
+          ? { statusFilter: query.statusFilter as TaskStatusFilter }
+          : {}),
+        ...(query.due ? { due: query.due as TaskDueFilter } : {}),
+        ...(query.priority
+          ? { priority: query.priority as TaskPriorityFilter }
+          : {}),
+        ...(query.source ? { source: query.source as TaskSourceFilter } : {}),
+        ...(query.emailClassification
+          ? {
+              emailClassification:
+                query.emailClassification as TaskEmailClassificationFilter,
+            }
+          : {}),
+        ...(query.businessTypeKey
+          ? { businessTypeKey: query.businessTypeKey }
+          : {}),
+        ...(query.sender ? { sender: query.sender } : {}),
+        ...(query.direction
+          ? { direction: query.direction as TaskDirectionFilter }
+          : {}),
+        ...(query.jobId ? { jobFilter: query.jobId } : {}),
+        connectionEmail: connection.email,
         ...(query.dateRange ? { dateRange: query.dateRange } : {}),
         ...(query.timezone ? { timezone: query.timezone } : {}),
-        taskThreshold: thresholds.taskThreshold
+        taskThreshold: thresholds.taskThreshold,
       });
       const skip = (query.page - 1) * query.pageSize;
+      const orderBy = [
+        { isPinned: "desc" as const },
+        { pinnedAt: { sort: "desc" as const, nulls: "last" as const } },
+        ...taskListOrderBy((query.sort as TaskSort | undefined) ?? "DUE_DATE"),
+      ];
 
       const [totalCount, tasks] = await Promise.all([
         app.services.prisma.task.count({
-          where
+          where,
         }),
         app.services.prisma.task.findMany({
           where,
-          orderBy: [
-            { isPinned: "desc" },
-            { pinnedAt: { sort: "desc", nulls: "last" } },
-            { sourceDate: "desc" },
-            { createdAt: "desc" },
-            { updatedAt: "desc" }
-          ],
+          orderBy,
           skip,
           take: query.pageSize,
           select: {
@@ -2792,12 +2913,28 @@ export const registerInboxReadRoutes = async (
                 subject: true,
                 snippet: true,
                 senderEmail: true,
-                receivedAt: true
-              }
-            }
-            // classification omitted from list — detail/review paths still load it
-          }
-        })
+                senderName: true,
+                sentAt: true,
+                receivedAt: true,
+                mailboxCategory: true,
+                priority: true,
+                jobId: true,
+                job: {
+                  select: { id: true, jobNumber: true, name: true },
+                },
+                inboxConnectionId: true,
+                classifications: {
+                  orderBy: { createdAt: "desc" },
+                  take: 1,
+                  select: { businessTypeKey: true },
+                },
+              },
+            },
+            classification: {
+              select: { businessTypeKey: true },
+            },
+          },
+        }),
       ]);
 
       // View telemetry → application logs only (not permanent AuditEvent).
@@ -2810,6 +2947,8 @@ export const registerInboxReadRoutes = async (
         reviewOnly: query.reviewOnly,
         lowConfidenceOnly: query.lowConfidenceOnly,
         status: query.status ?? null,
+        statusFilter: query.statusFilter ?? null,
+        due: query.due ?? null,
         dateRange: query.dateRange ?? null,
       });
 
@@ -2821,31 +2960,64 @@ export const registerInboxReadRoutes = async (
             reviewOnly: query.reviewOnly,
             lowConfidenceOnly: query.lowConfidenceOnly,
             status: query.status ?? null,
+            statusFilter: query.statusFilter ?? null,
+            due: query.due ?? null,
+            priority: query.priority ?? null,
+            source: query.source ?? null,
+            emailClassification: query.emailClassification ?? null,
+            businessTypeKey: query.businessTypeKey ?? null,
+            sender: query.sender ?? null,
+            direction: query.direction ?? null,
+            jobId: query.jobId ?? null,
+            sort: query.sort ?? null,
             dateRange: query.dateRange ?? null,
-            timezone: query.timezone ?? null
+            timezone: query.timezone ?? null,
           },
           pagination: {
             page: query.page,
             pageSize: query.pageSize,
             totalCount,
-            totalPages: totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize)
+            totalPages:
+              totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize),
           },
-          tasks: tasks.map((task) =>
-            taskListItemSchema.parse({
+          tasks: tasks.map((task) => {
+            const msg = task.sourceMessage;
+            const subtype =
+              task.classification?.businessTypeKey ??
+              msg?.classifications[0]?.businessTypeKey ??
+              null;
+            return taskListItemSchema.parse({
               task: serializeTask(task),
-              sourceMessage: task.sourceMessage
+              sourceMessage: msg
                 ? {
-                    id: task.sourceMessage.id,
-                    providerMessageId: task.sourceMessage.gmailMessageId,
-                    subject: task.sourceMessage.subject,
-                    snippet: task.sourceMessage.snippet,
-                    senderEmail: task.sourceMessage.senderEmail,
-                    receivedAt: serializeDate(task.sourceMessage.receivedAt)
+                    id: msg.id,
+                    providerMessageId: msg.gmailMessageId,
+                    subject: msg.subject,
+                    snippet: msg.snippet,
+                    senderEmail: msg.senderEmail,
+                    receivedAt: serializeDate(msg.receivedAt),
                   }
                 : null,
-              classification: null
-            })
-          )
+              sourceEmail: msg
+                ? {
+                    id: msg.id,
+                    subject: msg.subject,
+                    senderName: msg.senderName,
+                    senderAddress: msg.senderEmail,
+                    sentAt: serializeDate(msg.sentAt),
+                    receivedAt: serializeDate(msg.receivedAt),
+                    mailboxCategory: msg.mailboxCategory ?? null,
+                    businessSubtype: subtype,
+                    priority: toApiPriority(msg.priority),
+                    jobId: msg.jobId ?? msg.job?.id ?? null,
+                    jobNumber: msg.job?.jobNumber ?? null,
+                    jobName: msg.job?.name ?? null,
+                    inboxConnectionId: msg.inboxConnectionId ?? null,
+                  }
+                : null,
+              classification: null,
+            });
+          }),
         })
       );
     }

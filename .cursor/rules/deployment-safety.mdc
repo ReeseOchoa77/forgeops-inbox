@@ -1,0 +1,27 @@
+---
+description: Stop before production deploy — local work is not a live release
+alwaysApply: true
+---
+
+# Deployment safety (ForgeOps)
+
+**Implementation complete ≠ production deployed.**
+
+Normal tasks end after:
+
+1. Local implementation
+2. Automated tests
+3. Typecheck / build
+4. User can verify on localhost
+
+Do **not** unless the user explicitly requests production deployment:
+
+- `git push` / merge to `main`
+- Railway or Vercel production deploy / config changes
+- `prisma migrate deploy` / `npm run db:migrate:deploy` against production
+- Production credential rotation or infrastructure changes
+- Pointing local `.env` at production DB, Redis, or S3
+
+Use `APP_ENV=development` locally with docker-compose `forgeops_dev` + local Redis.
+Never point local `.env` at production DB, Redis, or S3.
+See `docs/DEPLOYMENT.md` (Local vs Production Data Isolation).

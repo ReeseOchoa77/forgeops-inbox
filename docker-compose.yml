@@ -3,15 +3,17 @@ services:
     image: postgres:16-alpine
     container_name: forgeops-postgres
     environment:
-      POSTGRES_DB: forgeops
+      # Dedicated DEVELOPMENT database — never production Railway Postgres.
+      POSTGRES_DB: forgeops_dev
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-dev-dbs.sql:/docker-entrypoint-initdb.d/01-init-dev-dbs.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d forgeops"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d forgeops_dev"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,4 +34,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-

@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./business-subtypes": {
+      "types": "./dist/business-subtypes.d.ts",
+      "default": "./dist/business-subtypes.js"
     }
   },
   "scripts": {

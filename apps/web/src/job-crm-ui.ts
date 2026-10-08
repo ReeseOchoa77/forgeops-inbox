@@ -11,6 +11,7 @@ export type JobCrmTab =
   | 'procurement'
   | 'deliveries'
   | 'billing'
+  | 'rfqs'
   | 'emails'
   | 'tasks'
   | 'documents'
@@ -23,6 +24,7 @@ export const JOB_CRM_TABS: Array<{ key: JobCrmTab; label: string; group: string 
   { key: 'documents', label: 'Documents', group: 'communication' },
   { key: 'tasks', label: 'Tasks', group: 'communication' },
   { key: 'scope', label: 'Scope', group: 'core' },
+  { key: 'rfqs', label: 'RFQs', group: 'estimating' },
   { key: 'schedule', label: 'Schedule', group: 'core' },
   { key: 'changes', label: 'Changes', group: 'operations' },
   { key: 'procurement', label: 'Procurement', group: 'operations' },
@@ -32,13 +34,87 @@ export const JOB_CRM_TABS: Array<{ key: JobCrmTab; label: string; group: string 
   { key: 'settings', label: 'Settings', group: 'system' },
 ]
 
-/** Every Job CRM tab — ACTIVE and BIDDING Jobs must reach all of these. */
+/** Tabs hidden while Job.status = BIDDING (data preserved; modules not deleted). */
+export const BIDDING_HIDDEN_TABS: readonly JobCrmTab[] = [
+  'schedule',
+  'procurement',
+  'deliveries',
+  'billing',
+] as const
+
+/**
+ * BIDDING workspace — estimating / bid pursuit.
+ * Order: Overview → Emails → Documents → Scope → RFQs → Changes → Tasks → Activity → Settings
+ */
+export const BIDDING_JOB_TABS: JobCrmTab[] = [
+  'overview',
+  'emails',
+  'documents',
+  'scope',
+  'rfqs',
+  'changes',
+  'tasks',
+  'activity',
+  'settings',
+]
+
+/**
+ * ACTIVE / awarded operational workspace.
+ * RFQs remain reachable (estimating history) but are not primary navigation.
+ */
+export const ACTIVE_JOB_TABS: JobCrmTab[] = [
+  'overview',
+  'emails',
+  'documents',
+  'tasks',
+  'scope',
+  'schedule',
+  'changes',
+  'procurement',
+  'deliveries',
+  'billing',
+  'activity',
+  'settings',
+]
+
+export function isBiddingJobStatus(status: string | null | undefined): boolean {
+  return status === 'BIDDING'
+}
+
+/** Lifecycle-aware tab strip for a Job. */
+export function jobCrmTabsForStatus(
+  status: string | null | undefined
+): Array<{ key: JobCrmTab; label: string; group: string }> {
+  const keys = isBiddingJobStatus(status) ? BIDDING_JOB_TABS : ACTIVE_JOB_TABS
+  const byKey = new Map(JOB_CRM_TABS.map((t) => [t.key, t]))
+  return keys
+    .map((key) => byKey.get(key))
+    .filter((t): t is { key: JobCrmTab; label: string; group: string } => t != null)
+}
+
+export function isJobCrmTabAvailable(
+  tab: JobCrmTab,
+  status: string | null | undefined
+): boolean {
+  return jobCrmTabsForStatus(status).some((t) => t.key === tab)
+}
+
+/** Invalid deep-link for this lifecycle → Overview (never a blank/broken panel). */
+export function resolveJobTabForStatus(
+  requested: JobCrmTab | null | undefined,
+  status: string | null | undefined
+): JobCrmTab {
+  if (requested && isJobCrmTabAvailable(requested, status)) return requested
+  return 'overview'
+}
+
+/** @deprecated Prefer jobCrmTabsForStatus — full strip differs by lifecycle. */
 export const JOB_CRM_REQUIRED_TABS: JobCrmTab[] = JOB_CRM_TABS.map((t) => t.key)
 
-/** All tabs render in the main strip (no More overflow). */
+/** @deprecated Prefer jobCrmTabsForStatus. */
 export const JOB_CRM_PRIMARY_TABS: JobCrmTab[] = [...JOB_CRM_REQUIRED_TABS]
 
-/** @deprecated Kept empty — Job Detail lists every tab inline. */
+/** @deprecated Kept empty — Job Detail lists tabs inline. */
 export const JOB_CRM_MORE_TABS: JobCrmTab[] = []
 
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -121,6 +197,10 @@ const ACTIVITY_LABELS: Record<string, string> = {
   INVOICE_REJECTED: 'Invoice rejected',
   INVOICE_VOIDED: 'Invoice voided',
   INVOICE_DELETED: 'Invoice deleted',
+  RFQ_CREATED: 'RFQ created',
+  RFQ_UPDATED: 'RFQ updated',
+  RFQ_STATUS_CHANGED: 'RFQ status changed',
+  RFQ_DELETED: 'RFQ deleted',
 }
 
 export function formatJobActivityAction(action: string): string {
@@ -136,6 +216,7 @@ export function formatJobActivityAction(action: string): string {
 export function activityActionTab(action: string): JobCrmTab | null {
   if (action.startsWith('WORK_PACKAGE') || action.startsWith('FABRICATION')) return 'scope'
   if (action.startsWith('MILESTONE')) return 'schedule'
+  if (action.startsWith('RFQ_')) return 'rfqs'
   if (
     action.startsWith('RFI_') ||
     action.startsWith('DIRECTIVE_') ||
@@ -178,8 +259,43 @@ export function buildJobAttentionItems(input: {
   procurementAtRiskCount?: number
   lateDeliveryCount?: number
   billingExceedsKnownContract?: boolean
+  /** BIDDING: open RFQs still awaiting quotes. */
+  outstandingRfqCount?: number
+  bidDueAt?: string | null
+  status?: string | null
 }): AttentionItem[] {
   const items: AttentionItem[] = []
+  if (isBiddingJobStatus(input.status)) {
+    if (input.bidDueAt) {
+      const due = new Date(input.bidDueAt)
+      if (!Number.isNaN(due.getTime()) && due.getTime() < Date.now()) {
+        items.push({
+          id: 'bid-due-past',
+          label: 'Bid due date has passed',
+          tab: 'overview',
+          tone: 'danger',
+        })
+      }
+    }
+    if ((input.outstandingRfqCount ?? 0) > 0) {
+      items.push({
+        id: 'rfqs-outstanding',
+        label: `${input.outstandingRfqCount} RFQ${input.outstandingRfqCount === 1 ? '' : 's'} outstanding`,
+        tab: 'rfqs',
+        tone: 'warn',
+      })
+    }
+    if ((input.overdueRfiCount ?? 0) > 0) {
+      items.push({
+        id: 'rfis-overdue',
+        label: `${input.overdueRfiCount} overdue RFI${input.overdueRfiCount === 1 ? '' : 's'}`,
+        tab: 'changes',
+        tone: 'danger',
+      })
+    }
+    return items
+  }
+
   if ((input.overdueMilestoneCount ?? 0) > 0) {
     items.push({
       id: 'milestones-overdue',

@@ -18,6 +18,8 @@
     "dev:web": "npm run dev --workspace @forgeops/web",
     "db:generate": "npm run prisma:generate --workspace @forgeops/db",
     "db:migrate": "npm run prisma:migrate --workspace @forgeops/db --",
+    "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @forgeops/db",
+    "db:reset:dev": "npm run prisma:reset:dev --workspace @forgeops/db",
     "db:studio": "npm run prisma:studio --workspace @forgeops/db",
     "db:seed-access": "tsx packages/db/prisma/seed-approved-access.ts",
     "db:cleanup-audit": "tsx packages/db/scripts/cleanup-audit-events.ts"

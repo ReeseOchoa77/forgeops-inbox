@@ -7,6 +7,7 @@ import {
 import {
   parseSequentialJobNumber,
   suggestNextJobNumberFromList,
+  workspaceJobNumbersForSuggestionWhere,
 } from "../bidding/suggest-next-job-number.js";
 
 describe("suggestBidProjectNameFromSubject", () => {
@@ -88,6 +89,50 @@ describe("suggestNextJobNumberFromList", () => {
 
   it("prefers yy-seq over plain when both exist", () => {
     expect(suggestNextJobNumberFromList(["2198", "26-200"])).toBe("26-201");
+  });
+
+  it("matrix: existing 3000,3001,3002 → suggest 3003", () => {
+    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
+  });
+
+  it("matrix: after deleting max 3002, current 3000,3001 → suggest 3002 (reuse)", () => {
+    // Deleted Jobs are absent from the list — they do not reserve numbers.
+    expect(suggestNextJobNumberFromList(["3000", "3001"])).toBe("3002");
+  });
+
+  it("matrix: delete non-max 3001 → still suggest from current max 3003 → 3004", () => {
+    expect(
+      suggestNextJobNumberFromList(["3000", "3002", "3003"])
+    ).toBe("3004");
+  });
+
+  it("matrix: archived + bidding + active all count toward max", () => {
+    // Caller includes all existing rows regardless of status/archivedAt.
+    expect(
+      suggestNextJobNumberFromList(["3000", "3001", "3002"])
+    ).toBe("3003");
+  });
+
+  it("matrix: historical deleted-only max must not appear in the list", () => {
+    // Audit/history may remember 4000, but the Job table list must not include it.
+    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
+    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).not.toBe(
+      "4001"
+    );
+  });
+
+  it("matrix: create 3003 then next is 3004; delete 3003 returns to 3003", () => {
+    expect(
+      suggestNextJobNumberFromList(["3000", "3001", "3002", "3003"])
+    ).toBe("3004");
+    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
+  });
+
+  it("exposes Job-table-only where helper (no status/archive filter)", () => {
+    expect(workspaceJobNumbersForSuggestionWhere("ws-1")).toEqual({
+      workspaceId: "ws-1",
+      AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
+    });
   });
 });
 

@@ -1,4 +1,4 @@
-import type { TaskListItem } from './api'
+import type { TaskListFilters, TaskListItem } from './api'
 
 export type TasksListCacheEntry = {
   tasks: TaskListItem[]
@@ -12,22 +12,39 @@ const TTL_MS = 45_000
 const MAX_ENTRIES = 12
 const cache = new Map<string, TasksListCacheEntry>()
 
+export function tasksListFilterFingerprint(filters: TaskListFilters = {}): string {
+  return [
+    filters.statusFilter ?? 'OPEN',
+    filters.due ?? 'ALL',
+    filters.priority ?? 'ALL',
+    filters.source ?? 'ALL',
+    filters.emailClassification ?? 'ALL',
+    filters.businessTypeKey ?? '',
+    filters.sender ?? '',
+    filters.direction ?? 'ALL',
+    filters.jobId ?? '',
+    filters.sort ?? 'DUE_DATE',
+    filters.dateRange ?? '',
+    filters.timezone ?? '',
+  ].join('|')
+}
+
 export function tasksListCacheKey(
   workspaceId: string,
   connectionId: string,
   page = 1,
-  dateRange: '' | 'TODAY' | 'WEEK' | 'MONTH' = ''
+  filters: TaskListFilters = {}
 ): string {
-  return `${workspaceId}:${connectionId}:${dateRange || 'ALL'}:${page}`
+  return `${workspaceId}:${connectionId}:${tasksListFilterFingerprint(filters)}:${page}`
 }
 
 export function getCachedTasksList(
   workspaceId: string,
   connectionId: string,
   page = 1,
-  dateRange: '' | 'TODAY' | 'WEEK' | 'MONTH' = ''
+  filters: TaskListFilters = {}
 ): TasksListCacheEntry | null {
-  const key = tasksListCacheKey(workspaceId, connectionId, page, dateRange)
+  const key = tasksListCacheKey(workspaceId, connectionId, page, filters)
   const entry = cache.get(key)
   if (!entry) return null
   if (Date.now() - entry.cachedAt > TTL_MS) {
@@ -42,7 +59,7 @@ export function setCachedTasksList(
   connectionId: string,
   page: number,
   entry: Omit<TasksListCacheEntry, 'cachedAt'>,
-  dateRange: '' | 'TODAY' | 'WEEK' | 'MONTH' = ''
+  filters: TaskListFilters = {}
 ): void {
   const now = Date.now()
   for (const [k, e] of cache) {
@@ -53,7 +70,7 @@ export function setCachedTasksList(
     if (oldest == null) break
     cache.delete(oldest)
   }
-  cache.set(tasksListCacheKey(workspaceId, connectionId, page, dateRange), {
+  cache.set(tasksListCacheKey(workspaceId, connectionId, page, filters), {
     ...entry,
     cachedAt: now,
   })

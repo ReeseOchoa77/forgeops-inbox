@@ -49,6 +49,7 @@ const inboxAnalysisResultSchema = z.object({
 });
 
 const isDevelopmentRouteEnabled = (app: FastifyInstance): boolean =>
+  app.services.env.APP_ENV !== "production" &&
   app.services.env.NODE_ENV !== "production" &&
   app.services.env.DEV_ENABLE_BOOTSTRAP_ROUTES;
 

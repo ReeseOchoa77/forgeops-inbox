@@ -14,6 +14,7 @@ export const registerDevRoutes = async (
 ): Promise<void> => {
   app.post("/api/v1/dev/bootstrap/workspace", async (request, reply) => {
     const enabled =
+      app.services.env.APP_ENV !== "production" &&
       app.services.env.NODE_ENV !== "production" &&
       app.services.env.DEV_ENABLE_BOOTSTRAP_ROUTES;
 

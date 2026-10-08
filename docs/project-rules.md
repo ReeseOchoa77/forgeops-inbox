@@ -2,6 +2,12 @@
 
 These rules are non-negotiable for the ForgeOps Inbox backend. If a proposed change conflicts with one of these rules, the change should be redesigned rather than merged around the rule.
 
+## Deployment safety
+
+- **Implementation complete ≠ production deployed.** See `docs/DEPLOYMENT.md`.
+- Do not push, merge to `main`, deploy, or run production migrations unless the user explicitly requests production deployment.
+- Local development uses `APP_ENV=development` and localhost infra; production uses `APP_ENV=production` and separate DB/Redis/S3.
+
 ## Core Invariants
 
 ### 1. Preserve strict multi-tenant workspace isolation

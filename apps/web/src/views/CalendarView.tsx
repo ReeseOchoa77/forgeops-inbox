@@ -35,6 +35,7 @@ function dayKey(iso: string): string {
 function typeColor(type: string): string {
   switch (type) {
     case 'TASK': return '#4338ca'
+    case 'BID_DUE': return '#b91c1c'
     case 'MEETING': return '#0f766e'
     case 'DEADLINE': return '#b91c1c'
     case 'NOTE': return '#a16207'
@@ -66,6 +67,7 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
       const merged: CalendarFeedItem[] = [
         ...r.events.map((e) => ({ ...e, kind: 'event' as const })),
         ...r.taskDueItems.map((t) => ({ ...t, kind: 'task' as const })),
+        ...(r.bidDueItems ?? []).map((b) => ({ ...b, kind: 'bid_due' as const })),
       ]
       merged.sort((a, b) => a.startAt.localeCompare(b.startAt))
       setItems(merged)
@@ -117,7 +119,7 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
   }
 
   const openEdit = (item: CalendarFeedItem) => {
-    if (item.kind === 'task') return
+    if (item.kind !== 'event') return
     if (isViewer) return
     setCreating(false)
     setEditing(item)

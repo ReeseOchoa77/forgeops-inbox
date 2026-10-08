@@ -2,16 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   filterOutBidSubmissionTasks,
   isBidSubmissionOpportunityTask,
+  isRawBiddingOpportunityContext,
   subjectLooksLikeBidInvitation,
 } from "../bidding/filter-bid-submission-tasks.js";
 
-describe("filter bid-submission opportunity Tasks", () => {
-  it("suppresses bid-deadline-only Tasks for BID_OPPORTUNITY", () => {
+describe("filter bid-submission opportunity Tasks (V1: suppress all auto Tasks)", () => {
+  it("suppresses all auto Tasks for BID_OPPORTUNITY", () => {
     const tasks = [
       {
         title: "Submit bid for Garden City Elementary",
         description: "Bids due October 15.",
       },
+      {
+        title: "Confirm intent to bid",
+        description: "Please confirm by October 5",
+      },
+      { title: "RSVP for mandatory pre-bid walkthrough", description: "By Oct 7" },
     ];
     expect(
       filterOutBidSubmissionTasks(tasks, {
@@ -19,89 +25,33 @@ describe("filter bid-submission opportunity Tasks", () => {
         subject: "Invitation to Bid — Garden City Elementary",
       })
     ).toEqual([]);
-  });
-
-  it("suppresses reminder / pricing-due / proposal-due shapes", () => {
     expect(
-      isBidSubmissionOpportunityTask(
-        { title: "Submit your proposal", description: "Due October 15" },
-        { businessTypeKey: "BID_OPPORTUNITY" }
-      )
-    ).toBe(true);
-    expect(
-      isBidSubmissionOpportunityTask(
-        { title: "Pricing due Friday at 2 PM", description: "" },
-        { businessTypeKey: "BID_OPPORTUNITY" }
-      )
-    ).toBe(true);
-    expect(
-      isBidSubmissionOpportunityTask(
-        { title: "Reminder: submit your proposal", description: "" },
-        {
-          businessTypeKey: "BID_OPPORTUNITY",
-          subject: "Reminder: submit your proposal by October 15",
-        }
-      )
+      isRawBiddingOpportunityContext({ businessTypeKey: "BID_OPPORTUNITY" })
     ).toBe(true);
   });
 
-  it("suppresses BID_UPDATE deadline-only Tasks", () => {
+  it("suppresses all auto Tasks for BID_UPDATE", () => {
     expect(
       filterOutBidSubmissionTasks(
-        [{ title: "Update bid deadline", description: "Extended to October 22" }],
+        [
+          { title: "Update bid deadline", description: "Extended to October 22" },
+          { title: "Submit bid", description: "Bid deadline extended" },
+        ],
         { businessTypeKey: "BID_UPDATE" }
       )
     ).toEqual([]);
+  });
+
+  it("legacy isBidSubmissionOpportunityTask is true for any task in bidding context", () => {
     expect(
       isBidSubmissionOpportunityTask(
-        { title: "Submit bid", description: "Bid deadline extended to October 22" },
-        { businessTypeKey: "BID_UPDATE" }
+        { title: "Anything", description: "" },
+        { businessTypeKey: "BID_OPPORTUNITY" }
       )
     ).toBe(true);
   });
 
-  it("keeps confirm-intent Task and drops submit-bid in mixed emails", () => {
-    const kept = filterOutBidSubmissionTasks(
-      [
-        {
-          title: "Submit bid",
-          description: "Bid due October 15",
-        },
-        {
-          title: "Confirm intent to bid",
-          description: "Please confirm by October 5",
-        },
-      ],
-      { businessTypeKey: "BID_OPPORTUNITY" }
-    );
-    expect(kept).toHaveLength(1);
-    expect(kept[0]?.title).toBe("Confirm intent to bid");
-  });
-
-  it("keeps RSVP / questions / substitution Tasks", () => {
-    const kept = filterOutBidSubmissionTasks(
-      [
-        { title: "RSVP for mandatory pre-bid walkthrough", description: "By Oct 7" },
-        { title: "Submit bidder questions", description: "By Oct 8" },
-        { title: "Submit substitution request", description: "By Oct 10" },
-        { title: "Submit proposal by Oct 15", description: "Opportunity deadline" },
-      ],
-      { businessTypeKey: "BID_OPPORTUNITY" }
-    );
-    expect(kept.map((t) => t.title)).toEqual([
-      "RSVP for mandatory pre-bid walkthrough",
-      "Submit bidder questions",
-      "Submit substitution request",
-    ]);
-  });
-
-  it("does not keyword-suppress ESTIMATE_QUOTE Provide pricing", () => {
-    expect(
-      isBidSubmissionOpportunityTask(
-        { title: "Provide pricing", description: "Reply with quote" },
-        { businessTypeKey: "ESTIMATE_QUOTE" }
-      )
-    ).toBe(false);
+  it("does not suppress ESTIMATE_QUOTE Provide pricing", () => {
     expect(
       filterOutBidSubmissionTasks(
         [{ title: "Provide pricing", description: "Reply with quote" }],
@@ -123,12 +73,6 @@ describe("filter bid-submission opportunity Tasks", () => {
         { businessTypeKey: "PURCHASE_ORDER_CONTRACT" }
       )
     ).toHaveLength(1);
-    expect(
-      filterOutBidSubmissionTasks(
-        [{ title: "Confirm material quantities", description: "By Friday" }],
-        { businessTypeKey: "MATERIAL_PURCHASING" }
-      )
-    ).toHaveLength(1);
   });
 
   it("uses invitation subject as context when subtype missing (heuristic/n8n)", () => {
@@ -144,6 +88,7 @@ describe("filter bid-submission opportunity Tasks", () => {
             title: "Invitation to Bid — Garden City Elementary",
             description: "Bids due October 15.",
           },
+          { title: "Confirm intent to bid", description: "By Oct 5" },
         ],
         {
           businessTypeKey: null,
@@ -159,6 +104,12 @@ describe("filter bid-submission opportunity Tasks", () => {
         { title: "Submit bid package drawings", description: "Internal fab package" },
         { businessTypeKey: "SHOP_DRAWINGS", subject: "Shop drawings" }
       )
+    ).toBe(false);
+    expect(
+      isRawBiddingOpportunityContext({
+        businessTypeKey: "SHOP_DRAWINGS",
+        subject: "Shop drawings",
+      })
     ).toBe(false);
   });
 });

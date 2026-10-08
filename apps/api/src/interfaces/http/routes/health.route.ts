@@ -67,6 +67,7 @@ export const registerHealthRoute = async (
       runtime: {
         databaseTarget,
         deploy: {
+          appEnv: env.APP_ENV,
           railwayGitCommitSha:
             process.env.RAILWAY_GIT_COMMIT_SHA ??
             process.env.RAILWAY_GIT_COMMIT ??

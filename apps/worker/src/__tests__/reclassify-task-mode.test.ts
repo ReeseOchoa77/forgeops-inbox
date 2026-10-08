@@ -267,7 +267,7 @@ describe("persistNativeClassificationResult taskMode", () => {
     expect(deleteMany).toHaveBeenCalled();
   });
 
-  it("REGENERATE + mixed bid email keeps only the distinct action Task", async () => {
+  it("REGENERATE + BID_OPPORTUNITY suppresses all auto Tasks (V1)", async () => {
     const deleteMany = vi.fn().mockResolvedValue({ count: 0 });
     const upsert = vi.fn().mockResolvedValue({});
     const findMany = vi.fn().mockResolvedValue([]);
@@ -314,9 +314,8 @@ describe("persistNativeClassificationResult taskMode", () => {
       taskMode: "REGENERATE",
     });
 
-    expect(result.tasksWritten).toBe(1);
-    expect(upsert).toHaveBeenCalledTimes(1);
-    expect(upsert.mock.calls[0]![0].create.title).toBe("Confirm intent to bid");
+    expect(result.tasksWritten).toBe(0);
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("production path without taskMode leaves BUSINESS empty-task set untouched", async () => {

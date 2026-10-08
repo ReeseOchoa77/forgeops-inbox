@@ -15,23 +15,10 @@ export function BusinessBadge({ category }: { category: string | null }) {
   return <span style={{ ...badgeBase, background: '#f0f0f0', color: '#888' }}>Non-Business</span>
 }
 
+import { BUSINESS_SUBTYPE_LABELS } from '@forgeops/shared/business-subtypes'
+
 export const businessTypeLabels: Record<string, string> = {
-  BID_OPPORTUNITY: 'Bid Opportunity',
-  BID_UPDATE: 'Bid Update / Addendum',
-  ESTIMATE_QUOTE: 'Estimate / Quote',
-  PURCHASE_ORDER_CONTRACT: 'Purchase Order / Contract',
-  PROJECT_COORDINATION: 'Project Coordination',
-  RFI_CLARIFICATION: 'RFI / Clarification',
-  SUBMITTAL_SHOP_DRAWING: 'Submittal / Shop Drawing',
-  CHANGE_ORDER_SCOPE: 'Change Order / Scope Change',
-  FABRICATION_PRODUCTION: 'Fabrication / Production',
-  MATERIAL_PURCHASING: 'Material / Vendor / Purchasing',
-  DELIVERY_LOGISTICS: 'Delivery / Logistics',
-  FIELD_INSTALLATION: 'Field Issue / Installation',
-  INVOICE_PAYMENT: 'Invoice / Payment',
-  COMPLIANCE_LEGAL: 'Compliance / Safety / Legal',
-  INTERNAL_ADMIN: 'Internal Administration',
-  OTHER_BUSINESS: 'Other Business'
+  ...BUSINESS_SUBTYPE_LABELS,
 }
 
 const businessTypeColors: Record<string, { bg: string; fg: string }> = {

@@ -16,6 +16,8 @@
     "typecheck": "tsc -b --pretty",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "tsx scripts/migrate-deploy.ts",
+    "prisma:reset:dev": "tsx scripts/reset-dev.ts",
     "prisma:studio": "prisma studio",
     "cleanup:audit": "tsx scripts/cleanup-audit-events.ts"
   },

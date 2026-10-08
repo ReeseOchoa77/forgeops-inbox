@@ -45,20 +45,34 @@ describe('tasks list cache', () => {
     expect(getCachedTasksList('ws', 'conn-b')).not.toBeNull()
   })
 
-  it('separates cache entries by dateRange', () => {
-    setCachedTasksList('ws', 'conn', 1, {
-      tasks: [{ task: { id: 'today' } } as never],
-      page: 1,
-      totalCount: 1,
-      totalPages: 1,
-    }, 'TODAY')
-    setCachedTasksList('ws', 'conn', 1, {
-      tasks: [{ task: { id: 'all' } } as never],
-      page: 1,
-      totalCount: 1,
-      totalPages: 1,
-    }, '')
-    expect(getCachedTasksList('ws', 'conn', 1, 'TODAY')?.tasks[0]?.task.id).toBe('today')
-    expect(getCachedTasksList('ws', 'conn', 1, '')?.tasks[0]?.task.id).toBe('all')
+  it('separates cache entries by filter fingerprint', () => {
+    setCachedTasksList(
+      'ws',
+      'conn',
+      1,
+      {
+        tasks: [{ task: { id: 'overdue' } } as never],
+        page: 1,
+        totalCount: 1,
+        totalPages: 1,
+      },
+      { due: 'OVERDUE' }
+    )
+    setCachedTasksList(
+      'ws',
+      'conn',
+      1,
+      {
+        tasks: [{ task: { id: 'all' } } as never],
+        page: 1,
+        totalCount: 1,
+        totalPages: 1,
+      },
+      {}
+    )
+    expect(
+      getCachedTasksList('ws', 'conn', 1, { due: 'OVERDUE' })?.tasks[0]?.task.id
+    ).toBe('overdue')
+    expect(getCachedTasksList('ws', 'conn', 1, {})?.tasks[0]?.task.id).toBe('all')
   })
 })
