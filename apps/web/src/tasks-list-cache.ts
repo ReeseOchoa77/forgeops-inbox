@@ -3,13 +3,16 @@ import type { TaskListFilters, TaskListItem } from './api'
 export type TasksListCacheEntry = {
   tasks: TaskListItem[]
   page: number
-  totalCount: number
-  totalPages: number
+  totalCount: number | null
+  totalPages: number | null
+  hasMore: boolean
   cachedAt: number
 }
 
-const TTL_MS = 45_000
-const MAX_ENTRIES = 12
+const TTL_MS = 60_000
+/** Soft-revalidate but skip network when entry is newer than this. */
+export const TASKS_LIST_FRESH_MS = 12_000
+const MAX_ENTRIES = 24
 const cache = new Map<string, TasksListCacheEntry>()
 
 export function tasksListFilterFingerprint(filters: TaskListFilters = {}): string {

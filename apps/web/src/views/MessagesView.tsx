@@ -5,6 +5,7 @@ import {
   getCachedInboxList,
   setCachedInboxList,
   INBOX_DEFAULT_LIST_FILTER_KEY,
+  INBOX_LIST_FRESH_MS,
 } from '../inbox-list-cache'
 import { inboxListQueryKey, isSameInboxListQuery } from '../inbox-list-query'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
@@ -293,6 +294,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [refreshing, setRefreshing] = useState(false)
   const usefulPaintLoggedRef = useRef(false)
   const requestSeqRef = useRef(0)
+  const listAbortRef = useRef<AbortController | null>(null)
   /** Active list query identity — rejects stale responses / decides soft vs replace. */
   const activeQueryKeyRef = useRef(
     initialCache ? inboxListQueryKey({ businessCategory: 'BUSINESS' }) : ''
@@ -462,12 +464,24 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setLoadingMore(true)
     }
     const seq = ++requestSeqRef.current
+    if (!append) {
+      listAbortRef.current?.abort()
+      listAbortRef.current = new AbortController()
+    }
+    const signal = append ? undefined : listAbortRef.current?.signal
     const markBase = `inbox-list-${workspaceId}-${connectionId}-${seq}`
     try {
       performance.mark(`${markBase}-messagesRequestStart`)
     } catch { /* ignore */ }
     try {
-      const r = await api.getMessages(workspaceId, connectionId, pageNum, PAGE_SIZE, filters)
+      const r = await api.getMessages(
+        workspaceId,
+        connectionId,
+        pageNum,
+        PAGE_SIZE,
+        filters,
+        signal ? { signal } : undefined
+      )
       try {
         performance.mark(`${markBase}-messagesResponseReceived`)
         performance.measure(
@@ -504,27 +518,37 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       setHasMore(r.pagination.hasMore)
       setPage(pageNum)
 
-      // Cache default Business first page for warm return navigation.
-      const isDefaultBusiness =
-        pageNum === 1 &&
-        !append &&
-        filters.businessCategory === 'BUSINESS' &&
-        !filters.sentOnly &&
-        !filters.unreadOnly &&
-        !filters.unclassifiedOnly &&
-        !filters.search &&
-        !filters.jobId &&
-        !filters.category &&
-        !filters.dateRange
-      if (isDefaultBusiness) {
-        setCachedInboxList(workspaceId, connectionId, INBOX_DEFAULT_LIST_FILTER_KEY, {
+      // Cache first page for any filter so tab switches can soft-hydrate.
+      if (pageNum === 1 && !append) {
+        setCachedInboxList(workspaceId, connectionId, requestKey, {
           messages: r.messages,
           hasMore: r.pagination.hasMore,
           totalCount: r.pagination.totalCount,
           page: pageNum,
         })
+        // Also keep the legacy default Business key warm for App.tsx prefetch.
+        const isDefaultBusiness =
+          filters.businessCategory === 'BUSINESS' &&
+          !filters.sentOnly &&
+          !filters.unreadOnly &&
+          !filters.unclassifiedOnly &&
+          !filters.search &&
+          !filters.jobId &&
+          !filters.category &&
+          !filters.dateRange &&
+          !filters.businessTypeGroup &&
+          !(filters.excludeBusinessTypeGroups?.length)
+        if (isDefaultBusiness) {
+          setCachedInboxList(workspaceId, connectionId, INBOX_DEFAULT_LIST_FILTER_KEY, {
+            messages: r.messages,
+            hasMore: r.pagination.hasMore,
+            totalCount: r.pagination.totalCount,
+            page: pageNum,
+          })
+        }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
       // Leave list empty/loading for the active query — never keep another tab's rows.
     } finally {
       if (seq === requestSeqRef.current && requestKey === activeQueryKeyRef.current) {
@@ -627,20 +651,40 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       return
     }
     const filters = buildFilters()
+    const nextKey = inboxListQueryKey(filters)
     const sameQuery = isSameInboxListQuery(activeQueryKeyRef.current, filters)
-    activeQueryKeyRef.current = inboxListQueryKey(filters)
+    activeQueryKeyRef.current = nextKey
     setPage(1)
     setHasMore(true)
     setTotalCount(null)
+
     if (sameQuery) {
       // Same identity (e.g. softRefreshList): keep rows while revalidating.
       void loadPage(1, filters, false, { soft: true })
-    } else {
-      // New tab/filter context: never render the previous query's emails.
-      setMessages([])
-      setRefreshing(false)
-      void loadPage(1, filters, false, { soft: false })
+      return
     }
+
+    // New tab/filter: paint cached rows immediately when available.
+    const cached = getCachedInboxList(workspaceId, connectionId, nextKey)
+    if (cached && cached.messages.length > 0) {
+      setMessages(cached.messages)
+      setPage(cached.page)
+      setHasMore(cached.hasMore)
+      setTotalCount(cached.totalCount)
+      setLoading(false)
+      const age = Date.now() - cached.cachedAt
+      if (age < INBOX_LIST_FRESH_MS) {
+        setRefreshing(false)
+        return
+      }
+      void loadPage(1, filters, false, { soft: true })
+      return
+    }
+
+    // Cold miss — clear previous query's rows and hard-load.
+    setMessages([])
+    setRefreshing(false)
+    void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
   }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups])
 

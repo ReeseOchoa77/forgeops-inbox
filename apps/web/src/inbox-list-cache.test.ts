@@ -85,4 +85,21 @@ describe('inbox initial load contracts', () => {
     const messages: unknown[] = []
     expect(loading && messages.length === 0).toBe(true)
   })
+
+  it('stores per-filter keys so tab switches can soft-hydrate', () => {
+    setCachedInboxList('ws', 'conn', 'BUSINESS|||||', {
+      messages: [{ id: 'biz' } as never],
+      hasMore: false,
+      totalCount: 1,
+      page: 1,
+    })
+    setCachedInboxList('ws', 'conn', '|||sent||||||', {
+      messages: [{ id: 'sent' } as never],
+      hasMore: false,
+      totalCount: 1,
+      page: 1,
+    })
+    expect(getCachedInboxList('ws', 'conn', 'BUSINESS|||||')?.messages[0]?.id).toBe('biz')
+    expect(getCachedInboxList('ws', 'conn', '|||sent||||||')?.messages[0]?.id).toBe('sent')
+  })
 })

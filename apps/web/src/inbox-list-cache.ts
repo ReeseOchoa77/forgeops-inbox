@@ -11,8 +11,10 @@ export type InboxListCacheEntry = {
 /** Default first-page Inbox (Business tab) — matches MessagesView initial filters. */
 export const INBOX_DEFAULT_LIST_FILTER_KEY = 'BUSINESS'
 
-const TTL_MS = 45_000
-const MAX_ENTRIES = 12
+const TTL_MS = 60_000
+/** Soft-revalidate but skip network when entry is newer than this. */
+export const INBOX_LIST_FRESH_MS = 12_000
+const MAX_ENTRIES = 24
 
 const cache = new Map<string, InboxListCacheEntry>()
 const inflight = new Map<string, Promise<InboxListCacheEntry>>()

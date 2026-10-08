@@ -1574,49 +1574,55 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     });
 
     const skip = (query.page - 1) * query.pageSize;
-    const [totalCount, tasks] = await Promise.all([
-      app.services.prisma.task.count({ where }),
-      app.services.prisma.task.findMany({
-        where,
-        orderBy: taskListOrderBy(query.sort as TaskSort),
-        skip,
-        take: query.pageSize,
-        select: {
-          id: true,
-          title: true,
-          summary: true,
-          description: true,
-          dueAt: true,
-          priority: true,
-          status: true,
-          assigneeUserId: true,
-          completedAt: true,
-          createdAt: true,
-          sourceMessageId: true,
-          sourceMessage: {
-            select: {
-              id: true,
-              subject: true,
-              senderName: true,
-              senderEmail: true,
-              sentAt: true,
-              receivedAt: true,
-              mailboxCategory: true,
-              priority: true,
-              jobId: true,
-              job: { select: { id: true, jobNumber: true, name: true } },
-              inboxConnectionId: true,
-              classifications: {
-                orderBy: { createdAt: "desc" },
-                take: 1,
-                select: { businessTypeKey: true },
-              },
+    const taskRows = await app.services.prisma.task.findMany({
+      where,
+      orderBy: taskListOrderBy(query.sort as TaskSort),
+      skip,
+      take: query.pageSize + 1,
+      select: {
+        id: true,
+        title: true,
+        summary: true,
+        description: true,
+        dueAt: true,
+        priority: true,
+        status: true,
+        assigneeUserId: true,
+        completedAt: true,
+        createdAt: true,
+        sourceMessageId: true,
+        sourceMessage: {
+          select: {
+            id: true,
+            subject: true,
+            senderName: true,
+            senderEmail: true,
+            sentAt: true,
+            receivedAt: true,
+            mailboxCategory: true,
+            priority: true,
+            jobId: true,
+            job: { select: { id: true, jobNumber: true, name: true } },
+            inboxConnectionId: true,
+            classifications: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: { businessTypeKey: true },
             },
           },
-          classification: { select: { businessTypeKey: true } },
         },
-      }),
-    ]);
+        classification: { select: { businessTypeKey: true } },
+      },
+    });
+    const hasMore = taskRows.length > query.pageSize;
+    const tasks = hasMore ? taskRows.slice(0, query.pageSize) : taskRows;
+    const exactCount = skip + tasks.length;
+    const totalCount = hasMore ? null : exactCount;
+    const totalPages = hasMore
+      ? null
+      : exactCount === 0
+        ? 0
+        : Math.ceil(exactCount / query.pageSize);
 
     const toApiPriority = (p: string | null | undefined) =>
       p === "MEDIUM" ? "NORMAL" : p ?? null;
@@ -1662,7 +1668,8 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         page: query.page,
         pageSize: query.pageSize,
         totalCount,
-        totalPages: totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize),
+        totalPages,
+        hasMore,
       },
       filters: {
         statusFilter: query.statusFilter,

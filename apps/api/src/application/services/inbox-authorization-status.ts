@@ -141,14 +141,20 @@ export function canStartInboxAuthorization(role: string): boolean {
 /**
  * Strict mailbox match for targeted OAuth (authorize-existing / reconnect).
  * Returns null when emails match after normalizeEmail; otherwise a user-facing error.
+ * When `allowDelegatedAccess` is true, mismatch is allowed — caller must verify
+ * Graph access to `expectedEmail` separately.
  */
 export function assertTargetedMailboxEmailMatch(input: {
   expectedEmail: string;
   microsoftEmail: string;
+  allowDelegatedAccess?: boolean;
 }): string | null {
   const expected = normalizeEmail(input.expectedEmail);
   const actual = normalizeEmail(input.microsoftEmail);
   if (expected === actual) {
+    return null;
+  }
+  if (input.allowDelegatedAccess) {
     return null;
   }
   return wrongMailboxAuthorizationError(expected);

@@ -5,6 +5,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import { assertDelegatedTargetMatchesConnection } from "../../../application/services/delegated-mailbox-onboarding.js";
+import { verifyOutlookMailboxAccess } from "../../../application/services/outlook-mailbox-access.js";
 import {
   assertTargetedMailboxEmailMatch,
   buildAuthorizationFields,
@@ -132,6 +134,8 @@ const prepareInboxAuthorization = async (input: {
   authorizeExisting?: boolean;
   connectionId?: string;
   providerKind: InboxProviderKind;
+  delegatedMailboxAccess?: boolean;
+  targetMailboxEmail?: string;
 }): Promise<PreparedInboxAuthorization> => {
   const provider = resolveOAuthProvider(input.app, input.providerKind);
 
@@ -143,6 +147,10 @@ const prepareInboxAuthorization = async (input: {
     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     reconnect: input.reconnect,
     authorizeExisting: input.authorizeExisting ?? false,
+    delegatedMailboxAccess: input.delegatedMailboxAccess ?? false,
+    ...(input.targetMailboxEmail
+      ? { targetMailboxEmail: normalizeEmail(input.targetMailboxEmail) }
+      : {}),
     createdAt: new Date().toISOString()
   });
   const authorizationUrl = provider.getAuthorizationUrl({
@@ -179,14 +187,27 @@ async function linkWorkspaceMailboxToConnection(input: {
   inboxConnectionId: string;
 }): Promise<void> {
   const normalized = normalizeEmail(input.mailboxEmail);
-  await input.app.services.prisma.workspaceMailbox.updateMany({
+  await input.app.services.prisma.workspaceMailbox.upsert({
     where: {
-      workspaceId: input.workspaceId,
-      provider: input.provider,
-      normalizedEmail: normalized,
+      workspaceId_normalizedEmail: {
+        workspaceId: input.workspaceId,
+        normalizedEmail: normalized,
+      },
     },
-    data: {
+    create: {
+      workspaceId: input.workspaceId,
+      emailAddress: normalized,
+      normalizedEmail: normalized,
+      provider: input.provider,
+      displayName: normalized,
+      status: "ACTIVE",
+      ingestionMode: "N8N",
       inboxConnectionId: input.inboxConnectionId,
+    },
+    update: {
+      provider: input.provider,
+      inboxConnectionId: input.inboxConnectionId,
+      status: "ACTIVE",
     },
   });
 }
@@ -587,7 +608,18 @@ export const registerInboxConnectionRoutes = async (
       );
 
       if (!membership) {
-        throw new Error("Workspace access no longer exists for this user");
+        // Platform Admin delegated onboarding may target any workspace without
+        // requiring workspace membership; ordinary flows still require it.
+        const actor = await app.services.prisma.user.findUnique({
+          where: { id: storedState.userId },
+          select: { platformRole: true },
+        });
+        const platformAdminDelegated =
+          Boolean(storedState.delegatedMailboxAccess) &&
+          actor?.platformRole === "PLATFORM_ADMIN";
+        if (!platformAdminDelegated) {
+          throw new Error("Workspace access no longer exists for this user");
+        }
       }
 
       const tokens = await provider.exchangeCode(query.code);
@@ -633,6 +665,9 @@ export const registerInboxConnectionRoutes = async (
               grantedScopes: tokens.grantedScopes,
               hasRefreshToken,
               hasIdToken,
+              requireSharedMailboxScopes: Boolean(
+                storedState.delegatedMailboxAccess
+              ),
             })
           : [...requiredScopes].filter(
               (scope) => !normalizedGrantedScopes.includes(scope)
@@ -727,6 +762,19 @@ export const registerInboxConnectionRoutes = async (
         );
       }
 
+      const delegatedMailboxAccess = Boolean(
+        storedState.delegatedMailboxAccess
+      );
+      if (delegatedMailboxAccess && existingConnection) {
+        const targetSwap = assertDelegatedTargetMatchesConnection({
+          stateTargetMailboxEmail: storedState.targetMailboxEmail,
+          connectionEmail: existingConnection.email,
+        });
+        if (targetSwap) {
+          throw new Error(targetSwap);
+        }
+      }
+
       if (isTargetedFlow && existingConnection) {
         const normalizedExpectedEmail = normalizeEmail(existingConnection.email);
         const normalizedMicrosoftEmail = microsoftEmail;
@@ -746,6 +794,7 @@ export const registerInboxConnectionRoutes = async (
           normalizedMicrosoftEmail,
           authorizeExisting,
           reconnect: Boolean(storedState.reconnect),
+          delegatedMailboxAccess,
           connectionId: existingConnection.id,
           workspaceId: storedState.workspaceId,
           matched,
@@ -761,9 +810,23 @@ export const registerInboxConnectionRoutes = async (
         const mismatch = assertTargetedMailboxEmailMatch({
           expectedEmail: existingConnection.email,
           microsoftEmail,
+          allowDelegatedAccess: delegatedMailboxAccess,
         });
         if (mismatch) {
           throw new Error(mismatch);
+        }
+
+        if (delegatedMailboxAccess && providerKind === "outlook" && !matched) {
+          if (!tokens.accessToken) {
+            throw new Error("Microsoft did not return an access token");
+          }
+          const accessCheck = await verifyOutlookMailboxAccess({
+            accessToken: tokens.accessToken,
+            targetMailboxEmail: existingConnection.email,
+          });
+          if (!accessCheck.ok) {
+            throw new Error(accessCheck.message);
+          }
         }
       }
 
@@ -787,14 +850,23 @@ export const registerInboxConnectionRoutes = async (
 
       const now = new Date();
       const connectionCreated = !existingConnection;
+      const preserveTargetEmail =
+        Boolean(existingConnection) &&
+        (delegatedMailboxAccess ||
+          (isTargetedFlow &&
+            normalizeEmail(existingConnection!.email) === microsoftEmail));
+      const connectionEmail = preserveTargetEmail
+        ? existingConnection!.email
+        : microsoftEmail;
       const connection = existingConnection
         ? await app.services.prisma.inboxConnection.update({
             where: {
               id: existingConnection.id
             },
             data: {
-              email: microsoftEmail,
-              displayName: profile.name,
+              // Never swap the registered mailbox on delegated/targeted authorize.
+              email: connectionEmail,
+              displayName: profile.name ?? existingConnection.displayName,
               providerAccountId: profile.subject,
               grantedScopes: normalizedGrantedScopes,
               encryptedAccessToken,
@@ -804,7 +876,11 @@ export const registerInboxConnectionRoutes = async (
               disconnectedAt: null,
               status: "ACTIVE",
               lastSyncError: null,
-              lastSyncErrorAt: null
+              lastSyncErrorAt: null,
+              delegatedMailboxAccess:
+                delegatedMailboxAccess ||
+                normalizeEmail(connectionEmail) !== microsoftEmail,
+              oauthAccountEmail: microsoftEmail,
             }
           })
         : await app.services.prisma.inboxConnection.create({
@@ -823,7 +899,9 @@ export const registerInboxConnectionRoutes = async (
               ingestionSource: "N8N",
               nativeListeningEnabled: false,
               status: "ACTIVE",
-              connectedAt: now
+              connectedAt: now,
+              delegatedMailboxAccess: false,
+              oauthAccountEmail: microsoftEmail,
             }
           });
 

@@ -283,7 +283,10 @@ export class InboxSyncProcessor {
         accessToken: safeDecrypt(this.tokenCipher, connection.encryptedAccessToken),
         accessTokenExpiresAt: connection.accessTokenExpiresAt,
         syncCursor: connection.syncCursor,
-        maxThreads: 100
+        maxThreads: 100,
+        ...(connection.delegatedMailboxAccess
+          ? { graphMailboxEmail: connection.email }
+          : {}),
       });
 
       const syncResult = await importProviderMailbox({

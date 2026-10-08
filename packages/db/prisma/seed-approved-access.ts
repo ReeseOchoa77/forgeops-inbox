@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -10,13 +12,20 @@ const SEED_ENTRIES = [
 ];
 
 async function main() {
-  const workspaces = await prisma.workspace.findMany({
+  let workspaces = await prisma.workspace.findMany({
     select: { id: true, name: true }
   });
 
   if (workspaces.length === 0) {
-    console.error("No workspaces found. Sign in once first to create a dev workspace, then run this seed.");
-    process.exit(1);
+    const created = await prisma.workspace.create({
+      data: {
+        name: "Development",
+        slug: `development-${randomUUID().slice(0, 8)}`
+      },
+      select: { id: true, name: true }
+    });
+    console.log(`Created default workspace: ${created.name} (${created.id})`);
+    workspaces = [created];
   }
 
   for (const workspace of workspaces) {

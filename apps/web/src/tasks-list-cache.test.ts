@@ -21,6 +21,7 @@ describe('tasks list cache', () => {
       page: 1,
       totalCount: 1,
       totalPages: 1,
+      hasMore: false,
     })
     const hit = getCachedTasksList('ws', 'conn', 1)
     expect(hit?.tasks).toHaveLength(1)
@@ -33,12 +34,14 @@ describe('tasks list cache', () => {
       page: 1,
       totalCount: 0,
       totalPages: 0,
+      hasMore: false,
     })
     setCachedTasksList('ws', 'conn-b', 1, {
       tasks: [],
       page: 1,
       totalCount: 0,
       totalPages: 0,
+      hasMore: false,
     })
     invalidateTasksListCache('ws', 'conn-a')
     expect(getCachedTasksList('ws', 'conn-a')).toBeNull()
@@ -55,6 +58,7 @@ describe('tasks list cache', () => {
         page: 1,
         totalCount: 1,
         totalPages: 1,
+        hasMore: false,
       },
       { due: 'OVERDUE' }
     )
@@ -67,6 +71,7 @@ describe('tasks list cache', () => {
         page: 1,
         totalCount: 1,
         totalPages: 1,
+        hasMore: false,
       },
       {}
     )

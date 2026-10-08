@@ -27,6 +27,8 @@ describe("Outlook OAuth scopes", () => {
     expect(scope).toContain("https://graph.microsoft.com/Mail.Read");
     expect(scope).toContain("https://graph.microsoft.com/Mail.Send");
     expect(scope).toContain("https://graph.microsoft.com/User.Read");
+    expect(scope).toContain("https://graph.microsoft.com/Mail.Read.Shared");
+    expect(scope).toContain("https://graph.microsoft.com/MailboxSettings.Read");
     expect(scope).toContain("email");
     expect(scope).toContain("profile");
 
@@ -86,6 +88,7 @@ describe("Outlook OAuth scopes", () => {
 
   it("callback validation passes when scope omits offline_access/openid but tokens are present", () => {
     // Realistic Microsoft tokenResponse.scope shape (short Graph names, no offline_access).
+    // Own-mailbox flow does not require Shared scopes in the token response.
     const missing = findMissingOutlookRequiredScopes({
       grantedScopes: ["Mail.Read", "Mail.Send", "User.Read", "email", "profile"],
       hasRefreshToken: true,
@@ -93,6 +96,17 @@ describe("Outlook OAuth scopes", () => {
     });
 
     expect(missing).toEqual([]);
+  });
+
+  it("delegated callback requires Shared + MailboxSettings scopes", () => {
+    const missing = findMissingOutlookRequiredScopes({
+      grantedScopes: ["Mail.Read", "Mail.Send", "User.Read", "email", "profile"],
+      hasRefreshToken: true,
+      hasIdToken: true,
+      requireSharedMailboxScopes: true,
+    });
+    expect(missing).toContain("https://graph.microsoft.com/Mail.Read.Shared");
+    expect(missing).toContain("https://graph.microsoft.com/MailboxSettings.Read");
   });
 
   it("callback validation fails when Mail.Send is missing", () => {

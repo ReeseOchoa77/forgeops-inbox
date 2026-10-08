@@ -6,6 +6,7 @@ import {
   getCachedTasksList,
   invalidateTasksListCache,
   setCachedTasksList,
+  TASKS_LIST_FRESH_MS,
 } from '../tasks-list-cache'
 
 interface Props {
@@ -27,8 +28,9 @@ export function TasksView({
   const isViewer = userRole === 'VIEWER'
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(0)
-  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState<number | null>(0)
+  const [totalCount, setTotalCount] = useState<number | null>(0)
+  const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -120,6 +122,7 @@ export function TasksView({
       setPage(1)
       setTotalPages(0)
       setTotalCount(0)
+      setHasMore(false)
       hasMoreRef.current = false
     } else if (mode === 'soft') {
       setError(null)
@@ -133,23 +136,30 @@ export function TasksView({
       .getTasks(workspaceId, connectionId, pageNum, 25, filters)
       .then((r) => {
         if (reqId !== requestIdRef.current) return
+        const more =
+          r.pagination.hasMore ??
+          (r.pagination.totalPages != null && pageNum < r.pagination.totalPages)
         setTasks((prev) => (mode === 'append' ? [...prev, ...r.tasks] : r.tasks))
         setTotalPages(r.pagination.totalPages)
         setTotalCount(r.pagination.totalCount)
-        hasMoreRef.current = pageNum < r.pagination.totalPages
+        setHasMore(more)
+        hasMoreRef.current = more
         setPage(pageNum)
-        setCachedTasksList(
-          workspaceId,
-          connectionId,
-          pageNum,
-          {
-            tasks: r.tasks,
-            page: pageNum,
-            totalCount: r.pagination.totalCount,
-            totalPages: r.pagination.totalPages,
-          },
-          filters
-        )
+        if (pageNum === 1 && mode !== 'append') {
+          setCachedTasksList(
+            workspaceId,
+            connectionId,
+            1,
+            {
+              tasks: r.tasks,
+              page: 1,
+              totalCount: r.pagination.totalCount,
+              totalPages: r.pagination.totalPages,
+              hasMore: more,
+            },
+            filters
+          )
+        }
         setError(null)
       })
       .catch((e) => {
@@ -158,6 +168,7 @@ export function TasksView({
           setTasks([])
           setTotalCount(0)
           setTotalPages(0)
+          setHasMore(false)
         }
         setError(e instanceof Error ? e.message : 'Failed to load tasks')
       })
@@ -170,15 +181,21 @@ export function TasksView({
       })
   }
 
-  // Soft-cache paint for page 1, then network. Filter changes clear previous results.
+  // Soft-cache paint for page 1; skip network when cache is fresh.
   useEffect(() => {
     const cached = getCachedTasksList(workspaceId, connectionId, 1, filters)
     if (cached) {
       setTasks(cached.tasks)
       setTotalPages(cached.totalPages)
       setTotalCount(cached.totalCount)
-      hasMoreRef.current = 1 < cached.totalPages
+      setHasMore(cached.hasMore)
+      hasMoreRef.current = cached.hasMore
       setLoading(false)
+      setError(null)
+      if (Date.now() - cached.cachedAt < TASKS_LIST_FRESH_MS) {
+        setRefreshing(false)
+        return
+      }
       fetchPage(1, 'soft')
     } else {
       fetchPage(1, 'replace')
@@ -287,7 +304,7 @@ export function TasksView({
     try {
       await api.reviewTask(workspaceId, taskId, 'REJECTED')
       setTasks((prev) => prev.filter((t) => t.task.id !== taskId))
-      setTotalCount((prev) => prev - 1)
+      setTotalCount((prev) => (prev == null ? prev : Math.max(0, prev - 1)))
     } catch {
       /* */
     }
@@ -344,7 +361,11 @@ export function TasksView({
           <div>
             <h2 style={{ fontSize: 18, margin: '0 0 2px' }}>Tasks</h2>
             <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
-              {loading ? 'Loading…' : `${totalCount} task${totalCount === 1 ? '' : 's'}`}
+              {loading
+                ? 'Loading…'
+                : totalCount != null
+                  ? `${totalCount} task${totalCount === 1 ? '' : 's'}`
+                  : `${tasks.length}${hasMore ? '+' : ''} task${tasks.length === 1 && !hasMore ? '' : 's'}`}
               {refreshing ? ' · Updating…' : ''}
             </p>
           </div>
@@ -669,7 +690,7 @@ export function TasksView({
           </div>
         )}
       </div>
-      {!loading && !error && totalPages > 1 && (
+      {!loading && !error && totalPages != null && totalPages > 1 && (
         <div style={{ fontSize: 11, color: '#aaa', padding: '6px 0', textAlign: 'center' }}>
           Page {page} of {totalPages}
         </div>

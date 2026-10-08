@@ -558,8 +558,10 @@ const tasksListResponseSchema = z.object({
   pagination: z.object({
     page: z.number().int().positive(),
     pageSize: z.number().int().positive(),
-    totalCount: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative(),
+    /** Exact count when last page; null when more pages exist (COUNT skipped). */
+    totalCount: z.number().int().nonnegative().nullable(),
+    totalPages: z.number().int().nonnegative().nullable(),
+    hasMore: z.boolean(),
   }),
   tasks: z.array(taskListItemSchema),
 });
@@ -2881,61 +2883,68 @@ export const registerInboxReadRoutes = async (
         ...taskListOrderBy((query.sort as TaskSort | undefined) ?? "DUE_DATE"),
       ];
 
-      const [totalCount, tasks] = await Promise.all([
-        app.services.prisma.task.count({
-          where,
-        }),
-        app.services.prisma.task.findMany({
-          where,
-          orderBy,
-          skip,
-          take: query.pageSize,
-          select: {
-            id: true,
-            title: true,
-            summary: true,
-            assigneeGuess: true,
-            dueAt: true,
-            priority: true,
-            status: true,
-            confidence: true,
-            requiresReview: true,
-            reviewQueue: true,
-            reviewStatus: true,
-            isPinned: true,
-            createdAt: true,
-            updatedAt: true,
-            sourceDate: true,
-            sourceMessage: {
-              select: {
-                id: true,
-                gmailMessageId: true,
-                subject: true,
-                snippet: true,
-                senderEmail: true,
-                senderName: true,
-                sentAt: true,
-                receivedAt: true,
-                mailboxCategory: true,
-                priority: true,
-                jobId: true,
-                job: {
-                  select: { id: true, jobNumber: true, name: true },
-                },
-                inboxConnectionId: true,
-                classifications: {
-                  orderBy: { createdAt: "desc" },
-                  take: 1,
-                  select: { businessTypeKey: true },
-                },
+      // take+1 → hasMore without COUNT(*) over the expensive bidding-exclusion WHERE.
+      const taskRows = await app.services.prisma.task.findMany({
+        where,
+        orderBy,
+        skip,
+        take: query.pageSize + 1,
+        select: {
+          id: true,
+          title: true,
+          summary: true,
+          assigneeGuess: true,
+          dueAt: true,
+          priority: true,
+          status: true,
+          confidence: true,
+          requiresReview: true,
+          reviewQueue: true,
+          reviewStatus: true,
+          isPinned: true,
+          createdAt: true,
+          updatedAt: true,
+          sourceDate: true,
+          sourceMessage: {
+            select: {
+              id: true,
+              gmailMessageId: true,
+              subject: true,
+              snippet: true,
+              senderEmail: true,
+              senderName: true,
+              sentAt: true,
+              receivedAt: true,
+              mailboxCategory: true,
+              priority: true,
+              jobId: true,
+              job: {
+                select: { id: true, jobNumber: true, name: true },
+              },
+              inboxConnectionId: true,
+              classifications: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: { businessTypeKey: true },
               },
             },
-            classification: {
-              select: { businessTypeKey: true },
-            },
           },
-        }),
-      ]);
+          classification: {
+            select: { businessTypeKey: true },
+          },
+        },
+      });
+      const { items: tasks, hasMore } = paginateTakePlusOne(
+        taskRows,
+        query.pageSize
+      );
+      const exactCount = skip + tasks.length;
+      const totalCount = hasMore ? null : exactCount;
+      const totalPages = hasMore
+        ? null
+        : exactCount === 0
+          ? 0
+          : Math.ceil(exactCount / query.pageSize);
 
       // View telemetry → application logs only (not permanent AuditEvent).
       console.info("inbox_connection.tasks_viewed", {
@@ -2977,8 +2986,8 @@ export const registerInboxReadRoutes = async (
             page: query.page,
             pageSize: query.pageSize,
             totalCount,
-            totalPages:
-              totalCount === 0 ? 0 : Math.ceil(totalCount / query.pageSize),
+            totalPages,
+            hasMore,
           },
           tasks: tasks.map((task) => {
             const msg = task.sourceMessage;

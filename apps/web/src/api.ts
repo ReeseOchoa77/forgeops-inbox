@@ -1051,25 +1051,32 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ mode }) }
     ),
 
-  getMessages: (workspaceId: string, connectionId: string, page = 1, pageSize = 25, filters?: {
-    search?: string;
-    searchIn?: 'all' | 'sender' | 'id';
-    businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
-    classificationType?: string;
-    hasTaskCandidate?: boolean;
-    category?: 'important' | 'spam' | 'trash';
-    businessTypeGroup?: string;
-    businessTypeKey?: string;
-    excludeBusinessTypeGroups?: string[];
-    jobId?: string;
-    reclassifiedOnly?: boolean;
-    sentOnly?: boolean;
-    unreadOnly?: boolean;
-    unclassifiedOnly?: boolean;
-    dateRange?: 'TODAY' | 'WEEK' | 'MONTH';
-    timezone?: string;
-    includeTotal?: boolean;
-  }) => {
+  getMessages: (
+    workspaceId: string,
+    connectionId: string,
+    page = 1,
+    pageSize = 25,
+    filters?: {
+      search?: string;
+      searchIn?: 'all' | 'sender' | 'id';
+      businessCategory?: 'BUSINESS' | 'NON_BUSINESS';
+      classificationType?: string;
+      hasTaskCandidate?: boolean;
+      category?: 'important' | 'spam' | 'trash';
+      businessTypeGroup?: string;
+      businessTypeKey?: string;
+      excludeBusinessTypeGroups?: string[];
+      jobId?: string;
+      reclassifiedOnly?: boolean;
+      sentOnly?: boolean;
+      unreadOnly?: boolean;
+      unclassifiedOnly?: boolean;
+      dateRange?: 'TODAY' | 'WEEK' | 'MONTH';
+      timezone?: string;
+      includeTotal?: boolean;
+    },
+    opts?: { signal?: AbortSignal }
+  ) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
     if (filters?.searchIn && filters.searchIn !== 'all') params.set('searchIn', filters.searchIn);
@@ -1100,7 +1107,8 @@ export const api = {
         hasMore: boolean;
       };
     }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`
+      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/messages?${params.toString()}`,
+      opts?.signal ? { signal: opts.signal } : undefined
     );
   },
 
@@ -1282,7 +1290,13 @@ export const api = {
     if (filters?.timezone) p.set('timezone', filters.timezone)
     return request<{
       tasks: TaskListItem[]
-      pagination: { page: number; totalCount: number; totalPages: number }
+      pagination: {
+        page: number
+        pageSize?: number
+        totalCount: number | null
+        totalPages: number | null
+        hasMore: boolean
+      }
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?${p}`
     )
@@ -1787,6 +1801,22 @@ export const api = {
       method: 'POST', body: JSON.stringify(data)
     }),
 
+  /**
+   * Platform Admin delegated Outlook authorize: OAuth identity may differ from
+   * the registered mailbox; callback verifies Graph access to the target.
+   */
+  adminAuthorizeDelegatedMailbox: (mailboxId: string) =>
+    request<{
+      status: string;
+      flow: string;
+      authorizationUrl: string;
+      requestedScopes: string[];
+      mailbox: { id: string; workspaceId: string; email: string; provider: string };
+    }>(`/admin/mailboxes/${mailboxId}/authorize-delegated`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
   adminPauseMailbox: (mailboxId: string) =>
     request<{ status: string }>(`/admin/mailboxes/${mailboxId}/pause`, { method: 'PATCH', body: JSON.stringify({}) }),
 
@@ -2045,7 +2075,13 @@ export const api = {
     const q = p.toString()
     return request<{
       tasks: JobTask[]
-      pagination?: { page: number; pageSize: number; totalCount: number; totalPages: number }
+      pagination?: {
+        page: number
+        pageSize: number
+        totalCount: number | null
+        totalPages: number | null
+        hasMore: boolean
+      }
     }>(`/workspaces/${workspaceId}/jobs/${jobId}/tasks${q ? `?${q}` : ''}`)
   },
 

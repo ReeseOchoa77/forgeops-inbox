@@ -51,6 +51,11 @@ import { JobDocumentControlForm, DocumentControlSummary } from '../components/Jo
 import { TaskListRow, taskFilterSelectStyle } from '../components/TaskListRow'
 import { BUSINESS_SUBTYPE_FILTER_OPTIONS } from '@forgeops/shared/business-subtypes'
 import type { TaskListFilters } from '../api'
+import {
+  getCachedTasksList,
+  setCachedTasksList,
+  TASKS_LIST_FRESH_MS,
+} from '../tasks-list-cache'
 import { FilePreviewModal } from '../components/FilePreviewModal'
 import {
   InlineImageRelevanceActions,
@@ -595,31 +600,59 @@ export function JobDetailView({
   useEffect(() => {
     if (tab !== 'tasks') return
     let cancelled = false
-    setTasks([])
-    setTasksLoading(true)
     setTasksError(null)
     const timezone =
       typeof Intl !== 'undefined'
         ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
         : 'UTC'
+    const jobFilters: TaskListFilters = {
+      statusFilter: taskStatusFilter,
+      due: taskDue,
+      priority: taskPriority,
+      source: taskSource,
+      ...(taskSubtype ? { businessTypeKey: taskSubtype } : {}),
+      ...(taskSender ? { sender: taskSender } : {}),
+      timezone,
+    }
+    const cacheScope = `job:${jobId}`
+    const cached = getCachedTasksList(workspaceId, cacheScope, 1, jobFilters)
+    if (cached) {
+      // JobTask shape is compatible for list rendering fields we use.
+      setTasks(cached.tasks as unknown as JobTask[])
+      setTasksLoading(false)
+      if (Date.now() - cached.cachedAt < TASKS_LIST_FRESH_MS) {
+        return () => {
+          cancelled = true
+        }
+      }
+    } else {
+      setTasksLoading(true)
+    }
     api
       .getJobTasks(workspaceId, jobId, {
-        statusFilter: taskStatusFilter,
-        due: taskDue,
-        priority: taskPriority,
-        source: taskSource,
-        ...(taskSubtype ? { businessTypeKey: taskSubtype } : {}),
-        ...(taskSender ? { sender: taskSender } : {}),
-        timezone,
-        pageSize: 100,
+        ...jobFilters,
+        pageSize: 50,
       })
       .then((r) => {
         if (cancelled) return
         setTasks(r.tasks)
+        setCachedTasksList(
+          workspaceId,
+          cacheScope,
+          1,
+          {
+            tasks: r.tasks as never,
+            page: 1,
+            totalCount: r.pagination?.totalCount ?? r.tasks.length,
+            totalPages: r.pagination?.totalPages ?? 1,
+            hasMore: r.pagination?.hasMore ?? false,
+          },
+          jobFilters
+        )
       })
       .catch((e) => {
         if (cancelled) return
-        setTasks([])
+        if (!cached) setTasks([])
         setTasksError(e instanceof Error ? e.message : 'Failed to load tasks')
       })
       .finally(() => {

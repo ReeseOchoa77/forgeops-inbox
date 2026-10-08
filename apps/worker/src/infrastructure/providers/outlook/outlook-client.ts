@@ -272,6 +272,8 @@ export interface OutlookMailboxSyncInput {
   receivedAfter?: Date;
   /** Historical list continuation (@odata.nextLink). Not a delta cursor. */
   pageCursor?: string | null;
+  /** When set, Graph mail paths use /users/{email} instead of /me. */
+  graphMailboxEmail?: string | null;
 }
 
 const mapGraphAddress = (
@@ -525,10 +527,26 @@ const parseRetryAfterMs = (response: Response): number => {
 };
 
 export class OutlookClient {
+  /** Active Graph mailbox resource for this client instance (`me` or `users/{upn}`). */
+  private mailboxResourceRoot = "me";
+
   constructor(private readonly config: OutlookClientConfig) {}
 
   isConfigured(): boolean {
     return Boolean(this.config.clientId && this.config.clientSecret);
+  }
+
+  /** Switch Graph mail I/O between /me and /users/{email}. */
+  setGraphMailboxEmail(email: string | null | undefined): void {
+    const trimmed = email?.trim();
+    this.mailboxResourceRoot = trimmed
+      ? `users/${encodeURIComponent(trimmed)}`
+      : "me";
+  }
+
+  private mailUrl(pathAfterMailbox: string): string {
+    const suffix = pathAfterMailbox.replace(/^\//, "");
+    return `${MICROSOFT_GRAPH_BASE_URL}/${this.mailboxResourceRoot}/${suffix}`;
   }
 
   /** Public token refresh for attachment ingestion (same path as mailbox sync). */
@@ -556,8 +574,9 @@ export class OutlookClient {
     outlookMessageId: string
   ): Promise<OutlookGraphListAttachmentsResult> {
     const url =
-      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
-      `/attachments?$select=${OUTLOOK_ATTACHMENT_LIST_SELECT}`;
+      this.mailUrl(
+        `messages/${encodeURIComponent(outlookMessageId)}/attachments?$select=${OUTLOOK_ATTACHMENT_LIST_SELECT}`
+      );
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`,
@@ -630,9 +649,9 @@ export class OutlookClient {
     outlookMessageId: string,
     attachmentId: string
   ): Promise<GraphAttachment | null> {
-    const url =
-      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
-      `/attachments/${encodeURIComponent(attachmentId)}`;
+    const url = this.mailUrl(
+      `messages/${encodeURIComponent(outlookMessageId)}/attachments/${encodeURIComponent(attachmentId)}`
+    );
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`,
@@ -662,9 +681,9 @@ export class OutlookClient {
     outlookMessageId: string,
     attachmentId: string
   ): Promise<OutlookGraphDownloadAttachmentResult> {
-    const url =
-      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(outlookMessageId)}` +
-      `/attachments/${encodeURIComponent(attachmentId)}/$value`;
+    const url = this.mailUrl(
+      `messages/${encodeURIComponent(outlookMessageId)}/attachments/${encodeURIComponent(attachmentId)}/$value`
+    );
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`,
@@ -693,6 +712,8 @@ export class OutlookClient {
     if (!this.config.clientId || !this.config.clientSecret) {
       throw new Error("Outlook client is not configured");
     }
+
+    this.setGraphMailboxEmail(input.graphMailboxEmail);
 
     const tokenResult = await this.refreshAccessToken(input.refreshToken);
 
@@ -753,10 +774,12 @@ export class OutlookClient {
     const url: string =
       input.pageCursor && input.pageCursor.startsWith("http")
         ? input.pageCursor
-        : `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/${encodeURIComponent(input.folderId)}/messages` +
-          `?$select=${MESSAGE_SELECT_FIELDS}` +
-          `&$orderby=receivedDateTime desc` +
-          `&$top=${pageSize}`;
+        : this.mailUrl(
+            `mailFolders/${encodeURIComponent(input.folderId)}/messages` +
+              `?$select=${MESSAGE_SELECT_FIELDS}` +
+              `&$orderby=receivedDateTime desc` +
+              `&$top=${pageSize}`
+          );
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${tokenResult.accessToken}`,
@@ -976,7 +999,7 @@ export class OutlookClient {
     const map = new Map<string, string>();
     try {
       const res = await this.fetchWithThrottleRetry(
-        `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders?$select=id,displayName&$top=50`,
+        this.mailUrl("mailFolders?$select=id,displayName&$top=50"),
         { Authorization: `Bearer ${accessToken}` }
       );
       if (res.ok) {
@@ -999,9 +1022,9 @@ export class OutlookClient {
     accessToken: string,
     messageId: string
   ): Promise<GraphMessage | null> {
-    const url =
-      `${MICROSOFT_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(messageId)}` +
-      `?$select=${MESSAGE_SELECT_FIELDS}`;
+    const url = this.mailUrl(
+      `messages/${encodeURIComponent(messageId)}?$select=${MESSAGE_SELECT_FIELDS}`
+    );
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${accessToken}`
@@ -1050,7 +1073,7 @@ export class OutlookClient {
     } else if (receivedAfter) {
       // Date-bounded historical import: list newest-first with Graph filter (not delta).
       url =
-        `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/inbox/messages` +
+        this.mailUrl("mailFolders/inbox/messages") +
         `?$select=${MESSAGE_SELECT_FIELDS}` +
         `&$filter=receivedDateTime ge ${receivedAfter.toISOString().replace(/\.\d{3}Z$/, "Z")}` +
         `&$orderby=receivedDateTime desc` +
@@ -1061,7 +1084,7 @@ export class OutlookClient {
       isDelta = true;
     } else {
       url =
-        `${MICROSOFT_GRAPH_BASE_URL}/me/mailFolders/inbox/messages/delta` +
+        this.mailUrl("mailFolders/inbox/messages/delta") +
         `?$select=${MESSAGE_SELECT_FIELDS}` +
         `&$top=${pageSize}`;
     }

@@ -108,6 +108,11 @@ export interface ProviderMailboxSyncInput {
    * Distinct from live syncCursor / delta links.
    */
   pageCursor?: string | null;
+  /**
+   * When set (Outlook delegated / shared mailbox), Graph calls use
+   * `/users/{email}/...` instead of `/me/...`.
+   */
+  graphMailboxEmail?: string | null;
 }
 
 export interface ProviderTokenResult {

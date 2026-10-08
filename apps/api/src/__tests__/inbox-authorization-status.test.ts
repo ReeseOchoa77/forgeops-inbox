@@ -244,6 +244,16 @@ describe("assertTargetedMailboxEmailMatch", () => {
     );
     expect(error).not.toMatch(/conn_|workspace|id=/i);
   });
+
+  it("allows OAuth identity ≠ target when allowDelegatedAccess is set", () => {
+    expect(
+      assertTargetedMailboxEmailMatch({
+        expectedEmail: "estimating@company.com",
+        microsoftEmail: "admin@company.com",
+        allowDelegatedAccess: true,
+      })
+    ).toBeNull();
+  });
 });
 
 describe("connection API serialization safety", () => {

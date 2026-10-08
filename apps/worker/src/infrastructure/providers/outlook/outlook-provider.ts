@@ -87,6 +87,9 @@ export class OutlookSyncProvider implements InboxSyncProvider {
         : {}),
       ...(input.receivedAfter ? { receivedAfter: input.receivedAfter } : {}),
       ...(input.pageCursor ? { pageCursor: input.pageCursor } : {}),
+      ...(input.graphMailboxEmail
+        ? { graphMailboxEmail: input.graphMailboxEmail }
+        : {}),
     });
 
     return {

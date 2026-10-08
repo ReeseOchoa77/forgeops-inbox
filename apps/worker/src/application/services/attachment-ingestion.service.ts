@@ -74,11 +74,13 @@ export class AttachmentIngestionService {
       },
       select: {
         id: true,
+        email: true,
         provider: true,
         status: true,
         encryptedRefreshToken: true,
         encryptedAccessToken: true,
         accessTokenExpiresAt: true,
+        delegatedMailboxAccess: true,
       },
     });
 
@@ -147,6 +149,10 @@ export class AttachmentIngestionService {
     if (!this.outlookClient.isConfigured()) {
       throw new Error("Outlook client is not configured for attachment ingestion");
     }
+
+    this.outlookClient.setGraphMailboxEmail(
+      connection.delegatedMailboxAccess ? connection.email : null
+    );
 
     const refreshToken = this.tokenCipher.decrypt(connection.encryptedRefreshToken);
     const tokenResult = await this.outlookClient.acquireAccessToken(refreshToken);

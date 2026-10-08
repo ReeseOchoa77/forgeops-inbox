@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { normalizeEmail, providerKindFromEnum } from "@forgeops/shared";
 import { z } from "zod";
 
 import { runClassificationParityForMessage } from "../../../application/services/classification-parity.js";
+import { buildDelegatedAuthorizeOAuthState } from "../../../application/services/delegated-mailbox-onboarding.js";
+import { validateAuthorizeExistingTarget } from "../../../application/services/inbox-authorization-status.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 async function requirePlatformAdminAccess(
@@ -251,13 +254,44 @@ export const registerPlatformAdminRoutes = async (
       }
     });
 
+    await app.services.prisma.workspaceMailbox.upsert({
+      where: {
+        workspaceId_normalizedEmail: {
+          workspaceId: body.workspaceId,
+          normalizedEmail,
+        },
+      },
+      create: {
+        workspaceId: body.workspaceId,
+        emailAddress: normalizedEmail,
+        normalizedEmail,
+        provider: body.provider,
+        displayName: body.displayName ?? normalizedEmail,
+        status: "ACTIVE",
+        ingestionMode: body.ingestionSource,
+        inboxConnectionId: connection.id,
+      },
+      update: {
+        provider: body.provider,
+        displayName: body.displayName ?? normalizedEmail,
+        status: "ACTIVE",
+        ingestionMode: body.ingestionSource,
+        inboxConnectionId: connection.id,
+      },
+    });
+
     await app.services.auditEventLogger.log({
       workspaceId: body.workspaceId,
       actorUserId: admin.userId,
       entityType: "INBOX_CONNECTION",
       entityId: connection.id,
       action: "admin.mailbox_registered",
-      metadata: { provider: body.provider, email: normalizedEmail, ingestionSource: body.ingestionSource },
+      metadata: {
+        provider: body.provider,
+        email: normalizedEmail,
+        ingestionSource: body.ingestionSource,
+        platformAdminEmail: admin.email,
+      },
       request
     });
 
@@ -272,6 +306,99 @@ export const registerPlatformAdminRoutes = async (
       }
     });
   });
+
+  /**
+   * Platform Admin delegated authorize: OAuth identity may differ from the
+   * registered mailbox email. Callback verifies Graph access to the target.
+   */
+  app.post(
+    "/api/v1/admin/mailboxes/:mailboxId/authorize-delegated",
+    async (request, reply) => {
+      const admin = await requirePlatformAdminAccess(app, request, reply);
+      if (!admin) return;
+
+      const { mailboxId } = z
+        .object({ mailboxId: z.string().min(1) })
+        .parse(request.params);
+
+      const connection = await app.services.prisma.inboxConnection.findUnique({
+        where: { id: mailboxId },
+      });
+
+      if (!connection) {
+        return reply.code(404).send({ message: "Mailbox not found" });
+      }
+
+      const targetCheck = validateAuthorizeExistingTarget(connection);
+      if (!targetCheck.ok) {
+        return reply.code(targetCheck.statusCode).send({
+          message: targetCheck.message,
+        });
+      }
+
+      const providerKind = providerKindFromEnum(connection.provider);
+      if (providerKind !== "outlook") {
+        return reply.code(400).send({
+          message:
+            "Delegated mailbox onboarding is currently supported for Outlook only",
+        });
+      }
+
+      const provider =
+        app.services.providerRegistry.getOAuthProvider(providerKind);
+      if (!provider.isConfigured()) {
+        return reply.code(503).send({
+          message: "Outlook OAuth is not configured",
+        });
+      }
+
+      const oauthState = buildDelegatedAuthorizeOAuthState({
+        workspaceId: connection.workspaceId,
+        userId: admin.userId,
+        connectionId: connection.id,
+        targetMailboxEmail: connection.email,
+      });
+      const stateWriteResult = await app.services.oauthStateStore.create(oauthState);
+
+      if (!stateWriteResult.written) {
+        return reply.code(500).send({
+          message: "Failed to persist delegated authorize state",
+        });
+      }
+
+      const authorizationUrl = provider.getAuthorizationUrl({
+        state: stateWriteResult.stateId,
+      });
+
+      await app.services.auditEventLogger.log({
+        workspaceId: connection.workspaceId,
+        actorUserId: admin.userId,
+        entityType: "INBOX_CONNECTION",
+        entityId: connection.id,
+        action: "admin.mailbox_delegated_authorize_requested",
+        metadata: {
+          email: connection.email,
+          provider: providerKind,
+          platformAdminEmail: admin.email,
+          delegatedMailboxAccess: true,
+        },
+        request,
+      });
+
+      return reply.send({
+        status: "authorization_required",
+        flow: "admin-mailbox-delegated-authorize",
+        authorizationUrl,
+        requestedScopes: [...provider.getRequiredScopes()],
+        mailbox: {
+          id: connection.id,
+          workspaceId: connection.workspaceId,
+          email: connection.email,
+          provider: connection.provider,
+        },
+      });
+    }
+  );
 
   app.patch("/api/v1/admin/mailboxes/:mailboxId/pause", async (request, reply) => {
     const admin = await requirePlatformAdminAccess(app, request, reply);

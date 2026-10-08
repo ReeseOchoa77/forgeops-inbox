@@ -16,6 +16,13 @@ export const googleOAuthStateSchema = z.discriminatedUnion("flow", [
     reconnect: z.boolean(),
     /** Targeted upgrade of an existing tokenless (e.g. n8n) Outlook connection. */
     authorizeExisting: z.boolean().optional().default(false),
+    /**
+     * Platform Admin delegated onboarding: OAuth identity may differ from
+     * targetMailboxEmail; Graph must verify access to the target.
+     */
+    delegatedMailboxAccess: z.boolean().optional().default(false),
+    /** Locked target mailbox for delegated flows (must match connection.email). */
+    targetMailboxEmail: z.string().email().optional(),
     createdAt: z.string().datetime()
   })
 ]);

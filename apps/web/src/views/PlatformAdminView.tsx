@@ -36,6 +36,10 @@ export function PlatformAdminView() {
   const [newWsName, setNewWsName] = useState('')
   const [newWsSlug, setNewWsSlug] = useState('')
 
+  const [ingestWorkspaceId, setIngestWorkspaceId] = useState('')
+  const [ingestEmail, setIngestEmail] = useState('')
+  const [ingestBusy, setIngestBusy] = useState(false)
+
   const loadData = async () => {
     setLoading(true)
     setError('')
@@ -105,6 +109,64 @@ export function PlatformAdminView() {
     }
   }
 
+  const handleIngestMailbox = async () => {
+    const workspaceId = ingestWorkspaceId.trim()
+    const email = ingestEmail.trim()
+    if (!workspaceId || !email) {
+      setError('Select a workspace and enter a mailbox email')
+      return
+    }
+    setIngestBusy(true)
+    setError('')
+    try {
+      let mailboxId: string
+      try {
+        const registered = await api.adminRegisterMailbox({
+          workspaceId,
+          provider: 'OUTLOOK',
+          email,
+          ingestionSource: 'N8N',
+        })
+        mailboxId = registered.mailbox.id
+      } catch (registerErr) {
+        const msg =
+          registerErr instanceof Error ? registerErr.message : String(registerErr)
+        if (!/already (exists|registered)/i.test(msg)) {
+          throw registerErr
+        }
+        const existing = await api.adminGetMailboxes({ workspaceId })
+        const match = existing.mailboxes.find(
+          (m) => m.email.toLowerCase() === email.toLowerCase()
+        )
+        if (!match) throw registerErr
+        mailboxId = match.id
+      }
+      const auth = await api.adminAuthorizeDelegatedMailbox(mailboxId)
+      if (!auth.authorizationUrl) {
+        throw new Error('Microsoft authorization URL was not returned')
+      }
+      window.location.assign(auth.authorizationUrl)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start mailbox ingest')
+      setIngestBusy(false)
+    }
+  }
+
+  const handleAuthorizeExistingDelegated = async (mailboxId: string) => {
+    setIngestBusy(true)
+    setError('')
+    try {
+      const auth = await api.adminAuthorizeDelegatedMailbox(mailboxId)
+      if (!auth.authorizationUrl) {
+        throw new Error('Microsoft authorization URL was not returned')
+      }
+      window.location.assign(auth.authorizationUrl)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start delegated authorize')
+      setIngestBusy(false)
+    }
+  }
+
   if (loading) return <p style={{ color: '#888', padding: 8 }}>Loading admin data...</p>
 
   const detailWsName = (wsId: string) =>
@@ -116,6 +178,8 @@ export function PlatformAdminView() {
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px' }}>
         Manage workspaces and members. Connections match Workspace → Monitored Mailboxes
         (disconnected mailboxes are excluded). Message totals update after Clear Inbox / sync.
+        Ingest Mailbox lets you authorize a different Outlook mailbox than your ForgeOps login —
+        Microsoft Graph must still grant access to that mailbox.
       </p>
 
       {error && (
@@ -180,6 +244,85 @@ export function PlatformAdminView() {
         >
           Create
         </button>
+      </div>
+
+      <div
+        className="card"
+        style={{
+          marginBottom: 16,
+          padding: 12,
+          border: '1px solid #e5e5e5',
+          borderRadius: 6,
+        }}
+      >
+        <h3 style={{ fontSize: 14, margin: '0 0 8px' }}>Ingest Mailbox</h3>
+        <p style={{ fontSize: 12, color: '#888', margin: '0 0 10px' }}>
+          Register an Outlook mailbox on a workspace, then complete Microsoft authorization.
+          Sign in as an account that has Full Access / shared mailbox rights to the target.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={{ fontSize: 11, color: '#888', display: 'block' }}>Workspace</label>
+            <select
+              value={ingestWorkspaceId}
+              onChange={(e) => setIngestWorkspaceId(e.target.value)}
+              style={{
+                padding: '5px 8px',
+                border: '1px solid #ddd',
+                borderRadius: 4,
+                fontSize: 13,
+                minWidth: 200,
+              }}
+            >
+              <option value="">Select workspace…</option>
+              {workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: '#888', display: 'block' }}>
+              Mailbox email
+            </label>
+            <input
+              value={ingestEmail}
+              onChange={(e) => setIngestEmail(e.target.value)}
+              placeholder="estimating@company.com"
+              style={{
+                padding: '5px 8px',
+                border: '1px solid #ddd',
+                borderRadius: 4,
+                fontSize: 13,
+                width: 240,
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: '#888', display: 'block' }}>Provider</label>
+            <input
+              value="Outlook"
+              disabled
+              style={{
+                padding: '5px 8px',
+                border: '1px solid #ddd',
+                borderRadius: 4,
+                fontSize: 13,
+                width: 100,
+                background: '#f7f7f7',
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={ingestBusy}
+            onClick={() => void handleIngestMailbox()}
+          >
+            {ingestBusy ? 'Starting…' : 'Authorize with Microsoft'}
+          </button>
+        </div>
       </div>
 
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -331,6 +474,7 @@ export function PlatformAdminView() {
                   <th style={{ padding: '6px 8px' }}>Listener</th>
                   <th style={{ padding: '6px 8px' }}>Messages</th>
                   <th style={{ padding: '6px 8px' }}>Last synced</th>
+                  <th style={{ padding: '6px 8px' }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -348,6 +492,19 @@ export function PlatformAdminView() {
                     </td>
                     <td style={{ padding: '5px 8px', color: '#999' }}>
                       {formatDate(c.lastSyncedAt)}
+                    </td>
+                    <td style={{ padding: '5px 8px' }}>
+                      {c.provider.toLowerCase() === 'outlook' ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={ingestBusy}
+                          onClick={() => void handleAuthorizeExistingDelegated(c.id)}
+                          title="Authorize or reauthorize with delegated Graph access"
+                        >
+                          Authorize
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

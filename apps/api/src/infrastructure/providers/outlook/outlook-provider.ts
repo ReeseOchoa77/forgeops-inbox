@@ -10,14 +10,31 @@ import type {
 const MICROSOFT_AUTH_BASE_URL = "https://login.microsoftonline.com";
 const MICROSOFT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
-export const outlookInboxConnectionScopes = [
+/** Core scopes required for every Outlook inbox connection (own mailbox). */
+export const outlookInboxCoreScopes = [
   "openid",
   "email",
   "profile",
   "offline_access",
   "https://graph.microsoft.com/Mail.Read",
   "https://graph.microsoft.com/Mail.Send",
-  "https://graph.microsoft.com/User.Read"
+  "https://graph.microsoft.com/User.Read",
+] as const;
+
+/**
+ * Extra scopes requested for shared/delegated mailbox access.
+ * Always requested at authorize time; enforced on callback only for
+ * Platform Admin delegated onboarding (`delegatedMailboxAccess`).
+ */
+export const outlookInboxSharedMailboxScopes = [
+  "https://graph.microsoft.com/Mail.Read.Shared",
+  "https://graph.microsoft.com/Mail.Send.Shared",
+  "https://graph.microsoft.com/MailboxSettings.Read",
+] as const;
+
+export const outlookInboxConnectionScopes = [
+  ...outlookInboxCoreScopes,
+  ...outlookInboxSharedMailboxScopes,
 ] as const;
 
 /**
@@ -307,11 +324,13 @@ export function peekMicrosoftIdTokenIdentityClaims(
 /**
  * Callback-side Outlook required-scope check. Re-applies refresh/id-token
  * coalescing so validation does not depend solely on tokenResponse.scope.
+ * Shared mailbox scopes are required only when `requireSharedMailboxScopes`.
  */
 export function findMissingOutlookRequiredScopes(input: {
   grantedScopes: readonly string[];
   hasRefreshToken: boolean;
   hasIdToken: boolean;
+  requireSharedMailboxScopes?: boolean;
 }): string[] {
   const coalesced = coalesceMicrosoftGrantedScopes({
     scope: input.grantedScopes.join(" "),
@@ -321,8 +340,9 @@ export function findMissingOutlookRequiredScopes(input: {
 
   const provider = new OutlookOAuthProvider({});
   const normalized = provider.normalizeGrantedScopes(coalesced);
-  return outlookInboxConnectionScopes.filter(
-    (scope) => !normalized.includes(scope)
-  );
+  const required = input.requireSharedMailboxScopes
+    ? outlookInboxConnectionScopes
+    : outlookInboxCoreScopes;
+  return required.filter((scope) => !normalized.includes(scope));
 }
 

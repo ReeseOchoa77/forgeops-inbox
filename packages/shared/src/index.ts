@@ -1,4 +1,5 @@
 export * from "./business-subtypes.js";
+export * from "./outlook/graph-mailbox-root.js";
 export * from "./tasks/task-list-filters.js";
 export * from "./constants/queues.js";
 export * from "./env/app-env.js";

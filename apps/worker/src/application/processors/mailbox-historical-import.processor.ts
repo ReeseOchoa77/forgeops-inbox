@@ -262,6 +262,9 @@ export async function processMailboxHistoricalImport(
           maxThreads: batchSize,
           ...(receivedAfter ? { receivedAfter } : {}),
           ...(pageCursor ? { pageCursor } : {}),
+          ...(connection.delegatedMailboxAccess
+            ? { graphMailboxEmail: connection.email }
+            : {}),
         });
       } catch (error) {
         // Persist cursor + counts so BullMQ retry / re-run can continue.
