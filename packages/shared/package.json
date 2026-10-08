@@ -11,8 +11,9 @@
       "default": "./dist/index.js"
     },
     "./business-subtypes": {
-      "types": "./dist/business-subtypes.d.ts",
-      "default": "./dist/business-subtypes.js"
+      "types": "./src/business-subtypes.ts",
+      "import": "./src/business-subtypes.ts",
+      "default": "./src/business-subtypes.ts"
     }
   },
   "scripts": {

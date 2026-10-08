@@ -15,6 +15,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Resolve browser-safe shared subpaths from source (no Prisma / shared dist). */
+    "paths": {
+      "@forgeops/shared/business-subtypes": [
+        "../../packages/shared/src/business-subtypes.ts"
+      ]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
