@@ -124,6 +124,16 @@ describe("collectEnvSafetyIssues", () => {
     expect(issues).toEqual([]);
   });
 
+  it("does not require SESSION_COOKIE_SECRET for worker-style production boots", () => {
+    const issues = collectEnvSafetyIssues({
+      appEnv: "production",
+      databaseUrl: "postgresql://u:p@db.example.com:5432/forgeops",
+      redisUrl: "redis://redis.example.com:6379",
+      tokenEncryptionSecret: "b".repeat(32),
+    });
+    expect(issues).toEqual([]);
+  });
+
   it("assertEnvSafety throws with codes", () => {
     expect(() =>
       assertEnvSafety({

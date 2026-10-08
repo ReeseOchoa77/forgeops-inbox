@@ -133,27 +133,33 @@ export function collectEnvSafetyIssues(input: {
   checkLocalOnly("REDIS_URL", input.redisUrl);
 
   if (input.appEnv === "production") {
-    const weakSession =
-      !input.sessionCookieSecret ||
-      input.sessionCookieSecret === "development-session-secret-change-me" ||
-      input.sessionCookieSecret.length < 32;
-    if (weakSession) {
-      issues.push({
-        code: "WEAK_SESSION_SECRET",
-        message:
-          "APP_ENV=production requires a strong SESSION_COOKIE_SECRET (≥32 chars, not the development default).",
-      });
+    // Session cookies are API-only. Worker/other services omit this field;
+    // only enforce when the caller actually uses sessions (passes a value).
+    if (input.sessionCookieSecret !== undefined) {
+      const weakSession =
+        input.sessionCookieSecret.length === 0 ||
+        input.sessionCookieSecret === "development-session-secret-change-me" ||
+        input.sessionCookieSecret.length < 32;
+      if (weakSession) {
+        issues.push({
+          code: "WEAK_SESSION_SECRET",
+          message:
+            "APP_ENV=production requires a strong SESSION_COOKIE_SECRET (≥32 chars, not the development default).",
+        });
+      }
     }
-    const weakToken =
-      !input.tokenEncryptionSecret ||
-      input.tokenEncryptionSecret === "development-token-encryption-secret" ||
-      input.tokenEncryptionSecret.length < 32;
-    if (weakToken) {
-      issues.push({
-        code: "WEAK_TOKEN_ENCRYPTION_SECRET",
-        message:
-          "APP_ENV=production requires a strong TOKEN_ENCRYPTION_SECRET / GOOGLE_TOKEN_ENCRYPTION_SECRET (≥32 chars, not the development default).",
-      });
+    if (input.tokenEncryptionSecret !== undefined) {
+      const weakToken =
+        input.tokenEncryptionSecret.length === 0 ||
+        input.tokenEncryptionSecret === "development-token-encryption-secret" ||
+        input.tokenEncryptionSecret.length < 32;
+      if (weakToken) {
+        issues.push({
+          code: "WEAK_TOKEN_ENCRYPTION_SECRET",
+          message:
+            "APP_ENV=production requires a strong TOKEN_ENCRYPTION_SECRET / GOOGLE_TOKEN_ENCRYPTION_SECRET (≥32 chars, not the development default).",
+        });
+      }
     }
     if (input.frontendUrl) {
       try {
