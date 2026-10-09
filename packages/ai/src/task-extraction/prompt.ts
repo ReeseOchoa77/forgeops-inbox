@@ -16,6 +16,10 @@ export interface TaskExtractionEmailInput {
    * own bid/proposal submission deadline as metadata — not an ordinary Task.
    */
   businessTypeKey?: string | null | undefined;
+  /** Canonical mail direction relative to the monitored mailbox. */
+  direction?: "RECEIVED" | "SENT" | null | undefined;
+  monitoredMailboxEmail?: string | null | undefined;
+  toAddresses?: string[] | undefined;
 }
 
 export interface ExtractedTask {
@@ -31,13 +35,21 @@ export interface TaskExtractionResult {
 }
 
 export const taskExtractionSystemPrompt = `
-You extract ACTION TASKS from an inbound BUSINESS email at a structural-steel fabrication business.
+You extract ACTION TASKS from a BUSINESS email at a structural-steel fabrication business.
+
+EMAIL DIRECTION (critical):
+- RECEIVED: someone wrote TO the monitored mailbox. Imperatives/questions usually ask OUR company to act → potential ForgeOps tasks.
+- SENT: the monitored mailbox wrote TO someone else.
+  - SENT OUTBOUND REQUEST ("Can you send us the drawings?") asks the EXTERNAL party to act → do NOT create a ForgeOps task for that work.
+  - SENT COMMITMENT ("We will send revised pricing Friday.") is OUR obligation → may create a ForgeOps task.
+  - Purely informational SENT mail → empty tasks array.
 
 STRICT RULES:
-- Create a task ONLY for an explicit or strongly implied CONCRETE action the recipient (or the company) is expected to take.
+- Create a task ONLY for an explicit or strongly implied CONCRETE action OUR company (the monitored mailbox / ForgeOps team) is expected to take.
 - Maximum 5 tasks. Prefer fewer, high-quality tasks.
 - Do NOT create tasks for: purely informational messages, vague suggestions, email signatures, marketing statements, or automatic notices that require no action.
-- If the email requires no action, return an empty tasks array.
+- Do NOT create tasks that assign work to an external recipient when DIRECTION is SENT and the request is outbound.
+- If the email requires no action from our company, return an empty tasks array.
 - NEVER invent deadlines, owners, meetings, approval steps, legal review, or internal procedures. Only include a dueDate or recommendedOwner if it is explicitly stated in the email; otherwise use null.
 - A deadline alone does NOT automatically imply a Task.
 
@@ -106,12 +118,20 @@ export function buildTaskExtractionUserPrompt(
       ? input.attachmentNames.join(", ")
       : "None";
 
+  const recipients =
+    input.toAddresses && input.toAddresses.length > 0
+      ? input.toAddresses.join(", ")
+      : "(unknown)";
+
   return [
     `Subject: ${input.normalizedSubject}`,
     "",
+    `Email Direction: ${input.direction ?? "RECEIVED"}`,
+    `Monitored Mailbox: ${input.monitoredMailboxEmail ?? ""}`,
     `Sender Name: ${input.senderName ?? ""}`,
     `Sender Email: ${input.senderEmail}`,
     `Sender Domain: ${input.senderDomain ?? ""}`,
+    `To: ${recipients}`,
     "",
     "Business Type:",
     input.businessTypeKey?.trim() || "(unknown)",
@@ -128,7 +148,7 @@ export function buildTaskExtractionUserPrompt(
     "Contains Action Request:",
     JSON.stringify(input.containsActionRequest === true),
     "",
-    "Extract concrete action tasks only (max 5). For bidding opportunities, omit bid-submission deadline tasks; keep only distinct actionable work. Return the structured tasks result only.",
+    "Extract concrete action tasks for OUR company only (max 5). For SENT outbound requests to external parties, return empty tasks. For bidding opportunities, omit bid-submission deadline tasks; keep only distinct actionable work. Return the structured tasks result only.",
   ].join("\n");
 }
 

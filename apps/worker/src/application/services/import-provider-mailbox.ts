@@ -5,7 +5,12 @@ import type {
   ProviderAttachmentMetadata,
   ProviderMailboxSyncResult
 } from "@forgeops/shared";
-import { isBlockedByInboxClearedAt, shouldInspectAttachments } from "@forgeops/shared";
+import {
+  isBlockedByInboxClearedAt,
+  mergeEmailDirection,
+  shouldInspectAttachments,
+  type EmailDirectionValue,
+} from "@forgeops/shared";
 
 export type EmailImportOrigin = "INBOX" | "HISTORICAL_IMPORT" | "PROJECT_FOLDER";
 
@@ -87,16 +92,39 @@ export const importProviderMailbox = async (input: {
       })
     : [];
 
-  const existingMessages = providerMessageIds.length
-    ? await input.prisma.emailMessage.findMany({
-        where: {
-          workspaceId: input.workspaceId,
-          inboxConnectionId: input.inboxConnectionId,
-          gmailMessageId: { in: providerMessageIds }
-        },
-        select: { id: true, gmailMessageId: true }
-      })
-    : [];
+  const internetMessageIds = [
+    ...new Set(
+      input.mailbox.threads
+        .flatMap((thread) =>
+          thread.messages.map((m) => m.internetMessageId?.trim() || null)
+        )
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+
+  const existingMessages =
+    providerMessageIds.length || internetMessageIds.length
+      ? await input.prisma.emailMessage.findMany({
+          where: {
+            workspaceId: input.workspaceId,
+            inboxConnectionId: input.inboxConnectionId,
+            OR: [
+              ...(providerMessageIds.length
+                ? [{ gmailMessageId: { in: providerMessageIds } }]
+                : []),
+              ...(internetMessageIds.length
+                ? [{ internetMessageId: { in: internetMessageIds } }]
+                : []),
+            ],
+          },
+          select: {
+            id: true,
+            gmailMessageId: true,
+            internetMessageId: true,
+            direction: true,
+          },
+        })
+      : [];
 
   const existingThreadIdMap = new Map(
     existingThreads.map((t) => [t.gmailThreadId, t.id])
@@ -104,6 +132,15 @@ export const importProviderMailbox = async (input: {
   const existingMessageIdMap = new Map(
     existingMessages.map((m) => [m.gmailMessageId, m.id])
   );
+  const existingByInternetMessageId = new Map<string, string>();
+  const existingDirectionById = new Map<string, EmailDirectionValue | null>();
+  for (const m of existingMessages) {
+    existingDirectionById.set(m.id, m.direction ?? null);
+    const imid = m.internetMessageId?.trim();
+    if (imid && !existingByInternetMessageId.has(imid)) {
+      existingByInternetMessageId.set(imid, m.id);
+    }
+  }
 
   let threadsImported = 0;
   let messagesImported = 0;
@@ -158,15 +195,28 @@ export const importProviderMailbox = async (input: {
             continue;
           }
 
-          const existingMessageId = existingMessageIdMap.get(message.providerMessageId);
+          const imid = message.internetMessageId?.trim() || null;
+          const existingMessageId =
+            existingMessageIdMap.get(message.providerMessageId) ??
+            (imid ? existingByInternetMessageId.get(imid) : undefined);
           const providerSaysUnread = message.providerLabels.some(
             (l) => l === "UNREAD" || l === "unread"
           );
+          const incomingDirection =
+            message.direction === "SENT" || message.direction === "RECEIVED"
+              ? message.direction
+              : null;
+          const resolvedDirection = mergeEmailDirection({
+            existing: existingMessageId
+              ? existingDirectionById.get(existingMessageId) ?? null
+              : null,
+            incoming: incomingDirection,
+          });
           const messageData = {
             gmailThreadId: message.providerThreadId,
             providerMessageId: message.providerMessageId,
             providerThreadId: message.providerThreadId,
-            internetMessageId: message.internetMessageId ?? null,
+            internetMessageId: imid,
             historyId: message.historyId,
             subject: message.subject,
             senderName: message.senderName,
@@ -188,22 +238,37 @@ export const importProviderMailbox = async (input: {
             ),
             attachmentMetadata: toPrismaJson(sortAttachments(message.attachmentMetadata)),
             sentAt: message.sentAt,
-            receivedAt: message.receivedAt
+            receivedAt: message.receivedAt,
+            ...(resolvedDirection ? { direction: resolvedDirection } : {}),
           };
 
           if (existingMessageId) {
             // Do not overwrite ForgeOps isRead→true from provider sync.
             // Only push unread from provider; user open owns marking read.
+            // Keep Graph id current when the same RFC822 message is rediscovered.
+            const knownByGraphId =
+              existingMessageIdMap.get(message.providerMessageId) ===
+              existingMessageId;
             await tx.emailMessage.update({
               where: { id: existingMessageId },
               data: {
                 ...messageData,
+                // Avoid unique clashes when rediscovered via internetMessageId
+                // with a different Graph id than the row's current gmailMessageId.
+                ...(knownByGraphId
+                  ? { gmailMessageId: message.providerMessageId }
+                  : {}),
                 ...originWrite,
                 ...(providerSaysUnread ? { isRead: false } : {}),
               }
             });
             updatedMessageIds.push(existingMessageId);
             duplicateMessageIds.push(existingMessageId);
+            existingMessageIdMap.set(message.providerMessageId, existingMessageId);
+            if (imid) existingByInternetMessageId.set(imid, existingMessageId);
+            if (resolvedDirection) {
+              existingDirectionById.set(existingMessageId, resolvedDirection);
+            }
             if (
               shouldInspectAttachments({
                 hasAttachments: message.hasAttachments,
@@ -243,10 +308,16 @@ export const importProviderMailbox = async (input: {
               ...messageData,
               ...originWrite,
               isRead: !providerSaysUnread,
+              direction: resolvedDirection ?? incomingDirection ?? "RECEIVED",
             }
           });
 
           existingMessageIdMap.set(message.providerMessageId, createdMessage.id);
+          if (imid) existingByInternetMessageId.set(imid, createdMessage.id);
+          existingDirectionById.set(
+            createdMessage.id,
+            resolvedDirection ?? incomingDirection ?? "RECEIVED"
+          );
           messagesImported += 1;
           createdMessageIds.push(createdMessage.id);
           if (

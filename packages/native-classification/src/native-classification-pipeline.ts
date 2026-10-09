@@ -34,6 +34,9 @@ export interface NativeClassificationPipelineInput {
   senderName?: string | null | undefined;
   senderEmail: string;
   senderDomain?: string | null | undefined;
+  /** Canonical EmailMessage.direction when known. */
+  direction?: "RECEIVED" | "SENT" | null | undefined;
+  toAddresses?: string[] | null | undefined;
   attachmentNames?: string[] | null | undefined;
   /** At most a few prior snippets. The current message stays primary. */
   threadSnippets?: Array<{
@@ -231,6 +234,9 @@ export async function runNativeClassificationPipeline(
         summary: semanticSignals.summary,
         containsActionRequest: semanticSignals.containsActionRequest,
         businessTypeKey,
+        direction: input.direction ?? "RECEIVED",
+        monitoredMailboxEmail: input.mailboxEmail,
+        toAddresses: input.toAddresses ?? [],
       });
       // Defense-in-depth: bid submission deadline ≠ ordinary Task.
       tasks = filterOutBidSubmissionTasks(taskResult.tasks, {

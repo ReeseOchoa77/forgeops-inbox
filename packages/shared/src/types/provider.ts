@@ -40,6 +40,12 @@ export interface ProviderAttachmentMetadata {
   size: number | null;
 }
 
+/** Canonical mail direction relative to the monitored mailbox. */
+export type ProviderEmailDirection = "RECEIVED" | "SENT";
+
+/** Outlook (and future) well-known mail folders for scoped sync. */
+export type ProviderMailFolder = "inbox" | "sentitems";
+
 export interface ProviderMessageSnapshot {
   providerMessageId: string;
   providerThreadId: string;
@@ -62,6 +68,11 @@ export interface ProviderMessageSnapshot {
   internetMessageId?: string | null;
   receivedAt: Date | null;
   sizeEstimate: number | null;
+  /**
+   * Authoritative when set by provider folder (e.g. Sent Items → SENT).
+   * Omit for providers/paths that do not know.
+   */
+  direction?: ProviderEmailDirection | null;
 }
 
 export interface ProviderThreadSnapshot {
@@ -113,6 +124,11 @@ export interface ProviderMailboxSyncInput {
    * `/users/{email}/...` instead of `/me/...`.
    */
   graphMailboxEmail?: string | null;
+  /**
+   * Outlook well-known folder for delta/list. Default inbox.
+   * Gmail ignores this (INBOX sync only).
+   */
+  mailFolder?: ProviderMailFolder;
 }
 
 export interface ProviderTokenResult {

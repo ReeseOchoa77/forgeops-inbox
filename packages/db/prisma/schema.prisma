@@ -84,6 +84,14 @@ enum MailboxCategory {
   TRASH
 }
 
+/// Canonical mail direction relative to the monitored mailbox.
+/// SENT = discovered from provider Sent Items (authoritative) or equivalent.
+/// RECEIVED = Inbox / incoming. Null = legacy rows (use sender heuristic fallback).
+enum EmailDirection {
+  RECEIVED
+  SENT
+}
+
 enum EmailType {
   ACTIONABLE_REQUEST
   FYI_UPDATE
@@ -630,7 +638,10 @@ model InboxConnection {
   accessTokenExpiresAt DateTime?
   connectedAt       DateTime?
   disconnectedAt    DateTime?
+  /// Outlook Inbox folder Graph deltaLink (live sync).
   syncCursor        String?
+  /// Outlook Sent Items folder Graph deltaLink (live sync). Independent of syncCursor.
+  sentSyncCursor    String?
   lastSyncStartedAt DateTime?
   lastSyncedAt      DateTime?
   lastSyncErrorAt   DateTime?
@@ -682,8 +693,10 @@ model MailboxHistoricalImport {
   failedCount        Int                           @default(0)
   /// Provider message ids attempted in this run (for progress recount / idempotency).
   processedProviderMessageIds Json                 @default("[]")
-  /// Opaque Graph nextLink / Gmail pageToken for mid-import resume. Never write to AuditEvent.
+  /// Opaque Graph nextLink / Gmail pageToken for mid-import Inbox resume. Never write to AuditEvent.
   resumeCursor       String?
+  /// Opaque Graph nextLink for mid-import Sent Items resume (Outlook listenSent). Never write to AuditEvent.
+  sentResumeCursor   String?
   errorMessage       String?
   startedAt          DateTime?
   completedAt        DateTime?
@@ -761,6 +774,8 @@ model EmailMessage {
   snippet          String?
   bodyText         String?
   bodyHtml         String?
+  /// RECEIVED | SENT when known. Null for legacy rows (sender-heuristic fallback in queries).
+  direction        EmailDirection?
   labelIds         String[]      @default([])
   hasAttachments   Boolean       @default(false)
   isRead           Boolean       @default(false)
@@ -827,6 +842,8 @@ model EmailMessage {
   @@index([workspaceId, mailboxCategory, receivedAt])
   @@index([workspaceId, threadId, sentAt])
   @@index([workspaceId, itemStatus, sentAt])
+  @@index([inboxConnectionId, internetMessageId])
+  @@index([workspaceId, inboxConnectionId, direction, sentAt])
   @@index([senderEmail])
   @@index([jobId])
   @@index([workspaceId, jobId, sentAt])

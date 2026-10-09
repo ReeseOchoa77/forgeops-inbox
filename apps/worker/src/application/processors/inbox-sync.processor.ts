@@ -33,6 +33,41 @@ const toPrismaJson = (value: unknown): Prisma.InputJsonValue => {
   return normalized as Prisma.InputJsonValue;
 };
 
+type ImportMailboxResult = Awaited<ReturnType<typeof importProviderMailbox>>;
+
+/** Merge Inbox + Sent Items import outcomes for classify/attachment enqueue. */
+export function mergeInboxSyncImports(
+  inbox: ImportMailboxResult,
+  sent: ImportMailboxResult | null
+): ImportMailboxResult {
+  if (!sent) return inbox;
+  const created = [...new Set([...(inbox.createdMessageIds ?? []), ...(sent.createdMessageIds ?? [])])];
+  const updated = [...new Set([...(inbox.updatedMessageIds ?? []), ...(sent.updatedMessageIds ?? [])])];
+  const duplicates = [
+    ...new Set([
+      ...(inbox.duplicateMessageIds ?? []),
+      ...(sent.duplicateMessageIds ?? []),
+    ]),
+  ];
+  return {
+    workspaceId: inbox.workspaceId,
+    inboxConnectionId: inbox.inboxConnectionId,
+    threadsImported: inbox.threadsImported + sent.threadsImported,
+    messagesImported: inbox.messagesImported + sent.messagesImported,
+    duplicatesSkipped: inbox.duplicatesSkipped + sent.duplicatesSkipped,
+    createdMessageIds: created,
+    updatedMessageIds: updated,
+    duplicateMessageIds: duplicates,
+    newestSyncCursor: inbox.newestSyncCursor,
+    attachmentIngestCandidates: [
+      ...inbox.attachmentIngestCandidates,
+      ...sent.attachmentIngestCandidates,
+    ],
+    skippedClearedCount:
+      (inbox.skippedClearedCount ?? 0) + (sent.skippedClearedCount ?? 0),
+  };
+}
+
 const logAuditEvent = async (input: {
   prisma: PrismaClient;
   workspaceId: string;
@@ -278,36 +313,74 @@ export class InboxSyncProcessor {
     });
 
     try {
-      const mailbox = await provider.syncMailbox({
-        refreshToken: this.tokenCipher.decrypt(connection.encryptedRefreshToken),
-        accessToken: safeDecrypt(this.tokenCipher, connection.encryptedAccessToken),
+      const refreshToken = this.tokenCipher.decrypt(
+        connection.encryptedRefreshToken
+      );
+      const accessToken = safeDecrypt(
+        this.tokenCipher,
+        connection.encryptedAccessToken
+      );
+      const graphMailbox =
+        connection.delegatedMailboxAccess
+          ? { graphMailboxEmail: connection.email }
+          : {};
+
+      // 1) Inbox delta (independent cursor: syncCursor)
+      const inboxMailbox = await provider.syncMailbox({
+        refreshToken,
+        accessToken,
         accessTokenExpiresAt: connection.accessTokenExpiresAt,
         syncCursor: connection.syncCursor,
         maxThreads: 100,
-        ...(connection.delegatedMailboxAccess
-          ? { graphMailboxEmail: connection.email }
-          : {}),
+        mailFolder: "inbox",
+        ...graphMailbox,
       });
 
-      const syncResult = await importProviderMailbox({
+      const inboxImport = await importProviderMailbox({
         prisma: this.prisma,
         workspaceId: context.workspaceId,
         inboxConnectionId: connection.id,
-        mailbox
+        mailbox: inboxMailbox,
       });
+
+      // 2) Sent Items delta when listenSent (independent cursor: sentSyncCursor)
+      let sentImport: Awaited<ReturnType<typeof importProviderMailbox>> | null =
+        null;
+      let sentMailbox: typeof inboxMailbox | null = null;
+      if (connection.listenSent === true && providerKind === "outlook") {
+        sentMailbox = await provider.syncMailbox({
+          refreshToken: inboxMailbox.refreshedRefreshToken ?? refreshToken,
+          accessToken: inboxMailbox.accessToken ?? accessToken,
+          accessTokenExpiresAt:
+            inboxMailbox.accessTokenExpiresAt ?? connection.accessTokenExpiresAt,
+          syncCursor: connection.sentSyncCursor,
+          maxThreads: 100,
+          mailFolder: "sentitems",
+          ...graphMailbox,
+        });
+        sentImport = await importProviderMailbox({
+          prisma: this.prisma,
+          workspaceId: context.workspaceId,
+          inboxConnectionId: connection.id,
+          mailbox: sentMailbox,
+        });
+      }
+
+      const syncResult = mergeInboxSyncImports(inboxImport, sentImport);
       const syncCompletedAt = new Date();
+      const latestMailbox = sentMailbox ?? inboxMailbox;
 
       const tokenUpdates: Record<string, unknown> = {};
 
-      if (mailbox.accessToken) {
+      if (latestMailbox.accessToken) {
         tokenUpdates.encryptedAccessToken = this.tokenCipher.encrypt(
-          mailbox.accessToken
+          latestMailbox.accessToken
         );
       }
 
-      if (mailbox.refreshedRefreshToken) {
+      if (latestMailbox.refreshedRefreshToken) {
         tokenUpdates.encryptedRefreshToken = this.tokenCipher.encrypt(
-          mailbox.refreshedRefreshToken
+          latestMailbox.refreshedRefreshToken
         );
       }
 
@@ -317,12 +390,18 @@ export class InboxSyncProcessor {
         },
         data: {
           status: "ACTIVE",
-          syncCursor: syncResult.newestSyncCursor ?? connection.syncCursor,
+          syncCursor: inboxImport.newestSyncCursor ?? connection.syncCursor,
+          ...(connection.listenSent === true && providerKind === "outlook"
+            ? {
+                sentSyncCursor:
+                  sentImport?.newestSyncCursor ?? connection.sentSyncCursor,
+              }
+            : {}),
           lastSyncedAt: syncCompletedAt,
           lastSyncError: null,
           lastSyncErrorAt: null,
           ...tokenUpdates,
-          accessTokenExpiresAt: mailbox.accessTokenExpiresAt
+          accessTokenExpiresAt: latestMailbox.accessTokenExpiresAt
         }
       });
 
@@ -330,25 +409,15 @@ export class InboxSyncProcessor {
       const updatedCount = syncResult.updatedMessageIds?.length ?? 0;
       const duplicateCount = syncResult.duplicateMessageIds?.length ?? 0;
       const attachmentIngestCandidateCount =
-        "attachmentIngestCandidates" in syncResult &&
-        Array.isArray(
-          (syncResult as { attachmentIngestCandidates?: unknown[] })
-            .attachmentIngestCandidates
-        )
-          ? (
-              syncResult as {
-                attachmentIngestCandidates: unknown[];
-              }
-            ).attachmentIngestCandidates.length
-          : 0;
-      const skippedClearedCount =
-        "skippedClearedCount" in syncResult
-          ? ((syncResult as { skippedClearedCount?: number }).skippedClearedCount ??
-            0)
-          : 0;
+        syncResult.attachmentIngestCandidates?.length ?? 0;
+      const skippedClearedCount = syncResult.skippedClearedCount ?? 0;
       const syncCursorAdvanced = Boolean(
-        syncResult.newestSyncCursor &&
-          syncResult.newestSyncCursor !== connection.syncCursor
+        inboxImport.newestSyncCursor &&
+          inboxImport.newestSyncCursor !== connection.syncCursor
+      );
+      const sentSyncCursorAdvanced = Boolean(
+        sentImport?.newestSyncCursor &&
+          sentImport.newestSyncCursor !== connection.sentSyncCursor
       );
 
       await logAuditEvent({
@@ -360,7 +429,7 @@ export class InboxSyncProcessor {
         metadata: buildInboxSyncSucceededAuditMetadata({
           provider: providerKind,
           jobId: context.jobId,
-          refreshTokenRotated: Boolean(mailbox.refreshedRefreshToken),
+          refreshTokenRotated: Boolean(latestMailbox.refreshedRefreshToken),
           syncCursorAdvanced,
           threadsImported: syncResult.threadsImported,
           messagesImported: syncResult.messagesImported,
@@ -380,7 +449,7 @@ export class InboxSyncProcessor {
       console.info("inbox-sync-completed", {
         jobId: context.jobId,
         provider: providerKind,
-        refreshTokenRotated: Boolean(mailbox.refreshedRefreshToken),
+        refreshTokenRotated: Boolean(latestMailbox.refreshedRefreshToken),
         workspaceId: syncResult.workspaceId,
         inboxConnectionId: syncResult.inboxConnectionId,
         threadsImported: syncResult.threadsImported,
@@ -392,8 +461,11 @@ export class InboxSyncProcessor {
         attachmentIngestCandidateCount,
         skippedClearedCount,
         syncCursorAdvanced,
-        hasNewestSyncCursor: Boolean(syncResult.newestSyncCursor),
-        newestSyncCursorLength: syncResult.newestSyncCursor?.length ?? 0,
+        sentSyncCursorAdvanced,
+        listenSent: connection.listenSent === true,
+        hasNewestSyncCursor: Boolean(inboxImport.newestSyncCursor),
+        hasNewestSentSyncCursor: Boolean(sentImport?.newestSyncCursor),
+        newestSyncCursorLength: inboxImport.newestSyncCursor?.length ?? 0,
         skipped: syncResult.skipped ?? false,
         skipReason: syncResult.skipReason,
       });

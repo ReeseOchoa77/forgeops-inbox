@@ -40,6 +40,17 @@ function attachmentNamesFromMetadata(metadata: unknown): string[] {
   return names;
 }
 
+function extractAddressEmails(addresses: unknown): string[] {
+  if (!Array.isArray(addresses)) return [];
+  const out: string[] = [];
+  for (const item of addresses) {
+    if (!item || typeof item !== "object") continue;
+    const email = (item as { email?: unknown }).email;
+    if (typeof email === "string" && email.trim()) out.push(email.trim());
+  }
+  return out;
+}
+
 export interface ClassifyEmailMessageDeps {
   prisma: PrismaClient;
   openaiApiKey?: string | undefined;
@@ -176,6 +187,8 @@ export async function classifyEmailMessageNative(
         subject: true,
         senderName: true,
         senderEmail: true,
+        toAddresses: true,
+        direction: true,
         bodyText: true,
         attachmentMetadata: true,
         jobId: true,
@@ -258,6 +271,8 @@ export async function classifyEmailMessageNative(
         senderName: message.senderName,
         senderEmail: message.senderEmail,
         senderDomain,
+        direction: message.direction ?? null,
+        toAddresses: extractAddressEmails(message.toAddresses),
         attachmentNames: attachmentNamesFromMetadata(message.attachmentMetadata),
         threadSnippets: priorMessages,
         ...(confirmedJobAssociation

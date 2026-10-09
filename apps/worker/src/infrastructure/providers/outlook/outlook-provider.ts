@@ -43,7 +43,8 @@ const mapMessage = (
   sentAt: msg.sentAt,
   internetMessageId: msg.internetMessageId,
   receivedAt: msg.receivedAt,
-  sizeEstimate: null
+  sizeEstimate: null,
+  direction: msg.direction,
 });
 
 const mapConversation = (
@@ -90,6 +91,7 @@ export class OutlookSyncProvider implements InboxSyncProvider {
       ...(input.graphMailboxEmail
         ? { graphMailboxEmail: input.graphMailboxEmail }
         : {}),
+      ...(input.mailFolder ? { mailFolder: input.mailFolder } : {}),
     });
 
     return {

@@ -17,6 +17,7 @@ import {
   buildOperationalTasksWhere,
   taskListOrderBy,
   BUSINESS_SUBTYPE_KEYS,
+  emailDirectionListWhere,
   type TaskStatusFilter,
   type TaskDueFilter,
   type TaskPriorityFilter,
@@ -1050,27 +1051,18 @@ export const buildMessagesWhere = (input: {
     andConditions.push({ isPinned: true });
   }
 
-  // Sent = sender matches any monitored/connected inbox.
-  // Sent tab: only those. All / Unread / Read: exclude them.
-  // Use a single `in`/`notIn` (case-insensitive) instead of N OR equals — same
-  // semantics, cheaper for the planner than NOT (OR equals…).
+  // Sent / received: prefer canonical EmailMessage.direction; fall back to
+  // sender∈monitored for legacy rows with null direction.
   {
     const monitoredEmails = (input.mailboxEmails ?? [])
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean);
-    if (input.sentOnly) {
-      if (monitoredEmails.length > 0) {
-        andConditions.push({
-          senderEmail: { in: monitoredEmails, mode: "insensitive" as const },
-        });
-      } else {
-        andConditions.push({ id: "__no_monitored_inboxes__" });
-      }
-    } else if (monitoredEmails.length > 0) {
-      andConditions.push({
-        senderEmail: { notIn: monitoredEmails, mode: "insensitive" as const },
-      });
-    }
+    andConditions.push(
+      emailDirectionListWhere({
+        sentOnly: Boolean(input.sentOnly),
+        monitoredEmails,
+      }) as Prisma.EmailMessageWhereInput
+    );
   }
 
   andConditions.push({ isArchived: false });

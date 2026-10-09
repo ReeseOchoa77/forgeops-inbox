@@ -167,7 +167,7 @@ export async function processMailboxHistoricalImport(
     throw new Error(`Historical import not found: ${payload.importId}`);
   }
 
-  const resuming = Boolean(importRow.resumeCursor);
+  const resuming = Boolean(importRow.resumeCursor || importRow.sentResumeCursor);
   let processedProviderMessageIds = asStringArray(
     importRow.processedProviderMessageIds
   );
@@ -176,6 +176,10 @@ export async function processMailboxHistoricalImport(
   let failedCount = resuming ? importRow.failedCount : 0;
   let createdMessageIds: string[] = [];
   let pageCursor: string | null = importRow.resumeCursor ?? null;
+  let sentPageCursor: string | null = importRow.sentResumeCursor ?? null;
+  /** Inbox first; Sent Items after Inbox exhausted when listenSent. */
+  let importPhase: "inbox" | "sent" =
+    !pageCursor && sentPageCursor ? "sent" : "inbox";
 
   await deps.prisma.mailboxHistoricalImport.update({
     where: { id: payload.importId },
@@ -194,6 +198,7 @@ export async function processMailboxHistoricalImport(
             personalCount: 0,
             processedProviderMessageIds: [],
             resumeCursor: null,
+            sentResumeCursor: null,
           }),
     },
   });
@@ -248,6 +253,16 @@ export async function processMailboxHistoricalImport(
           : Math.min(HISTORICAL_IMPORT_PAGE_SIZE, hardCap - alreadyProcessed);
       if (batchSize <= 0) break;
 
+      // Skip Inbox phase when listenIncoming is off (Sent-only historical).
+      if (importPhase === "inbox" && !listenIncoming) {
+        importPhase = listenSent && providerKind === "outlook" ? "sent" : "inbox";
+        if (importPhase === "inbox") break;
+      }
+      if (importPhase === "sent" && !(listenSent && providerKind === "outlook")) {
+        break;
+      }
+
+      const activeCursor = importPhase === "sent" ? sentPageCursor : pageCursor;
       let mailbox: ProviderMailboxSyncResult;
       try {
         mailbox = await provider.syncMailbox({
@@ -260,8 +275,9 @@ export async function processMailboxHistoricalImport(
           accessTokenExpiresAt: connection.accessTokenExpiresAt,
           syncCursor: null,
           maxThreads: batchSize,
+          mailFolder: importPhase === "sent" ? "sentitems" : "inbox",
           ...(receivedAfter ? { receivedAfter } : {}),
-          ...(pageCursor ? { pageCursor } : {}),
+          ...(activeCursor ? { pageCursor: activeCursor } : {}),
           ...(connection.delegatedMailboxAccess
             ? { graphMailboxEmail: connection.email }
             : {}),
@@ -273,6 +289,7 @@ export async function processMailboxHistoricalImport(
           data: {
             status: "RUNNING",
             resumeCursor: pageCursor,
+            sentResumeCursor: sentPageCursor,
             processedCount: processedProviderMessageIds.length,
             importedCount,
             duplicateCount,
@@ -285,12 +302,13 @@ export async function processMailboxHistoricalImport(
 
       const remainingCap =
         hardCap == null ? null : hardCap - processedProviderMessageIds.length;
+      // Folder sync already scopes direction; keep junk/trash filters.
       const cappedThreads = filterThreadsForImport(mailbox.threads, {
         receivedAfter,
         excludeJunk,
         excludeTrash,
-        listenIncoming,
-        listenSent,
+        listenIncoming: true,
+        listenSent: true,
         remainingCap,
       });
 
@@ -334,6 +352,7 @@ export async function processMailboxHistoricalImport(
             where: { id: payload.importId },
             data: {
               resumeCursor: pageCursor,
+              sentResumeCursor: sentPageCursor,
               processedCount: processedProviderMessageIds.length,
               importedCount,
               duplicateCount,
@@ -406,7 +425,12 @@ export async function processMailboxHistoricalImport(
         }
       }
 
-      pageCursor = mailbox.nextPageCursor ?? null;
+      const nextCursor = mailbox.nextPageCursor ?? null;
+      if (importPhase === "sent") {
+        sentPageCursor = nextCursor;
+      } else {
+        pageCursor = nextCursor;
+      }
 
       await deps.prisma.mailboxHistoricalImport.update({
         where: { id: payload.importId },
@@ -417,13 +441,34 @@ export async function processMailboxHistoricalImport(
           failedCount,
           processedProviderMessageIds,
           resumeCursor: pageCursor,
+          sentResumeCursor: sentPageCursor,
         },
       });
 
-      // Empty page with no continuation → done.
-      if (!pageCursor) break;
+      // Empty page with no continuation → advance phase or done.
+      if (!nextCursor) {
+        if (
+          importPhase === "inbox" &&
+          listenSent &&
+          providerKind === "outlook"
+        ) {
+          importPhase = "sent";
+          continue;
+        }
+        break;
+      }
       // Provider returned a full page but no new eligible messages — still advance via cursor.
-      if (batchProviderIds.length === 0 && mailbox.threads.length === 0) break;
+      if (batchProviderIds.length === 0 && mailbox.threads.length === 0) {
+        if (
+          importPhase === "inbox" &&
+          listenSent &&
+          providerKind === "outlook"
+        ) {
+          importPhase = "sent";
+          continue;
+        }
+        break;
+      }
     }
 
     // By-count only: brief wait so the card shows classify progress.

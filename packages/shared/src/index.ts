@@ -10,6 +10,7 @@ export * from "./types/inbox.js";
 export * from "./types/jobs.js";
 export * from "./types/provider.js";
 export * from "./types/provider-message-delete.js";
+export * from "./email-direction.js";
 export * from "./types/tenant.js";
 export * from "./reference/normalize.js";
 export * from "./reference/evidence-scoring.js";

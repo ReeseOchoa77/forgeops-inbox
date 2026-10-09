@@ -13,6 +13,8 @@ type FixtureMsg = {
   inboxConnectionId: string;
   senderEmail: string;
   mailboxCategory: "BUSINESS" | "PERSONAL";
+  /** null simulates legacy rows without canonical direction. */
+  direction?: "RECEIVED" | "SENT" | null;
   isTrashed?: boolean;
   isArchived?: boolean;
 };
@@ -83,11 +85,48 @@ function matchesListWhere(
     }
 
     if ("OR" in cond && Array.isArray(cond.OR)) {
-      const senderEquals = cond.OR.every(
+      const orList = cond.OR as Array<Record<string, unknown>>;
+      // Canonical direction OR legacy sender heuristic
+      const hasDirectionBranch = orList.some(
+        (c) => c && typeof c === "object" && "direction" in c
+      );
+      if (hasDirectionBranch) {
+        const msgDir = msg.direction ?? null;
+        const ok = orList.some((branch) => {
+          if (!branch || typeof branch !== "object") return false;
+          if ("direction" in branch) {
+            if (branch.direction === msgDir) return true;
+            // SENT filter with direction:SENT matches only SENT; RECEIVED similarly
+            return false;
+          }
+          if ("AND" in branch && Array.isArray(branch.AND)) {
+            const ands = branch.AND as Array<Record<string, unknown>>;
+            const dirNull = ands.some((a) => a && a.direction === null);
+            const sender = ands.find((a) => a && "senderEmail" in a) as
+              | { senderEmail?: { in?: string[]; notIn?: string[] } }
+              | undefined;
+            if (!dirNull || msgDir !== null) return false;
+            const s = msg.senderEmail.toLowerCase();
+            if (sender?.senderEmail?.in) {
+              return sender.senderEmail.in.map((e) => e.toLowerCase()).includes(s);
+            }
+            if (sender?.senderEmail?.notIn) {
+              return !sender.senderEmail.notIn
+                .map((e) => e.toLowerCase())
+                .includes(s);
+            }
+          }
+          return false;
+        });
+        if (!ok) return false;
+        continue;
+      }
+
+      const senderEquals = orList.every(
         (c) => c && typeof c === "object" && "senderEmail" in c
       );
       if (senderEquals) {
-        const ok = cond.OR.some((c) => {
+        const ok = orList.some((c) => {
           const se = (c as { senderEmail?: { equals?: string; in?: string[] } }).senderEmail;
           if (typeof se?.equals === "string") {
             return se.equals.toLowerCase() === msg.senderEmail.toLowerCase();
@@ -152,10 +191,12 @@ const sentPersonal: FixtureMsg = {
 };
 
 describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
-  it("1. Sent: sentOnly=true, businessCategory omitted → BUSINESS + PERSONAL outbound", () => {
+  it("1. Sent: sentOnly=true uses direction OR legacy sender heuristic", () => {
     const where = baseWhere({ sentOnly: true });
     const and = where.AND as object[];
     expect(and.some((c) => "mailboxCategory" in c)).toBe(false);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
+    // Legacy heuristic fixture (null direction simulated via sender match path)
     expect(matchesListWhere(where, sentBusiness)).toBe(true);
     expect(matchesListWhere(where, sentPersonal)).toBe(true);
   });
@@ -188,22 +229,18 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
     expect(
       matchesListWhere(where, { ...sentBusiness, senderEmail: "not-monitored@x.com" })
     ).toBe(false);
-    const and = where.AND as Array<Record<string, unknown>>;
-    const senderCond = and.find((c) => c && typeof c === "object" && "senderEmail" in c) as
-      | { senderEmail: { in?: string[] } }
-      | undefined;
-    expect(senderCond?.senderEmail?.in).toEqual(
-      expect.arrayContaining(["ed@tekstl.net", "other@example.com"])
-    );
+    const raw = JSON.stringify(where);
+    expect(raw).toContain("ed@tekstl.net");
+    expect(raw).toContain("other@example.com");
+    expect(raw).toContain('"direction":"SENT"');
   });
 
   it("uses notIn (not NOT/OR) to exclude monitored senders from Business", () => {
     const where = baseWhere({ businessCategory: "BUSINESS", sentOnly: false });
+    const raw = JSON.stringify(where);
+    expect(raw).toContain("notIn");
+    expect(raw).toContain('"direction":"RECEIVED"');
     const and = where.AND as Array<Record<string, unknown>>;
-    const senderCond = and.find((c) => c && typeof c === "object" && "senderEmail" in c) as
-      | { senderEmail: { notIn?: string[] } }
-      | undefined;
-    expect(senderCond?.senderEmail?.notIn?.length).toBeGreaterThan(0);
     expect(and.some((c) => c && typeof c === "object" && "NOT" in c)).toBe(false);
   });
 
@@ -234,7 +271,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     expect(matchesListWhere(where, incomingBusiness)).toBe(false);
     const and = where.AND as object[];
     expect(and.some((c) => "mailboxCategory" in c && (c as { mailboxCategory: string }).mailboxCategory === "BUSINESS")).toBe(true);
-    expect(and.some((c) => "senderEmail" in c)).toBe(true);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
   });
 
   it("Sent + Personal excludes Business outbound", () => {
@@ -251,7 +288,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       businessTypeGroup: "BIDS_ESTIMATING",
     });
     const and = where.AND as Array<Record<string, unknown>>;
-    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
     expect(and.some((c) => c && "mailboxCategory" in c)).toBe(true);
     const subtype = and.find(
       (c) =>
@@ -292,7 +329,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
         businessTypeKey: key,
       });
       const and = where.AND as Array<Record<string, unknown>>;
-      expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+      expect(JSON.stringify(where)).toContain('"direction":"SENT"');
       expect(
         and.some(
           (c) =>
@@ -313,7 +350,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     });
     const and = where.AND as Array<Record<string, unknown>>;
     expect(and.some((c) => c && "isPinned" in c && c.isPinned === true)).toBe(true);
-    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
     expect(and.some((c) => c && "mailboxCategory" in c)).toBe(true);
   });
 
@@ -348,8 +385,18 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     });
     const and = where.AND as Array<Record<string, unknown>>;
     expect(and.some((c) => c && "isRead" in c && c.isRead === false)).toBe(true);
-    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
-    expect(and.some((c) => c && "OR" in c && Array.isArray(c.OR))).toBe(true);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "OR" in c &&
+          Array.isArray(c.OR) &&
+          (c.OR as object[]).some(
+            (o) => o && typeof o === "object" && "receivedAt" in o
+          )
+      )
+    ).toBe(true);
   });
 
   it("Sent + search ANDs search OR clauses with direction", () => {
@@ -360,7 +407,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       searchIn: "sender",
     });
     const and = where.AND as Array<Record<string, unknown>>;
-    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(JSON.stringify(where)).toContain('"direction":"SENT"');
     expect(
       and.some(
         (c) =>
@@ -537,9 +584,15 @@ describe("buildMessagesWhere — Inbox dateRange", () => {
     const before = new Date("2026-08-31T23:59:59.000Z");
     const where = baseWhere({ receivedAfter: after, receivedBefore: before });
     const and = where.AND as Array<Record<string, unknown>>;
-    const rangeCond = and.find((c) => c && "OR" in c && Array.isArray(c.OR)) as
-      | { OR: Array<Record<string, unknown>> }
-      | undefined;
+    const rangeCond = and.find(
+      (c) =>
+        c &&
+        "OR" in c &&
+        Array.isArray(c.OR) &&
+        (c.OR as object[]).some(
+          (o) => o && typeof o === "object" && "receivedAt" in o
+        )
+    ) as { OR: Array<Record<string, unknown>> } | undefined;
     expect(rangeCond?.OR?.some((c) => "receivedAt" in c)).toBe(true);
   });
 });

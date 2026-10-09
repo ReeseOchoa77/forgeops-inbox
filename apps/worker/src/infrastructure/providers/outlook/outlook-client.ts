@@ -217,6 +217,8 @@ export type OutlookGraphDownloadAttachmentResult =
   | { ok: true; data: Buffer; contentType: string | null }
   | { ok: false; status: number; error: string };
 
+export type OutlookMailFolder = "inbox" | "sentitems";
+
 export interface OutlookMessageSnapshot {
   outlookMessageId: string;
   conversationId: string;
@@ -238,6 +240,8 @@ export interface OutlookMessageSnapshot {
   receivedAt: Date | null;
   isRead: boolean;
   importance: string | null;
+  /** Authoritative when synced from a well-known folder. */
+  direction: "RECEIVED" | "SENT";
 }
 
 export interface OutlookConversationSnapshot {
@@ -274,6 +278,8 @@ export interface OutlookMailboxSyncInput {
   pageCursor?: string | null;
   /** When set, Graph mail paths use /users/{email} instead of /me. */
   graphMailboxEmail?: string | null;
+  /** Well-known folder. Default inbox. */
+  mailFolder?: OutlookMailFolder;
 }
 
 const mapGraphAddress = (
@@ -429,7 +435,11 @@ const mergeParticipants = (
   return [...participants.values()];
 };
 
-const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): OutlookMessageSnapshot => {
+const parseMessage = (
+  msg: GraphMessage,
+  folderMap: Map<string, string>,
+  direction: "RECEIVED" | "SENT" = "RECEIVED"
+): OutlookMessageSnapshot => {
   const from = msg.from ? mapGraphAddress(msg.from) : null;
   const parsedSent = parseDate(msg.sentDateTime);
   const receivedAt = parseDate(msg.receivedDateTime);
@@ -456,7 +466,8 @@ const parseMessage = (msg: GraphMessage, folderMap: Map<string, string>): Outloo
     sentAt,
     receivedAt,
     isRead: msg.isRead === false ? false : msg.isRead === true ? true : false,
-    importance: msg.importance ?? null
+    importance: msg.importance ?? null,
+    direction,
   };
 };
 
@@ -718,14 +729,16 @@ export class OutlookClient {
     const tokenResult = await this.refreshAccessToken(input.refreshToken);
 
     const folderMap = await this.fetchFolderNames(tokenResult.accessToken);
+    const mailFolder: OutlookMailFolder = input.mailFolder ?? "inbox";
 
-    const messages = await this.fetchInboxMessages(
+    const messages = await this.fetchMailFolderMessages(
       tokenResult.accessToken,
       input.maxMessages ?? MAX_MESSAGES_PER_SYNC,
       input.syncCursor ?? null,
       folderMap,
       input.receivedAfter ?? null,
-      input.pageCursor ?? null
+      input.pageCursor ?? null,
+      mailFolder
     );
 
     if (messages.hasAttachmentIds.length > 0) {
@@ -1048,13 +1061,14 @@ export class OutlookClient {
     return normalizeGraphMessageFrom(graphMessageSchema.parse(raw));
   }
 
-  private async fetchInboxMessages(
+  private async fetchMailFolderMessages(
     accessToken: string,
     maxMessages: number,
     syncCursor: string | null,
     folderMap: Map<string, string>,
     receivedAfter: Date | null = null,
-    pageCursor: string | null = null
+    pageCursor: string | null = null,
+    mailFolder: OutlookMailFolder = "inbox"
   ): Promise<{
     items: OutlookMessageSnapshot[];
     deltaLink: string | null;
@@ -1062,6 +1076,10 @@ export class OutlookClient {
     nextPageCursor: string | null;
   }> {
     const pageSize = Math.min(maxMessages, 50);
+    const folderPath =
+      mailFolder === "sentitems" ? "mailFolders/sentitems" : "mailFolders/inbox";
+    const direction: "RECEIVED" | "SENT" =
+      mailFolder === "sentitems" ? "SENT" : "RECEIVED";
 
     let url: string | null;
     let isDelta = false;
@@ -1072,11 +1090,14 @@ export class OutlookClient {
       isDelta = false;
     } else if (receivedAfter) {
       // Date-bounded historical import: list newest-first with Graph filter (not delta).
+      // Sent Items often has null receivedDateTime — prefer sentDateTime for sent folder.
+      const dateField =
+        mailFolder === "sentitems" ? "sentDateTime" : "receivedDateTime";
       url =
-        this.mailUrl("mailFolders/inbox/messages") +
+        this.mailUrl(`${folderPath}/messages`) +
         `?$select=${MESSAGE_SELECT_FIELDS}` +
-        `&$filter=receivedDateTime ge ${receivedAfter.toISOString().replace(/\.\d{3}Z$/, "Z")}` +
-        `&$orderby=receivedDateTime desc` +
+        `&$filter=${dateField} ge ${receivedAfter.toISOString().replace(/\.\d{3}Z$/, "Z")}` +
+        `&$orderby=${dateField} desc` +
         `&$top=${pageSize}`;
       isDelta = false;
     } else if (syncCursor && syncCursor.startsWith("http")) {
@@ -1084,7 +1105,7 @@ export class OutlookClient {
       isDelta = true;
     } else {
       url =
-        this.mailUrl("mailFolders/inbox/messages/delta") +
+        this.mailUrl(`${folderPath}/messages/delta`) +
         `?$select=${MESSAGE_SELECT_FIELDS}` +
         `&$top=${pageSize}`;
     }
@@ -1103,22 +1124,24 @@ export class OutlookClient {
 
       if ((response.status === 410 || response.status === 404) && isDelta) {
         console.warn("outlook-delta-link-expired", {
+          folder: mailFolder,
           cursor: syncCursor?.slice(0, 80)
         });
-        return this.fetchInboxMessages(
+        return this.fetchMailFolderMessages(
           accessToken,
           maxMessages,
           null,
           folderMap,
           receivedAfter,
-          null
+          null,
+          mailFolder
         );
       }
 
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `Outlook inbox fetch failed (${response.status}): ${errorText}`
+          `Outlook ${mailFolder} fetch failed (${response.status}): ${errorText}`
         );
       }
 
@@ -1160,14 +1183,16 @@ export class OutlookClient {
           continue;
         }
 
-        const parsed = parseMessage(normalized, folderMap);
+        const parsed = parseMessage(normalized, folderMap, direction);
 
-        if (
-          receivedAfter &&
-          parsed.receivedAt &&
-          parsed.receivedAt.getTime() < receivedAfter.getTime()
-        ) {
-          continue;
+        if (receivedAfter) {
+          const msgTime =
+            mailFolder === "sentitems"
+              ? parsed.sentAt?.getTime()
+              : (parsed.receivedAt ?? parsed.sentAt)?.getTime();
+          if (msgTime != null && msgTime < receivedAfter.getTime()) {
+            continue;
+          }
         }
 
         items.push(parsed);
