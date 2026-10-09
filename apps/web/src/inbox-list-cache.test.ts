@@ -3,9 +3,12 @@ import {
   clearInboxListCacheForTests,
   getCachedInboxList,
   setCachedInboxList,
+  patchCachedInboxMessagePin,
   prefetchInboxList,
+  sortInboxMessagesPinnedFirst,
   INBOX_DEFAULT_LIST_FILTER_KEY,
 } from './inbox-list-cache'
+import { inboxListQueryKey } from './inbox-list-query'
 
 describe('inbox list cache', () => {
   beforeEach(() => {
@@ -65,6 +68,77 @@ describe('inbox list cache', () => {
     expect(fetches).toBe(1)
     const hit = getCachedInboxList('ws', 'conn')
     expect(hit?.messages[0]?.isRead).toBe(false)
+  })
+})
+
+describe('inbox pin cache patch', () => {
+  beforeEach(() => {
+    clearInboxListCacheForTests()
+  })
+
+  it('sortInboxMessagesPinnedFirst puts pinned first', () => {
+    const sorted = sortInboxMessagesPinnedFirst([
+      { id: 'a', isPinned: false, receivedAt: '2026-01-02T00:00:00.000Z' } as never,
+      { id: 'b', isPinned: true, receivedAt: '2026-01-01T00:00:00.000Z' } as never,
+    ])
+    expect(sorted.map((m) => m.id)).toEqual(['b', 'a'])
+  })
+
+  it('patchCachedInboxMessagePin updates every filter cache for the mailbox', () => {
+    const businessKey = inboxListQueryKey({ businessCategory: 'BUSINESS' })
+    const personalKey = inboxListQueryKey({ businessCategory: 'NON_BUSINESS' })
+    setCachedInboxList('ws', 'conn', businessKey, {
+      messages: [
+        { id: 'm1', isPinned: false, receivedAt: '2026-01-02T00:00:00.000Z' } as never,
+        { id: 'm2', isPinned: false, receivedAt: '2026-01-01T00:00:00.000Z' } as never,
+      ],
+      hasMore: false,
+      totalCount: 2,
+      page: 1,
+    })
+    setCachedInboxList('ws', 'conn', personalKey, {
+      messages: [
+        { id: 'm1', isPinned: false, receivedAt: '2026-01-02T00:00:00.000Z' } as never,
+      ],
+      hasMore: false,
+      totalCount: 1,
+      page: 1,
+    })
+
+    patchCachedInboxMessagePin({
+      workspaceId: 'ws',
+      connectionId: 'conn',
+      messageId: 'm1',
+      isPinned: true,
+      activeFilterKey: businessKey,
+    })
+
+    expect(getCachedInboxList('ws', 'conn', businessKey)?.messages[0]?.id).toBe('m1')
+    expect(getCachedInboxList('ws', 'conn', businessKey)?.messages[0]?.isPinned).toBe(true)
+    expect(getCachedInboxList('ws', 'conn', personalKey)?.messages[0]?.isPinned).toBe(true)
+  })
+
+  it('unpin from pinnedOnly cache removes the row', () => {
+    const pinnedKey = inboxListQueryKey({
+      businessCategory: 'BUSINESS',
+      pinnedOnly: true,
+    })
+    expect(pinnedKey.split('|')).toContain('pinned')
+    setCachedInboxList('ws', 'conn', pinnedKey, {
+      messages: [
+        { id: 'm1', isPinned: true, receivedAt: '2026-01-02T00:00:00.000Z' } as never,
+      ],
+      hasMore: false,
+      totalCount: 1,
+      page: 1,
+    })
+    patchCachedInboxMessagePin({
+      workspaceId: 'ws',
+      connectionId: 'conn',
+      messageId: 'm1',
+      isPinned: false,
+    })
+    expect(getCachedInboxList('ws', 'conn', pinnedKey)?.messages).toEqual([])
   })
 })
 

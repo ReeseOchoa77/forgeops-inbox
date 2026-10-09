@@ -621,6 +621,7 @@ export type TaskListFilters = {
   /** Legacy sourceDate window */
   dateRange?: 'TODAY' | 'WEEK' | 'MONTH'
   timezone?: string
+  pinnedOnly?: boolean
 }
 
 export interface ApprovedAccessEntry {
@@ -1075,6 +1076,7 @@ export const api = {
       sentOnly?: boolean;
       unreadOnly?: boolean;
       unclassifiedOnly?: boolean;
+      pinnedOnly?: boolean;
       dateRange?: 'TODAY' | 'WEEK' | 'MONTH';
       timezone?: string;
       includeTotal?: boolean;
@@ -1098,6 +1100,7 @@ export const api = {
     if (filters?.sentOnly) params.set('sentOnly', 'true');
     if (filters?.unreadOnly) params.set('unreadOnly', 'true');
     if (filters?.unclassifiedOnly) params.set('unclassifiedOnly', 'true');
+    if (filters?.pinnedOnly) params.set('pinnedOnly', 'true');
     if (filters?.dateRange) params.set('dateRange', filters.dateRange);
     if (filters?.timezone) params.set('timezone', filters.timezone);
     if (filters?.includeTotal) params.set('includeTotal', 'true');
@@ -1292,6 +1295,7 @@ export const api = {
     if (filters?.sort) p.set('sort', filters.sort)
     if (filters?.dateRange) p.set('dateRange', filters.dateRange)
     if (filters?.timezone) p.set('timezone', filters.timezone)
+    if (filters?.pinnedOnly) p.set('pinnedOnly', 'true')
     return request<{
       tasks: TaskListItem[]
       pagination: {

@@ -15,6 +15,7 @@ export function inboxListQueryKey(filters: InboxMessageListFilters): string {
     filters.sentOnly ? "sent" : "",
     filters.unreadOnly ? "unread" : "",
     filters.unclassifiedOnly ? "unclassified" : "",
+    filters.pinnedOnly ? "pinned" : "",
     filters.jobId ?? "",
     filters.dateRange ?? "",
     filters.timezone ?? "",

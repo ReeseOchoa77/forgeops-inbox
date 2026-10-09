@@ -67,6 +67,70 @@ export function setCachedInboxList(
   })
 }
 
+/** Pinned-first then newest received/sent — matches Inbox server orderBy secondary. */
+export function sortInboxMessagesPinnedFirst(
+  messages: MessageSummary[]
+): MessageSummary[] {
+  return [...messages].sort((a, b) => {
+    if (a.isPinned && !b.isPinned) return -1
+    if (!a.isPinned && b.isPinned) return 1
+    const dateA = new Date(a.receivedAt ?? a.sentAt ?? 0).getTime()
+    const dateB = new Date(b.receivedAt ?? b.sentAt ?? 0).getTime()
+    return dateB - dateA
+  })
+}
+
+/**
+ * Patch canonical pin state for one message across every cached filter for this
+ * mailbox. When unpinning from a pinnedOnly cache, remove the row.
+ * Returns the sorted messages for the active filter key (if present).
+ */
+export function patchCachedInboxMessagePin(input: {
+  workspaceId: string
+  connectionId: string
+  messageId: string
+  isPinned: boolean
+  /** When set, also refresh this filter entry's cachedAt after patch. */
+  activeFilterKey?: string
+}): MessageSummary[] | null {
+  const prefix = `${input.workspaceId}:${input.connectionId}:`
+  const now = Date.now()
+  let activeMessages: MessageSummary[] | null = null
+
+  for (const [key, entry] of [...cache.entries()]) {
+    if (!key.startsWith(prefix)) continue
+    const filterKey = key.slice(prefix.length)
+    // Query key segment for pinnedOnly is literally "pinned" (see inboxListQueryKey).
+    const segments = filterKey.split('|')
+    const pinnedOnlyFilter = segments.includes('pinned')
+    let nextMessages = entry.messages.map((m) =>
+      m.id === input.messageId ? { ...m, isPinned: input.isPinned } : m
+    )
+    if (!input.isPinned && pinnedOnlyFilter) {
+      nextMessages = nextMessages.filter((m) => m.id !== input.messageId)
+    }
+    nextMessages = sortInboxMessagesPinnedFirst(nextMessages)
+    cache.set(key, { ...entry, messages: nextMessages, cachedAt: now })
+    if (input.activeFilterKey && filterKey === input.activeFilterKey) {
+      activeMessages = nextMessages
+    }
+  }
+
+  return activeMessages
+}
+
+export function invalidateInboxListCache(
+  workspaceId: string,
+  connectionId?: string
+): void {
+  const prefix = connectionId
+    ? `${workspaceId}:${connectionId}:`
+    : `${workspaceId}:`
+  for (const key of [...cache.keys()]) {
+    if (key.startsWith(prefix)) cache.delete(key)
+  }
+}
+
 export function prefetchInboxList(
   workspaceId: string,
   connectionId: string,

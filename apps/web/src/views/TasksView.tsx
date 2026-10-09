@@ -5,7 +5,9 @@ import { TaskListRow, taskFilterSelectStyle } from '../components/TaskListRow'
 import {
   getCachedTasksList,
   invalidateTasksListCache,
+  patchCachedTasksListPin,
   setCachedTasksList,
+  sortTasksPinnedFirst,
   TASKS_LIST_FRESH_MS,
 } from '../tasks-list-cache'
 
@@ -49,6 +51,7 @@ export function TasksView({
   const [direction, setDirection] = useState<TaskListFilters['direction']>('ALL')
   const [jobId, setJobId] = useState('')
   const [sort, setSort] = useState<TaskListFilters['sort']>('DUE_DATE')
+  const [pinnedOnly, setPinnedOnly] = useState(false)
   const [jobs, setJobs] = useState<Array<{ id: string; name: string; jobNumber: string | null }>>([])
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -81,6 +84,7 @@ export function TasksView({
       ...(jobId ? { jobId } : {}),
       sort,
       timezone: browserTimeZone,
+      ...(pinnedOnly ? { pinnedOnly: true } : {}),
     }),
     [
       statusFilter,
@@ -94,6 +98,7 @@ export function TasksView({
       jobId,
       sort,
       browserTimeZone,
+      pinnedOnly,
     ]
   )
 
@@ -312,23 +317,30 @@ export function TasksView({
 
   const handlePin = async (taskId: string, currentlyPinned: boolean) => {
     const newPinned = !currentlyPinned
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.task.id === taskId
-          ? { ...t, task: { ...t.task, isPinned: newPinned } }
-          : t
-      )
-    )
+    const applyLocal = (pinned: boolean) => {
+      setTasks((prev) => {
+        let next = prev.map((t) =>
+          t.task.id === taskId
+            ? { ...t, task: { ...t.task, isPinned: pinned } }
+            : t
+        )
+        if (!pinned && pinnedOnly) {
+          next = next.filter((t) => t.task.id !== taskId)
+        }
+        return sortTasksPinnedFirst(next)
+      })
+      patchCachedTasksListPin({
+        workspaceId,
+        connectionId,
+        taskId,
+        isPinned: pinned,
+      })
+    }
+    applyLocal(newPinned)
     try {
       await api.pinTask(workspaceId, taskId, newPinned)
     } catch {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.task.id === taskId
-            ? { ...t, task: { ...t.task, isPinned: currentlyPinned } }
-            : t
-        )
-      )
+      applyLocal(currentlyPinned)
     }
   }
 
@@ -467,6 +479,23 @@ export function TasksView({
             marginBottom: 10,
           }}
         >
+          <button
+            type="button"
+            data-testid="tasks-pinned-filter"
+            aria-pressed={pinnedOnly}
+            title="Show only pinned tasks (composes with other filters)"
+            onClick={() => setPinnedOnly((prev) => !prev)}
+            style={{
+              ...selectStyle,
+              fontWeight: pinnedOnly ? 600 : 500,
+              border: pinnedOnly ? '1px solid #e09400' : selectStyle.border,
+              background: pinnedOnly ? '#fff8e1' : '#fff',
+              color: pinnedOnly ? '#e09400' : '#374151',
+              cursor: 'pointer',
+            }}
+          >
+            Pinned
+          </button>
           <select
             aria-label="Status"
             value={statusFilter}

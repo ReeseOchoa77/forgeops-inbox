@@ -4,6 +4,8 @@ import { buildInboxMessageListFilters, type InboxBusinessTypeGroup } from '../in
 import {
   getCachedInboxList,
   setCachedInboxList,
+  patchCachedInboxMessagePin,
+  sortInboxMessagesPinnedFirst,
   INBOX_DEFAULT_LIST_FILTER_KEY,
   INBOX_LIST_FRESH_MS,
 } from '../inbox-list-cache'
@@ -302,6 +304,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
   const [readFilter, setReadFilter] = useState<ReadFilter>('')
+  const [pinnedOnly, setPinnedOnly] = useState(false)
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
   const [excludeBusinessTypeGroups, setExcludeBusinessTypeGroups] = useState<InboxBusinessTypeGroup[]>([])
@@ -422,8 +425,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       activeSearch,
       searchIn,
       excludeBusinessTypeGroups,
+      pinnedOnly,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups, pinnedOnly])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     if (key === 'sent') {
@@ -686,7 +690,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
-  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups])
+  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups, pinnedOnly])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -904,21 +908,33 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const handlePin = async (messageId: string, currentlyPinned: boolean) => {
     const newPinned = !currentlyPinned
-    const sortMessages = (msgs: MessageSummary[]) => [...msgs].sort((a, b) => {
-      if (a.isPinned && !b.isPinned) return -1
-      if (!a.isPinned && b.isPinned) return 1
-      const dateA = new Date(a.receivedAt ?? a.sentAt).getTime()
-      const dateB = new Date(b.receivedAt ?? b.sentAt).getTime()
-      return dateB - dateA
-    })
-    setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)))
+    const applyLocal = (pinned: boolean) => {
+      setMessages((prev) => {
+        let next = prev.map((m) =>
+          m.id === messageId ? { ...m, isPinned: pinned } : m
+        )
+        if (!pinned && pinnedOnly) {
+          next = next.filter((m) => m.id !== messageId)
+        }
+        return sortInboxMessagesPinnedFirst(next)
+      })
+      const activeKey = activeQueryKeyRef.current
+      patchCachedInboxMessagePin({
+        workspaceId,
+        connectionId,
+        messageId,
+        isPinned: pinned,
+        ...(activeKey ? { activeFilterKey: activeKey } : {}),
+      })
+    }
+    applyLocal(newPinned)
     try {
       const msg = messages.find(m => m.id === messageId)
       const cid = msg ? resolveMessageConnectionId(msg) : connectionId
       if (!cid || isAllMailboxesConnectionId(cid)) throw new Error('missing mailbox')
       await api.pinMessage(workspaceId, cid, messageId, newPinned)
     } catch {
-      setMessages(prev => sortMessages(prev.map(m => m.id === messageId ? { ...m, isPinned: currentlyPinned } : m)))
+      applyLocal(currentlyPinned)
     }
   }
 
@@ -1577,6 +1593,26 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <option value="read">Read</option>
             <option value="sent">Sent</option>
           </select>
+
+          <button
+            type="button"
+            data-testid="inbox-pinned-filter"
+            aria-pressed={pinnedOnly}
+            title="Show only pinned emails (composes with current tab/filters)"
+            onClick={() => setPinnedOnly((prev) => !prev)}
+            style={{
+              padding: '4px 10px',
+              fontSize: 12,
+              fontWeight: pinnedOnly ? 600 : 500,
+              borderRadius: 6,
+              border: pinnedOnly ? '1px solid #e09400' : '1px solid #ddd',
+              background: pinnedOnly ? '#fff8e1' : '#fff',
+              color: pinnedOnly ? '#e09400' : '#374151',
+              cursor: 'pointer',
+            }}
+          >
+            Pinned
+          </button>
 
           <select
             data-testid="inbox-date-filter"

@@ -321,6 +321,8 @@ export type BuildOperationalTasksWhereInput = {
   jobFilter?: string | "NONE";
   timezone?: string;
   now?: Date;
+  /** Only pinned tasks. */
+  pinnedOnly?: boolean;
 };
 
 /**
@@ -362,6 +364,10 @@ export function buildOperationalTasksWhere(
   push(taskBusinessSubtypeWhere(input.businessTypeKey));
   push(taskSenderSearchWhere(input.sender));
   push(taskDirectionWhere(input.direction, input.connectionEmail));
+
+  if (input.pinnedOnly) {
+    andConditions.push({ isPinned: true });
+  }
 
   return { AND: andConditions };
 }

@@ -52,6 +52,8 @@ export type InboxMessageListFilters = {
   sentOnly?: true;
   unreadOnly?: true;
   unclassifiedOnly?: true;
+  /** When true, only pinned emails (composes with tab/direction filters). */
+  pinnedOnly?: true;
   dateRange?: "TODAY" | "WEEK" | "MONTH";
   timezone?: string;
   search?: string;
@@ -68,6 +70,7 @@ export function buildInboxMessageListFilters(input: {
   searchIn?: "all" | "sender" | "id";
   /** Applied only on Business tabs (not Personal / Unclassified / Trash / Sent). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
+  pinnedOnly?: boolean;
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
 
@@ -82,6 +85,7 @@ export function buildInboxMessageListFilters(input: {
   // Global Sent: direction only — never combine with Business/Personal category.
   if (input.readFilter === "sent") {
     f.sentOnly = true;
+    if (input.pinnedOnly) f.pinnedOnly = true;
     if (input.dateRange) {
       f.dateRange = input.dateRange;
       if (input.timezone) f.timezone = input.timezone;
@@ -123,6 +127,10 @@ export function buildInboxMessageListFilters(input: {
   if (input.activeSearch) {
     f.search = input.activeSearch;
     if (input.searchIn === "sender") f.searchIn = "sender";
+  }
+
+  if (input.pinnedOnly) {
+    f.pinnedOnly = true;
   }
 
   return f;

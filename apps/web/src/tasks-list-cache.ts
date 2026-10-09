@@ -29,6 +29,7 @@ export function tasksListFilterFingerprint(filters: TaskListFilters = {}): strin
     filters.sort ?? 'DUE_DATE',
     filters.dateRange ?? '',
     filters.timezone ?? '',
+    filters.pinnedOnly ? 'PINNED' : '',
   ].join('|')
 }
 
@@ -89,6 +90,53 @@ export function invalidateTasksListCache(
   for (const key of [...cache.keys()]) {
     if (key.startsWith(prefix)) cache.delete(key)
   }
+}
+
+/** Pinned-first then keep relative order of unpinned / among-pinned. */
+export function sortTasksPinnedFirst(tasks: TaskListItem[]): TaskListItem[] {
+  return [...tasks].sort((a, b) => {
+    const ap = Boolean(a.task.isPinned)
+    const bp = Boolean(b.task.isPinned)
+    if (ap && !bp) return -1
+    if (!ap && bp) return 1
+    return 0
+  })
+}
+
+/**
+ * Patch pin state across every cached page/filter for this mailbox.
+ * Unpinned items are removed from pinnedOnly caches.
+ */
+export function patchCachedTasksListPin(input: {
+  workspaceId: string
+  connectionId: string
+  taskId: string
+  isPinned: boolean
+}): TaskListItem[] | null {
+  const prefix = `${input.workspaceId}:${input.connectionId}:`
+  const now = Date.now()
+  let firstPageMessages: TaskListItem[] | null = null
+
+  for (const [key, entry] of [...cache.entries()]) {
+    if (!key.startsWith(prefix)) continue
+    // Fingerprint ends with `|PINNED` then `:page` — e.g. `...|PINNED:1`.
+    const isPinnedOnly = /\|PINNED:\d+$/.test(key)
+    let next = entry.tasks.map((t) =>
+      t.task.id === input.taskId
+        ? { ...t, task: { ...t.task, isPinned: input.isPinned } }
+        : t
+    )
+    if (!input.isPinned && isPinnedOnly) {
+      next = next.filter((t) => t.task.id !== input.taskId)
+    }
+    next = sortTasksPinnedFirst(next)
+    cache.set(key, { ...entry, tasks: next, cachedAt: now })
+    if (key.endsWith(':1') && firstPageMessages == null) {
+      firstPageMessages = next
+    }
+  }
+
+  return firstPageMessages
 }
 
 export function clearTasksListCacheForTests(): void {

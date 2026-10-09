@@ -171,6 +171,8 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
    * Orthogonal to Business/Personal mailboxCategory tabs.
    */
   unclassifiedOnly: booleanQueryWithDefaultFalseSchema,
+  /** Only emails with isPinned=true (composes with other Inbox filters). */
+  pinnedOnly: booleanQueryWithDefaultFalseSchema,
   /**
    * Inbox date preset. Bounds computed server-side with `timezone` (IANA).
    * Week starts Sunday (matches Tasks "This Week").
@@ -233,6 +235,8 @@ const tasksListQuerySchema = paginationQuerySchema.extend({
   /** Legacy: filters Task.sourceDate (email timeline), not dueAt. */
   dateRange: z.enum(["TODAY", "WEEK", "MONTH"]).optional(),
   timezone: z.string().min(1).max(80).optional(),
+  /** Only tasks with isPinned=true (composes with other Task filters). */
+  pinnedOnly: booleanQueryWithDefaultFalseSchema,
 });
 
 const reviewListQuerySchema = paginationQuerySchema;
@@ -1004,6 +1008,8 @@ export const buildMessagesWhere = (input: {
   unreadOnly?: boolean;
   /** No Classification row (ingest/classify pending or failed). */
   unclassifiedOnly?: boolean;
+  /** Only pinned emails. */
+  pinnedOnly?: boolean;
   /** Inbox date preset bounds (UTC instants). */
   receivedAfter?: Date;
   receivedBefore?: Date;
@@ -1038,6 +1044,10 @@ export const buildMessagesWhere = (input: {
     andConditions.push({ isTrashed: true });
   } else {
     andConditions.push({ isTrashed: false });
+  }
+
+  if (input.pinnedOnly) {
+    andConditions.push({ isPinned: true });
   }
 
   // Sent = sender matches any monitored/connected inbox.
@@ -1256,6 +1266,7 @@ export const buildTasksWhere = (input: {
   taskThreshold: Prisma.Decimal;
   dateRange?: "TODAY" | "WEEK" | "MONTH";
   timezone?: string;
+  pinnedOnly?: boolean;
 }): Prisma.TaskWhereInput => {
   const base = buildOperationalTasksWhere({
     workspaceId: input.workspaceId,
@@ -1277,6 +1288,7 @@ export const buildTasksWhere = (input: {
     ...(input.connectionEmail
       ? { connectionEmail: input.connectionEmail }
       : {}),
+    ...(input.pinnedOnly ? { pinnedOnly: true } : {}),
     timezone: input.timezone || "UTC",
   });
 
@@ -1814,6 +1826,7 @@ export const registerInboxReadRoutes = async (
         sentOnly: query.sentOnly,
         unreadOnly: query.unreadOnly,
         unclassifiedOnly: query.unclassifiedOnly,
+        pinnedOnly: query.pinnedOnly,
         ...(query.dateRange
           ? (() => {
               try {
@@ -2875,6 +2888,7 @@ export const registerInboxReadRoutes = async (
         connectionEmail: connection.email,
         ...(query.dateRange ? { dateRange: query.dateRange } : {}),
         ...(query.timezone ? { timezone: query.timezone } : {}),
+        ...(query.pinnedOnly ? { pinnedOnly: true } : {}),
         taskThreshold: thresholds.taskThreshold,
       });
       const skip = (query.page - 1) * query.pageSize;
