@@ -30,13 +30,15 @@ describe("deleteFromProviderOnDelete defaults and gates", () => {
 
 describe("deleteOutlookProviderMessage", () => {
   it("uses exact providerMessageId and /me by default", async () => {
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(null, { status: 204 })
+    );
     const result = await deleteOutlookProviderMessage(
       {
         providerMessageId: "AAMkExactId",
         accessToken: "tok",
       },
-      fetchImpl as unknown as typeof fetch
+      fetchImpl
     );
     expect(result.outcome).toBe("deleted");
     const url = String(fetchImpl.mock.calls[0]?.[0]);
@@ -45,14 +47,16 @@ describe("deleteOutlookProviderMessage", () => {
   });
 
   it("uses /users/{mailbox} for delegated connections", async () => {
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(null, { status: 204 })
+    );
     await deleteOutlookProviderMessage(
       {
         providerMessageId: "AAMkExactId",
         graphMailboxEmail: "estimating@company.com",
         accessToken: "tok",
       },
-      fetchImpl as unknown as typeof fetch
+      fetchImpl
     );
     const url = String(fetchImpl.mock.calls[0]?.[0]);
     expect(url).toContain("/users/estimating%40company.com/messages/AAMkExactId");
@@ -60,17 +64,23 @@ describe("deleteOutlookProviderMessage", () => {
   });
 
   it("treats 404 as already_deleted (idempotent)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response("gone", { status: 404 })
+    );
     const result = await deleteOutlookProviderMessage(
       { providerMessageId: "gone", accessToken: "tok" },
-      (async () => new Response("gone", { status: 404 })) as unknown as typeof fetch
+      fetchImpl
     );
     expect(result.outcome).toBe("already_deleted");
   });
 
   it("fails closed on 403", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response("no", { status: 403 })
+    );
     const result = await deleteOutlookProviderMessage(
       { providerMessageId: "x", accessToken: "tok" },
-      (async () => new Response("no", { status: 403 })) as unknown as typeof fetch
+      fetchImpl
     );
     expect(result.outcome).toBe("failed");
     expect(result.message).toMatch(/Mail\.ReadWrite|Re-authorize/i);

@@ -26,9 +26,12 @@ describe("Platform Admin delegated mailbox onboarding", () => {
     expect(state.userId).toBe("admin_user");
     expect(state.connectionId).toBe("conn_estimating");
     expect(state.workspaceId).toBe("ws_1");
-    expect(googleOAuthStateSchema.parse(state).targetMailboxEmail).toBe(
-      "estimating@company.com"
-    );
+    const parsed = googleOAuthStateSchema.parse(state);
+    expect(parsed.flow).toBe("inbox-connect");
+    if (parsed.flow !== "inbox-connect") {
+      throw new Error("expected inbox-connect OAuth state");
+    }
+    expect(parsed.targetMailboxEmail).toBe("estimating@company.com");
   });
 
   it("ordinary user cannot use Platform Admin cross-mailbox flow", () => {
@@ -82,22 +85,26 @@ describe("Platform Admin delegated mailbox onboarding", () => {
   });
 
   it("verifies target mailbox access via Graph and fails closed when inaccessible", async () => {
-    const okFetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    const okFetch = vi.fn<typeof fetch>(
+      async () => new Response("{}", { status: 200 })
+    );
     const ok = await verifyOutlookMailboxAccess({
       accessToken: "token",
       targetMailboxEmail: "estimating@company.com",
-      fetchImpl: okFetch as unknown as typeof fetch,
+      fetchImpl: okFetch,
     });
     expect(ok).toEqual({ ok: true, verifiedEmail: "estimating@company.com" });
     expect(String(okFetch.mock.calls[0]?.[0])).toContain(
       "/users/estimating%40company.com/mailboxSettings"
     );
 
+    const deniedFetch = vi.fn<typeof fetch>(
+      async () => new Response("Forbidden", { status: 403 })
+    );
     const denied = await verifyOutlookMailboxAccess({
       accessToken: "token",
       targetMailboxEmail: "secret@company.com",
-      fetchImpl: (async () =>
-        new Response("Forbidden", { status: 403 })) as unknown as typeof fetch,
+      fetchImpl: deniedFetch,
     });
     expect(denied.ok).toBe(false);
     if (!denied.ok) {
