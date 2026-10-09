@@ -109,8 +109,9 @@ export function TaskListRow({
         gap: 12,
         padding: '12px 14px',
         borderBottom: '1px solid #f0f0f0',
+        borderLeft: isPinned ? '3px solid #f5a623' : 'none',
         alignItems: 'flex-start',
-        background: isPinned ? '#fafbff' : '#fff',
+        background: isPinned ? '#fffde7' : '#fff',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
