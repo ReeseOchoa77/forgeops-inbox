@@ -198,18 +198,13 @@ export function taskDirectionWhere(
       },
     };
   }
-  // INCOMING: has source email and sender is not the monitored mailbox
+  // INCOMING / Tasks: not outbound from the monitored mailbox (includes manual tasks).
   return {
-    AND: [
-      { sourceMessageId: { not: null } },
-      {
-        NOT: {
-          sourceMessage: {
-            senderEmail: { equals: email, mode: "insensitive" },
-          },
-        },
+    NOT: {
+      sourceMessage: {
+        senderEmail: { equals: email, mode: "insensitive" },
       },
-    ],
+    },
   };
 }
 

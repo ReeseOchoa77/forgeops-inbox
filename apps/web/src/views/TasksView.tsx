@@ -43,12 +43,13 @@ export function TasksView({
   const [due, setDue] = useState<TaskListFilters['due']>('ALL')
   const [priority, setPriority] = useState<TaskListFilters['priority']>('ALL')
   const [source, setSource] = useState<TaskListFilters['source']>('ALL')
-  const [emailClassification, setEmailClassification] =
-    useState<TaskListFilters['emailClassification']>('ALL')
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [sender, setSender] = useState('')
   const [senderDraft, setSenderDraft] = useState('')
-  const [direction, setDirection] = useState<TaskListFilters['direction']>('ALL')
+  /** Tasks = inbound / not from our mailbox; Requests = outbound from our mailbox. */
+  const [listMode, setListMode] = useState<'tasks' | 'requests'>('tasks')
+  const direction: TaskListFilters['direction'] =
+    listMode === 'requests' ? 'SENT' : 'INCOMING'
   const [jobId, setJobId] = useState('')
   const [sort, setSort] = useState<TaskListFilters['sort']>('DUE_DATE')
   const [pinnedOnly, setPinnedOnly] = useState(false)
@@ -77,7 +78,6 @@ export function TasksView({
       due,
       priority,
       source,
-      emailClassification,
       ...(businessTypeKey ? { businessTypeKey } : {}),
       ...(sender ? { sender } : {}),
       direction,
@@ -91,7 +91,6 @@ export function TasksView({
       due,
       priority,
       source,
-      emailClassification,
       businessTypeKey,
       sender,
       direction,
@@ -557,19 +556,6 @@ export function TasksView({
             <option value="MANUAL">Manual</option>
           </select>
           <select
-            aria-label="Email classification"
-            value={emailClassification}
-            onChange={(e) =>
-              setEmailClassification(e.target.value as typeof emailClassification)
-            }
-            style={selectStyle}
-          >
-            <option value="ALL">All classifications</option>
-            <option value="BUSINESS">Business</option>
-            <option value="PERSONAL">Personal</option>
-            <option value="UNCLASSIFIED">Unclassified</option>
-          </select>
-          <select
             aria-label="Business subtype"
             value={businessTypeKey}
             onChange={(e) => setBusinessTypeKey(e.target.value)}
@@ -582,16 +568,47 @@ export function TasksView({
               </option>
             ))}
           </select>
-          <select
-            aria-label="Direction"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value as typeof direction)}
-            style={selectStyle}
+          <div
+            role="group"
+            aria-label="Tasks or requests"
+            data-testid="tasks-requests-toggle"
+            style={{
+              display: 'inline-flex',
+              border: '1px solid #ddd',
+              borderRadius: 6,
+              overflow: 'hidden',
+              background: '#fff',
+            }}
           >
-            <option value="ALL">All directions</option>
-            <option value="INCOMING">Incoming</option>
-            <option value="SENT">Sent</option>
-          </select>
+            {(
+              [
+                { key: 'tasks' as const, label: 'Tasks' },
+                { key: 'requests' as const, label: 'Requests' },
+              ] as const
+            ).map(({ key, label }, i) => {
+              const active = listMode === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setListMode(key)}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: 12,
+                    fontWeight: active ? 600 : 500,
+                    border: 'none',
+                    borderLeft: i === 0 ? 'none' : '1px solid #ddd',
+                    background: active ? '#1a1a2e' : '#fff',
+                    color: active ? '#fff' : '#374151',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
           <select
             aria-label="Sort"
             value={sort}
@@ -650,7 +667,9 @@ export function TasksView({
         )}
         {!loading && !error && tasks.length === 0 && (
           <div style={{ padding: 48, textAlign: 'center', color: '#888', fontSize: 14 }}>
-            No tasks match these filters.
+            {listMode === 'requests'
+              ? 'No requests match these filters.'
+              : 'No tasks match these filters.'}
           </div>
         )}
         {!loading &&
