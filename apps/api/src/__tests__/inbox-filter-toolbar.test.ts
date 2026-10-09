@@ -41,11 +41,25 @@ describe("Inbox filter toolbar — compact mail + date dropdowns", () => {
     );
   });
 
+  it("Sent composes with tabs — does not reset classification or hide tab active state", () => {
+    expect(messagesSrc).toContain(
+      "// Direction composes with the current tab/classification — do not reset them."
+    );
+    expect(messagesSrc).toContain(
+      "// Tab/classification composes with the current direction (incl. Sent)."
+    );
+    expect(messagesSrc).not.toContain("Global Sent: clear Business/Personal category");
+    expect(messagesSrc).not.toContain("Leaving Sent (or switching category) always clears sentOnly");
+    expect(messagesSrc).toContain("const tabActive = inboxTab === tab.key");
+    expect(messagesSrc).not.toContain("!isSentView && inboxTab === tab.key");
+    expect(messagesSrc).toContain("const showBusinessChrome = isBusiness");
+  });
+
   it("query-context changes clear stale rows (no soft cross-tab bleed)", () => {
     expect(messagesSrc).toContain("inboxListQueryKey");
     expect(messagesSrc).toContain("isSameInboxListQuery");
     expect(messagesSrc).toContain("activeQueryKeyRef");
-    expect(messagesSrc).toContain("New tab/filter context");
+    expect(messagesSrc).toContain("New tab/filter: paint cached rows immediately when available");
     expect(messagesSrc).toContain("setMessages([])");
     // Soft only when sameQuery
     expect(messagesSrc).toContain("sameQuery");

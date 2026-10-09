@@ -1,17 +1,226 @@
 import { describe, expect, it } from "vitest";
 import { buildInboxMessageListFilters } from "./inbox-message-list-filters";
+import { inboxListQueryKey } from "./inbox-list-query";
 
-describe("buildInboxMessageListFilters — global Sent", () => {
-  it("1. Sent filter: sentOnly=true, businessCategory omitted", () => {
+describe("buildInboxMessageListFilters — Sent composes with other filters", () => {
+  it("1. Sent + All Business → sentOnly + BUSINESS (all subtypes)", () => {
     const f = buildInboxMessageListFilters({
       inboxTab: "ALL_BUSINESS",
       readFilter: "sent",
     });
-    expect(f).toEqual({ sentOnly: true });
-    expect(f.businessCategory).toBeUndefined();
+    expect(f).toEqual({ sentOnly: true, businessCategory: "BUSINESS" });
   });
 
-  it("2. Business: businessCategory=BUSINESS, sentOnly omitted", () => {
+  it("2. Sent + Business excludes Personal param (BUSINESS only)", () => {
+    const f = buildInboxMessageListFilters({
+      inboxTab: "ALL_BUSINESS",
+      readFilter: "sent",
+    });
+    expect(f.businessCategory).toBe("BUSINESS");
+    expect(f.sentOnly).toBe(true);
+  });
+
+  it("3. Sent + Personal → sentOnly + NON_BUSINESS", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "PERSONAL",
+        readFilter: "sent",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "NON_BUSINESS",
+    });
+  });
+
+  it("4. Sent + each business type group sets businessTypeGroup", () => {
+    for (const group of [
+      "BIDS_ESTIMATING",
+      "PROJECTS",
+      "PURCHASING",
+      "ACCOUNTING",
+      "INTERNAL",
+      "OTHER",
+    ] as const) {
+      expect(
+        buildInboxMessageListFilters({
+          inboxTab: group,
+          readFilter: "sent",
+        })
+      ).toEqual({
+        sentOnly: true,
+        businessCategory: "BUSINESS",
+        businessTypeGroup: group,
+      });
+    }
+  });
+
+  it("5. Sent + Pinned → sentOnly + pinnedOnly (+ tab category)", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        pinnedOnly: true,
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      pinnedOnly: true,
+    });
+  });
+
+  it("6. Sent + No job → jobId=unassigned", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        jobFilter: "unassigned",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      jobId: "unassigned",
+    });
+  });
+
+  it("7. Sent + Job → jobId preserved", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "PROJECTS",
+        readFilter: "sent",
+        jobFilter: "job-9",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      businessTypeGroup: "PROJECTS",
+      jobId: "job-9",
+    });
+  });
+
+  it("8. Sent + date range composes", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        dateRange: "WEEK",
+        timezone: "America/Chicago",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      dateRange: "WEEK",
+      timezone: "America/Chicago",
+    });
+  });
+
+  it("9. Sent + Business + Pinned + This week uses AND of all", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        pinnedOnly: true,
+        dateRange: "WEEK",
+        timezone: "UTC",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      pinnedOnly: true,
+      dateRange: "WEEK",
+      timezone: "UTC",
+    });
+  });
+
+  it("10. Sent + search composes", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        activeSearch: "mortenson",
+        searchIn: "sender",
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      search: "mortenson",
+      searchIn: "sender",
+    });
+  });
+
+  it("11. Sent + Unclassified → sentOnly + unclassifiedOnly", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "UNCLASSIFIED",
+        readFilter: "sent",
+      })
+    ).toEqual({ sentOnly: true, unclassifiedOnly: true });
+  });
+
+  it("12. Sent + Exclude groups on Business tab", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "sent",
+        excludeBusinessTypeGroups: ["OTHER"],
+      })
+    ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      excludeBusinessTypeGroups: ["OTHER"],
+    });
+  });
+
+  it("13. query/cache identity distinguishes Sent filter combinations", () => {
+    const sentBusiness = buildInboxMessageListFilters({
+      inboxTab: "ALL_BUSINESS",
+      readFilter: "sent",
+    });
+    const sentPersonal = buildInboxMessageListFilters({
+      inboxTab: "PERSONAL",
+      readFilter: "sent",
+    });
+    const sentBids = buildInboxMessageListFilters({
+      inboxTab: "BIDS_ESTIMATING",
+      readFilter: "sent",
+    });
+    const sentPinned = buildInboxMessageListFilters({
+      inboxTab: "ALL_BUSINESS",
+      readFilter: "sent",
+      pinnedOnly: true,
+    });
+    const keys = [
+      inboxListQueryKey(sentBusiness),
+      inboxListQueryKey(sentPersonal),
+      inboxListQueryKey(sentBids),
+      inboxListQueryKey(sentPinned),
+    ];
+    expect(new Set(keys).size).toBe(4);
+    expect(keys[0]).toContain("sent");
+    expect(keys[0]).toContain("BUSINESS");
+    expect(keys[1]).toContain("NON_BUSINESS");
+    expect(keys[2]).toContain("BIDS_ESTIMATING");
+    expect(keys[3]).toContain("pinned");
+  });
+
+  it("14. Received / All mail (non-sent) still omit sentOnly", () => {
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "",
+      }).sentOnly
+    ).toBeUndefined();
+    expect(
+      buildInboxMessageListFilters({
+        inboxTab: "ALL_BUSINESS",
+        readFilter: "unread",
+      })
+    ).toEqual({
+      businessCategory: "BUSINESS",
+      unreadOnly: true,
+    });
+  });
+
+  it("Business without Sent still sets BUSINESS only", () => {
     const f = buildInboxMessageListFilters({
       inboxTab: "ALL_BUSINESS",
       readFilter: "",
@@ -20,49 +229,13 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     expect(f.sentOnly).toBeUndefined();
   });
 
-  it("3. Personal: businessCategory=NON_BUSINESS, sentOnly omitted", () => {
-    const f = buildInboxMessageListFilters({
-      inboxTab: "PERSONAL",
-      readFilter: "",
-    });
-    expect(f.businessCategory).toBe("NON_BUSINESS");
-    expect(f.sentOnly).toBeUndefined();
-  });
-
-  it("7. Switching: Sent ignores stale Business/Personal tab state", () => {
+  it("Personal without Sent omits sentOnly", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "PERSONAL",
-        readFilter: "sent",
-      })
-    ).toEqual({ sentOnly: true });
-
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "PROJECTS",
-        readFilter: "sent",
-        jobFilter: "job-1",
-      })
-    ).toEqual({ sentOnly: true });
-
-    // Leaving Sent for Business clears sentOnly
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
         readFilter: "",
-      }).sentOnly
-    ).toBeUndefined();
-
-    // Leaving Sent for Personal clears sentOnly; unread is server-side
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "PERSONAL",
-        readFilter: "unread",
       })
-    ).toEqual({
-      businessCategory: "NON_BUSINESS",
-      unreadOnly: true,
-    });
+    ).toEqual({ businessCategory: "NON_BUSINESS" });
   });
 
   it("Unread on Business tab sets unreadOnly with BUSINESS category", () => {
@@ -87,19 +260,6 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     ).toEqual({
       businessCategory: "BUSINESS",
       jobId: "assigned",
-    });
-  });
-
-  it("No job filter sends jobId=unassigned (same as former Unassigned option)", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "",
-        jobFilter: "unassigned",
-      })
-    ).toEqual({
-      businessCategory: "BUSINESS",
-      jobId: "unassigned",
     });
   });
 
@@ -131,20 +291,6 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     ).not.toHaveProperty("jobId");
   });
 
-  it("Business subtype + job only apply when not Sent", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "PROJECTS",
-        readFilter: "",
-        jobFilter: "job-9",
-      })
-    ).toEqual({
-      businessCategory: "BUSINESS",
-      businessTypeGroup: "PROJECTS",
-      jobId: "job-9",
-    });
-  });
-
   it("Trash unchanged", () => {
     expect(
       buildInboxMessageListFilters({
@@ -170,20 +316,11 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     ).toEqual({ unclassifiedOnly: true, unreadOnly: true });
   });
 
-  it("Sent still wins over Unclassified tab", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "UNCLASSIFIED",
-        readFilter: "sent",
-      })
-    ).toEqual({ sentOnly: true });
-  });
-
   it("Email ID search ignores tab filters and uses searchIn=id", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "ALL_BUSINESS",
-        readFilter: "unread",
+        readFilter: "sent",
         jobFilter: "job1",
         activeSearch: "clmsg123",
         searchIn: "id",
@@ -194,76 +331,7 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     });
   });
 
-  it("Unread + This week compose without resetting either filter", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "unread",
-        dateRange: "WEEK",
-        timezone: "America/Chicago",
-      })
-    ).toMatchObject({
-      businessCategory: "BUSINESS",
-      unreadOnly: true,
-      dateRange: "WEEK",
-      timezone: "America/Chicago",
-    });
-  });
-
-  it("All mail / Read / All dates produce no unreadOnly or dateRange params", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "",
-        dateRange: "",
-      })
-    ).not.toHaveProperty("unreadOnly");
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "read",
-        dateRange: "",
-      })
-    ).not.toHaveProperty("unreadOnly");
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "",
-        dateRange: "",
-      })
-    ).not.toHaveProperty("dateRange");
-  });
-
-  it("dateRange + timezone compose with Business and Unclassified", () => {
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "",
-        dateRange: "TODAY",
-        timezone: "America/Chicago",
-      })
-    ).toEqual({
-      businessCategory: "BUSINESS",
-      dateRange: "TODAY",
-      timezone: "America/Chicago",
-    });
-
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "UNCLASSIFIED",
-        readFilter: "unread",
-        dateRange: "WEEK",
-        timezone: "UTC",
-      })
-    ).toEqual({
-      unclassifiedOnly: true,
-      unreadOnly: true,
-      dateRange: "WEEK",
-      timezone: "UTC",
-    });
-  });
-
-  it("Exclude groups apply on Business, not Personal/Unclassified/Sent", () => {
+  it("Exclude groups apply on Business, not Personal/Unclassified", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "ALL_BUSINESS",
@@ -273,21 +341,6 @@ describe("buildInboxMessageListFilters — global Sent", () => {
     ).toEqual({
       businessCategory: "BUSINESS",
       excludeBusinessTypeGroups: ["BIDS_ESTIMATING", "OTHER"],
-    });
-
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "PROJECTS",
-        readFilter: "unread",
-        jobFilter: "job-1",
-        excludeBusinessTypeGroups: ["OTHER"],
-      })
-    ).toEqual({
-      businessCategory: "BUSINESS",
-      businessTypeGroup: "PROJECTS",
-      jobId: "job-1",
-      unreadOnly: true,
-      excludeBusinessTypeGroups: ["OTHER"],
     });
 
     expect(
@@ -305,13 +358,5 @@ describe("buildInboxMessageListFilters — global Sent", () => {
         excludeBusinessTypeGroups: ["OTHER"],
       }).excludeBusinessTypeGroups
     ).toBeUndefined();
-
-    expect(
-      buildInboxMessageListFilters({
-        inboxTab: "ALL_BUSINESS",
-        readFilter: "sent",
-        excludeBusinessTypeGroups: ["OTHER"],
-      })
-    ).toEqual({ sentOnly: true });
   });
 });

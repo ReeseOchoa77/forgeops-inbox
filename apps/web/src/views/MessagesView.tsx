@@ -358,10 +358,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const isUnclassified = inboxTab === 'UNCLASSIFIED'
   const isBusiness = inboxTab !== 'PERSONAL' && inboxTab !== 'TRASH' && !isUnclassified
   const isSentView = readFilter === 'sent'
-  /** Business subtype chrome (priority/job/type columns) — not on Personal, Trash, Unclassified, or global Sent. */
-  const showBusinessChrome = isBusiness && !isSentView
+  /** Business subtype chrome (priority/job/type columns) — not on Personal, Trash, Unclassified. */
+  const showBusinessChrome = isBusiness
   /** Compact status chrome for the Unclassified tab. */
-  const showUnclassifiedChrome = isUnclassified && !isSentView
+  const showUnclassifiedChrome = isUnclassified
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
@@ -430,21 +430,13 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups, pinnedOnly])
 
   const selectDirectionFilter = (key: ReadFilter) => {
-    if (key === 'sent') {
-      // Global Sent: clear Business/Personal category + job so they cannot stale-combine.
-      setReadFilter('sent')
-      setInboxTab('ALL_BUSINESS')
-      setJobFilter('')
-      setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
-      return
-    }
+    // Direction composes with the current tab/classification — do not reset them.
     setReadFilter(key)
   }
 
   const selectInboxTab = (tab: InboxTab) => {
-    // Leaving Sent (or switching category) always clears sentOnly.
+    // Tab/classification composes with the current direction (incl. Sent).
     setInboxTab(tab)
-    setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') setJobFilter('')
     if (tab === 'TRASH') setMassDeleteMode(false)
@@ -1552,7 +1544,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           if (tab.key === 'PERSONAL' && !isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) return false
           return true
         }).map(tab => {
-          const tabActive = !isSentView && inboxTab === tab.key
+          const tabActive = inboxTab === tab.key
           return (
           <button key={tab.key} onClick={() => selectInboxTab(tab.key)}
             style={{
@@ -1698,7 +1690,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         ) : filteredMessages.length === 0 ? (
           <div className="empty-state" style={{ padding: 32 }}>
             <div className="empty-icon">{inboxTab === 'TRASH' ? '\uD83D\uDDD1' : isSentView ? '\uD83D\uDCE4' : inboxTab === 'PERSONAL' ? '\uD83D\uDCE8' : inboxTab === 'UNCLASSIFIED' ? '\u26A0' : '\u2709'}</div>
-            <h3>{activeSearch ? 'No results' : isSentView ? 'No sent emails' : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
+            <h3>{activeSearch ? 'No results' : isSentView
+              ? `No sent ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`
+              : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
             <p>{activeSearch
               ? (searchIn === 'sender'
                 ? `No senders match "${activeSearch}"`

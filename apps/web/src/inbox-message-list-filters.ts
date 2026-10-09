@@ -1,6 +1,7 @@
 /**
  * Builds query params for GET .../messages.
- * Sent is a global direction filter: sentOnly=true and no businessCategory.
+ * SENT is a direction predicate (sentOnly) that ANDs with every other active
+ * Inbox filter — it must not override classification, subtype, job, etc.
  * Unread uses server-side unreadOnly (not client-only filtering).
  * Unclassified is messages with no Classification row (pending/failed classify).
  */
@@ -68,7 +69,7 @@ export function buildInboxMessageListFilters(input: {
   jobFilter?: string;
   activeSearch?: string;
   searchIn?: "all" | "sender" | "id";
-  /** Applied only on Business tabs (not Personal / Unclassified / Trash / Sent). */
+  /** Applied only on Business tabs (not Personal / Unclassified / Trash). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
   pinnedOnly?: boolean;
 }): InboxMessageListFilters {
@@ -82,19 +83,9 @@ export function buildInboxMessageListFilters(input: {
     };
   }
 
-  // Global Sent: direction only — never combine with Business/Personal category.
+  // Direction predicate — composes with tab/classification filters below.
   if (input.readFilter === "sent") {
     f.sentOnly = true;
-    if (input.pinnedOnly) f.pinnedOnly = true;
-    if (input.dateRange) {
-      f.dateRange = input.dateRange;
-      if (input.timezone) f.timezone = input.timezone;
-    }
-    if (input.activeSearch) {
-      f.search = input.activeSearch;
-      if (input.searchIn === "sender") f.searchIn = "sender";
-    }
-    return f;
   }
 
   if (input.inboxTab === "PERSONAL") {

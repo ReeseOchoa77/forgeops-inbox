@@ -213,9 +213,8 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
     expect(matchesListWhere(where, incomingPersonal)).toBe(false);
   });
 
-  it("stale combo avoided: omit businessCategory when building global Sent where", () => {
+  it("Sent without classification still omits mailboxCategory (all sent)", () => {
     const where = baseWhere({ sentOnly: true });
-    // Explicitly ensure we did not pass businessCategory
     expect(
       (where.AND as object[]).some(
         (c) =>
@@ -224,6 +223,161 @@ describe("buildMessagesWhere — global Sent (no businessCategory)", () => {
             (c as { mailboxCategory: string }).mailboxCategory === "PERSONAL")
       )
     ).toBe(false);
+  });
+});
+
+describe("buildMessagesWhere — Sent AND composition", () => {
+  it("Sent + Business excludes Personal outbound", () => {
+    const where = baseWhere({ sentOnly: true, businessCategory: "BUSINESS" });
+    expect(matchesListWhere(where, sentBusiness)).toBe(true);
+    expect(matchesListWhere(where, sentPersonal)).toBe(false);
+    expect(matchesListWhere(where, incomingBusiness)).toBe(false);
+    const and = where.AND as object[];
+    expect(and.some((c) => "mailboxCategory" in c && (c as { mailboxCategory: string }).mailboxCategory === "BUSINESS")).toBe(true);
+    expect(and.some((c) => "senderEmail" in c)).toBe(true);
+  });
+
+  it("Sent + Personal excludes Business outbound", () => {
+    const where = baseWhere({ sentOnly: true, businessCategory: "NON_BUSINESS" });
+    expect(matchesListWhere(where, sentPersonal)).toBe(true);
+    expect(matchesListWhere(where, sentBusiness)).toBe(false);
+    expect(matchesListWhere(where, incomingPersonal)).toBe(false);
+  });
+
+  it("Sent + businessTypeGroup ANDs subtype keys with direction", () => {
+    const where = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      businessTypeGroup: "BIDS_ESTIMATING",
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(and.some((c) => c && "mailboxCategory" in c)).toBe(true);
+    const subtype = and.find(
+      (c) =>
+        c &&
+        "classifications" in c &&
+        (c as { classifications: { some?: { businessTypeKey?: { in?: string[] } } } })
+          .classifications?.some?.businessTypeKey?.in
+    ) as
+      | { classifications: { some: { businessTypeKey: { in: string[] } } } }
+      | undefined;
+    expect(subtype?.classifications.some.businessTypeKey.in).toEqual(
+      expect.arrayContaining(["BID_OPPORTUNITY", "BID_UPDATE", "ESTIMATE_QUOTE"])
+    );
+  });
+
+  it("Sent + each businessTypeKey is a distinct AND predicate", () => {
+    for (const key of [
+      "BID_OPPORTUNITY",
+      "BID_UPDATE",
+      "ESTIMATE_QUOTE",
+      "PURCHASE_ORDER_CONTRACT",
+      "PROJECT_COORDINATION",
+      "RFI_CLARIFICATION",
+      "SUBMITTAL_SHOP_DRAWING",
+      "CHANGE_ORDER_SCOPE",
+      "FABRICATION_PRODUCTION",
+      "MATERIAL_PURCHASING",
+      "DELIVERY_LOGISTICS",
+      "INVOICE_PAYMENT",
+      "FIELD_INSTALLATION",
+      "COMPLIANCE_LEGAL",
+      "INTERNAL_ADMIN",
+      "OTHER_BUSINESS",
+    ]) {
+      const where = baseWhere({
+        sentOnly: true,
+        businessCategory: "BUSINESS",
+        businessTypeKey: key,
+      });
+      const and = where.AND as Array<Record<string, unknown>>;
+      expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+      expect(
+        and.some(
+          (c) =>
+            c &&
+            "classifications" in c &&
+            (c as { classifications: { some?: { businessTypeKey?: string } } })
+              .classifications?.some?.businessTypeKey === key
+        )
+      ).toBe(true);
+    }
+  });
+
+  it("Sent + Pinned ANDs isPinned", () => {
+    const where = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      pinnedOnly: true,
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "isPinned" in c && c.isPinned === true)).toBe(true);
+    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(and.some((c) => c && "mailboxCategory" in c)).toBe(true);
+  });
+
+  it("Sent + No job / Job ANDs jobId", () => {
+    const unassigned = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      jobId: "unassigned",
+    });
+    expect((unassigned.AND as object[])).toEqual(
+      expect.arrayContaining([{ jobId: null }])
+    );
+    const job = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      jobId: "job-42",
+    });
+    expect((job.AND as object[])).toEqual(
+      expect.arrayContaining([{ jobId: "job-42" }])
+    );
+  });
+
+  it("Sent + date range + unread AND together", () => {
+    const after = new Date("2026-08-01T00:00:00.000Z");
+    const before = new Date("2026-08-31T23:59:59.000Z");
+    const where = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      unreadOnly: true,
+      receivedAfter: after,
+      receivedBefore: before,
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "isRead" in c && c.isRead === false)).toBe(true);
+    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(and.some((c) => c && "OR" in c && Array.isArray(c.OR))).toBe(true);
+  });
+
+  it("Sent + search ANDs search OR clauses with direction", () => {
+    const where = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      search: "mortenson",
+      searchIn: "sender",
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    expect(and.some((c) => c && "senderEmail" in c)).toBe(true);
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "OR" in c &&
+          Array.isArray(c.OR) &&
+          (c.OR as object[]).some(
+            (o) => o && "senderEmail" in o && JSON.stringify(o).includes("mortenson")
+          )
+      )
+    ).toBe(true);
+  });
+
+  it("non-Sent Business still excludes monitored senders (no regression)", () => {
+    const where = baseWhere({ businessCategory: "BUSINESS", sentOnly: false });
+    expect(matchesListWhere(where, incomingBusiness)).toBe(true);
+    expect(matchesListWhere(where, sentBusiness)).toBe(false);
   });
 });
 
