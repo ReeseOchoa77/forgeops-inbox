@@ -621,6 +621,9 @@ model InboxConnection {
   listenSent        Boolean               @default(false)
   excludeJunk       Boolean               @default(true)
   excludeTrash      Boolean               @default(true)
+  /// When true, Inbox UI trash/delete also deletes the provider message (Outlook Deleted Items).
+  /// Default OFF — destructive external sync must be explicitly enabled per mailbox.
+  deleteFromProviderOnDelete Boolean      @default(false)
   grantedScopes     String[]              @default([])
   encryptedAccessToken String?
   encryptedRefreshToken String?

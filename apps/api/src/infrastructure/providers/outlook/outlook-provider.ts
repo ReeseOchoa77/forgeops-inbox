@@ -32,9 +32,20 @@ export const outlookInboxSharedMailboxScopes = [
   "https://graph.microsoft.com/MailboxSettings.Read",
 ] as const;
 
+/**
+ * Write scopes for provider-side message delete (Graph DELETE → Deleted Items).
+ * Always requested at authorize time; enforced only when
+ * `deleteFromProviderOnDelete` is used (not required for ordinary connect).
+ */
+export const outlookInboxWriteScopes = [
+  "https://graph.microsoft.com/Mail.ReadWrite",
+  "https://graph.microsoft.com/Mail.ReadWrite.Shared",
+] as const;
+
 export const outlookInboxConnectionScopes = [
   ...outlookInboxCoreScopes,
   ...outlookInboxSharedMailboxScopes,
+  ...outlookInboxWriteScopes,
 ] as const;
 
 /**

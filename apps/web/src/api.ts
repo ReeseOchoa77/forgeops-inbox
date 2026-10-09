@@ -119,11 +119,14 @@ export interface MailboxListenerSettings {
   processingMode: 'NATIVE' | 'N8N' | 'SHADOW'
   shadowSupported: boolean
   nativeListeningEnabled: boolean
+  deleteFromProviderOnDelete: boolean
+  providerSupportsDeleteFromProvider: boolean
   listener: {
     listenIncoming: boolean
     listenSent: boolean
     excludeJunk: boolean
     excludeTrash: boolean
+    deleteFromProviderOnDelete: boolean
   }
   activity: {
     lastSyncedAt: string | null
@@ -822,6 +825,7 @@ export const api = {
       listenSent: boolean
       excludeJunk: boolean
       excludeTrash: boolean
+      deleteFromProviderOnDelete: boolean
       ingestionSource: 'NATIVE' | 'N8N' | 'SHADOW'
     }>
   ) =>

@@ -57,6 +57,7 @@ const listenerSettingsPatchSchema = z
     listenSent: z.boolean().optional(),
     excludeJunk: z.boolean().optional(),
     excludeTrash: z.boolean().optional(),
+    deleteFromProviderOnDelete: z.boolean().optional(),
     ingestionSource: z.enum(["NATIVE", "N8N", "SHADOW"]).optional(),
   })
   .strict();
@@ -157,12 +158,15 @@ function serializeListenerSettings(connection: {
   listenSent: boolean;
   excludeJunk: boolean;
   excludeTrash: boolean;
+  deleteFromProviderOnDelete: boolean;
   lastSyncedAt: Date | null;
   lastReceivedAt: Date | null;
   lastProcessedAt: Date | null;
   lastSyncError: string | null;
   lastErrorMessage: string | null;
 }) {
+  const providerSupportsDeleteFromProvider =
+    connection.provider === "OUTLOOK";
   return {
     connectionId: connection.id,
     email: connection.email,
@@ -177,11 +181,14 @@ function serializeListenerSettings(connection: {
           : "N8N",
     shadowSupported: false,
     nativeListeningEnabled: connection.nativeListeningEnabled,
+    deleteFromProviderOnDelete: connection.deleteFromProviderOnDelete,
+    providerSupportsDeleteFromProvider,
     listener: {
       listenIncoming: connection.listenIncoming,
       listenSent: connection.listenSent,
       excludeJunk: connection.excludeJunk,
       excludeTrash: connection.excludeTrash,
+      deleteFromProviderOnDelete: connection.deleteFromProviderOnDelete,
     },
     activity: {
       lastSyncedAt: connection.lastSyncedAt?.toISOString() ?? null,
@@ -277,7 +284,15 @@ export const registerMailboxControlRoutes = async (
       );
       if (!access) return;
 
-      if (!hasMinRole(access.membership.role, "ADMIN")) {
+      const actor = await app.services.prisma.user.findUnique({
+        where: { id: access.session.userId },
+        select: { platformRole: true },
+      });
+      const isPlatformAdmin = actor?.platformRole === "PLATFORM_ADMIN";
+      if (
+        !hasMinRole(access.membership.role, "ADMIN") &&
+        !isPlatformAdmin
+      ) {
         return reply
           .code(403)
           .send({ message: "ADMIN or OWNER role required" });
@@ -297,6 +312,16 @@ export const registerMailboxControlRoutes = async (
       });
       if (!existing) {
         return reply.code(404).send({ message: "Mailbox not found" });
+      }
+
+      if (
+        body.deleteFromProviderOnDelete === true &&
+        existing.provider !== "OUTLOOK"
+      ) {
+        return reply.code(400).send({
+          message:
+            "Delete from connected mailbox is only supported for Outlook mailboxes.",
+        });
       }
 
       const nextSource = body.ingestionSource ?? existing.ingestionSource;
@@ -336,6 +361,9 @@ export const registerMailboxControlRoutes = async (
             : {}),
           ...(body.excludeTrash !== undefined
             ? { excludeTrash: body.excludeTrash }
+            : {}),
+          ...(body.deleteFromProviderOnDelete !== undefined
+            ? { deleteFromProviderOnDelete: body.deleteFromProviderOnDelete }
             : {}),
           ...(body.ingestionSource !== undefined
             ? {
@@ -381,6 +409,8 @@ export const registerMailboxControlRoutes = async (
           ingestionSource: updated.ingestionSource,
           listenIncoming: updated.listenIncoming,
           listenSent: updated.listenSent,
+          deleteFromProviderOnDelete: updated.deleteFromProviderOnDelete,
+          platformAdminOverride: isPlatformAdmin && !hasMinRole(access.membership.role, "ADMIN"),
         },
         request,
       });

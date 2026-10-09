@@ -24,7 +24,8 @@ export function clearInboxMessageWhere(input: {
  * Delete EmailMessage rows matching `where`, plus email-owned children.
  * Threads are removed only when they have no messages left.
  * Does not delete Jobs, Customers, or DiscoveredFolder rows.
- * Does not call the mail provider.
+ * Does not call the mail provider — Clear Inbox / Clear All Emails must NEVER
+ * honor `deleteFromProviderOnDelete` (that setting is Inbox UI trash only).
  */
 export async function deleteScopedEmailMessages(
   tx: Prisma.TransactionClient,

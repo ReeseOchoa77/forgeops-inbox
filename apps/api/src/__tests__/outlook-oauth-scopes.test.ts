@@ -14,7 +14,7 @@ describe("Outlook OAuth scopes", () => {
     const provider = new OutlookOAuthProvider({
       clientId: "test-client-id",
       clientSecret: "test-secret",
-      redirectUri: "https://api.example.com/api/v1/inbox-connections/google/callback",
+      redirectUri: "https://api.example.com/api/v1/inbox-connections/outlook/callback",
       tenantId: "common",
     });
 
@@ -29,6 +29,7 @@ describe("Outlook OAuth scopes", () => {
     expect(scope).toContain("https://graph.microsoft.com/User.Read");
     expect(scope).toContain("https://graph.microsoft.com/Mail.Read.Shared");
     expect(scope).toContain("https://graph.microsoft.com/MailboxSettings.Read");
+    expect(scope).toContain("https://graph.microsoft.com/Mail.ReadWrite");
     expect(scope).toContain("email");
     expect(scope).toContain("profile");
 

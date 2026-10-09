@@ -933,6 +933,56 @@ export function MonitoredMailboxesPanel({
                   />
                   Exclude Deleted / Trash
                 </label>
+                <div
+                  style={{
+                    borderTop: '1px solid #eee',
+                    paddingTop: 10,
+                    marginTop: 2,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <label
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 8,
+                    }}
+                  >
+                    <span>Delete from connected mailbox</span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(
+                        settings.listener.deleteFromProviderOnDelete ??
+                          settings.deleteFromProviderOnDelete
+                      )}
+                      disabled={
+                        !canManage ||
+                        settingsBusy ||
+                        !settings.providerSupportsDeleteFromProvider
+                      }
+                      onChange={(e) => {
+                        const enable = e.target.checked
+                        if (enable) {
+                          const ok = window.confirm(
+                            'Emails deleted in ForgeOps will also be deleted from this mailbox. They may be moved to the provider’s Deleted Items/Trash folder.'
+                          )
+                          if (!ok) return
+                        }
+                        void saveSettings({
+                          deleteFromProviderOnDelete: enable,
+                        }).then(() => onRefresh())
+                      }}
+                    />
+                  </label>
+                  <p style={{ fontSize: 11, color: '#666', margin: 0, lineHeight: 1.4 }}>
+                    {settings.providerSupportsDeleteFromProvider
+                      ? 'When enabled, deleting an email in ForgeOps also deletes it from the connected email account. Default is off.'
+                      : 'Provider deletion is only supported for Outlook mailboxes.'}
+                  </p>
+                </div>
                 <p style={{ fontSize: 11, color: '#666', margin: 0, lineHeight: 1.4 }}>
                   Authorizing the mailbox does not turn the native listener on. Use Start
                   Listening only after switching processing to NATIVE.

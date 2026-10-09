@@ -714,7 +714,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       else await api.trashMessage(workspaceId, cid, messageId)
       setMessages(prev => prev.filter(m => m.id !== messageId))
       setTotalCount(prev => (prev == null ? prev : Math.max(0, prev - 1)))
-    } catch { /* */ }
+    } catch (e) {
+      // Provider-delete failures must not look like success (row stays visible).
+      window.alert(e instanceof Error ? e.message : 'Failed to delete email')
+    }
   }
 
   const handleMassDeleteClick = async (messageId: string) => {

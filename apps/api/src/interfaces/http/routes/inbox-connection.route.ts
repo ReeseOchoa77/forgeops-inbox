@@ -1,7 +1,7 @@
 import type { InboxConnectionStatus } from "@prisma/client";
 import type { InboxProviderKind } from "@forgeops/shared";
 import { normalizeEmail, providerKindFromEnum, providerKindToEnum, shouldRegisterNativePush } from "@forgeops/shared";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
@@ -519,7 +519,18 @@ export const registerInboxConnectionRoutes = async (
     }
   );
 
-  app.get("/api/v1/inbox-connections/google/callback", async (request, reply) => {
+  /**
+   * Shared InboxConnection OAuth callback handler.
+   * Provider is resolved from OAuth state (gmail | outlook), not from the path.
+   * Canonical paths:
+   * - Gmail mailbox:  GET /api/v1/inbox-connections/google/callback
+   * - Outlook mailbox: GET /api/v1/inbox-connections/outlook/callback
+   * Do not use /api/v1/auth/microsoft/callback (ForgeOps login) for mailbox connect.
+   */
+  const handleInboxConnectionOAuthCallback = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) => {
     const query = inboxConnectionCallbackQuerySchema.parse(request.query);
     const stateId = query.state;
     const stateReadResult = stateId
@@ -993,7 +1004,16 @@ export const registerInboxConnectionRoutes = async (
         `${app.services.env.FRONTEND_URL}/?connection_error=${errorMsg}`
       );
     }
-  });
+  };
+
+  app.get(
+    "/api/v1/inbox-connections/google/callback",
+    handleInboxConnectionOAuthCallback
+  );
+  app.get(
+    "/api/v1/inbox-connections/outlook/callback",
+    handleInboxConnectionOAuthCallback
+  );
 
   /**
    * Authorize / upgrade an existing Outlook InboxConnection via Microsoft OAuth.

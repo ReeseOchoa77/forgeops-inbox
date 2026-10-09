@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
+import { trashEmailMessagesWithOptionalProviderDelete } from "../../../application/services/trash-email-with-provider-delete.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
   mapStoredPriorityToN8n,
@@ -3116,39 +3117,64 @@ export const registerInboxReadRoutes = async (
         }
       }
 
+      let messageIds: string[] = [];
       if (body.messageIds && body.messageIds.length > 0) {
-        const result = await app.services.prisma.emailMessage.updateMany({
+        const rows = await app.services.prisma.emailMessage.findMany({
           where: {
             workspaceId: params.workspaceId,
             inboxConnectionId: params.id,
             id: { in: body.messageIds },
             isTrashed: false,
             isArchived: false,
-            mailboxCategory: "PERSONAL"
+            mailboxCategory: "PERSONAL",
           },
-          data: { isTrashed: true }
+          select: { id: true },
         });
-        return reply.send({ status: "ok", trashed: result.count });
+        messageIds = rows.map((r) => r.id);
+      } else {
+        const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
+        const where = buildMessagesWhere({
+          workspaceId: params.workspaceId,
+          inboxConnectionId: params.id,
+          businessCategory: "NON_BUSINESS",
+          reviewOnly: false,
+          lowConfidenceOnly: false,
+          ...(body.search ? { search: body.search } : {}),
+          classificationThreshold: thresholds.classificationThreshold,
+          taskThreshold: thresholds.taskThreshold,
+        });
+        const rows = await app.services.prisma.emailMessage.findMany({
+          where,
+          select: { id: true },
+          take: 500,
+        });
+        messageIds = rows.map((r) => r.id);
       }
 
-      const thresholds = await getWorkspaceThresholds(app, params.workspaceId);
-      const where = buildMessagesWhere({
+      const env = app.services.env;
+      const result = await trashEmailMessagesWithOptionalProviderDelete({
+        prisma: app.services.prisma,
+        tokenCipher: app.services.tokenCipher,
         workspaceId: params.workspaceId,
         inboxConnectionId: params.id,
-        businessCategory: "NON_BUSINESS",
-        reviewOnly: false,
-        lowConfidenceOnly: false,
-        ...(body.search ? { search: body.search } : {}),
-        classificationThreshold: thresholds.classificationThreshold,
-        taskThreshold: thresholds.taskThreshold
+        messageSelectors: messageIds,
+        outlook: {
+          clientId: env.OUTLOOK_CLIENT_ID,
+          clientSecret: env.OUTLOOK_CLIENT_SECRET,
+          tenantId: env.OUTLOOK_TENANT_ID,
+        },
+        actorUserId: session.userId,
       });
 
-      const result = await app.services.prisma.emailMessage.updateMany({
-        where,
-        data: { isTrashed: true }
-      });
+      if (!result.ok) {
+        return reply.code(result.statusCode).send({ message: result.message });
+      }
 
-      return reply.send({ status: "ok", trashed: result.count });
+      return reply.send({
+        status: "ok",
+        trashed: result.trashed,
+        providerDeleted: result.providerDeleted,
+      });
     }
   );
 
@@ -3165,16 +3191,30 @@ export const registerInboxReadRoutes = async (
       if (!session) return sendAuthenticationRequired(reply);
       if (!membership) return sendWorkspaceAccessDenied(reply);
 
-      await app.services.prisma.emailMessage.updateMany({
-        where: {
-          workspaceId: params.workspaceId,
-          inboxConnectionId: params.id,
-          OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }]
+      const env = app.services.env;
+      const result = await trashEmailMessagesWithOptionalProviderDelete({
+        prisma: app.services.prisma,
+        tokenCipher: app.services.tokenCipher,
+        workspaceId: params.workspaceId,
+        inboxConnectionId: params.id,
+        messageSelectors: [params.messageId],
+        outlook: {
+          clientId: env.OUTLOOK_CLIENT_ID,
+          clientSecret: env.OUTLOOK_CLIENT_SECRET,
+          tenantId: env.OUTLOOK_TENANT_ID,
         },
-        data: { isTrashed: true }
+        actorUserId: session.userId,
       });
 
-      return reply.send({ status: "ok" });
+      if (!result.ok) {
+        return reply.code(result.statusCode).send({ message: result.message });
+      }
+
+      return reply.send({
+        status: "ok",
+        trashed: result.trashed,
+        providerDeleted: result.providerDeleted,
+      });
     }
   );
 
