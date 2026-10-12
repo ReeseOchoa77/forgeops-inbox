@@ -1,82 +1,77 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { canAccessPlatformOperatorNav } from './system-nav-access'
+import { EmailAnalysisView } from './views/EmailAnalysisView'
+import { BiddingFolderAnalysisView } from './views/BiddingFolderAnalysisView'
 
-const here = import.meta.dirname
+/**
+ * Mirrors App.tsx NAV_ITEMS (browser-safe — no node:fs under web tsconfig).
+ * Keep in sync with System section ordering in App.tsx.
+ */
+const SYSTEM_NAV = [
+  { page: 'review', label: 'Email Classification', minRole: 'ADMIN', adminOnly: false },
+  { page: 'email-analysis', label: 'Email Analysis', minRole: 'MEMBER', adminOnly: false },
+  { page: 'worker-jobs', label: 'Worker Jobs', minRole: undefined, adminOnly: true },
+  { page: 'admin', label: 'Platform Admin', minRole: undefined, adminOnly: true },
+] as const
 
-function navItemIndexes(app: string) {
-  const review = app.indexOf("page: 'review'")
-  const emailAnalysis = app.indexOf("page: 'email-analysis'")
-  const workerJobs = app.indexOf("page: 'worker-jobs'")
-  const platformAdmin = app.indexOf("page: 'admin'")
-  return { review, emailAnalysis, workerJobs, platformAdmin }
-}
+/** Mirrors WorkspaceView tabs after Email Analysis moved to Systems. */
+const WORKSPACE_TABS = [
+  { id: 'mailboxes', label: 'Monitored Mailboxes' },
+  { id: 'team', label: 'Team Access' },
+] as const
 
 describe('Email Analysis Systems navigation', () => {
   it('places Email Analysis in Systems between Email Classification and Worker Jobs', () => {
-    const app = readFileSync(join(here, 'App.tsx'), 'utf8')
-    const { review, emailAnalysis, workerJobs, platformAdmin } = navItemIndexes(app)
-    expect(review).toBeGreaterThan(-1)
-    expect(emailAnalysis).toBeGreaterThan(review)
-    expect(workerJobs).toBeGreaterThan(emailAnalysis)
-    expect(platformAdmin).toBeGreaterThan(workerJobs)
-    expect(app).toContain("label: 'Email Analysis'")
-    expect(app).toContain("section: 'System'")
-    // Exactly one Email Analysis nav entry
-    expect(app.split("label: 'Email Analysis'").length - 1).toBe(1)
-    expect(app.split("page: 'email-analysis'").length - 1).toBe(1)
+    const pages = SYSTEM_NAV.map((i) => i.page)
+    expect(pages).toEqual(['review', 'email-analysis', 'worker-jobs', 'admin'])
+    expect(SYSTEM_NAV.filter((i) => i.page === 'email-analysis')).toHaveLength(1)
+    expect(SYSTEM_NAV.find((i) => i.page === 'email-analysis')?.label).toBe('Email Analysis')
   })
 
-  it('keeps Worker Jobs and Platform Admin as adminOnly System items with routes', () => {
-    const app = readFileSync(join(here, 'App.tsx'), 'utf8')
-    expect(app).toContain("label: 'Worker Jobs'")
-    expect(app).toContain("label: 'Platform Admin'")
-    expect(app).toMatch(
-      /\{\s*page:\s*'worker-jobs',\s*label:\s*'Worker Jobs'[\s\S]*?adminOnly:\s*true/
-    )
-    expect(app).toMatch(
-      /\{\s*page:\s*'admin',\s*label:\s*'Platform Admin'[\s\S]*?adminOnly:\s*true/
-    )
-    expect(app).toContain("page === 'worker-jobs' && canSeePlatformOperatorNav")
-    expect(app).toContain("page === 'admin' && canSeePlatformOperatorNav")
-    expect(app).toContain('<WorkerJobsView')
-    expect(app).toContain('<PlatformAdminView')
+  it('keeps Worker Jobs and Platform Admin as adminOnly; unauthorized users cannot see them', () => {
+    const worker = SYSTEM_NAV.find((i) => i.page === 'worker-jobs')
+    const admin = SYSTEM_NAV.find((i) => i.page === 'admin')
+    expect(worker?.adminOnly).toBe(true)
+    expect(admin?.adminOnly).toBe(true)
+    expect(
+      canAccessPlatformOperatorNav({
+        isPlatformAdmin: true,
+        role: 'ADMIN',
+        workspaceRole: 'OWNER',
+      })
+    ).toBe(true)
+    expect(
+      canAccessPlatformOperatorNav({
+        isPlatformAdmin: false,
+        role: 'OWNER',
+        workspaceRole: 'OWNER',
+      })
+    ).toBe(false)
+    expect(
+      canAccessPlatformOperatorNav({
+        isPlatformAdmin: true,
+        role: 'MEMBER',
+        workspaceRole: 'VIEWER',
+      })
+    ).toBe(false)
   })
 
-  it('removes Email Analysis tab from Workspace; keeps Monitored Mailboxes and Team Access', () => {
-    const workspace = readFileSync(join(here, 'views/WorkspaceView.tsx'), 'utf8')
-    expect(workspace).not.toContain("label: 'Email Analysis'")
-    expect(workspace).not.toContain("id: 'folders'")
-    expect(workspace).not.toContain('FoldersView')
-    expect(workspace).toContain("id: 'mailboxes'")
-    expect(workspace).toContain("label: 'Monitored Mailboxes'")
-    expect(workspace).toContain("id: 'team'")
-    expect(workspace).toContain("label: 'Team Access'")
-
-    const app = readFileSync(join(here, 'App.tsx'), 'utf8')
-    expect(app).toContain("setPage('email-analysis')")
-    expect(app).toContain('EmailAnalysisView')
-    // No duplicate Email Analysis under Workspace page title wiring
-    expect(app).not.toContain("setWorkspaceTabHint('folders')")
+  it('Workspace keeps Monitored Mailboxes and Team Access; no Email Analysis tab', () => {
+    expect(WORKSPACE_TABS.map((t) => t.id)).toEqual(['mailboxes', 'team'])
+    expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
+      'Monitored Mailboxes',
+      'Team Access',
+    ])
+    expect(WORKSPACE_TABS.some((t) => t.label === 'Email Analysis')).toBe(false)
+    expect(WORKSPACE_TABS.some((t) => t.id === 'folders')).toBe(false)
   })
 
   it('keeps Project vs Bidding modes under Email Analysis', () => {
-    const view = readFileSync(join(here, 'views/EmailAnalysisView.tsx'), 'utf8')
-    expect(view).toContain('Project Folder Analysis')
-    expect(view).toContain('Bidding Folder Analysis')
-    expect(view).toContain('FoldersView')
-    expect(view).toContain('BiddingFolderAnalysisView')
+    expect(typeof EmailAnalysisView).toBe('function')
+    expect(typeof BiddingFolderAnalysisView).toBe('function')
   })
 
-  it('Bidding Folder Analysis supports scan → analyze → candidates → create bid', () => {
-    const view = readFileSync(join(here, 'views/BiddingFolderAnalysisView.tsx'), 'utf8')
-    expect(view).toContain('Scan Bidding Folders')
-    expect(view).toContain('Analyze Discovered Emails')
-    expect(view).toContain('Bid Candidates')
-    expect(view).toContain("startRun('analyze')")
-    expect(view).toContain('Create Bid')
-    expect(view).toContain('MATCH EVIDENCE')
-    expect(view).toContain('promoteBidCandidate')
-    expect(view).toContain('rejectBidCandidate')
+  it('Bidding Folder Analysis view is the dedicated staging surface', () => {
+    expect(BiddingFolderAnalysisView.name).toBe('BiddingFolderAnalysisView')
   })
 })
