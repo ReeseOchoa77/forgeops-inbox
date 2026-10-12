@@ -13,8 +13,11 @@ describe('Tasks filter UX contracts', () => {
       statusFilter: 'OPEN',
       businessTypeKey: 'RFI_CLARIFICATION',
     })
+    const d = tasksListFilterFingerprint({ view: 'MY' })
+    const e = tasksListFilterFingerprint({ view: 'REQUESTS' })
     expect(a).not.toBe(b)
     expect(a).not.toBe(c)
+    expect(d).not.toBe(e)
   })
 
   it('exports TasksView and TaskListRow components', () => {

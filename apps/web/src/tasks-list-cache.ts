@@ -17,6 +17,8 @@ const cache = new Map<string, TasksListCacheEntry>()
 
 export function tasksListFilterFingerprint(filters: TaskListFilters = {}): string {
   return [
+    filters.view ?? 'MY',
+    filters.assigneeUserId ?? '',
     filters.statusFilter ?? 'OPEN',
     filters.due ?? 'ALL',
     filters.priority ?? 'ALL',

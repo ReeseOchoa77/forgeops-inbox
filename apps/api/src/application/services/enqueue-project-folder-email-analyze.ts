@@ -3,6 +3,7 @@ import {
   QueueNames,
   buildProjectFolderEmailAnalyzeJobId,
   emptyProjectFolderEmailAnalyzeProgress,
+  isBiddingWorkflowFolderName,
   type ProjectFolderEmailAnalyzeJobPayload,
   type ProjectFolderEmailAnalyzeJobResult,
 } from "@forgeops/shared";
@@ -99,12 +100,18 @@ export async function enqueueProjectFolderEmailAnalyze(input: {
       matchedJobId: true,
       providerFolderId: true,
       inboxConnectionId: true,
+      rawFolderName: true,
       matchedJob: { select: { id: true } },
     },
   });
 
-  // Drop rows whose Job FK is broken (matchedJobId set but Job missing).
-  const verifiedWithJob = verified.filter((v) => v.matchedJobId && v.matchedJob);
+  // Drop rows whose Job FK is broken; never analyze Bid Invites / Quotes here.
+  const verifiedWithJob = verified.filter(
+    (v) =>
+      v.matchedJobId &&
+      v.matchedJob &&
+      !isBiddingWorkflowFolderName(v.rawFolderName)
+  );
 
   if (verifiedWithJob.length === 0) {
     throw new ProjectFolderEmailAnalyzeError(

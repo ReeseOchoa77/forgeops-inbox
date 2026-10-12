@@ -830,7 +830,7 @@ export default function App() {
 
           {page === 'dashboard' && (
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <DashboardView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onNavigate={(p) => setPage(p)} breakpoint={bp} />
+              <DashboardView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onNavigate={(p) => setPage(p)} breakpoint={bp} currentUserId={session.user?.id} />
             </div>
           )}
 
@@ -885,7 +885,7 @@ export default function App() {
           )}
           {!needsConnection && page === 'tasks' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onSelectMessage={openMessage} userRole={currentRole} />
+              <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onSelectMessage={openMessage} userRole={currentRole} currentUserId={session.user?.id} />
             </div>
           )}
 
@@ -894,6 +894,7 @@ export default function App() {
               <CalendarView
                 workspaceId={workspaceId}
                 userRole={currentRole}
+                currentUserId={session.user?.id}
                 onOpenJob={openJob}
               />
             </div>

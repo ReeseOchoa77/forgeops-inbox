@@ -180,11 +180,21 @@ export interface Classification {
   routingHints?: Record<string, unknown> | null;
 }
 
+export interface TaskUserLite {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
 export interface TaskSummary {
   id: string;
   title: string;
   summary: string | null;
+  description?: string | null;
   assigneeGuess: string | null;
+  assigneeUserId?: string | null;
+  requesterUserId?: string | null;
+  source?: 'EMAIL' | 'MANUAL';
   dueAt: string | null;
   priority: string;
   status: string;
@@ -195,6 +205,9 @@ export interface TaskSummary {
   createdAt: string;
   /** Canonical timeline date (email date for email-sourced tasks). */
   sourceDate?: string;
+  jobId?: string | null;
+  assignee?: TaskUserLite | null;
+  requester?: TaskUserLite | null;
 }
 
 export interface MessageJobSummary {
@@ -608,6 +621,10 @@ export interface TaskListItem {
 }
 
 export type TaskListFilters = {
+  /** MY = assignee me; REQUESTS = requester me ∧ assignee ≠ me; ALL = workspace (admin) */
+  view?: 'MY' | 'REQUESTS' | 'ALL'
+  /** Admin/Owner Tasks-for scope: userId | UNASSIGNED | omit for all */
+  assigneeUserId?: string
   statusFilter?: 'OPEN' | 'COMPLETED' | 'ALL'
   due?: 'ALL' | 'OVERDUE' | 'TODAY' | 'WEEK' | 'MONTH' | 'NONE'
   priority?: 'ALL' | 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
@@ -615,6 +632,7 @@ export type TaskListFilters = {
   emailClassification?: 'ALL' | 'BUSINESS' | 'PERSONAL' | 'UNCLASSIFIED'
   businessTypeKey?: string
   sender?: string
+  /** Email direction filter (separate from ownership Requests). */
   direction?: 'ALL' | 'INCOMING' | 'SENT'
   jobId?: string
   sort?: 'DUE_DATE' | 'NEWEST' | 'OLDEST' | 'PRIORITY'
@@ -622,6 +640,7 @@ export type TaskListFilters = {
   dateRange?: 'TODAY' | 'WEEK' | 'MONTH'
   timezone?: string
   pinnedOnly?: boolean
+  inboxConnectionId?: string
 }
 
 export interface ApprovedAccessEntry {
@@ -674,6 +693,75 @@ export interface ProjectFolderScanSummary {
   verified: number;
   suggested: number;
   unmatched: number;
+}
+
+export interface BidEmailAnalyzeProgressView {
+  bidInvitesFolderFound: boolean;
+  quotesFolderFound: boolean;
+  bidInvitesFolderName: string | null;
+  quotesFolderName: string | null;
+  bidInvitesScanned: number;
+  bidInvitesTotalEstimate: number | null;
+  quotesScanned: number;
+  quotesTotalEstimate: number | null;
+  messagesCreated: number;
+  messagesExisting: number;
+  candidatesCreated: number;
+  candidatesUpdated: number;
+  quotesMatched: number;
+  quotesUnmatched: number;
+  quotesLinkedToJob: number;
+  aiCalls: number;
+  currentPhase: string | null;
+  currentFolderName: string | null;
+  warning: string | null;
+}
+
+export interface BidCandidateSummary {
+  id: string;
+  status: string;
+  proposedProjectName: string | null;
+  proposedCustomerName: string | null;
+  proposedBidDueAt: string | null;
+  proposedJobNumber: string | null;
+  confidence: number | null;
+  inviteCount: number;
+  quoteCount: number;
+  canonicalJobId: string | null;
+  canonicalJob: {
+    id: string;
+    name: string;
+    jobNumber: string | null;
+    status: string;
+  } | null;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface BidCandidateDetail extends BidCandidateSummary {
+  identityKey: string;
+  evidence: unknown;
+  reviewNotes: string | null;
+  confirmedAt: string | null;
+  confirmedByUserId: string | null;
+  emails: Array<{
+    id: string;
+    role: string;
+    matchConfidence: number | null;
+    matchEvidence: unknown;
+    isPrimary: boolean;
+    email: {
+      id: string;
+      subject: string | null;
+      senderName: string | null;
+      senderEmail: string | null;
+      receivedAt: string | null;
+      sentAt: string | null;
+      hasAttachments: boolean;
+      attachmentMetadata: unknown;
+      jobId: string | null;
+    };
+  }>;
 }
 
 export interface FolderSummaryMetrics {
@@ -750,6 +838,8 @@ export interface CalendarTaskDueItem {
   linkedJob: CalendarJobBadge | null;
   taskStatus?: string;
   taskPriority?: string;
+  assigneeUserId?: string | null;
+  assignee?: TaskUserLite | null;
 }
 
 /** Synthesized from Job.status=BIDDING + Job.bidDueAt (canonical active-bid deadline). */
@@ -1271,6 +1361,10 @@ export const api = {
   getAttachmentUrl: (workspaceId: string, connectionId: string, messageId: string, attachmentId: string) =>
     `${BASE}/workspaces/${encodeURIComponent(workspaceId)}/inbox-connections/${encodeURIComponent(connectionId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
 
+  /**
+   * Workspace-scoped tasks (ownership views). Prefer over mailbox-scoped list.
+   * `connectionId` is optional and only used as an email-direction filter hint.
+   */
   getTasks: (
     workspaceId: string,
     connectionId: string,
@@ -1281,6 +1375,8 @@ export const api = {
     const p = new URLSearchParams()
     p.set('page', String(page))
     p.set('pageSize', String(pageSize))
+    if (filters?.view) p.set('view', filters.view)
+    if (filters?.assigneeUserId) p.set('assigneeUserId', filters.assigneeUserId)
     if (filters?.statusFilter) p.set('statusFilter', filters.statusFilter)
     if (filters?.due && filters.due !== 'ALL') p.set('due', filters.due)
     if (filters?.priority && filters.priority !== 'ALL') p.set('priority', filters.priority)
@@ -1296,6 +1392,7 @@ export const api = {
     if (filters?.dateRange) p.set('dateRange', filters.dateRange)
     if (filters?.timezone) p.set('timezone', filters.timezone)
     if (filters?.pinnedOnly) p.set('pinnedOnly', 'true')
+    if (connectionId) p.set('inboxConnectionId', connectionId)
     return request<{
       tasks: TaskListItem[]
       pagination: {
@@ -1305,10 +1402,39 @@ export const api = {
         totalPages: number | null
         hasMore: boolean
       }
-    }>(
-      `/workspaces/${workspaceId}/inbox-connections/${connectionId}/tasks?${p}`
-    )
+    }>(`/workspaces/${workspaceId}/tasks?${p}`)
   },
+
+  getTaskAssignees: (workspaceId: string) =>
+    request<{
+      members: Array<{ id: string; name: string | null; email: string; role: string }>
+    }>(`/workspaces/${workspaceId}/task-assignees`),
+
+  createTask: (
+    workspaceId: string,
+    body: {
+      title: string
+      description?: string | null
+      assigneeUserId: string
+      jobId?: string | null
+      dueAt?: string | null
+      priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
+    }
+  ) =>
+    request<TaskListItem>(`/workspaces/${workspaceId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  setTaskStatus: (
+    workspaceId: string,
+    taskId: string,
+    status: 'OPEN' | 'DONE'
+  ) =>
+    request<TaskListItem>(`/workspaces/${workspaceId}/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
 
   getReviewQueue: (workspaceId: string, connectionId: string, page = 1) =>
     request<{ items: ReviewItem[]; pagination: { page: number; totalCount: number; totalPages: number }; thresholds: { classification: number; task: number } }>(
@@ -1364,6 +1490,19 @@ export const api = {
     request<{ status: string }>(`/workspaces/${workspaceId}/tasks/${taskId}/review`, {
       method: 'PATCH',
       body: JSON.stringify({ reviewStatus })
+    }),
+
+  /** @deprecated Prefer setTaskStatus — review is orthogonal to completion. */
+  completeTask: (workspaceId: string, taskId: string) =>
+    request<TaskListItem>(`/workspaces/${workspaceId}/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'DONE' }),
+    }),
+
+  reopenTask: (workspaceId: string, taskId: string) =>
+    request<TaskListItem>(`/workspaces/${workspaceId}/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'OPEN' }),
     }),
 
   getApprovedAccess: (workspaceId: string) =>
@@ -1573,16 +1712,29 @@ export const api = {
       `/workspaces/${workspaceId}/email-contacts?q=${encodeURIComponent(q)}&limit=${limit}`
     ),
 
-  getCalendar: (workspaceId: string, from: string, to: string) =>
-    request<{
-      from: string;
-      to: string;
-      events: CalendarEventItem[];
-      taskDueItems: CalendarTaskDueItem[];
-      bidDueItems: CalendarBidDueItem[];
-    }>(
-      `/workspaces/${workspaceId}/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-    ),
+  /**
+   * Calendar feed. `calendarFor`: ME | ALL | UNASSIGNED | userId
+   * Only OWNER/ADMIN may use non-ME scopes (enforced server-side).
+   */
+  getCalendar: (
+    workspaceId: string,
+    from: string,
+    to: string,
+    calendarFor: string = 'ME'
+  ) => {
+    const p = new URLSearchParams()
+    p.set('from', from)
+    p.set('to', to)
+    p.set('calendarFor', calendarFor)
+    return request<{
+      from: string
+      to: string
+      calendarFor: string
+      events: CalendarEventItem[]
+      taskDueItems: CalendarTaskDueItem[]
+      bidDueItems: CalendarBidDueItem[]
+    }>(`/workspaces/${workspaceId}/calendar?${p}`)
+  },
 
   createCalendarEvent: (
     workspaceId: string,
@@ -2816,6 +2968,108 @@ export const api = {
       } | null;
     }>(
       `/workspaces/${workspaceId}/project-folders/analyze-emails/latest?connectionId=${encodeURIComponent(connectionId)}`
+    ),
+
+  startBidAnalysis: (workspaceId: string, connectionId: string) =>
+    request<{ status: string; runId: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/analyze`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ connectionId }),
+      }
+    ),
+
+  getBidAnalysisRun: (workspaceId: string, runId: string) =>
+    request<{
+      run: {
+        id: string;
+        status: string;
+        progress: BidEmailAnalyzeProgressView;
+        errorMessage: string | null;
+      };
+    }>(`/workspaces/${workspaceId}/bid-analysis/runs/${runId}`),
+
+  getLatestBidAnalysisRun: (workspaceId: string, connectionId: string) =>
+    request<{
+      run: {
+        id: string;
+        status: string;
+        progress: BidEmailAnalyzeProgressView;
+        errorMessage: string | null;
+      } | null;
+    }>(
+      `/workspaces/${workspaceId}/bid-analysis/runs/latest?connectionId=${encodeURIComponent(connectionId)}`
+    ),
+
+  listBidCandidates: (
+    workspaceId: string,
+    params?: { status?: string; limit?: number }
+  ) => {
+    const p = new URLSearchParams();
+    if (params?.status) p.set('status', params.status);
+    if (params?.limit) p.set('limit', String(params.limit));
+    const q = p.toString();
+    return request<{ candidates: BidCandidateSummary[] }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates${q ? `?${q}` : ''}`
+    );
+  },
+
+  getBidCandidate: (workspaceId: string, candidateId: string) =>
+    request<{ candidate: BidCandidateDetail }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}`
+    ),
+
+  updateBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      projectName?: string | null;
+      customerName?: string | null;
+      bidDueAt?: string | null;
+      jobNumber?: string | null;
+      status?: 'READY' | 'NEEDS_REVIEW' | 'DISCOVERED';
+      reviewNotes?: string | null;
+    }
+  ) =>
+    request<{ status: string; candidateId: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  promoteBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      mode?: 'create' | 'attach';
+      existingJobId?: string;
+      projectName?: string;
+      customerName?: string | null;
+      bidDueAt?: string | null;
+      jobNumber?: string | null;
+      confirmCreateDespiteExisting?: boolean;
+    }
+  ) =>
+    request<{
+      candidateId: string;
+      jobId: string;
+      created: boolean;
+      attachedEmailCount: number;
+    }>(`/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  rejectBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    reviewNotes?: string | null
+  ) =>
+    request<{ status: string; candidateId: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reviewNotes: reviewNotes ?? null }),
+      }
     ),
 
   getVerifiedProjectFolders: (

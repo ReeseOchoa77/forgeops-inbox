@@ -23,6 +23,8 @@ import {
   type MailboxHistoricalImportJobResult,
   type ProjectFolderEmailAnalyzeJobPayload,
   type ProjectFolderEmailAnalyzeJobResult,
+  type BidEmailAnalyzeJobPayload,
+  type BidEmailAnalyzeJobResult,
   type MailboxReclassifyJobPayload,
   type MailboxReclassifyJobResult,
   type InlineImageRelevanceJobPayload,
@@ -89,7 +91,9 @@ import { registerJobDeliveryRoutes } from "./routes/job-deliveries.route.js";
 import { registerJobBillingRoutes } from "./routes/job-billing.route.js";
 import { registerJobRfqRoutes } from "./routes/job-rfqs.route.js";
 import { registerBiddingRoutes } from "./routes/bidding.route.js";
+import { registerBidAnalysisRoutes } from "./routes/bid-analysis.route.js";
 import { registerTaskBulkRoutes } from "./routes/task-bulk.route.js";
+import { registerTasksRoutes } from "./routes/tasks.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
 import { registerWorkspacePreferencesRoutes } from "./routes/workspace-preferences.route.js";
 import { registerDocumentLibraryRoutes } from "./routes/document-library.route.js";
@@ -170,6 +174,12 @@ export const buildServer = async () => {
     ProjectFolderEmailAnalyzeJobPayload,
     ProjectFolderEmailAnalyzeJobResult
   >(QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const bidEmailAnalyzeQueue = new Queue<
+    BidEmailAnalyzeJobPayload,
+    BidEmailAnalyzeJobResult
+  >(QueueNames.BID_EMAIL_ANALYZE, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   const mailboxReclassifyQueue = new Queue<
@@ -350,6 +360,7 @@ export const buildServer = async () => {
       mailboxHistoricalImportQueue,
       mailboxClassifyQueue,
       projectFolderEmailAnalyzeQueue,
+      bidEmailAnalyzeQueue,
       mailboxReclassifyQueue,
       inlineImageRelevanceQueue,
       googleOAuthService,
@@ -466,7 +477,9 @@ export const buildServer = async () => {
   registerJobBillingRoutes(app);
   registerJobRfqRoutes(app);
   await registerBiddingRoutes(app);
+  await registerBidAnalysisRoutes(app);
   await registerTaskBulkRoutes(app);
+  await registerTasksRoutes(app);
   await registerJobFilesRoutes(app);
   await registerWorkspacePreferencesRoutes(app);
   await registerCalendarRoutes(app);
@@ -528,6 +541,7 @@ export const buildServer = async () => {
     await mailboxHistoricalImportQueue.close();
     await mailboxClassifyQueue.close();
     await projectFolderEmailAnalyzeQueue.close();
+    await bidEmailAnalyzeQueue.close();
     await mailboxReclassifyQueue.close();
     await inlineImageRelevanceQueue.close();
     await attachmentIngestQueue.close();

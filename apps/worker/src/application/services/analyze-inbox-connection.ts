@@ -6,6 +6,7 @@ import {
   shouldSkipNativeClassificationOverwrite,
   normalizeTaskDueAt,
   resolveTaskSourceDate,
+  resolveUniqueToAssigneeUserId,
   type InboxAnalysisResult,
 } from "@forgeops/shared";
 
@@ -82,6 +83,7 @@ export const analyzeInboxConnection = async (input: {
         select: {
           user: {
             select: {
+              id: true,
               name: true,
               email: true
             }
@@ -117,6 +119,7 @@ export const analyzeInboxConnection = async (input: {
           labelIds: true,
           sentAt: true,
           receivedAt: true,
+          direction: true,
           jobId: true,
           jobAssignmentIsManual: true,
           jobAssignmentSource: true,
@@ -451,6 +454,16 @@ export const analyzeInboxConnection = async (input: {
         const dueAt = normalizeTaskDueAt(taskCandidate.dueAt, {
           emailMessageId: message.id,
         });
+        const isSent = message.direction === "SENT";
+        const assigneeUserId = !isSent
+          ? resolveUniqueToAssigneeUserId({
+              toAddresses: message.toAddresses,
+              members: members.map((u) => ({
+                userId: u.id,
+                email: u.email,
+              })),
+            })
+          : null;
 
         await tx.task.upsert({
           where: {
@@ -461,10 +474,12 @@ export const analyzeInboxConnection = async (input: {
             }
           },
           update: {
+            source: "EMAIL",
             sourceThreadId: message.threadId,
             classificationId: persistedClassification.id,
-            assigneeUserId: null,
+            assigneeUserId,
             assigneeGuess: taskCandidate.assigneeGuess,
+            requesterUserId: null,
             sourceTaskKey: "heuristic-primary",
             title: taskCandidate.title,
             summary: taskCandidate.summary,
@@ -484,11 +499,14 @@ export const analyzeInboxConnection = async (input: {
           },
           create: {
             workspaceId: input.workspaceId,
+            source: "EMAIL",
             sourceThreadId: message.threadId,
             sourceMessageId: message.id,
             sourceTaskKey: "heuristic-primary",
             classificationId: persistedClassification.id,
+            assigneeUserId,
             assigneeGuess: taskCandidate.assigneeGuess,
+            requesterUserId: null,
             title: taskCandidate.title,
             summary: taskCandidate.summary,
             description: taskCandidate.summary,

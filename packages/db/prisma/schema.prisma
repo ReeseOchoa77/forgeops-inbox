@@ -127,6 +127,12 @@ enum TaskStatus {
   CANCELLED
 }
 
+/// Canonical Task provenance. EMAIL = derived from EmailMessage; MANUAL = user-created.
+enum TaskSource {
+  EMAIL
+  MANUAL
+}
+
 enum ReviewQueue {
   TRIAGE
   EXTRACTION
@@ -515,6 +521,8 @@ model Workspace {
   discoveredFolders    DiscoveredFolder[]
   jobFolderRoots       JobFolderRoot[]
   projectFolderEmailAnalyzeRuns ProjectFolderEmailAnalyzeRun[]
+  bidAnalysisRuns      BidAnalysisRun[]
+  bidCandidates        BidCandidate[]
   mailboxReclassifyRuns MailboxReclassifyRun[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
@@ -555,6 +563,7 @@ model User {
   memberships             Membership[]
   assignedThreads         EmailThread[]    @relation("ThreadAssignee")
   assignedTasks           Task[]           @relation("TaskAssignee")
+  requestedTasks          Task[]           @relation("TaskRequester")
   reviewedClassifications Classification[] @relation("ClassificationReviewer")
   reviewedTasks           Task[]           @relation("TaskReviewer")
   createdRoutingRules     RoutingRule[]    @relation("RoutingRuleCreator")
@@ -567,6 +576,8 @@ model User {
   classificationInstructions ClassificationInstruction[] @relation("InstructionCreator")
   estimatedJobs           Job[]            @relation("JobEstimator")
   jobParticipations       JobParticipant[] @relation("JobParticipantUser")
+  confirmedBidCandidates  BidCandidate[]   @relation("BidCandidateConfirmer")
+  proposedEstimatorCandidates BidCandidate[] @relation("BidCandidateProposedEstimator")
 }
 
 model ApprovedAccess {
@@ -825,6 +836,7 @@ model EmailMessage {
   tasks            Task[]        @relation("TaskSourceMessage")
   attachments      EmailAttachment[]
   linkedRfqs       JobRfq[]      @relation("JobRfqEmail")
+  bidCandidateEmails BidCandidateEmail[]
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -951,12 +963,19 @@ model Classification {
 model Task {
   id               String       @id @default(cuid())
   workspaceId      String
-  sourceThreadId   String
+  /// Nullable so MANUAL tasks do not require a synthetic EmailThread.
+  sourceThreadId   String?
   sourceMessageId  String?
   classificationId String?
+  /// Canonical assignee (ForgeOps User). Prefer over assigneeGuess when set.
   assigneeUserId   String?
+  /// ForgeOps user who created/requested the task. Null for external email provenance.
+  requesterUserId  String?
+  /// Legacy/heuristic display hint; not authoritative when assigneeUserId is set.
   assigneeGuess    String?
   sourceTaskKey    String?
+  /// Canonical provenance: EMAIL (from EmailMessage) or MANUAL (user-created).
+  source           TaskSource   @default(EMAIL)
   title            String
   summary          String?
   description      String?
@@ -984,10 +1003,11 @@ model Task {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   workspace        Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sourceThread     EmailThread  @relation("TaskSourceThread", fields: [workspaceId, sourceThreadId], references: [workspaceId, id], onDelete: Cascade)
+  sourceThread     EmailThread? @relation("TaskSourceThread", fields: [workspaceId, sourceThreadId], references: [workspaceId, id], onDelete: Cascade)
   sourceMessage    EmailMessage? @relation("TaskSourceMessage", fields: [workspaceId, sourceMessageId], references: [workspaceId, id], onDelete: SetNull)
   classification   Classification? @relation(fields: [workspaceId, classificationId], references: [workspaceId, id], onDelete: SetNull)
   assigneeUser     User?        @relation("TaskAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  requesterUser    User?        @relation("TaskRequester", fields: [requesterUserId], references: [id], onDelete: SetNull)
   reviewedByUser   User?        @relation("TaskReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
   customer         Customer?    @relation("TaskCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   vendor           Vendor?      @relation("TaskVendor", fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
@@ -997,6 +1017,7 @@ model Task {
   @@unique([workspaceId, id])
   @@index([workspaceId, status, dueAt])
   @@index([workspaceId, assigneeUserId, status])
+  @@index([workspaceId, requesterUserId, status])
   @@index([workspaceId, priority, status])
   @@index([workspaceId, confidence])
   @@index([workspaceId, reviewQueue, reviewStatus])
@@ -1008,6 +1029,7 @@ model Task {
   @@index([vendorId])
   @@index([jobId])
   @@index([workspaceId, sourceDate])
+  @@index([workspaceId, source])
 }
 
 /// ForgeOps-native calendar item (meetings/events/notes). Task due dates are aggregated separately, not duplicated here.
@@ -1180,6 +1202,7 @@ model Job {
   installationRecords   JobInstallationRecord[]
   invoices              JobInvoice[]
   rfqs                  JobRfq[]
+  confirmedBidCandidates BidCandidate[] @relation("BidCandidateCanonicalJob")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -2310,6 +2333,108 @@ model ProjectFolderEmailAnalyzeRun {
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, inboxConnectionId, status])
+}
+
+/// Staging status for Bid Analysis candidates (NOT a Job).
+enum BidCandidateStatus {
+  DISCOVERED
+  READY
+  NEEDS_REVIEW
+  CONFIRMED
+  REJECTED
+}
+
+/// Role of an EmailMessage linked to a BidCandidate.
+enum BidCandidateEmailRole {
+  BID_INVITE
+  QUOTE
+  SUPPORTING
+  ADDENDUM
+}
+
+enum BidAnalysisRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Workspace-level Bid Analysis run (Bid Invites + Quotes only).
+model BidAnalysisRun {
+  id                String               @id @default(cuid())
+  workspaceId       String
+  inboxConnectionId String
+  status            BidAnalysisRunStatus @default(PENDING)
+  /// Rolling progress JSON (folder counters, AI calls, etc.)
+  progress          Json                 @default("{}")
+  errorMessage      String?
+  initiatedByUserId String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, inboxConnectionId, status])
+}
+
+/// Staging proposed bid — NOT a canonical Job until human confirmation.
+model BidCandidate {
+  id                      String             @id @default(cuid())
+  workspaceId             String
+  /// Deterministic grouping key for idempotent upserts (normalized name/number).
+  identityKey             String
+  status                  BidCandidateStatus @default(DISCOVERED)
+  proposedProjectName     String?
+  proposedCustomerName    String?
+  proposedBidDueAt        DateTime?
+  proposedEstimatorUserId String?
+  proposedJobNumber       String?
+  /// Compact evidence labels / match scores (no bodies).
+  evidence                Json?
+  confidence              Decimal?           @db.Decimal(5, 4)
+  reviewNotes             String?
+  canonicalJobId          String?
+  confirmedAt             DateTime?
+  confirmedByUserId       String?
+  rejectedAt              DateTime?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  workspace               Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  proposedEstimatorUser   User?              @relation("BidCandidateProposedEstimator", fields: [proposedEstimatorUserId], references: [id], onDelete: SetNull)
+  confirmedByUser         User?              @relation("BidCandidateConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+  canonicalJob            Job?               @relation("BidCandidateCanonicalJob", fields: [canonicalJobId], references: [id], onDelete: SetNull)
+  emails                  BidCandidateEmail[]
+
+  @@unique([workspaceId, identityKey])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, proposedBidDueAt])
+  @@index([canonicalJobId])
+}
+
+/// Lightweight BidCandidate ↔ EmailMessage link (no content duplication).
+model BidCandidateEmail {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  bidCandidateId  String
+  emailMessageId  String
+  role            BidCandidateEmailRole
+  /// Match confidence for QUOTE links; null for invite/supporting.
+  matchConfidence Decimal?              @db.Decimal(5, 4)
+  /// Compact match evidence labels (no bodies).
+  matchEvidence   Json?
+  isPrimary       Boolean               @default(false)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  bidCandidate    BidCandidate          @relation(fields: [bidCandidateId], references: [id], onDelete: Cascade)
+  emailMessage    EmailMessage          @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([bidCandidateId, emailMessageId])
+  @@index([workspaceId, bidCandidateId])
+  @@index([emailMessageId])
+  @@index([workspaceId, role])
 }
 
 enum MailboxReclassifyRunStatus {

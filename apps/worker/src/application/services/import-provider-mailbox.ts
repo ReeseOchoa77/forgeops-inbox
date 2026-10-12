@@ -12,14 +12,20 @@ import {
   type EmailDirectionValue,
 } from "@forgeops/shared";
 
-export type EmailImportOrigin = "INBOX" | "HISTORICAL_IMPORT" | "PROJECT_FOLDER";
+export type EmailImportOrigin =
+  | "INBOX"
+  | "HISTORICAL_IMPORT"
+  | "PROJECT_FOLDER"
+  | "BID_ANALYSIS";
 
 /** Flags written on create or refresh. Live inbox sync writes neither flag. */
 export function emailOriginWrite(
   origin: EmailImportOrigin | undefined
 ): { fromHistoricalImport?: true; fromProjectFolder?: true } {
   if (origin === "HISTORICAL_IMPORT") return { fromHistoricalImport: true };
-  if (origin === "PROJECT_FOLDER") return { fromProjectFolder: true };
+  if (origin === "PROJECT_FOLDER" || origin === "BID_ANALYSIS") {
+    return { fromProjectFolder: true };
+  }
   return {};
 }
 

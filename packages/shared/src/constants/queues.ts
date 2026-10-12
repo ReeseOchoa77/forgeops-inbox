@@ -6,6 +6,7 @@ export const QueueNames = {
   MAILBOX_HISTORICAL_IMPORT: "mailbox-historical-import",
   MAILBOX_CLASSIFY: "mailbox-classify",
   PROJECT_FOLDER_EMAIL_ANALYZE: "project-folder-email-analyze",
+  BID_EMAIL_ANALYZE: "bid-email-analyze",
   MAILBOX_RECLASSIFY: "mailbox-reclassify",
   INLINE_IMAGE_RELEVANCE: "inline-image-relevance",
 } as const;
@@ -28,6 +29,11 @@ export function buildMailboxClassifyJobId(emailMessageId: string): string {
 /** Deterministic job id for a project-folder email analyze run. */
 export function buildProjectFolderEmailAnalyzeJobId(runId: string): string {
   return `project-folder-email-analyze-${runId}`;
+}
+
+/** Deterministic job id for a Bid Invites/Quotes analysis run. */
+export function buildBidEmailAnalyzeJobId(runId: string): string {
+  return `bid-email-analyze-${runId}`;
 }
 
 /** Deterministic job id for a mailbox reclassification orchestrator run. */

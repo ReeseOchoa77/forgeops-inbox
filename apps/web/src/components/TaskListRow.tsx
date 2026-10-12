@@ -1,7 +1,13 @@
 import type { CSSProperties } from 'react'
 import { businessSubtypeLabel } from '@forgeops/shared/business-subtypes'
-import type { TaskSourceEmail } from '../api'
+import type { TaskSourceEmail, TaskUserLite } from '../api'
 import { PriorityBadge, StatusBadge } from './Badges'
+
+function displayUserName(user: TaskUserLite | null | undefined): string | null {
+  if (!user) return null
+  const name = user.name?.trim()
+  return name || user.email || null
+}
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -88,6 +94,8 @@ export function TaskListRow({
   priority,
   dueAt,
   sourceEmail,
+  assignee,
+  requester,
   isPinned,
   onOpenEmail,
   actions,
@@ -97,11 +105,20 @@ export function TaskListRow({
   priority: string
   dueAt: string | null
   sourceEmail?: TaskSourceEmail | null
+  assignee?: TaskUserLite | null
+  requester?: TaskUserLite | null
   isPinned?: boolean
   onOpenEmail?: (emailId: string) => void
   actions?: React.ReactNode
 }) {
   const overdue = isOverdue(dueAt, status)
+  const assigneeLabel = displayUserName(assignee)
+  const requesterLabel = displayUserName(requester)
+  const ownershipBits: string[] = []
+  if (assigneeLabel) ownershipBits.push(`Assigned to ${assigneeLabel}`)
+  if (requesterLabel) ownershipBits.push(`Requested by ${requesterLabel}`)
+  else if (sourceEmail && !requester) ownershipBits.push('Requested via email')
+
   return (
     <div
       style={{
@@ -120,6 +137,11 @@ export function TaskListRow({
           {title}
         </div>
         <TaskProvenanceLine sourceEmail={sourceEmail} onOpenEmail={onOpenEmail} />
+        {ownershipBits.length > 0 ? (
+          <div style={{ fontSize: 11, color: '#777', marginTop: 3 }}>
+            {ownershipBits.join(' · ')}
+          </div>
+        ) : null}
         <div
           style={{
             display: 'flex',

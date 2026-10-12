@@ -58,6 +58,7 @@ describe("task list filters", () => {
     expect(JSON.stringify(where)).toContain("RFI_CLARIFICATION");
     expect(JSON.stringify(where)).toContain("mortenson");
     expect(JSON.stringify(where)).toContain("BID_OPPORTUNITY");
+    expect(JSON.stringify(where)).toContain('"source":"EMAIL"');
   });
 
   it("Job-scoped list keeps jobId and can include assigned bidding tasks", () => {

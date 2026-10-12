@@ -1,6 +1,7 @@
 export * from "./business-subtypes.js";
 export * from "./outlook/graph-mailbox-root.js";
 export * from "./tasks/task-list-filters.js";
+export * from "./tasks/resolve-email-task-assignee.js";
 export * from "./constants/queues.js";
 export * from "./env/app-env.js";
 export * from "./env/bootstrap-log.js";
@@ -51,4 +52,8 @@ export * from "./bidding/filter-bid-submission-tasks.js";
 export * from "./bidding/sanitize-bidding-customer-name.js";
 export * from "./bidding/extract-project-name-from-attachments.js";
 export * from "./bidding/resolve-bid-project-identity.js";
+export * from "./bidding/bidding-folder-roles.js";
+export * from "./bidding/bid-candidate-identity.js";
+export * from "./bidding/resolve-bidding-workflow-folders.js";
 export * from "./calendar/bidding-calendar-inclusion.js";
+export * from "./calendar/calendar-task-assignee-scope.js";

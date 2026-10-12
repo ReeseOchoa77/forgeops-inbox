@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import {
+  isBiddingWorkflowFolderName,
   matchFolderToExistingJobs,
   normalizeName,
   PROJECTS_ROOT_DISPLAY_NAME,
@@ -266,7 +267,10 @@ export async function scanNativeProjectFolders(input: {
       source: a.source,
     }));
 
-  const candidates = graphFolders.filter((f) => !f.isRoot);
+  // Bid Invites / Quotes are bidding-workflow folders — never treat as project↔Job candidates.
+  const candidates = graphFolders.filter(
+    (f) => !f.isRoot && !isBiddingWorkflowFolderName(f.displayName)
+  );
   const seenProviderIds = new Set(graphFolders.map((f) => f.id));
 
   let created = 0;
@@ -484,7 +488,7 @@ export async function getVerifiedProjectFolders(
   }
 ) {
   const mailboxEmail = input.mailboxEmail?.toLowerCase();
-  return prisma.discoveredFolder.findMany({
+  const rows = await prisma.discoveredFolder.findMany({
     where: {
       workspaceId: input.workspaceId,
       status: "APPROVED",
@@ -513,4 +517,5 @@ export async function getVerifiedProjectFolders(
       },
     },
   });
+  return rows.filter((r) => !isBiddingWorkflowFolderName(r.rawFolderName));
 }

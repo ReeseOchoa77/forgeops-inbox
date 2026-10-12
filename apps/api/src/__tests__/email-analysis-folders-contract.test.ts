@@ -114,6 +114,8 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(view).toContain("Analyze Emails (all verified)");
     expect(view).toContain("Folder scan result");
     expect(view).toContain("Email analysis:");
+    expect(view).toContain("Analyze Bidding Folders");
+    expect(view).toContain("Bid Analysis");
     expect(view).not.toContain(">Analyze Project Folders<");
   });
 

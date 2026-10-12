@@ -16,6 +16,7 @@ import {
   NATIVE_PIPELINE_MODEL_VERSION,
   resolveConfirmedWorkspaceJob,
   resolveTaskSourceDate,
+  resolveUniqueToAssigneeUserId,
   type ReclassifyTaskMode,
   type StoredPriority,
 } from "@forgeops/shared";
@@ -102,6 +103,7 @@ export async function persistNativeClassificationResult(input: {
       labelIds: true,
       sentAt: true,
       receivedAt: true,
+      direction: true,
       jobId: true,
       jobAssignmentIsManual: true,
       jobAssignmentSource: true,
@@ -112,6 +114,25 @@ export async function persistNativeClassificationResult(input: {
   if (!message) {
     throw new Error(`EmailMessage not found: ${input.emailMessageId}`);
   }
+
+  // Deterministic assignee: RECEIVED + exactly one TO match among workspace members.
+  // SENT: do not assign sender (avoids flipping outbound vendor requests onto the sender).
+  const memberships = await input.prisma.membership.findMany({
+    where: { workspaceId: input.workspaceId },
+    select: { userId: true, user: { select: { email: true } } },
+  });
+  const members = memberships.map((m) => ({
+    userId: m.userId,
+    email: m.user.email,
+  }));
+  const isSent = message.direction === "SENT";
+  const assigneeUserId =
+    !isSent
+      ? resolveUniqueToAssigneeUserId({
+          toAddresses: message.toAddresses,
+          members,
+        })
+      : null;
 
   const signals = input.pipeline.semanticSignals;
   let decision = input.pipeline.mailboxDecision;
@@ -576,12 +597,17 @@ export async function persistNativeClassificationResult(input: {
             },
           },
           update: {
+            source: "EMAIL",
             sourceThreadId: message.threadId,
             classificationId: core.classificationId,
             title: payload.title,
             summary: payload.summary,
             description: payload.description,
+            // Canonical assignee from TO match; assigneeGuess remains non-authoritative.
+            assigneeUserId,
             assigneeGuess: payload.assigneeGuess,
+            // Never invent a ForgeOps requester for external email.
+            requesterUserId: null,
             dueAt: payload.dueAt,
             sourceDate: payload.sourceDate,
             priority: payload.priority,
@@ -597,6 +623,7 @@ export async function persistNativeClassificationResult(input: {
           },
           create: {
             workspaceId: input.workspaceId,
+            source: "EMAIL",
             sourceThreadId: message.threadId,
             sourceMessageId: message.id,
             sourceTaskKey: payload.sourceTaskKey,
@@ -604,7 +631,9 @@ export async function persistNativeClassificationResult(input: {
             title: payload.title,
             summary: payload.summary,
             description: payload.description,
+            assigneeUserId,
             assigneeGuess: payload.assigneeGuess,
+            requesterUserId: null,
             dueAt: payload.dueAt,
             sourceDate: payload.sourceDate,
             priority: payload.priority,

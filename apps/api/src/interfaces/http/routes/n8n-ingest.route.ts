@@ -8,6 +8,7 @@ import {
   safeDateOrNull,
   isBlockedByInboxClearedAt,
   filterOutBidSubmissionTasks,
+  resolveUniqueToAssigneeUserId,
 } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -572,6 +573,18 @@ async function upsertTasks(
     subject: body.email.subject,
   });
 
+  const memberships = await tx.membership.findMany({
+    where: { workspaceId },
+    select: { userId: true, user: { select: { email: true } } },
+  });
+  const assigneeUserId = resolveUniqueToAssigneeUserId({
+    toAddresses: body.email.to.map((email) => ({ email, name: null })),
+    members: memberships.map((m) => ({
+      userId: m.userId,
+      email: m.user.email,
+    })),
+  });
+
   for (let i = 0; i < filteredTasks.length; i++) {
     const task = filteredTasks[i]!;
     const taskKey = generateTaskKey(messageId, task.title, i);
@@ -589,12 +602,15 @@ async function upsertTasks(
         }
       },
       update: {
+        source: "EMAIL",
         sourceThreadId: threadId,
         classificationId,
         title: task.title,
         summary: task.description || null,
         description: task.description || null,
+        assigneeUserId,
         assigneeGuess: task.recommendedOwner ?? null,
+        requesterUserId: null,
         dueAt,
         sourceDate,
         priority: messagePriority,
@@ -605,6 +621,7 @@ async function upsertTasks(
       },
       create: {
         workspaceId,
+        source: "EMAIL",
         sourceThreadId: threadId,
         sourceMessageId: messageId,
         sourceTaskKey: taskKey,
@@ -612,7 +629,9 @@ async function upsertTasks(
         title: task.title,
         summary: task.description || null,
         description: task.description || null,
+        assigneeUserId,
         assigneeGuess: task.recommendedOwner ?? null,
+        requesterUserId: null,
         dueAt,
         sourceDate,
         priority: messagePriority,

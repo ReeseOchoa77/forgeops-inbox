@@ -65,6 +65,7 @@ function queues(app: FastifyInstance) {
     mailboxHistoricalImportQueue: app.services.mailboxHistoricalImportQueue as unknown as WorkerQueueHandle,
     mailboxClassifyQueue: app.services.mailboxClassifyQueue as unknown as WorkerQueueHandle,
     projectFolderEmailAnalyzeQueue: app.services.projectFolderEmailAnalyzeQueue as unknown as WorkerQueueHandle,
+    bidEmailAnalyzeQueue: app.services.bidEmailAnalyzeQueue as unknown as WorkerQueueHandle,
     mailboxReclassifyQueue: app.services.mailboxReclassifyQueue as unknown as WorkerQueueHandle,
     inlineImageRelevanceQueue: app.services.inlineImageRelevanceQueue as unknown as WorkerQueueHandle,
   });

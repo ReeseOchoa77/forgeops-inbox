@@ -292,6 +292,7 @@ function runKey(queue: QueueName, data: Record<string, unknown>): string | null 
   if (queue === QueueNames.MAILBOX_HISTORICAL_IMPORT) return str(data, "importId");
   if (queue === QueueNames.MAILBOX_RECLASSIFY) return str(data, "runId");
   if (queue === QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE) return str(data, "runId");
+  if (queue === QueueNames.BID_EMAIL_ANALYZE) return str(data, "runId");
   return null;
 }
 
@@ -302,6 +303,7 @@ export function workerQueuesFromServices(services: {
   mailboxHistoricalImportQueue: WorkerQueueHandle;
   mailboxClassifyQueue: WorkerQueueHandle;
   projectFolderEmailAnalyzeQueue: WorkerQueueHandle;
+  bidEmailAnalyzeQueue: WorkerQueueHandle;
   mailboxReclassifyQueue: WorkerQueueHandle;
   inlineImageRelevanceQueue: WorkerQueueHandle;
 }): WorkerQueueBundle[] {
@@ -312,6 +314,7 @@ export function workerQueuesFromServices(services: {
     { name: QueueNames.MAILBOX_HISTORICAL_IMPORT, queue: services.mailboxHistoricalImportQueue },
     { name: QueueNames.MAILBOX_CLASSIFY, queue: services.mailboxClassifyQueue },
     { name: QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE, queue: services.projectFolderEmailAnalyzeQueue },
+    { name: QueueNames.BID_EMAIL_ANALYZE, queue: services.bidEmailAnalyzeQueue },
     { name: QueueNames.MAILBOX_RECLASSIFY, queue: services.mailboxReclassifyQueue },
     { name: QueueNames.INLINE_IMAGE_RELEVANCE, queue: services.inlineImageRelevanceQueue },
   ];
@@ -1109,6 +1112,18 @@ async function abortProjectFolderRun(prisma: PrismaClient, runId: string): Promi
   return updated.count;
 }
 
+async function abortBidEmailAnalyzeRun(prisma: PrismaClient, runId: string): Promise<number> {
+  const updated = await prisma.bidAnalysisRun.updateMany({
+    where: { id: runId, status: { in: ["PENDING", "RUNNING"] } },
+    data: {
+      status: "CANCELLED",
+      errorMessage: "Aborted from Worker Jobs. Staging rows already saved stay saved.",
+      completedAt: new Date(),
+    },
+  });
+  return updated.count;
+}
+
 async function abortMissingApplicationRun(
   prisma: PrismaClient,
   queueName: QueueName,
@@ -1121,6 +1136,18 @@ async function abortMissingApplicationRun(
       throw new WorkerJobActionError("This analysis is not running", 409, "CANCEL_UNAVAILABLE");
     }
     const run = await prisma.projectFolderEmailAnalyzeRun.findUnique({
+      where: { id: runId },
+      select: { workspaceId: true },
+    });
+    return { queue: queueName, jobId, workspaceId: run?.workspaceId ?? null, mode: "closed" };
+  }
+  if (queueName === QueueNames.BID_EMAIL_ANALYZE && jobId.startsWith("bid-email-analyze-")) {
+    const runId = jobId.slice("bid-email-analyze-".length);
+    const count = await abortBidEmailAnalyzeRun(prisma, runId);
+    if (count === 0) {
+      throw new WorkerJobActionError("This analysis is not running", 409, "CANCEL_UNAVAILABLE");
+    }
+    const run = await prisma.bidAnalysisRun.findUnique({
       where: { id: runId },
       select: { workspaceId: true },
     });
@@ -1202,6 +1229,10 @@ export async function cancelWorkerJob(
       const runId = str(data, "runId");
       if (runId) await abortProjectFolderRun(deps.prisma, runId);
     }
+    if (entry.name === QueueNames.BID_EMAIL_ANALYZE) {
+      const runId = str(data, "runId");
+      if (runId) await abortBidEmailAnalyzeRun(deps.prisma, runId);
+    }
     await job.remove();
     return { queue: entry.name, jobId: job.id!, workspaceId, mode: "removed" };
   }
@@ -1235,6 +1266,15 @@ export async function cancelWorkerJob(
       const runId = str(data, "runId");
       if (runId) {
         const count = await abortProjectFolderRun(deps.prisma, runId);
+        if (count > 0) {
+          return { queue: entry.name, jobId: job.id!, workspaceId, mode: "closed" };
+        }
+      }
+    }
+    if (entry.name === QueueNames.BID_EMAIL_ANALYZE) {
+      const runId = str(data, "runId");
+      if (runId) {
+        const count = await abortBidEmailAnalyzeRun(deps.prisma, runId);
         if (count > 0) {
           return { queue: entry.name, jobId: job.id!, workspaceId, mode: "closed" };
         }
@@ -1283,6 +1323,16 @@ export async function cancelWorkerJob(
     const runId = str(data, "runId");
     if (!runId) throw new WorkerJobActionError("Run id missing", 409, "CANCEL_UNAVAILABLE");
     const count = await abortProjectFolderRun(deps.prisma, runId);
+    if (count === 0) {
+      throw new WorkerJobActionError("This analysis is not running", 409, "CANCEL_UNAVAILABLE");
+    }
+    return { queue: entry.name, jobId: job.id!, workspaceId, mode: "cooperative" };
+  }
+
+  if (entry.name === QueueNames.BID_EMAIL_ANALYZE) {
+    const runId = str(data, "runId");
+    if (!runId) throw new WorkerJobActionError("Run id missing", 409, "CANCEL_UNAVAILABLE");
+    const count = await abortBidEmailAnalyzeRun(deps.prisma, runId);
     if (count === 0) {
       throw new WorkerJobActionError("This analysis is not running", 409, "CANCEL_UNAVAILABLE");
     }

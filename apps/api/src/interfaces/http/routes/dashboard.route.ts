@@ -67,33 +67,16 @@ export const registerDashboardRoutes = async (
       const openStatuses = ["OPEN", "IN_PROGRESS"] as const;
       const activeStatuses = ["OPEN", "IN_PROGRESS", "BLOCKED"] as const;
 
-      const taskBase = {
+      // Ownership-oriented metrics (My Tasks / Requests), not sent-mail heuristics.
+      const myTasksBase = {
         workspaceId,
-        sourceThread: { inboxConnectionId: connection.id },
+        assigneeUserId: session.userId,
       };
-
-      const inboxSenderFilter =
-        monitoredEmails.length > 0
-          ? {
-              OR: [
-                { sourceMessageId: null },
-                {
-                  sourceMessage: {
-                    senderEmail: { notIn: monitoredEmails },
-                  },
-                },
-              ],
-            }
-          : {};
-
-      const requestSenderFilter =
-        monitoredEmails.length > 0
-          ? {
-              sourceMessage: {
-                senderEmail: { in: monitoredEmails },
-              },
-            }
-          : { id: "__never__" };
+      const myRequestsBase = {
+        workspaceId,
+        requesterUserId: session.userId,
+        NOT: { assigneeUserId: session.userId },
+      };
 
       const tDb = performance.now();
       const [
@@ -107,36 +90,30 @@ export const registerDashboardRoutes = async (
       ] = await Promise.all([
         app.services.prisma.task.count({
           where: {
-            ...taskBase,
+            ...myTasksBase,
             status: { in: [...openStatuses] },
-            ...inboxSenderFilter,
           },
         }),
         app.services.prisma.task.count({
           where: {
-            ...taskBase,
+            ...myTasksBase,
             status: { in: [...activeStatuses] },
             dueAt: { lt: now },
-            ...inboxSenderFilter,
           },
         }),
         app.services.prisma.task.count({
           where: {
-            ...taskBase,
+            ...myTasksBase,
             status: { in: [...activeStatuses] },
             dueAt: { gte: todayStart, lt: todayEnd },
-            ...inboxSenderFilter,
           },
         }),
-        monitoredEmails.length
-          ? app.services.prisma.task.count({
-              where: {
-                ...taskBase,
-                status: { in: [...openStatuses] },
-                ...requestSenderFilter,
-              },
-            })
-          : Promise.resolve(0),
+        app.services.prisma.task.count({
+          where: {
+            ...myRequestsBase,
+            status: { in: [...openStatuses] },
+          },
+        }),
         app.services.prisma.emailMessage.count({
           where: {
             workspaceId,

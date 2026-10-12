@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { calendarForCacheKey } from '@forgeops/shared'
 import type { CalendarBidDueItem, CalendarFeedItem, CalendarTaskDueItem } from './api'
 
 describe('Calendar feed merge (web)', () => {
@@ -69,5 +70,36 @@ describe('Calendar feed merge (web)', () => {
     const response: { bidDueItems?: CalendarBidDueItem[] } = {}
     const items = response.bidDueItems
     expect(items ?? []).toEqual([])
+  })
+
+  it('cache/query identity distinguishes calendarFor scopes', () => {
+    const month = '2026-10'
+    const keys = (['ME', 'kerri', 'reese', 'ALL', 'UNASSIGNED'] as const).map(
+      (scope) => `${month}|${calendarForCacheKey(scope)}`
+    )
+    expect(new Set(keys).size).toBe(5)
+  })
+
+  it('shows assignee on All-users task chips without duplicating self-assign', () => {
+    const task: CalendarTaskDueItem = {
+      id: 't1',
+      title: 'Review shop drawings',
+      description: null,
+      startAt: '2026-10-06T00:00:00.000Z',
+      endAt: null,
+      allDay: true,
+      type: 'TASK',
+      source: 'FORGEOPS',
+      linkedJobId: null,
+      linkedTaskId: 't1',
+      linkedEmailMessageId: null,
+      linkedJob: null,
+      assigneeUserId: 'reese',
+      assignee: { id: 'reese', name: 'Reese', email: 'reese@co.com' },
+    }
+    const chip = `Task: ${task.title} · ${task.assignee?.name}`
+    expect(chip).toBe('Task: Review shop drawings · Reese')
+    // One item — requester==assignee does not create a second feed row.
+    expect([task]).toHaveLength(1)
   })
 })

@@ -22,6 +22,7 @@ import { startMailboxHistoricalImportWorker } from "./jobs/mailbox-historical-im
 import { startMailboxReclassifyWorker } from "./jobs/mailbox-reclassify.worker.js";
 import { startInlineImageRelevanceWorker } from "./jobs/inline-image-relevance.worker.js";
 import { startProjectFolderEmailAnalyzeWorker } from "./jobs/project-folder-email-analyze.worker.js";
+import { startBidEmailAnalyzeWorker } from "./jobs/bid-email-analyze.worker.js";
 import { createBullMqConnection } from "./infrastructure/redis/connection.js";
 
 const env = loadWorkerEnv();
@@ -30,6 +31,7 @@ const inboxAnalysis = startInboxAnalysisWorker(env);
 const attachmentIngest = startAttachmentIngestWorker(env);
 const historicalImport = startMailboxHistoricalImportWorker(env);
 const projectFolderEmailAnalyze = startProjectFolderEmailAnalyzeWorker(env);
+const bidEmailAnalyze = startBidEmailAnalyzeWorker(env);
 const mailboxClassify = startMailboxClassifyWorker(env);
 const mailboxReclassify = startMailboxReclassifyWorker(env);
 const inlineImageRelevance = startInlineImageRelevanceWorker(env);
@@ -250,6 +252,7 @@ const shutdown = async (signal: string): Promise<void> => {
     attachmentIngest.worker.close(),
     historicalImport.worker.close(),
     projectFolderEmailAnalyze.worker.close(),
+    bidEmailAnalyze.worker.close(),
     mailboxClassify.worker.close(),
     mailboxReclassify.worker.close(),
     inlineImageRelevance.worker.close(),
@@ -257,6 +260,7 @@ const shutdown = async (signal: string): Promise<void> => {
     inboxSync.syncQueue.close(),
     historicalImport.queue.close(),
     projectFolderEmailAnalyze.queue.close(),
+    bidEmailAnalyze.queue.close(),
     mailboxClassifyQueue.close(),
     inboxSync.redis.quit(),
     inboxAnalysis.redis.quit(),
@@ -282,6 +286,7 @@ console.info("worker-started", {
     "attachment-ingest",
     "mailbox-historical-import",
     "project-folder-email-analyze",
+    "bid-email-analyze",
     "mailbox-classify",
     "mailbox-reclassify",
     "inline-image-relevance",

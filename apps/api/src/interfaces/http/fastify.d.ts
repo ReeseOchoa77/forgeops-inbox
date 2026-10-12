@@ -42,6 +42,10 @@ declare module "fastify" {
         import("@forgeops/shared").ProjectFolderEmailAnalyzeJobPayload,
         import("@forgeops/shared").ProjectFolderEmailAnalyzeJobResult
       >;
+      bidEmailAnalyzeQueue: Queue<
+        import("@forgeops/shared").BidEmailAnalyzeJobPayload,
+        import("@forgeops/shared").BidEmailAnalyzeJobResult
+      >;
       mailboxReclassifyQueue: Queue<
         import("@forgeops/shared").MailboxReclassifyJobPayload,
         import("@forgeops/shared").MailboxReclassifyJobResult

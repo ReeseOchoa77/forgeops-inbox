@@ -213,3 +213,65 @@ export interface ProjectFolderEmailAnalyzeJobResult {
   errorMessage?: string;
 }
 
+export interface BidEmailAnalyzeJobPayload {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  initiatedBy?: string;
+}
+
+export interface BidEmailAnalyzeProgress {
+  bidInvitesFolderFound: boolean;
+  quotesFolderFound: boolean;
+  bidInvitesFolderName: string | null;
+  quotesFolderName: string | null;
+  bidInvitesScanned: number;
+  bidInvitesTotalEstimate: number | null;
+  quotesScanned: number;
+  quotesTotalEstimate: number | null;
+  messagesCreated: number;
+  messagesExisting: number;
+  candidatesCreated: number;
+  candidatesUpdated: number;
+  quotesMatched: number;
+  quotesUnmatched: number;
+  quotesLinkedToJob: number;
+  aiCalls: number;
+  currentPhase: "RESOLVE_FOLDERS" | "BID_INVITES" | "QUOTES" | "DONE" | null;
+  currentFolderName: string | null;
+  warning: string | null;
+}
+
+export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
+  return {
+    bidInvitesFolderFound: false,
+    quotesFolderFound: false,
+    bidInvitesFolderName: null,
+    quotesFolderName: null,
+    bidInvitesScanned: 0,
+    bidInvitesTotalEstimate: null,
+    quotesScanned: 0,
+    quotesTotalEstimate: null,
+    messagesCreated: 0,
+    messagesExisting: 0,
+    candidatesCreated: 0,
+    candidatesUpdated: 0,
+    quotesMatched: 0,
+    quotesUnmatched: 0,
+    quotesLinkedToJob: 0,
+    aiCalls: 0,
+    currentPhase: null,
+    currentFolderName: null,
+    warning: null,
+  };
+}
+
+export interface BidEmailAnalyzeJobResult {
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  status: "COMPLETED" | "FAILED" | "CANCELLED";
+  progress: BidEmailAnalyzeProgress;
+  errorMessage?: string;
+}
+

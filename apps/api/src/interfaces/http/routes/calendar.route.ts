@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   activeBiddingJobBidDueWhere,
   calendarIneligibleBiddingTaskWhere,
+  calendarTaskAssigneeWhere,
+  canInspectWorkspaceCalendars,
   formatBidDueCalendarTitle,
 } from "@forgeops/shared";
 
@@ -18,6 +20,12 @@ const eventParams = z.object({
 const rangeQuery = z.object({
   from: z.string().datetime(),
   to: z.string().datetime(),
+  /**
+   * User-scoped Task calendar filter.
+   * ME (default) | ALL | UNASSIGNED | <userId>
+   * Job-scoped items (CalendarEvent, Bid Due) remain workspace-wide.
+   */
+  calendarFor: z.string().min(1).optional().default("ME"),
 });
 
 const eventTypeValues = ["MEETING", "EVENT", "NOTE", "DEADLINE"] as const;
@@ -107,10 +115,11 @@ function serializeEvent(e: {
 
 /**
  * Calendar MVP:
- * - ForgeOps-native CalendarEvent rows
- * - Task.dueAt aggregation (bidding eligibility via source EmailMessage.jobId)
- * - Synthetic Bid Due from Job.status=BIDDING + Job.bidDueAt (canonical)
- * Google/Microsoft calendar sync is intentionally not wired (scopes not expanded).
+ * - ForgeOps-native CalendarEvent rows (workspace-scoped)
+ * - Task.dueAt aggregation — USER-scoped via Task.assigneeUserId
+ * - Synthetic Bid Due from Job.status=BIDDING + Job.bidDueAt (workspace-scoped)
+ * Job milestones exist in DB but are not projected here (preserve).
+ * Google/Microsoft calendar sync is intentionally not wired.
  */
 export const registerCalendarRoutes = async (
   app: FastifyInstance
@@ -128,6 +137,42 @@ export const registerCalendarRoutes = async (
       if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
         return reply.code(400).send({ message: "Invalid from/to range" });
       }
+
+      const calendarFor = query.calendarFor || "ME";
+      const canInspect = canInspectWorkspaceCalendars(auth.role);
+
+      if (calendarFor !== "ME" && !canInspect) {
+        return reply.code(403).send({
+          message: "Only OWNER or ADMIN can inspect another user's calendar",
+        });
+      }
+
+      if (
+        calendarFor !== "ME" &&
+        calendarFor !== "ALL" &&
+        calendarFor !== "UNASSIGNED"
+      ) {
+        const target = await app.services.prisma.membership.findUnique({
+          where: {
+            workspaceId_userId: {
+              workspaceId,
+              userId: calendarFor,
+            },
+          },
+          select: { userId: true },
+        });
+        if (!target) {
+          return reply.code(400).send({
+            message: "calendarFor user is not an active workspace member",
+          });
+        }
+      }
+
+      const assigneeWhere = calendarTaskAssigneeWhere({
+        calendarFor,
+        currentUserId: auth.userId,
+        canInspectWorkspace: canInspect,
+      });
 
       // Single Prisma NOT clause — relation filters, no per-Task email N+1.
       const biddingTaskExclude = calendarIneligibleBiddingTaskWhere();
@@ -151,6 +196,7 @@ export const registerCalendarRoutes = async (
             dueAt: { gte: from, lt: to },
             status: { notIn: ["CANCELLED"] },
             dismissedAt: null,
+            ...assigneeWhere,
             NOT: biddingTaskExclude,
           },
           orderBy: { dueAt: "asc" },
@@ -163,6 +209,10 @@ export const registerCalendarRoutes = async (
             priority: true,
             jobId: true,
             sourceMessageId: true,
+            assigneeUserId: true,
+            assigneeUser: {
+              select: { id: true, name: true, email: true },
+            },
             job: { select: { id: true, name: true, jobNumber: true } },
           },
         }),
@@ -184,6 +234,7 @@ export const registerCalendarRoutes = async (
       return reply.send({
         from: from.toISOString(),
         to: to.toISOString(),
+        calendarFor,
         events: events.map(serializeEvent),
         taskDueItems: tasks.map((t) => ({
           id: t.id,
@@ -206,6 +257,14 @@ export const registerCalendarRoutes = async (
             : null,
           taskStatus: t.status,
           taskPriority: t.priority,
+          assigneeUserId: t.assigneeUserId,
+          assignee: t.assigneeUser
+            ? {
+                id: t.assigneeUser.id,
+                name: t.assigneeUser.name,
+                email: t.assigneeUser.email,
+              }
+            : null,
         })),
         bidDueItems: biddingJobs.map((j) => ({
           id: `bid-due:${j.id}`,

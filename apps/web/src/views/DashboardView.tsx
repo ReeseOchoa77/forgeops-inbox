@@ -9,6 +9,7 @@ interface Props {
   connections: ConnectionSummary[]
   onNavigate: (page: 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'reference' | 'workspace' | 'settings' | 'admin') => void
   breakpoint?: Breakpoint
+  currentUserId?: string
 }
 
 function formatDate(iso: string | null): string {
@@ -79,7 +80,7 @@ type DashboardCacheEntry = {
 
 const dashboardCache = new Map<string, DashboardCacheEntry>()
 
-export function DashboardView({ workspaceId, connectionId, connections, onNavigate, breakpoint = 'desktop' }: Props) {
+export function DashboardView({ workspaceId, connectionId, connections, onNavigate, breakpoint = 'desktop', currentUserId }: Props) {
   const cacheKey = `${workspaceId}:${connectionId}`
   const cached = dashboardCache.get(cacheKey)
   const [summary, setSummary] = useState<DashboardSummary | null>(cached?.summary ?? null)
@@ -132,13 +133,15 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
       })
       .catch(() => { if (!cancelled) setLoading(false) })
 
-    // Secondary: task lists + recent mail (independent of summary)
+    // Secondary: My Tasks + Requests + recent mail (independent of summary)
     Promise.all([
-      api.getTasks(workspaceId, connectionId, 1, 25).catch(() => ({ tasks: [] as TaskListItem[] })),
+      api.getTasks(workspaceId, connectionId, 1, 25, { view: 'MY', statusFilter: 'OPEN' }).catch(() => ({ tasks: [] as TaskListItem[] })),
+      api.getTasks(workspaceId, connectionId, 1, 25, { view: 'REQUESTS', statusFilter: 'ALL' }).catch(() => ({ tasks: [] as TaskListItem[] })),
       api.getMessages(workspaceId, connectionId, 1, 6, { businessCategory: 'BUSINESS' }).catch(() => ({ messages: [] as MessageSummary[] })),
-    ]).then(([t, m]) => {
+    ]).then(([my, reqs, m]) => {
       if (cancelled) return
-      setTasks(t.tasks)
+      const merged = [...my.tasks, ...reqs.tasks]
+      setTasks(merged)
       setRecentEmails(m.messages)
       hasPaintedRef.current = true
       setRefreshing(false)
@@ -147,7 +150,7 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
         summary: prev?.summary ?? summary ?? {
           openTasks: 0, overdueTasks: 0, dueToday: 0, openRequests: 0, unreadBusiness: 0,
         },
-        tasks: t.tasks,
+        tasks: merged,
         recentEmails: m.messages,
         at: Date.now(),
       })
@@ -197,14 +200,33 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
     )
   }
 
-  const isRequestTask = (item: TaskListItem) => {
+  /** Canonical Requests: requester is current user and assignee is someone else. */
+  const isCanonicalRequest = (item: TaskListItem) => {
+    const requesterId = item.task.requesterUserId
+    const assigneeId = item.task.assigneeUserId
+    if (!requesterId || !assigneeId || !currentUserId) return false
+    return requesterId === currentUserId && assigneeId !== currentUserId
+  }
+
+  /** Legacy outbound-email heuristic (Sent) — labeled separately from Requests. */
+  const isOutboundEmailTask = (item: TaskListItem) => {
     const sender = item.sourceMessage?.senderEmail?.toLowerCase()
     return !!sender && monitoredEmails.has(sender)
   }
 
-  // Inbox tasks = not from sent/outbound mail
-  const inboxTasks = tasks.filter(t => !isRequestTask(t))
-  const requestTasks = tasks.filter(t => isRequestTask(t) && t.task.status !== 'CANCELLED')
+  const myTasks = tasks.filter(
+    (t) =>
+      t.task.status !== 'CANCELLED' &&
+      (currentUserId
+        ? t.task.assigneeUserId === currentUserId
+        : !isOutboundEmailTask(t))
+  )
+  const inboxTasks = myTasks.length > 0 || currentUserId ? myTasks : tasks.filter((t) => !isOutboundEmailTask(t))
+  const requestTasks = tasks.filter(
+    (t) =>
+      t.task.status !== 'CANCELLED' &&
+      (currentUserId ? isCanonicalRequest(t) : isOutboundEmailTask(t))
+  )
   const openRequests = requestTasks.filter(t => t.task.status === 'OPEN' || t.task.status === 'IN_PROGRESS')
 
   const pinnedTasks = inboxTasks.filter(t => t.task.isPinned && t.task.status !== 'DONE')
@@ -415,20 +437,22 @@ export function DashboardView({ workspaceId, connectionId, connections, onNaviga
           )}
         </div>
 
-        {/* Requests — what you've asked for / assigned via sent mail */}
+        {/* Requests — tasks you created for someone else */}
         <div style={phoneCard}>
           {sectionHeader('Requests', openRequests.length, '#00695c', '#e0f2f1', 'tasks')}
           <p style={{ fontSize: 11, color: '#999', margin: '6px 16px 0', flexShrink: 0 }}>
-            Reminders from your sent mail — things you've asked for or assigned.
+            Tasks you requested from other people (not self-assigned).
           </p>
 
-          {recentRequests.length === 0 ? emptyState('↗', 'No outbound requests yet') : (
+          {recentRequests.length === 0 ? emptyState('↗', 'No requests yet') : (
             <div style={cardBody}>
               {recentRequests.map(item => taskRow(item, {
                 hidePriority: true,
-                subtitle: item.sourceMessage?.subject
-                  ? `You asked · ${item.sourceMessage.subject}`
-                  : `You asked · ${timeAgo(item.task.createdAt)}`,
+                subtitle: item.task.assignee?.name || item.task.assignee?.email
+                  ? `Assigned to ${item.task.assignee.name?.trim() || item.task.assignee.email} · ${timeAgo(item.task.createdAt)}`
+                  : item.sourceMessage?.subject
+                    ? item.sourceMessage.subject
+                    : `Requested · ${timeAgo(item.task.createdAt)}`,
               }))}
             </div>
           )}

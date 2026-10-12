@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type CalendarFeedItem } from '../api'
 
 interface Props {
   workspaceId: string
   userRole: string
+  currentUserId?: string
   onOpenTask?: (taskId: string) => void
   onOpenJob?: (jobId: string) => void
 }
@@ -43,9 +44,18 @@ function typeColor(type: string): string {
   }
 }
 
-export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
+function assigneeLabel(item: CalendarFeedItem): string | null {
+  if (item.kind !== 'task') return null
+  if (!item.assignee) return item.assigneeUserId == null ? 'Unassigned' : null
+  return item.assignee.name?.trim() || item.assignee.email
+}
+
+export function CalendarView({ workspaceId, userRole, currentUserId, onOpenJob }: Props) {
   const isViewer = userRole === 'VIEWER'
+  const canInspectWorkspace = userRole === 'OWNER' || userRole === 'ADMIN'
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()))
+  /** ME | ALL | UNASSIGNED | userId — query identity; changing clears painted feed. */
+  const [calendarFor, setCalendarFor] = useState('ME')
   const [items, setItems] = useState<CalendarFeedItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -57,13 +67,29 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
   const [type, setType] = useState<'MEETING' | 'EVENT' | 'NOTE' | 'DEADLINE'>('EVENT')
   const [allDay, setAllDay] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [members, setMembers] = useState<
+    Array<{ id: string; name: string | null; email: string }>
+  >([])
+  const requestIdRef = useRef(0)
+
+  useEffect(() => {
+    if (!canInspectWorkspace) return
+    api
+      .getTaskAssignees(workspaceId)
+      .then((r) => setMembers(r.members.map((m) => ({ id: m.id, name: m.name, email: m.email }))))
+      .catch(() => setMembers([]))
+  }, [workspaceId, canInspectWorkspace])
 
   const load = useCallback(async () => {
+    const reqId = ++requestIdRef.current
     setLoading(true)
     setError('')
+    // Clear immediately so Kerri → Reese cannot flash stale Task chips.
+    setItems([])
     try {
       const range = monthRange(cursor)
-      const r = await api.getCalendar(workspaceId, range.from, range.to)
+      const r = await api.getCalendar(workspaceId, range.from, range.to, calendarFor)
+      if (reqId !== requestIdRef.current) return
       const merged: CalendarFeedItem[] = [
         ...r.events.map((e) => ({ ...e, kind: 'event' as const })),
         ...r.taskDueItems.map((t) => ({ ...t, kind: 'task' as const })),
@@ -72,11 +98,12 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
       merged.sort((a, b) => a.startAt.localeCompare(b.startAt))
       setItems(merged)
     } catch (e) {
+      if (reqId !== requestIdRef.current) return
       setError(e instanceof Error ? e.message : 'Failed to load calendar')
     } finally {
-      setLoading(false)
+      if (reqId === requestIdRef.current) setLoading(false)
     }
-  }, [workspaceId, cursor])
+  }, [workspaceId, cursor, calendarFor])
 
   useEffect(() => { void load() }, [load])
 
@@ -106,6 +133,16 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
   }, [cursor])
 
   const selectedItems = selectedDay ? (byDay.get(selectedDay) ?? []) : []
+
+  const calendarTitle = useMemo(() => {
+    if (!canInspectWorkspace || calendarFor === 'ME') return 'My Calendar'
+    if (calendarFor === 'ALL') return 'All users'
+    if (calendarFor === 'UNASSIGNED') return 'Unassigned'
+    const m = members.find((u) => u.id === calendarFor)
+    return m ? (m.name?.trim() || m.email) : 'User calendar'
+  }, [canInspectWorkspace, calendarFor, members])
+
+  const showAssigneeOnTasks = calendarFor === 'ALL' || calendarFor === 'UNASSIGNED'
 
   const openCreateForDay = (key: string) => {
     if (isViewer) return
@@ -183,12 +220,43 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18 }}>Calendar</h2>
+          <h2 style={{ margin: 0, fontSize: 18 }}>
+            Calendar{canInspectWorkspace && calendarFor !== 'ME' ? ` — ${calendarTitle}` : ''}
+          </h2>
           <p style={{ margin: '4px 0 0', fontSize: 12, color: '#888' }}>
-            Task due dates and ForgeOps events. Google/Microsoft calendar sync is not connected yet.
+            {canInspectWorkspace && calendarFor !== 'ME'
+              ? `Viewing ${calendarTitle}. Task deadlines are user-scoped; Job Bid Due and events remain workspace-wide.`
+              : 'My Calendar: your assigned Task due dates, plus workspace events and Bid Due.'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {canInspectWorkspace && (
+            <select
+              aria-label="Calendar for"
+              data-testid="calendar-for-select"
+              value={calendarFor}
+              onChange={(e) => setCalendarFor(e.target.value)}
+              style={{
+                padding: '6px 8px',
+                fontSize: 12,
+                border: '1px solid #ddd',
+                borderRadius: 6,
+                background: '#fff',
+                maxWidth: 220,
+              }}
+            >
+              <option value="ME">Calendar for: My Calendar</option>
+              <option value="ALL">Calendar for: All users</option>
+              <option value="UNASSIGNED">Calendar for: Unassigned</option>
+              {members
+                .filter((m) => m.id !== currentUserId)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    Calendar for: {m.name?.trim() || m.email}
+                  </option>
+                ))}
+            </select>
+          )}
           <button type="button" className="btn btn-sm btn-outline" onClick={() => setCursor(addMonths(cursor, -1))}>Prev</button>
           <span style={{ fontSize: 14, fontWeight: 600, minWidth: 140, textAlign: 'center' }}>{monthLabel}</span>
           <button type="button" className="btn btn-sm btn-outline" onClick={() => setCursor(addMonths(cursor, 1))}>Next</button>
@@ -235,25 +303,31 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
                     <>
                       <div style={{ fontSize: 12, fontWeight: 600, color: '#333', marginBottom: 4 }}>{cell.date.getDate()}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {dayItems.slice(0, 3).map((item) => (
-                          <div
-                            key={`${item.kind}-${item.id}`}
-                            style={{
-                              fontSize: 10,
-                              lineHeight: 1.2,
-                              color: '#fff',
-                              background: typeColor(item.type),
-                              borderRadius: 3,
-                              padding: '1px 4px',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                            title={item.title}
-                          >
-                            {item.type === 'TASK' ? 'Task: ' : ''}{item.title}
-                          </div>
-                        ))}
+                        {dayItems.slice(0, 3).map((item) => {
+                          const who = showAssigneeOnTasks ? assigneeLabel(item) : null
+                          return (
+                            <div
+                              key={`${item.kind}-${item.id}`}
+                              style={{
+                                fontSize: 10,
+                                lineHeight: 1.2,
+                                color: '#fff',
+                                background: typeColor(item.type),
+                                borderRadius: 3,
+                                padding: '1px 4px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                opacity: item.kind === 'task' && item.taskStatus === 'DONE' ? 0.65 : 1,
+                              }}
+                              title={who ? `${item.title} — ${who}` : item.title}
+                            >
+                              {item.type === 'TASK' ? 'Task: ' : ''}
+                              {item.title}
+                              {who ? ` · ${who}` : ''}
+                            </div>
+                          )
+                        })}
                         {dayItems.length > 3 && (
                           <div style={{ fontSize: 10, color: '#888' }}>+{dayItems.length - 3} more</div>
                         )}
@@ -330,47 +404,59 @@ export function CalendarView({ workspaceId, userRole, onOpenJob }: Props) {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {selectedItems.map((item) => (
-              <div
-                key={`${item.kind}-${item.id}`}
-                style={{
-                  border: '1px solid #eee',
-                  borderRadius: 6,
-                  padding: 8,
-                  borderLeft: `3px solid ${typeColor(item.type)}`,
-                }}
-              >
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>{item.type}</div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{item.title}</div>
-                {item.description && (
-                  <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{item.description}</div>
-                )}
-                {item.linkedJob && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenJob?.(item.linkedJob!.id)}
-                    style={{
-                      marginTop: 6,
-                      border: '1px solid #ddd',
-                      background: '#f8fafc',
-                      borderRadius: 4,
-                      fontSize: 11,
-                      padding: '2px 6px',
-                      cursor: onOpenJob ? 'pointer' : 'default',
-                    }}
-                  >
-                    Job {item.linkedJob.jobNumber ?? item.linkedJob.name}
-                  </button>
-                )}
-                {item.kind === 'event' && !isViewer && (
-                  <div style={{ marginTop: 6 }}>
-                    <button type="button" className="btn btn-sm btn-outline" onClick={() => openEdit(item)}>
-                      Edit
-                    </button>
+            {selectedItems.map((item) => {
+              const who = assigneeLabel(item)
+              return (
+                <div
+                  key={`${item.kind}-${item.id}`}
+                  style={{
+                    border: '1px solid #eee',
+                    borderRadius: 6,
+                    padding: 8,
+                    borderLeft: `3px solid ${typeColor(item.type)}`,
+                    opacity: item.kind === 'task' && item.taskStatus === 'DONE' ? 0.7 : 1,
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>
+                    {item.type}
+                    {item.kind === 'task' && item.taskStatus === 'DONE' ? ' · Completed' : ''}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{item.title}</div>
+                  {who && item.kind === 'task' && (
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                      {who === 'Unassigned' ? 'Unassigned' : `Assigned to ${who}`}
+                    </div>
+                  )}
+                  {item.description && (
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{item.description}</div>
+                  )}
+                  {item.linkedJob && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenJob?.(item.linkedJob!.id)}
+                      style={{
+                        marginTop: 6,
+                        border: '1px solid #ddd',
+                        background: '#f8fafc',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '2px 6px',
+                        cursor: onOpenJob ? 'pointer' : 'default',
+                      }}
+                    >
+                      Job {item.linkedJob.jobNumber ?? item.linkedJob.name}
+                    </button>
+                  )}
+                  {item.kind === 'event' && !isViewer && (
+                    <div style={{ marginTop: 6 }}>
+                      <button type="button" className="btn btn-sm btn-outline" onClick={() => openEdit(item)}>
+                        Edit
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

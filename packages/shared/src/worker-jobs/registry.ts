@@ -107,6 +107,17 @@ export const WORKER_JOB_DEFINITIONS: Record<QueueName, WorkerJobDefinition> = {
     revert: false,
     revertReason: "This run does not record which rows it created versus reused.",
   },
+  [QueueNames.BID_EMAIL_ANALYZE]: {
+    queue: QueueNames.BID_EMAIL_ANALYZE,
+    displayName: "Bid email analysis",
+    purpose:
+      "Analyze Projects/Bid Invites and Projects/Quotes into staging BidCandidates. Never creates Jobs.",
+    pause: false,
+    resume: false,
+    cancelActive: true,
+    revert: false,
+    revertReason: "Staging rows are not journaled for reverse.",
+  },
   [QueueNames.MAILBOX_RECLASSIFY]: {
     queue: QueueNames.MAILBOX_RECLASSIFY,
     displayName: "Mailbox reclassify",

@@ -55,6 +55,13 @@ export type TaskEmailClassificationFilter =
 export const TASK_DIRECTION_FILTERS = ["ALL", "INCOMING", "SENT"] as const;
 export type TaskDirectionFilter = (typeof TASK_DIRECTION_FILTERS)[number];
 
+/** Primary ownership views (not email direction). */
+export const TASK_OWNERSHIP_VIEWS = ["MY", "REQUESTS", "ALL"] as const;
+export type TaskOwnershipView = (typeof TASK_OWNERSHIP_VIEWS)[number];
+
+/** Admin/Owner assignee scope: concrete user id, ALL, or UNASSIGNED. */
+export type TaskAssigneeScope = string | "ALL" | "UNASSIGNED";
+
 export const TASK_SORTS = [
   "DUE_DATE",
   "NEWEST",
@@ -113,8 +120,55 @@ export function taskSourceWhere(
   source: TaskSourceFilter | undefined
 ): Prisma.TaskWhereInput | null {
   if (!source || source === "ALL") return null;
-  if (source === "EMAIL") return { sourceMessageId: { not: null } };
-  return { sourceMessageId: null };
+  return { source };
+}
+
+/**
+ * My Tasks / Requests / Admin scope — server-side before pagination.
+ *
+ * Requests invariant: requester = me AND assignee != me
+ * (self-assigned never appears under Requests).
+ */
+export function taskOwnershipWhere(input: {
+  view: TaskOwnershipView | undefined;
+  currentUserId: string;
+  /** Admin/Owner only — enforced by caller. */
+  canViewWorkspaceTasks: boolean;
+  assigneeScope?: TaskAssigneeScope;
+}): Prisma.TaskWhereInput | null {
+  const view = input.view ?? "MY";
+
+  if (view === "MY") {
+    return { assigneeUserId: input.currentUserId };
+  }
+
+  if (view === "REQUESTS") {
+    return {
+      requesterUserId: input.currentUserId,
+      NOT: { assigneeUserId: input.currentUserId },
+    };
+  }
+
+  // view === ALL — workspace-wide or Tasks-for scope (Admin/Owner only)
+  if (!input.canViewWorkspaceTasks) {
+    // Non-admin: ALL degenerates to My Tasks ∪ own Requests (no peer inspection).
+    return {
+      OR: [
+        { assigneeUserId: input.currentUserId },
+        {
+          AND: [
+            { requesterUserId: input.currentUserId },
+            { NOT: { assigneeUserId: input.currentUserId } },
+          ],
+        },
+      ],
+    };
+  }
+
+  const scope = input.assigneeScope ?? "ALL";
+  if (scope === "UNASSIGNED") return { assigneeUserId: null };
+  if (scope !== "ALL") return { assigneeUserId: scope };
+  return null;
 }
 
 export function taskJobWhere(
@@ -181,8 +235,9 @@ export function taskSenderSearchWhere(
 }
 
 /**
- * Direction relative to the monitored mailbox email (connection).
- * SENT = sourceMessage.senderEmail matches connection email.
+ * Email direction filter for email-derived tasks (separate from ownership views).
+ * Prefers EmailMessage.direction; falls back to sender∈monitored for legacy null rows.
+ * MANUAL tasks (no source message) are included for INCOMING/ALL, excluded for SENT.
  */
 export function taskDirectionWhere(
   direction: TaskDirectionFilter | undefined,
@@ -190,21 +245,60 @@ export function taskDirectionWhere(
 ): Prisma.TaskWhereInput | null {
   if (!direction || direction === "ALL") return null;
   const email = connectionEmail?.trim().toLowerCase();
-  if (!email) return null;
+  const monitored = email ? [email] : [];
+
   if (direction === "SENT") {
     return {
       sourceMessage: {
-        senderEmail: { equals: email, mode: "insensitive" },
+        OR: [
+          { direction: "SENT" },
+          ...(monitored.length > 0
+            ? [
+                {
+                  AND: [
+                    { direction: null },
+                    {
+                      senderEmail: {
+                        in: monitored,
+                        mode: "insensitive" as const,
+                      },
+                    },
+                  ],
+                },
+              ]
+            : []),
+        ],
       },
     };
   }
-  // INCOMING / Tasks: not outbound from the monitored mailbox (includes manual tasks).
+
+  // INCOMING: received/legacy non-sent, plus MANUAL tasks without source email.
   return {
-    NOT: {
-      sourceMessage: {
-        senderEmail: { equals: email, mode: "insensitive" },
+    OR: [
+      { sourceMessageId: null },
+      {
+        sourceMessage: {
+          OR: [
+            { direction: "RECEIVED" },
+            ...(monitored.length > 0
+              ? [
+                  {
+                    AND: [
+                      { direction: null },
+                      {
+                        senderEmail: {
+                          notIn: monitored,
+                          mode: "insensitive" as const,
+                        },
+                      },
+                    ],
+                  },
+                ]
+              : [{ direction: null }]),
+          ],
+        },
       },
-    },
+    ],
   };
 }
 
@@ -299,6 +393,11 @@ export type BuildOperationalTasksWhereInput = {
   workspaceId: string;
   /** When set, scope to tasks whose source thread belongs to this connection. */
   inboxConnectionId?: string;
+  /**
+   * When true with inboxConnectionId, also include MANUAL workspace tasks
+   * (no source thread) so user-created tasks appear in the mailbox Tasks tab.
+   */
+  includeManualWorkspaceTasks?: boolean;
   /** When set, scope to Task.jobId (Job Tasks tab). */
   jobId?: string;
   /** Exclude unassigned bidding-related tasks (default operational view). */
@@ -318,6 +417,11 @@ export type BuildOperationalTasksWhereInput = {
   now?: Date;
   /** Only pinned tasks. */
   pinnedOnly?: boolean;
+  /** Ownership view (My / Requests / All). */
+  ownershipView?: TaskOwnershipView;
+  currentUserId?: string;
+  canViewWorkspaceTasks?: boolean;
+  assigneeScope?: TaskAssigneeScope;
 };
 
 /**
@@ -331,9 +435,24 @@ export function buildOperationalTasksWhere(
   ];
 
   if (input.inboxConnectionId) {
-    andConditions.push({
-      sourceThread: { inboxConnectionId: input.inboxConnectionId },
-    });
+    if (input.includeManualWorkspaceTasks) {
+      andConditions.push({
+        OR: [
+          { sourceThread: { inboxConnectionId: input.inboxConnectionId } },
+          {
+            AND: [
+              { source: "MANUAL" },
+              { sourceThreadId: null },
+              { workspaceId: input.workspaceId },
+            ],
+          },
+        ],
+      });
+    } else {
+      andConditions.push({
+        sourceThread: { inboxConnectionId: input.inboxConnectionId },
+      });
+    }
   }
 
   if (input.jobId) {
@@ -350,6 +469,19 @@ export function buildOperationalTasksWhere(
   const push = (clause: Prisma.TaskWhereInput | null) => {
     if (clause) andConditions.push(clause);
   };
+
+  if (input.currentUserId && input.ownershipView) {
+    push(
+      taskOwnershipWhere({
+        view: input.ownershipView,
+        currentUserId: input.currentUserId,
+        canViewWorkspaceTasks: Boolean(input.canViewWorkspaceTasks),
+        ...(input.assigneeScope !== undefined
+          ? { assigneeScope: input.assigneeScope }
+          : {}),
+      })
+    );
+  }
 
   push(taskStatusBucketWhere(input.status));
   push(taskDueWhere(input.due, input.timezone || "UTC", input.now));

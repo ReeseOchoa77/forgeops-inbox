@@ -17,6 +17,7 @@ interface Props {
   connections?: Array<{ email: string }>
   onSelectMessage?: (id: string) => void
   userRole?: string
+  currentUserId?: string
 }
 
 const selectStyle = taskFilterSelectStyle()
@@ -26,8 +27,10 @@ export function TasksView({
   connectionId,
   onSelectMessage,
   userRole,
+  currentUserId,
 }: Props) {
   const isViewer = userRole === 'VIEWER'
+  const canViewWorkspaceTasks = userRole === 'OWNER' || userRole === 'ADMIN'
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState<number | null>(0)
@@ -46,14 +49,29 @@ export function TasksView({
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [sender, setSender] = useState('')
   const [senderDraft, setSenderDraft] = useState('')
-  /** Tasks = inbound / not from our mailbox; Requests = outbound from our mailbox. */
-  const [listMode, setListMode] = useState<'tasks' | 'requests'>('tasks')
-  const direction: TaskListFilters['direction'] =
-    listMode === 'requests' ? 'SENT' : 'INCOMING'
+  /** Canonical ownership: My Tasks vs Requests (requester≠assignee). */
+  const [ownershipView, setOwnershipView] = useState<'MY' | 'REQUESTS' | 'ALL'>('MY')
+  /** Email direction filter (Incoming / Sent) — separate from Requests. */
+  const [direction, setDirection] = useState<TaskListFilters['direction']>('ALL')
+  /** Admin/Owner: ALL | UNASSIGNED | userId */
+  const [tasksFor, setTasksFor] = useState<string>('ALL')
   const [jobId, setJobId] = useState('')
   const [sort, setSort] = useState<TaskListFilters['sort']>('DUE_DATE')
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [jobs, setJobs] = useState<Array<{ id: string; name: string; jobNumber: string | null }>>([])
+  const [members, setMembers] = useState<
+    Array<{ id: string; name: string | null; email: string; role: string }>
+  >([])
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createTitle, setCreateTitle] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createAssignee, setCreateAssignee] = useState('')
+  const [createJobId, setCreateJobId] = useState('')
+  const [createDueAt, setCreateDueAt] = useState('')
+  const [createPriority, setCreatePriority] = useState<'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'>('NORMAL')
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -72,8 +90,13 @@ export function TasksView({
       ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
       : 'UTC'
 
+  const effectiveView: TaskListFilters['view'] =
+    canViewWorkspaceTasks && ownershipView === 'ALL' ? 'ALL' : ownershipView === 'REQUESTS' ? 'REQUESTS' : 'MY'
+
   const filters: TaskListFilters = useMemo(
     () => ({
+      view: effectiveView,
+      ...(effectiveView === 'ALL' && tasksFor !== 'ALL' ? { assigneeUserId: tasksFor } : {}),
       statusFilter,
       due,
       priority,
@@ -87,6 +110,8 @@ export function TasksView({
       ...(pinnedOnly ? { pinnedOnly: true } : {}),
     }),
     [
+      effectiveView,
+      tasksFor,
       statusFilter,
       due,
       priority,
@@ -115,6 +140,21 @@ export function TasksView({
       )
       .catch(() => setJobs([]))
   }, [workspaceId])
+
+  useEffect(() => {
+    api
+      .getTaskAssignees(workspaceId)
+      .then((r) => {
+        setMembers(r.members)
+        if (!createAssignee && currentUserId) {
+          setCreateAssignee(currentUserId)
+        } else if (!createAssignee && r.members[0]) {
+          setCreateAssignee(r.members[0].id)
+        }
+      })
+      .catch(() => setMembers([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- init assignee once
+  }, [workspaceId, currentUserId])
 
   const fetchPage = (pageNum: number, mode: 'replace' | 'append' | 'soft') => {
     const reqId = ++requestIdRef.current
@@ -185,7 +225,6 @@ export function TasksView({
       })
   }
 
-  // Soft-cache paint for page 1; skip network when cache is fresh.
   useEffect(() => {
     const cached = getCachedTasksList(workspaceId, connectionId, 1, filters)
     if (cached) {
@@ -279,11 +318,9 @@ export function TasksView({
 
   const handleComplete = async (taskId: string) => {
     try {
-      await api.reviewTask(workspaceId, taskId, 'APPROVED')
+      const updated = await api.setTaskStatus(workspaceId, taskId, 'DONE')
       setTasks((prev) =>
-        prev.map((t) =>
-          t.task.id === taskId ? { ...t, task: { ...t.task, status: 'DONE' } } : t
-        )
+        prev.map((t) => (t.task.id === taskId ? { ...t, task: { ...t.task, ...updated.task } } : t))
       )
     } catch {
       /* */
@@ -292,11 +329,9 @@ export function TasksView({
 
   const handleReopen = async (taskId: string) => {
     try {
-      await api.reviewTask(workspaceId, taskId, 'REJECTED')
+      const updated = await api.setTaskStatus(workspaceId, taskId, 'OPEN')
       setTasks((prev) =>
-        prev.map((t) =>
-          t.task.id === taskId ? { ...t, task: { ...t.task, status: 'OPEN' } } : t
-        )
+        prev.map((t) => (t.task.id === taskId ? { ...t, task: { ...t.task, ...updated.task } } : t))
       )
     } catch {
       /* */
@@ -343,6 +378,34 @@ export function TasksView({
     }
   }
 
+  const submitCreate = async () => {
+    if (!createTitle.trim() || !createAssignee) return
+    setCreateBusy(true)
+    setCreateError(null)
+    try {
+      await api.createTask(workspaceId, {
+        title: createTitle.trim(),
+        description: createDescription.trim() || null,
+        assigneeUserId: createAssignee,
+        jobId: createJobId || null,
+        dueAt: createDueAt ? new Date(`${createDueAt}T12:00:00`).toISOString() : null,
+        priority: createPriority,
+      })
+      setCreateOpen(false)
+      setCreateTitle('')
+      setCreateDescription('')
+      setCreateJobId('')
+      setCreateDueAt('')
+      setCreatePriority('NORMAL')
+      invalidateTasksListCache(workspaceId)
+      reloadTasks()
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'Failed to create task')
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   const openEmail = (emailId: string) => {
     onSelectMessage?.(emailId)
   }
@@ -356,6 +419,9 @@ export function TasksView({
     color: danger ? '#c62828' : '#555',
     cursor: 'pointer',
   })
+
+  const memberLabel = (m: { name: string | null; email: string }) =>
+    m.name?.trim() ? `${m.name} (${m.email})` : m.email
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -380,29 +446,158 @@ export function TasksView({
               {refreshing ? ' · Updating…' : ''}
             </p>
           </div>
-          {!isViewer && (
-            <button
-              type="button"
-              onClick={() => {
-                setBulkOpen(true)
-                setBulkError(null)
-                setBulkPreview(null)
-              }}
-              style={{
-                padding: '6px 12px',
-                fontSize: 12,
-                fontWeight: 600,
-                borderRadius: 6,
-                border: '1px solid #ef9a9a',
-                background: '#fff',
-                color: '#c62828',
-                cursor: 'pointer',
-              }}
-            >
-              Delete tasks before date…
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {!isViewer && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateOpen(true)
+                  setCreateError(null)
+                  if (currentUserId) setCreateAssignee(currentUserId)
+                }}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  borderRadius: 6,
+                  border: '1px solid #1a1a2e',
+                  background: '#1a1a2e',
+                  color: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                Create Task
+              </button>
+            )}
+            {!isViewer && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkOpen(true)
+                  setBulkError(null)
+                  setBulkPreview(null)
+                }}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  borderRadius: 6,
+                  border: '1px solid #ef9a9a',
+                  background: '#fff',
+                  color: '#c62828',
+                  cursor: 'pointer',
+                }}
+              >
+                Delete tasks before date…
+              </button>
+            )}
+          </div>
         </div>
+
+        {createOpen && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 14,
+              border: '1px solid #ddd',
+              borderRadius: 8,
+              background: '#fafafa',
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Create Task</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 480 }}>
+              <input
+                aria-label="Task title"
+                placeholder="Task title"
+                value={createTitle}
+                onChange={(e) => setCreateTitle(e.target.value)}
+                style={{ ...selectStyle, width: '100%', maxWidth: '100%' }}
+              />
+              <textarea
+                aria-label="Description"
+                placeholder="Description / notes (optional)"
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                rows={3}
+                style={{ ...selectStyle, width: '100%', maxWidth: '100%', resize: 'vertical' }}
+              />
+              <select
+                aria-label="Assigned to"
+                value={createAssignee}
+                onChange={(e) => setCreateAssignee(e.target.value)}
+                style={{ ...selectStyle, maxWidth: '100%' }}
+              >
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {memberLabel(m)}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Job"
+                value={createJobId}
+                onChange={(e) => setCreateJobId(e.target.value)}
+                style={{ ...selectStyle, maxWidth: '100%' }}
+              >
+                <option value="">No Job</option>
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.jobNumber ? `#${j.jobNumber} · ` : ''}
+                    {j.name}
+                  </option>
+                ))}
+              </select>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="date"
+                  aria-label="Due date"
+                  value={createDueAt}
+                  onChange={(e) => setCreateDueAt(e.target.value)}
+                  style={selectStyle}
+                />
+                <select
+                  aria-label="Priority"
+                  value={createPriority}
+                  onChange={(e) =>
+                    setCreatePriority(e.target.value as typeof createPriority)
+                  }
+                  style={selectStyle}
+                >
+                  <option value="LOW">Low</option>
+                  <option value="NORMAL">Normal</option>
+                  <option value="HIGH">High</option>
+                  <option value="URGENT">Urgent</option>
+                </select>
+              </div>
+              {createError && (
+                <div style={{ fontSize: 12, color: '#c62828' }}>{createError}</div>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={!createTitle.trim() || !createAssignee || createBusy}
+                  onClick={() => void submitCreate()}
+                  style={{
+                    ...btnStyle(),
+                    background: '#1a1a2e',
+                    color: '#fff',
+                    borderColor: '#1a1a2e',
+                    fontWeight: 600,
+                  }}
+                >
+                  {createBusy ? 'Creating…' : 'Create'}
+                </button>
+                <button
+                  type="button"
+                  style={btnStyle()}
+                  onClick={() => setCreateOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {bulkOpen && (
           <div
@@ -478,6 +673,66 @@ export function TasksView({
             marginBottom: 10,
           }}
         >
+          <div
+            role="group"
+            aria-label="My Tasks or Requests"
+            data-testid="tasks-requests-toggle"
+            style={{
+              display: 'inline-flex',
+              border: '1px solid #ddd',
+              borderRadius: 6,
+              overflow: 'hidden',
+              background: '#fff',
+            }}
+          >
+            {(
+              [
+                { key: 'MY' as const, label: 'My Tasks' },
+                { key: 'REQUESTS' as const, label: 'Requests' },
+                ...(canViewWorkspaceTasks
+                  ? [{ key: 'ALL' as const, label: 'All tasks' }]
+                  : []),
+              ] as const
+            ).map(({ key, label }, i) => {
+              const active = ownershipView === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setOwnershipView(key)}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: 12,
+                    fontWeight: active ? 600 : 500,
+                    border: 'none',
+                    borderLeft: i === 0 ? 'none' : '1px solid #ddd',
+                    background: active ? '#1a1a2e' : '#fff',
+                    color: active ? '#fff' : '#374151',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          {canViewWorkspaceTasks && ownershipView === 'ALL' && (
+            <select
+              aria-label="Tasks for"
+              value={tasksFor}
+              onChange={(e) => setTasksFor(e.target.value)}
+              style={{ ...selectStyle, maxWidth: 220 }}
+            >
+              <option value="ALL">Tasks for: All users</option>
+              <option value="UNASSIGNED">Tasks for: Unassigned</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  Tasks for: {m.name?.trim() || m.email}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             data-testid="tasks-pinned-filter"
@@ -556,6 +811,16 @@ export function TasksView({
             <option value="MANUAL">Manual</option>
           </select>
           <select
+            aria-label="Email direction"
+            value={direction}
+            onChange={(e) => setDirection(e.target.value as typeof direction)}
+            style={selectStyle}
+          >
+            <option value="ALL">Direction: All</option>
+            <option value="INCOMING">Incoming</option>
+            <option value="SENT">Sent</option>
+          </select>
+          <select
             aria-label="Business subtype"
             value={businessTypeKey}
             onChange={(e) => setBusinessTypeKey(e.target.value)}
@@ -568,47 +833,6 @@ export function TasksView({
               </option>
             ))}
           </select>
-          <div
-            role="group"
-            aria-label="Tasks or requests"
-            data-testid="tasks-requests-toggle"
-            style={{
-              display: 'inline-flex',
-              border: '1px solid #ddd',
-              borderRadius: 6,
-              overflow: 'hidden',
-              background: '#fff',
-            }}
-          >
-            {(
-              [
-                { key: 'tasks' as const, label: 'Tasks' },
-                { key: 'requests' as const, label: 'Requests' },
-              ] as const
-            ).map(({ key, label }, i) => {
-              const active = listMode === key
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setListMode(key)}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: 12,
-                    fontWeight: active ? 600 : 500,
-                    border: 'none',
-                    borderLeft: i === 0 ? 'none' : '1px solid #ddd',
-                    background: active ? '#1a1a2e' : '#fff',
-                    color: active ? '#fff' : '#374151',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
           <select
             aria-label="Sort"
             value={sort}
@@ -667,7 +891,7 @@ export function TasksView({
         )}
         {!loading && !error && tasks.length === 0 && (
           <div style={{ padding: 48, textAlign: 'center', color: '#888', fontSize: 14 }}>
-            {listMode === 'requests'
+            {ownershipView === 'REQUESTS'
               ? 'No requests match these filters.'
               : 'No tasks match these filters.'}
           </div>
@@ -701,6 +925,8 @@ export function TasksView({
                 priority={item.task.priority}
                 dueAt={item.task.dueAt}
                 sourceEmail={sourceEmail}
+                assignee={item.task.assignee}
+                requester={item.task.requester}
                 isPinned={item.task.isPinned}
                 onOpenEmail={onSelectMessage ? openEmail : undefined}
                 actions={
