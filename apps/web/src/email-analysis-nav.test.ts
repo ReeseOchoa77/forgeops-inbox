@@ -75,3 +75,20 @@ describe('Email Analysis Systems navigation', () => {
     expect(BiddingFolderAnalysisView.name).toBe('BiddingFolderAnalysisView')
   })
 })
+
+describe('Bidding Folder discovery infinite scroll contracts', () => {
+  it('keeps Analyze bound to discovery totals helpers, not UI row count alone', async () => {
+    const {
+      analyzeDiscoveryUsesCanonicalDataset,
+      BID_FOLDER_DISCOVERY_PAGE_SIZE,
+    } = await import('./bid-folder-discovery-list')
+    expect(BID_FOLDER_DISCOVERY_PAGE_SIZE).toBe(50)
+    expect(
+      analyzeDiscoveryUsesCanonicalDataset({
+        loadedItemCount: 50,
+        discoveryTotalCount: 127,
+        analyzeUsesUiLoadedRowsOnly: false,
+      })
+    ).toBe(true)
+  })
+})

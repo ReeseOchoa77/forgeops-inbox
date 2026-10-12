@@ -7,6 +7,12 @@ import {
   type BidFolderDiscoveryItem,
   type ConnectionSummary,
 } from '../api'
+import {
+  appendBidFolderDiscoveryItems,
+  BID_FOLDER_DISCOVERY_PAGE_SIZE,
+  bidFolderDiscoveryHasMore,
+  bidFolderDiscoveryQueryKey,
+} from '../bid-folder-discovery-list'
 
 const RANGE_OPTIONS = [
   { value: '30d', label: 'Last 30 days' },
@@ -148,9 +154,11 @@ export function BiddingFolderAnalysisView({
   const [searchInput, setSearchInput] = useState('')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   const [items, setItems] = useState<BidFolderDiscoveryItem[]>([])
   const [counts, setCounts] = useState({ bidInvites: 0, quotes: 0 })
   const [loadingList, setLoadingList] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [candidates, setCandidates] = useState<BidCandidateSummary[]>([])
   const [loadingCandidates, setLoadingCandidates] = useState(false)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
@@ -163,6 +171,10 @@ export function BiddingFolderAnalysisView({
   const [editBidDue, setEditBidDue] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   const pollGenRef = useRef(0)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const loadMoreLock = useRef(false)
+  const discoveryReqSeq = useRef(0)
+  const discoveryQueryKeyRef = useRef('')
 
   const outlookConnections = useMemo(
     () => connections.filter(isOutlookConnection),
@@ -240,29 +252,88 @@ export function BiddingFolderAnalysisView({
     [workspaceId]
   )
 
-  const loadList = useCallback(
-    async (connId: string, role: ListRole, sortDir: SortDir, q: string, pageNum: number) => {
-      if (!connId) return
-      setLoadingList(true)
+  const loadDiscovery = useCallback(
+    async (opts: {
+      connId: string
+      role: ListRole
+      sortDir: SortDir
+      q: string
+      pageNum: number
+      append: boolean
+    }) => {
+      if (!opts.connId) return
+      const queryKey = bidFolderDiscoveryQueryKey({
+        workspaceId,
+        connectionId: opts.connId,
+        role: opts.role,
+        sort: opts.sortDir,
+        search: opts.q,
+      })
+      const seq = ++discoveryReqSeq.current
+      if (opts.append) setLoadingMore(true)
+      else setLoadingList(true)
       try {
         const res = await api.listBidFolderDiscovery(workspaceId, {
-          connectionId: connId,
-          role,
-          sort: sortDir,
-          search: q || undefined,
-          page: pageNum,
-          pageSize: 50,
+          connectionId: opts.connId,
+          role: opts.role,
+          sort: opts.sortDir,
+          search: opts.q || undefined,
+          page: opts.pageNum,
+          pageSize: BID_FOLDER_DISCOVERY_PAGE_SIZE,
         })
-        setItems(res.items)
+        if (seq !== discoveryReqSeq.current) return
+        // Drop stale responses from a previous role/search/sort/mailbox.
+        if (queryKey !== discoveryQueryKeyRef.current && opts.append) return
+        discoveryQueryKeyRef.current = queryKey
         setTotal(res.total)
         setPage(res.page)
+        const more = bidFolderDiscoveryHasMore({
+          page: res.page,
+          pageSize: res.pageSize,
+          total: res.total,
+        })
+        setHasMore(more)
+        setItems((prev) =>
+          opts.append ? appendBidFolderDiscoveryItems(prev, res.items) : res.items
+        )
       } catch (e) {
+        if (seq !== discoveryReqSeq.current) return
         setError(e instanceof Error ? e.message : 'Failed to load discovery list')
       } finally {
-        setLoadingList(false)
+        if (seq === discoveryReqSeq.current) {
+          setLoadingList(false)
+          setLoadingMore(false)
+          loadMoreLock.current = false
+        }
       }
     },
     [workspaceId]
+  )
+
+  const resetAndLoadDiscovery = useCallback(
+    async (connId: string, role: ListRole, sortDir: SortDir, q: string) => {
+      discoveryQueryKeyRef.current = bidFolderDiscoveryQueryKey({
+        workspaceId,
+        connectionId: connId,
+        role,
+        sort: sortDir,
+        search: q,
+      })
+      setItems([])
+      setPage(1)
+      setTotal(0)
+      setHasMore(false)
+      loadMoreLock.current = false
+      await loadDiscovery({
+        connId,
+        role,
+        sortDir,
+        q,
+        pageNum: 1,
+        append: false,
+      })
+    },
+    [loadDiscovery, workspaceId]
   )
 
   const pollRun = useCallback(
@@ -278,7 +349,8 @@ export function BiddingFolderAnalysisView({
           setBusy(false)
           setBusyKind(null)
           await loadCounts(connId)
-          await loadList(connId, listRole, sort, search, 1)
+          // New scan/analyze completion: refresh discovery from page 1 (no full browser refresh).
+          await resetAndLoadDiscovery(connId, listRole, sort, search)
           if (kind === 'analyze' || res.run.progress.operation === 'analyze') {
             await loadCandidates()
           }
@@ -287,7 +359,7 @@ export function BiddingFolderAnalysisView({
         await new Promise((r) => setTimeout(r, 1500))
       }
     },
-    [listRole, loadCandidates, loadCounts, loadList, search, sort, workspaceId]
+    [listRole, loadCandidates, loadCounts, resetAndLoadDiscovery, search, sort, workspaceId]
   )
 
   useEffect(() => {
@@ -312,7 +384,6 @@ export function BiddingFolderAnalysisView({
       })
       .catch(() => {})
     void loadCounts(selectedConnectionId)
-    void loadList(selectedConnectionId, listRole, sort, search, 1)
     void loadCandidates()
     return () => {
       cancelled = true
@@ -322,10 +393,49 @@ export function BiddingFolderAnalysisView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConnectionId, workspaceId])
 
+  // Role / sort / search / mailbox changes reset infinite pages and fetch page 1 from server.
   useEffect(() => {
     if (!selectedConnectionId) return
-    void loadList(selectedConnectionId, listRole, sort, search, page)
-  }, [listRole, sort, search, page, selectedConnectionId, loadList])
+    void resetAndLoadDiscovery(selectedConnectionId, listRole, sort, search)
+  }, [listRole, sort, search, selectedConnectionId, resetAndLoadDiscovery])
+
+  const requestNextDiscoveryPage = useCallback(() => {
+    if (
+      !selectedConnectionId ||
+      !hasMore ||
+      loadingList ||
+      loadingMore ||
+      loadMoreLock.current
+    ) {
+      return
+    }
+    loadMoreLock.current = true
+    void loadDiscovery({
+      connId: selectedConnectionId,
+      role: listRole,
+      sortDir: sort,
+      q: search,
+      pageNum: page + 1,
+      append: true,
+    })
+  }, [
+    hasMore,
+    listRole,
+    loadDiscovery,
+    loadingList,
+    loadingMore,
+    page,
+    search,
+    selectedConnectionId,
+    sort,
+  ])
+
+  const handleDiscoveryScroll = () => {
+    const el = listRef.current
+    if (!el || !hasMore || loadingMore || loadMoreLock.current) return
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (remaining < 160) requestNextDiscoveryPage()
+  }
 
   useEffect(() => {
     if (!selectedCandidateId) {
@@ -373,7 +483,7 @@ export function BiddingFolderAnalysisView({
   }
 
   const applySearch = () => {
-    setPage(1)
+    // Server-side search: changing `search` resets infinite pages via effect.
     setSearch(searchInput.trim())
   }
 
@@ -552,7 +662,6 @@ export function BiddingFolderAnalysisView({
               onChange={(e) => {
                 setSelectedConnectionId(e.target.value)
                 setError('')
-                setPage(1)
                 setSelectedCandidateId(null)
               }}
               style={{
@@ -703,20 +812,14 @@ export function BiddingFolderAnalysisView({
           <button
             type="button"
             className={listRole === 'BID_INVITE' ? 'btn btn-primary' : 'btn btn-outline'}
-            onClick={() => {
-              setListRole('BID_INVITE')
-              setPage(1)
-            }}
+            onClick={() => setListRole('BID_INVITE')}
           >
             Bid Invites ({counts.bidInvites})
           </button>
           <button
             type="button"
             className={listRole === 'QUOTE' ? 'btn btn-primary' : 'btn btn-outline'}
-            onClick={() => {
-              setListRole('QUOTE')
-              setPage(1)
-            }}
+            onClick={() => setListRole('QUOTE')}
           >
             Quotes ({counts.quotes})
           </button>
@@ -725,10 +828,7 @@ export function BiddingFolderAnalysisView({
             Sort{' '}
             <select
               value={sort}
-              onChange={(e) => {
-                setSort(e.target.value as SortDir)
-                setPage(1)
-              }}
+              onChange={(e) => setSort(e.target.value as SortDir)}
               style={{ padding: '4px 6px', fontSize: 12 }}
             >
               <option value="newest">Newest → Oldest</option>
@@ -758,7 +858,7 @@ export function BiddingFolderAnalysisView({
           </div>
         </div>
 
-        {loadingList ? (
+        {loadingList && items.length === 0 ? (
           <p style={{ fontSize: 13, color: '#888' }}>Loading…</p>
         ) : items.length === 0 ? (
           <p style={{ fontSize: 13, color: '#888' }}>
@@ -766,84 +866,98 @@ export function BiddingFolderAnalysisView({
             mailbox. Run a scan with a date range.
           </p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#666' }}>
-                  <th style={{ padding: '6px 8px' }}>Date</th>
-                  <th style={{ padding: '6px 8px' }}>Subject</th>
-                  <th style={{ padding: '6px 8px' }}>Sender</th>
-                  <th style={{ padding: '6px 8px' }}>Attachments</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((row) => {
-                  const dateIso = row.email.receivedAt ?? row.email.sentAt
-                  return (
-                    <tr
-                      key={row.discoveryId}
-                      style={{
-                        borderTop: '1px solid #eee',
-                        cursor: onOpenMessage ? 'pointer' : undefined,
-                      }}
-                      onClick={() => {
-                        if (onOpenMessage && selectedConnectionId) {
-                          onOpenMessage(row.email.id, selectedConnectionId)
-                        }
-                      }}
-                    >
-                      <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                        {formatWhen(dateIso)}
-                      </td>
-                      <td style={{ padding: '6px 8px' }}>{row.email.subject ?? '(no subject)'}</td>
-                      <td style={{ padding: '6px 8px' }}>
-                        {row.email.senderName || row.email.senderEmail}
-                      </td>
-                      <td style={{ padding: '6px 8px' }}>
-                        {row.email.hasAttachments
-                          ? row.email.attachmentCount > 0
-                            ? String(row.email.attachmentCount)
-                            : 'Yes'
-                          : '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {total > 50 && (
-          <div
-            style={{
-              display: 'flex',
-              gap: 8,
-              marginTop: 10,
-              alignItems: 'center',
-              fontSize: 12,
-            }}
-          >
-            <button
-              type="button"
-              className="btn btn-outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+          <>
+            <div
+              ref={listRef}
+              onScroll={handleDiscoveryScroll}
+              style={{
+                maxHeight: 'min(420px, 50vh)',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                border: '1px solid #eee',
+                borderRadius: 6,
+              }}
             >
-              Prev
-            </button>
-            <span>
-              Page {page} · {total} total
-            </span>
-            <button
-              type="button"
-              className="btn btn-outline"
-              disabled={page * 50 >= total}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </button>
-          </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: '#fafafa',
+                    zIndex: 1,
+                  }}
+                >
+                  <tr style={{ textAlign: 'left', color: '#666' }}>
+                    <th style={{ padding: '6px 8px' }}>Date</th>
+                    <th style={{ padding: '6px 8px' }}>Subject</th>
+                    <th style={{ padding: '6px 8px' }}>Sender</th>
+                    <th style={{ padding: '6px 8px' }}>Attachments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((row) => {
+                    const dateIso = row.email.receivedAt ?? row.email.sentAt
+                    return (
+                      <tr
+                        key={row.discoveryId}
+                        style={{
+                          borderTop: '1px solid #eee',
+                          cursor: onOpenMessage ? 'pointer' : undefined,
+                        }}
+                        onClick={() => {
+                          if (onOpenMessage && selectedConnectionId) {
+                            onOpenMessage(row.email.id, selectedConnectionId)
+                          }
+                        }}
+                      >
+                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                          {formatWhen(dateIso)}
+                        </td>
+                        <td style={{ padding: '6px 8px' }}>
+                          {row.email.subject ?? '(no subject)'}
+                        </td>
+                        <td style={{ padding: '6px 8px' }}>
+                          {row.email.senderName || row.email.senderEmail}
+                        </td>
+                        <td style={{ padding: '6px 8px' }}>
+                          {row.email.hasAttachments
+                            ? row.email.attachmentCount > 0
+                              ? String(row.email.attachmentCount)
+                              : 'Yes'
+                            : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {loadingMore && (
+                <p style={{ fontSize: 12, color: '#888', textAlign: 'center', padding: 8 }}>
+                  Loading more emails…
+                </p>
+              )}
+              {hasMore && !loadingMore && (
+                <div style={{ textAlign: 'center', padding: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => requestNextDiscoveryPage()}
+                  >
+                    Load more
+                  </button>
+                </div>
+              )}
+              {!hasMore && items.length > 0 && (
+                <p style={{ fontSize: 11, color: '#bbb', textAlign: 'center', padding: 8 }}>
+                  End of list
+                </p>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: '#666', margin: '8px 0 0' }}>
+              Loaded {items.length} of {total}
+              {search ? ' matching search' : ''}
+            </p>
+          </>
         )}
 
         {canScan && (
@@ -854,6 +968,7 @@ export function BiddingFolderAnalysisView({
               className="btn btn-primary"
               disabled={busy || discoveryTotal === 0}
               onClick={() => void startRun('analyze')}
+              title="Analyzes the full persisted discovery dataset for this mailbox, not only rows loaded in this list"
             >
               {busy && busyKind === 'analyze'
                 ? 'Analyzing discovered emails…'

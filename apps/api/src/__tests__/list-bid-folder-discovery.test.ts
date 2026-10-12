@@ -72,4 +72,28 @@ describe("listBidFolderDiscoveryEmails", () => {
     });
     expect(prisma.bidFolderDiscoveryEmail.findMany).toHaveBeenCalled();
   });
+
+  it("page 2 uses skip offset (server pagination for infinite scroll)", async () => {
+    const prisma = {
+      bidFolderDiscoveryEmail: {
+        count: vi.fn(async () => 127),
+        findMany: vi.fn(async (args: { skip: number; take: number }) => {
+          expect(args.skip).toBe(50);
+          expect(args.take).toBe(50);
+          return [];
+        }),
+      },
+    };
+    const res = await listBidFolderDiscoveryEmails({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      connectionId: "conn",
+      role: "BID_INVITE",
+      page: 2,
+      pageSize: 50,
+    });
+    expect(res.total).toBe(127);
+    expect(res.page).toBe(2);
+    expect(res.pageSize).toBe(50);
+  });
 });
