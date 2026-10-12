@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { calendarForCacheKey } from '@forgeops/shared'
 import type { CalendarBidDueItem, CalendarFeedItem, CalendarTaskDueItem } from './api'
+
+/** Mirror of shared calendarForCacheKey — keep web tsc free of @forgeops/shared root. */
+function calendarForCacheKey(calendarFor: string): string {
+  return `calendarFor:${calendarFor || 'ME'}`
+}
 
 describe('Calendar feed merge (web)', () => {
   it('merges events, task dues, and bidDueItems without client-side bid filtering', () => {
