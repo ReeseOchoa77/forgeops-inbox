@@ -9,6 +9,7 @@ import {
   isPdfTextUsable,
   selectRelevantPdfText,
 } from "../bidding/select-relevant-pdf-text.js";
+import { emptyDetailedScope } from "../bidding/scope-detail.js";
 
 describe("extractQuoteFieldsDeterministic with PDF text", () => {
   it("extracts amount from body first", () => {
@@ -19,7 +20,8 @@ describe("extractQuoteFieldsDeterministic with PDF text", () => {
     });
     expect(r.amount).toBe(180000);
     expect(r.amountSource).toBe("EMAIL_BODY");
-    expect(r.scope).toMatch(/steel/i);
+    expect(r.scopeDetail.tradeCategory).toMatch(/steel/i);
+    expect(r.scopeDetail.detailedComplete).toBe(false);
   });
 
   it("extracts amount only in PDF when body lacks it", () => {
@@ -30,7 +32,7 @@ describe("extractQuoteFieldsDeterministic with PDF text", () => {
     });
     expect(r.amount).toBe(184500);
     expect(r.amountSource).toBe("PDF_TEXT");
-    expect(r.scopeSource).toBe("PDF_TEXT");
+    expect(r.scopeDetail.tradeCategory).toMatch(/structural steel/i);
   });
 
   it("preserves revision notes from PDF", () => {
@@ -41,6 +43,19 @@ describe("extractQuoteFieldsDeterministic with PDF text", () => {
     });
     expect(r.notes).toMatch(/Revision/i);
     expect(r.amount).toBe(50000);
+  });
+
+  it("keeps Bid vs Quote scope independence at extract layer", () => {
+    const quote = extractQuoteFieldsDeterministic({
+      bodyText: "Quote covers stairs and rails only. Total $10,000",
+    });
+    expect(quote.scopeDetail.items.map((i) => i.name.toLowerCase())).toEqual(
+      expect.arrayContaining(["stairs", "railings"])
+    );
+    // Bid extract would be separate — quote extract does not invent framing.
+    expect(
+      quote.scopeDetail.items.some((i) => /beam|column/i.test(i.name))
+    ).toBe(false);
   });
 });
 
@@ -63,15 +78,30 @@ describe("selectRelevantPdfText", () => {
 });
 
 describe("completeness gates", () => {
-  it("skips AI when bid is complete", () => {
+  it("skips AI when bid identity is complete and scope already detailed", () => {
     expect(
       bidFieldsNeedAiEnrichment({
         projectName: "Prieto Battery",
         customerName: "CoBeck",
         bidDueAt: "2026-05-01",
         projectNumber: null,
+        scopeDetailComplete: true,
+        hasScopeEvidence: true,
       })
     ).toBe(false);
+  });
+
+  it("requests AI when detailed scope incomplete with evidence", () => {
+    expect(
+      bidFieldsNeedAiEnrichment({
+        projectName: "Prieto Battery",
+        customerName: "CoBeck",
+        bidDueAt: "2026-05-01",
+        projectNumber: null,
+        scopeDetailComplete: false,
+        hasScopeEvidence: true,
+      })
+    ).toBe(true);
   });
 
   it("requests AI when project name missing", () => {
@@ -85,11 +115,15 @@ describe("completeness gates", () => {
     ).toBe(true);
   });
 
-  it("requests quote AI when amount missing but PDF usable", () => {
+  it("requests quote AI when only generic trade scope present", () => {
     expect(
       quoteFieldsNeedAiEnrichment({
-        amount: null,
+        amount: 180000,
         scope: "Structural steel",
+        scopeDetail: emptyDetailedScope({
+          tradeCategory: "Structural steel",
+          detailedComplete: false,
+        }),
         hasUsablePdfText: true,
       })
     ).toBe(true);

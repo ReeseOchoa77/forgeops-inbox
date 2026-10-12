@@ -11,18 +11,23 @@ import {
   bidFieldsNeedAiEnrichment,
   buildBidCandidateIdentityKey,
   extractBidDueDateDeterministic,
+  extractDetailedScopeDeterministic,
   extractDomain,
   extractQuoteFieldsDeterministic,
   existingJobNeedsAiAdjudication,
+  isDetailedScopeComplete,
+  mergeAiScopeDetail,
   quoteFieldsNeedAiEnrichment,
   quoteMatchNeedsAiAdjudication,
   rankJobMatchCandidates,
   resolveBidProjectIdentity,
+  scopeSummaryString,
   scoreQuoteToBidCandidate,
   suggestBidProjectNameFromSubject,
   QUOTE_AUTO_LINK_THRESHOLD,
   QUOTE_REVIEW_THRESHOLD,
   type BidEmailAnalyzeProgress,
+  type DetailedScope,
 } from "@forgeops/shared";
 
 import {
@@ -312,13 +317,28 @@ export async function extractBidCandidatesFromDiscovery(input: {
       }
     }
 
+    let scopeDetail: DetailedScope = extractDetailedScopeDeterministic({
+      subject: email.subject,
+      bodyText: email.bodyText,
+      attachmentNames: fields.attachmentNames,
+      pdfText: pdfMeta.combinedRelevant || null,
+    });
+    const hasScopeEvidence = Boolean(
+      (email.bodyText ?? "").trim() ||
+        pdfMeta.hasUsablePdfText ||
+        fields.attachmentNames.length
+    );
+
     let aiApplied = false;
     let aiFailed = false;
+    let aiNotes: string | null = null;
     const needsAi = bidFieldsNeedAiEnrichment({
       projectName: fields.projectName,
       customerName: fields.customerName,
       bidDueAt: fields.bidDueAt,
       projectNumber: fields.projectNumber,
+      scopeDetailComplete: isDetailedScopeComplete(scopeDetail),
+      hasScopeEvidence,
     });
 
     if (needsAi && input.ai?.bidExtractor.isConfigured()) {
@@ -337,7 +357,7 @@ export async function extractBidCandidatesFromDiscovery(input: {
             bidDueDate: fields.bidDueAt
               ? fields.bidDueAt.toISOString().slice(0, 10)
               : null,
-            scope: null,
+            scope: scopeSummaryString(scopeDetail),
             notes: null,
           },
         });
@@ -386,15 +406,16 @@ export async function extractBidCandidatesFromDiscovery(input: {
             };
           }
         }
-        // scope/notes stored after we know candidate
-        (fields as { aiScope?: string | null; aiNotes?: string | null }).aiScope =
-          aiResult.scope;
-        (fields as { aiScope?: string | null; aiNotes?: string | null }).aiNotes =
-          aiResult.notes;
+        if (aiResult.scopeDetail) {
+          scopeDetail = mergeAiScopeDetail(scopeDetail, aiResult.scopeDetail);
+        }
+        aiNotes = aiResult.notes;
       } catch {
         aiFailed = true;
       }
     }
+
+    const scopeSummary = scopeSummaryString(scopeDetail);
 
     const identityKey = buildBidCandidateIdentityKey({
       projectNumber: fields.projectNumber,
@@ -425,6 +446,7 @@ export async function extractBidCandidatesFromDiscovery(input: {
             proposedBidDueAt: true,
             proposedJobNumber: true,
             proposedScope: true,
+            proposedScopeDetail: true,
             proposedNotes: true,
             existingJobMatchStatus: true,
             evidence: true,
@@ -435,10 +457,6 @@ export async function extractBidCandidatesFromDiscovery(input: {
 
     const emailRole = inviteEmailRoleFromSubject(email.subject);
     let candidateId: string;
-    const aiFields = fields as {
-      aiScope?: string | null;
-      aiNotes?: string | null;
-    };
 
     if (existing) {
       candidateId = existing.id;
@@ -456,12 +474,17 @@ export async function extractBidCandidatesFromDiscovery(input: {
         const nextNumber = locked.has("proposedJobNumber")
           ? existing.proposedJobNumber
           : fields.projectNumber ?? existing.proposedJobNumber;
-        const nextScope = locked.has("proposedScope")
+        const scopeLocked =
+          locked.has("proposedScope") || locked.has("proposedScopeDetail");
+        const nextScope = scopeLocked
           ? existing.proposedScope
-          : aiFields.aiScope ?? existing.proposedScope;
+          : scopeSummary ?? existing.proposedScope;
+        const nextScopeDetail = scopeLocked
+          ? existing.proposedScopeDetail
+          : (scopeDetail as unknown as Prisma.InputJsonValue);
         const nextNotes = locked.has("proposedNotes")
           ? existing.proposedNotes
-          : aiFields.aiNotes ?? existing.proposedNotes;
+          : aiNotes ?? existing.proposedNotes;
         const status =
           aiFailed && !nextName
             ? "NEEDS_REVIEW"
@@ -479,14 +502,21 @@ export async function extractBidCandidatesFromDiscovery(input: {
             proposedBidDueAt: nextDue,
             proposedJobNumber: nextNumber,
             proposedScope: nextScope,
+            proposedScopeDetail: nextScopeDetail as Prisma.InputJsonValue,
             proposedNotes: nextNotes,
             evidence: {
               ...prevEv,
               alternateNames: fields.alternateNames,
               attachments: fields.attachmentNames.slice(0, 20),
-              fieldSources: fields.fieldSources,
+              fieldSources: {
+                ...fields.fieldSources,
+                proposedScope: scopeLocked
+                  ? "USER_EDITED"
+                  : scopeDetail.extractionMethod ?? "DETERMINISTIC",
+              },
               attachmentIds: pdfMeta.attachmentIdsUsed,
               pdfTextUnavailable: pdfMeta.hasTextUnavailable,
+              scopeDetailedComplete: isDetailedScopeComplete(scopeDetail),
               extractionMethod: aiApplied
                 ? "AI_ENRICHED"
                 : "DETERMINISTIC",
@@ -523,14 +553,19 @@ export async function extractBidCandidatesFromDiscovery(input: {
           proposedCustomerName: fields.customerName,
           proposedBidDueAt: fields.bidDueAt,
           proposedJobNumber: fields.projectNumber,
-          proposedScope: aiFields.aiScope ?? null,
-          proposedNotes: aiFields.aiNotes ?? null,
+          proposedScope: scopeSummary,
+          proposedScopeDetail: scopeDetail as unknown as Prisma.InputJsonValue,
+          proposedNotes: aiNotes,
           evidence: {
             alternateNames: fields.alternateNames,
             attachments: fields.attachmentNames.slice(0, 20),
-            fieldSources: fields.fieldSources,
+            fieldSources: {
+              ...fields.fieldSources,
+              proposedScope: scopeDetail.extractionMethod ?? "DETERMINISTIC",
+            },
             attachmentIds: pdfMeta.attachmentIdsUsed,
             pdfTextUnavailable: pdfMeta.hasTextUnavailable,
+            scopeDetailedComplete: isDetailedScopeComplete(scopeDetail),
             extractionMethod: aiApplied ? "AI_ENRICHED" : "DETERMINISTIC",
             aiFailed: aiFailed || undefined,
           } as Prisma.InputJsonValue,
@@ -645,11 +680,14 @@ export async function extractQuotesFromDiscovery(input: {
     let aiFailed = false;
     let displayName: string | null = null;
     let revisionNote: string | null = null;
+    let scopeDetail: DetailedScope = fields.scopeDetail;
 
     const needsAi = quoteFieldsNeedAiEnrichment({
       amount: fields.amount,
       scope: fields.scope,
+      scopeDetail,
       hasUsablePdfText: pdfMeta.hasUsablePdfText,
+      hasBodyEvidence: Boolean((email.bodyText ?? "").trim()),
     });
 
     if (needsAi && input.ai?.quoteExtractor.isConfigured()) {
@@ -677,12 +715,20 @@ export async function extractQuotesFromDiscovery(input: {
             evidence: [...fields.evidence, "amount:ai"],
           };
         }
-        if (aiResult.scope && !fields.scope) {
+        if (aiResult.scopeDetail) {
+          scopeDetail = mergeAiScopeDetail(scopeDetail, aiResult.scopeDetail);
           fields = {
             ...fields,
-            scope: aiResult.scope,
-            scopeSource: "PDF_TEXT",
-            evidence: [...fields.evidence, "scope:ai"],
+            scope: scopeSummaryString(scopeDetail),
+            scopeDetail,
+            evidence: [...fields.evidence, "scope_detail:ai"],
+          };
+        } else if (aiResult.scope && !isDetailedScopeComplete(scopeDetail)) {
+          // Compact AI scope string only — do not treat as detailed items.
+          fields = {
+            ...fields,
+            scope: fields.scope ?? aiResult.scope,
+            evidence: [...fields.evidence, "scope:ai_summary"],
           };
         }
         if (aiResult.notes) {
@@ -713,6 +759,7 @@ export async function extractQuotesFromDiscovery(input: {
         userEditedFields: true,
         displayName: true,
         extractedScope: true,
+        extractedScopeDetail: true,
         extractedAmount: true,
         currency: true,
         extractedNotes: true,
@@ -727,6 +774,7 @@ export async function extractQuotesFromDiscovery(input: {
       scopeSource: fields.scopeSource,
       attachmentIds: pdfMeta.attachmentIdsUsed,
       pdfTextUnavailable: pdfMeta.hasTextUnavailable,
+      scopeDetailedComplete: isDetailedScopeComplete(scopeDetail),
       extractionMethod: aiApplied ? "AI_ENRICHED" : "DETERMINISTIC",
       revision: revisionNote,
       aiFailed: aiFailed || undefined,
@@ -739,6 +787,8 @@ export async function extractQuotesFromDiscovery(input: {
         continue;
       }
       const locked = lockedFields(existing.userEditedFields);
+      const scopeLocked =
+        locked.has("extractedScope") || locked.has("extractedScopeDetail");
       const nextNotes = locked.has("extractedNotes")
         ? existing.extractedNotes
         : [fields.notes, revisionNote].filter(Boolean).join("; ") || null;
@@ -749,9 +799,12 @@ export async function extractQuotesFromDiscovery(input: {
           displayName: locked.has("displayName")
             ? existing.displayName
             : displayName ?? existing.displayName,
-          extractedScope: locked.has("extractedScope")
+          extractedScope: scopeLocked
             ? existing.extractedScope
-            : fields.scope,
+            : scopeSummaryString(scopeDetail) ?? fields.scope,
+          extractedScopeDetail: scopeLocked
+            ? (existing.extractedScopeDetail as Prisma.InputJsonValue)
+            : (scopeDetail as unknown as Prisma.InputJsonValue),
           extractedAmount: locked.has("extractedAmount")
             ? existing.extractedAmount
             : fields.amount,
@@ -771,7 +824,8 @@ export async function extractQuotesFromDiscovery(input: {
           emailMessageId: email.id,
           sourceSubject: email.subject,
           displayName,
-          extractedScope: fields.scope,
+          extractedScope: scopeSummaryString(scopeDetail) ?? fields.scope,
+          extractedScopeDetail: scopeDetail as unknown as Prisma.InputJsonValue,
           extractedAmount: fields.amount,
           currency: fields.currency,
           extractedNotes:

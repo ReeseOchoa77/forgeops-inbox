@@ -52,6 +52,7 @@ describe("override-safe extract", () => {
           proposedBidDueAt: null,
           proposedJobNumber: null,
           proposedScope: null,
+          proposedScopeDetail: null,
           proposedNotes: null,
           existingJobMatchStatus: "NONE",
           evidence: null,

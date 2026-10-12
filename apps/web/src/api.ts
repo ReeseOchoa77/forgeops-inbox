@@ -745,12 +745,31 @@ export interface BidFolderDiscoveryItem {
   };
 }
 
+export interface BiddingScopeItemView {
+  name: string;
+  details?: string | null;
+  kind?: string;
+  source?: string;
+}
+
+export interface BiddingScopeDetailView {
+  tradeCategory?: string | null;
+  items?: BiddingScopeItemView[];
+  work?: BiddingScopeItemView[];
+  exclusions?: BiddingScopeItemView[];
+  qualifications?: BiddingScopeItemView[];
+  summary?: string | null;
+  detailedComplete?: boolean;
+  extractionMethod?: string | null;
+}
+
 export interface BidQuoteStagingSummary {
   id: string;
   emailMessageId: string;
   sourceSubject: string | null;
   displayName?: string | null;
   extractedScope: string | null;
+  extractedScopeDetail?: BiddingScopeDetailView | null;
   extractedAmount: number | null;
   currency: string | null;
   extractedNotes: string | null;
@@ -775,6 +794,8 @@ export interface BidCandidateSummary {
   proposedBidDueAt: string | null;
   proposedJobNumber: string | null;
   proposedScope?: string | null;
+  proposedScopeDetail?: BiddingScopeDetailView | null;
+  scopeItemCount?: number;
   proposedNotes?: string | null;
   proposedExistingJobId?: string | null;
   proposedExistingJob?: {
@@ -814,9 +835,11 @@ export interface BidCandidateDetail extends BidCandidateSummary {
     id: string;
     sourceSubject: string | null;
     extractedScope: string | null;
+    extractedScopeDetail?: BiddingScopeDetailView | null;
     extractedAmount: number | null;
     currency: string | null;
     extractedNotes: string | null;
+    extractionEvidence?: unknown;
     matchStatus: string;
     matchConfidence: number | null;
   }>;

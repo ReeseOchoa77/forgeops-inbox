@@ -4,6 +4,7 @@
  */
 
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { scopeDetailFromUserText } from "@forgeops/shared";
 
 export class BidQuoteStagingError extends Error {
   readonly code: "NOT_FOUND" | "CANDIDATE_NOT_FOUND" | "INVALID";
@@ -40,6 +41,7 @@ export async function listBidQuoteStaging(input: {
     sourceSubject: string | null;
     displayName: string | null;
     extractedScope: string | null;
+    extractedScopeDetail: unknown;
     extractedAmount: number | null;
     currency: string | null;
     extractedNotes: string | null;
@@ -103,6 +105,7 @@ export async function listBidQuoteStaging(input: {
       sourceSubject: q.sourceSubject,
       displayName: q.displayName,
       extractedScope: q.extractedScope,
+      extractedScopeDetail: q.extractedScopeDetail,
       extractedAmount:
         q.extractedAmount != null ? Number(q.extractedAmount) : null,
       currency: q.currency,
@@ -205,7 +208,10 @@ export async function updateBidQuoteStaging(input: {
 
   const locked = lockedFields(quote.userEditedFields);
   if (input.displayName !== undefined) locked.add("displayName");
-  if (input.extractedScope !== undefined) locked.add("extractedScope");
+  if (input.extractedScope !== undefined) {
+    locked.add("extractedScope");
+    locked.add("extractedScopeDetail");
+  }
   if (input.extractedAmount !== undefined) locked.add("extractedAmount");
   if (input.currency !== undefined) locked.add("currency");
   if (input.extractedNotes !== undefined) locked.add("extractedNotes");
@@ -215,7 +221,12 @@ export async function updateBidQuoteStaging(input: {
       ? { displayName: input.displayName?.trim() || null }
       : {}),
     ...(input.extractedScope !== undefined
-      ? { extractedScope: input.extractedScope }
+      ? {
+          extractedScope: input.extractedScope,
+          extractedScopeDetail: scopeDetailFromUserText(
+            input.extractedScope
+          ) as unknown as Prisma.InputJsonValue,
+        }
       : {}),
     ...(input.extractedAmount !== undefined
       ? { extractedAmount: input.extractedAmount }

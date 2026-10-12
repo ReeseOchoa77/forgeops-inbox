@@ -8,6 +8,7 @@ import {
   buildBidCandidateIdentityKey,
   dedupeProjectAliases,
   normalizeName,
+  scopeDetailFromUserText,
 } from "@forgeops/shared";
 import {
   associateBidImportEmails,
@@ -447,7 +448,10 @@ export async function updateBidCandidateReview(input: {
   if (input.customerName !== undefined) locked.add("proposedCustomerName");
   if (input.bidDueAt !== undefined) locked.add("proposedBidDueAt");
   if (input.jobNumber !== undefined) locked.add("proposedJobNumber");
-  if (input.scope !== undefined) locked.add("proposedScope");
+  if (input.scope !== undefined) {
+    locked.add("proposedScope");
+    locked.add("proposedScopeDetail");
+  }
   if (input.notes !== undefined) locked.add("proposedNotes");
 
   const nextName =
@@ -472,7 +476,14 @@ export async function updateBidCandidateReview(input: {
       ...(input.estimatorUserId !== undefined
         ? { proposedEstimatorUserId: input.estimatorUserId }
         : {}),
-      ...(input.scope !== undefined ? { proposedScope: input.scope } : {}),
+      ...(input.scope !== undefined
+        ? {
+            proposedScope: input.scope,
+            proposedScopeDetail: scopeDetailFromUserText(
+              input.scope
+            ) as unknown as Prisma.InputJsonValue,
+          }
+        : {}),
       ...(input.notes !== undefined ? { proposedNotes: input.notes } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.reviewNotes !== undefined

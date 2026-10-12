@@ -109,10 +109,14 @@ describe("updateBidQuoteStaging", () => {
           displayName: "Maple Grove Quote",
           extractedAmount: 184500,
           extractedScope: "Structural Steel",
+          extractedScopeDetail: expect.objectContaining({
+            extractionMethod: "USER_EDITED",
+          }),
           userEditedFields: expect.arrayContaining([
             "displayName",
             "extractedAmount",
             "extractedScope",
+            "extractedScopeDetail",
           ]),
         }),
       })

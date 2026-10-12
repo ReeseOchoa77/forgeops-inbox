@@ -2,20 +2,36 @@
  * Helpers deciding when optional AI enrichment is warranted for Bid/Quote staging.
  */
 
+import {
+  isDetailedScopeComplete,
+  type DetailedScope,
+} from "./scope-detail.js";
+
 export function bidFieldsNeedAiEnrichment(fields: {
   projectName: string | null;
   customerName: string | null;
   bidDueAt: Date | string | null;
   projectNumber: string | null;
   scope?: string | null;
+  /** When false/undefined with evidence available, AI may enrich detailed scope. */
+  scopeDetailComplete?: boolean;
+  /** Evidence text available for scope enrichment (body or PDF). */
+  hasScopeEvidence?: boolean;
 }): boolean {
   const hasName = Boolean(fields.projectName?.trim());
   const hasDue = fields.bidDueAt != null && String(fields.bidDueAt).length > 0;
   const hasCustomer = Boolean(fields.customerName?.trim());
-  // Complete enough for READY without AI.
+
+  // Detailed scope incomplete with usable evidence → AI enrichment allowed.
+  if (
+    fields.hasScopeEvidence &&
+    fields.scopeDetailComplete === false
+  ) {
+    return true;
+  }
+
+  // Complete enough for READY without AI (identity fields).
   if (hasName && hasDue && hasCustomer) return false;
-  // Name alone with due is often enough — still enrich if customer missing? Prefer
-  // AI only when name OR due missing (operationally important).
   if (hasName && hasDue) return false;
   return true;
 }
@@ -23,17 +39,25 @@ export function bidFieldsNeedAiEnrichment(fields: {
 export function quoteFieldsNeedAiEnrichment(fields: {
   amount: number | null;
   scope: string | null;
+  scopeDetail?: DetailedScope | null;
   /** PDF text usable but deterministic missed amount/scope */
   hasUsablePdfText?: boolean;
+  hasBodyEvidence?: boolean;
 }): boolean {
-  if (fields.amount != null && fields.scope) return false;
-  if (fields.amount != null && !fields.hasUsablePdfText) return false;
-  // Amount missing with PDF evidence → AI may help; or scope missing with PDF.
-  if (fields.hasUsablePdfText && (fields.amount == null || !fields.scope)) {
+  const detailComplete = isDetailedScopeComplete(fields.scopeDetail);
+  const hasEvidence = Boolean(fields.hasUsablePdfText || fields.hasBodyEvidence);
+
+  // Generic trade-only scope is incomplete — allow AI when evidence exists.
+  if (!detailComplete && hasEvidence) return true;
+
+  if (fields.amount != null && detailComplete) return false;
+  if (fields.amount != null && !fields.hasUsablePdfText && detailComplete) {
+    return false;
+  }
+  if (fields.hasUsablePdfText && (fields.amount == null || !detailComplete)) {
     return true;
   }
-  // Body-only weak extract with neither amount nor scope → AI optional.
-  return fields.amount == null && !fields.scope;
+  return fields.amount == null && !detailComplete;
 }
 
 /** Deterministic Quote→Bid scores in this band may use AI shortlist adjudication. */
@@ -46,7 +70,6 @@ export function quoteMatchNeedsAiAdjudication(input: {
   const { bestScore, secondScore, autoLinkThreshold, reviewThreshold } = input;
   if (bestScore >= autoLinkThreshold) return false;
   if (bestScore < reviewThreshold) return false;
-  // Ambiguous band: either mid score or tight race with runner-up.
   if (secondScore != null && bestScore - secondScore < 0.12) return true;
   return bestScore < autoLinkThreshold && bestScore >= reviewThreshold;
 }

@@ -1,17 +1,13 @@
 /**
- * Deterministic Quote field extraction from email subject/body/filenames.
- * Never hallucinates amounts — returns null when evidence is weak.
+ * Deterministic Quote field extraction from email subject/body/filenames/PDF text.
+ * Never hallucinates amounts or detailed scope items.
  */
 
-const SCOPE_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /\bstructural\s+steel\b/i, label: "Structural steel" },
-  { re: /\bmisc(?:ellaneous)?\.?\s+metals?\b/i, label: "Miscellaneous metals" },
-  { re: /\bstairs?\s+and\s+rails?\b/i, label: "Stairs and rails" },
-  { re: /\bsteel\s+package\b/i, label: "Steel package" },
-  { re: /\bjoists?\s*(?:\/|&|and)?\s*deck\b/i, label: "Joists/deck" },
-  { re: /\bstructural\b.*\bmisc/i, label: "Structural + miscellaneous metals" },
-  { re: /\berection\b/i, label: "Erection" },
-];
+import {
+  extractDetailedScopeDeterministic,
+  scopeSummaryString,
+  type DetailedScope,
+} from "./scope-detail.js";
 
 const AMOUNT_PATTERNS: RegExp[] = [
   /(?:total|quote|amount|price|sum)\s*[:#]?\s*\$?\s*([\d,]{2,}(?:\.\d{2})?)/i,
@@ -42,12 +38,12 @@ export function extractQuoteFieldsDeterministic(input: {
   pdfText?: string | null;
 }): {
   scope: string | null;
+  scopeDetail: DetailedScope;
   amount: number | null;
   currency: string | null;
   notes: string | null;
   evidence: string[];
   confidence: number;
-  /** Attachment ids are not known here — caller may append. */
   amountSource: "EMAIL_BODY" | "PDF_TEXT" | null;
   scopeSource: "EMAIL_BODY" | "ATTACHMENT_FILENAME" | "PDF_TEXT" | null;
 } {
@@ -55,34 +51,34 @@ export function extractQuoteFieldsDeterministic(input: {
   const body = input.bodyText ?? "";
   const pdf = input.pdfText ?? "";
   const text = `${subject}\n${body}`;
-  const attachments = (input.attachmentNames ?? []).join(" ");
   const evidence: string[] = [];
   let confidence = 0.2;
 
-  let scope: string | null = null;
+  const scopeDetail = extractDetailedScopeDeterministic({
+    ...(input.subject !== undefined ? { subject: input.subject } : {}),
+    ...(input.bodyText !== undefined ? { bodyText: input.bodyText } : {}),
+    ...(input.attachmentNames !== undefined
+      ? { attachmentNames: input.attachmentNames }
+      : {}),
+    ...(input.pdfText !== undefined ? { pdfText: input.pdfText } : {}),
+  });
+  const scope = scopeSummaryString(scopeDetail);
   let scopeSource: "EMAIL_BODY" | "ATTACHMENT_FILENAME" | "PDF_TEXT" | null =
     null;
-  for (const p of SCOPE_PATTERNS) {
-    if (p.re.test(text)) {
-      scope = p.label;
-      scopeSource = "EMAIL_BODY";
-      evidence.push(`scope:${p.label}`);
-      confidence += 0.25;
-      break;
-    }
-    if (p.re.test(attachments)) {
-      scope = p.label;
-      scopeSource = "ATTACHMENT_FILENAME";
-      evidence.push(`scope:${p.label}:filename`);
-      confidence += 0.25;
-      break;
-    }
-    if (pdf && p.re.test(pdf)) {
-      scope = p.label;
-      scopeSource = "PDF_TEXT";
-      evidence.push(`scope:${p.label}:pdf`);
-      confidence += 0.25;
-      break;
+  if (scopeDetail.items.length || scopeDetail.work.length || scopeDetail.tradeCategory) {
+    const src =
+      scopeDetail.items[0]?.source ??
+      scopeDetail.work[0]?.source ??
+      "EMAIL_BODY";
+    if (src === "PDF_TEXT") scopeSource = "PDF_TEXT";
+    else if (src === "ATTACHMENT_FILENAME") scopeSource = "ATTACHMENT_FILENAME";
+    else scopeSource = "EMAIL_BODY";
+    if (scopeDetail.detailedComplete) {
+      evidence.push(`scope_items:${scopeDetail.items.length}`);
+      confidence += 0.3;
+    } else if (scopeDetail.tradeCategory) {
+      evidence.push(`scope_trade:${scopeDetail.tradeCategory}`);
+      confidence += 0.1;
     }
   }
 
@@ -94,8 +90,6 @@ export function extractQuoteFieldsDeterministic(input: {
     if (!m?.[1]) continue;
     const parsed = parseMoney(m[1]);
     if (parsed == null) continue;
-    // Require an explicit money cue — bare $NNNN alone is accepted only if >= 1000
-    // and pattern matched; avoid tiny/phone-like numbers.
     if (parsed < 100) continue;
     amount = parsed;
     currency = "USD";
@@ -130,6 +124,7 @@ export function extractQuoteFieldsDeterministic(input: {
 
   return {
     scope,
+    scopeDetail,
     amount,
     currency,
     notes: notes.length ? notes.slice(0, 6).join("; ") : null,

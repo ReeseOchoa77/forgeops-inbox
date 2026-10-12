@@ -353,6 +353,15 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             proposedJobNumber: c.proposedJobNumber,
             proposedEstimatorUserId: c.proposedEstimatorUserId,
             proposedScope: c.proposedScope,
+            proposedScopeDetail: c.proposedScopeDetail,
+            scopeItemCount: (() => {
+              const d = c.proposedScopeDetail as {
+                items?: unknown[];
+                work?: unknown[];
+              } | null;
+              if (!d || typeof d !== "object") return 0;
+              return (d.items?.length ?? 0) + (d.work?.length ?? 0);
+            })(),
             proposedNotes: c.proposedNotes,
             proposedExistingJobId: c.proposedExistingJobId,
             proposedExistingJob: c.proposedExistingJob,
@@ -465,6 +474,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               id: true,
               sourceSubject: true,
               extractedScope: true,
+              extractedScopeDetail: true,
               extractedAmount: true,
               currency: true,
               extractedNotes: true,
@@ -494,6 +504,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           proposedJobNumber: c.proposedJobNumber,
           proposedEstimatorUserId: c.proposedEstimatorUserId,
           proposedScope: c.proposedScope,
+          proposedScopeDetail: c.proposedScopeDetail,
           proposedNotes: c.proposedNotes,
           proposedExistingJobId: c.proposedExistingJobId,
           proposedExistingJob: c.proposedExistingJob,
@@ -516,6 +527,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             id: q.id,
             sourceSubject: q.sourceSubject,
             extractedScope: q.extractedScope,
+            extractedScopeDetail: q.extractedScopeDetail,
             extractedAmount:
               q.extractedAmount != null ? Number(q.extractedAmount) : null,
             currency: q.currency,

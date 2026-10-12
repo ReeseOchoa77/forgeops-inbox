@@ -12,6 +12,12 @@ import {
   StructuredOutputValidationError,
 } from "../openai/responses-json.js";
 import { buildStageValidationFailedLog } from "../openai/structured-output-diagnostics.js";
+import {
+  parseAiScopeDetail,
+  SCOPE_DETAIL_JSON_SCHEMA_FRAGMENT,
+  SCOPE_DETAIL_PROMPT_RULES,
+  type AiScopeDetailPayload,
+} from "./scope-detail-parse.js";
 
 export const BID_FIELD_EXTRACT_MODEL = DEFAULT_CLASSIFICATION_AI_MODEL;
 
@@ -21,7 +27,6 @@ export type BidFieldExtractionInput = {
   senderName?: string | null;
   senderEmail?: string | null;
   pdfFilenames?: string[];
-  /** Bounded relevant PDF text (already section-selected). */
   pdfText?: string | null;
   deterministic: {
     projectName: string | null;
@@ -39,7 +44,9 @@ export type BidFieldExtractionResult = {
   projectNumber: string | null;
   bidDueAt: string | null;
   location: string | null;
+  /** Legacy compact summary — prefer scopeDetail. */
   scope: string | null;
+  scopeDetail: AiScopeDetailPayload | null;
   notes: string | null;
   confidence: number | null;
   fieldStatus: Record<string, "FOUND" | "INFERRED" | "UNKNOWN">;
@@ -55,6 +62,7 @@ Return ONLY JSON:
   "bidDueAt": "YYYY-MM-DD" | null,
   "location": string | null,
   "scope": string | null,
+  ${SCOPE_DETAIL_JSON_SCHEMA_FRAGMENT},
   "notes": string | null,
   "confidence": number | null,
   "fieldStatus": {
@@ -75,7 +83,8 @@ CRITICAL — do NOT invent operational Job data:
 - Prefer null over guessing for bidDueAt, projectNumber, customerName, projectName.
 - bidDueAt is BID SUBMISSION deadline only (not pre-bid / RFI / meeting).
 - customerName is inviting GC/CM/organization — not a person, not a bidding platform.
-- scope is fabrication scope when stated (structural steel, misc metals, etc.).
+- "scope" may be a short summary; put concrete requested items/work in scopeDetail.
+${SCOPE_DETAIL_PROMPT_RULES}
 - Deterministic hints may be wrong wrappers — override only with stronger evidence.
 - Never invent prices.
 
@@ -91,6 +100,9 @@ function buildUserPrompt(input: BidFieldExtractionInput): string {
     `senderEmail: ${input.senderEmail?.trim() || "(empty)"}`,
     `pdfFilenames: ${pdfs.length ? pdfs.join(" | ") : "(none)"}`,
     `deterministic: ${JSON.stringify(input.deterministic)}`,
+    "",
+    "Task: extract identity fields AND concrete Bid-request scope items/work from evidence.",
+    "Do not invent a standard structural-steel bill of materials.",
     "",
     "Email body:",
     body || "(empty)",
@@ -138,6 +150,7 @@ function parseResult(raw: unknown): BidFieldExtractionResult {
     bidDueAt: pick("bidDueAt"),
     location: pick("location"),
     scope: pick("scope"),
+    scopeDetail: parseAiScopeDetail(o.scopeDetail),
     notes: pick("notes"),
     confidence: conf,
     fieldStatus: {
@@ -160,6 +173,7 @@ export function emptyBidFieldExtractionResult(): BidFieldExtractionResult {
     bidDueAt: null,
     location: null,
     scope: null,
+    scopeDetail: null,
     notes: null,
     confidence: null,
     fieldStatus: {
@@ -192,7 +206,7 @@ export class OpenAIBidFieldExtractor {
       model: this.model,
       instructions: systemPrompt,
       userInput: buildUserPrompt(input),
-      maxOutputTokens: 600,
+      maxOutputTokens: 900,
     });
     try {
       const parsed = await createJsonObjectResponse(

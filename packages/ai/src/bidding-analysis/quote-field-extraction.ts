@@ -11,6 +11,12 @@ import {
   StructuredOutputValidationError,
 } from "../openai/responses-json.js";
 import { buildStageValidationFailedLog } from "../openai/structured-output-diagnostics.js";
+import {
+  parseAiScopeDetail,
+  SCOPE_DETAIL_JSON_SCHEMA_FRAGMENT,
+  SCOPE_DETAIL_PROMPT_RULES,
+  type AiScopeDetailPayload,
+} from "./scope-detail-parse.js";
 
 export const QUOTE_FIELD_EXTRACT_MODEL = DEFAULT_CLASSIFICATION_AI_MODEL;
 
@@ -30,6 +36,7 @@ export type QuoteFieldExtractionInput = {
 export type QuoteFieldExtractionResult = {
   displayName: string | null;
   scope: string | null;
+  scopeDetail: AiScopeDetailPayload | null;
   amount: number | null;
   currency: string | null;
   revision: string | null;
@@ -48,6 +55,7 @@ Return ONLY JSON:
 {
   "displayName": string | null,
   "scope": string | null,
+  ${SCOPE_DETAIL_JSON_SCHEMA_FRAGMENT},
   "amount": number | null,
   "currency": "USD" | string | null,
   "revision": string | null,
@@ -76,7 +84,9 @@ CRITICAL:
 - amount must appear explicitly as money in evidence; else null + UNKNOWN.
 - Prefer FOUND only when clearly present; INFERRED only with strong support; else UNKNOWN/null.
 - revision may be "Rev 2", "Revised", quote number if explicit.
-- scope is fabrication scope (structural steel, misc metals, etc.) when stated.
+- "scope" may be a short summary; put concrete quoted items/work in scopeDetail.
+${SCOPE_DETAIL_PROMPT_RULES}
+- Prefer PDF proposal/inclusions/exclusions/schedule-of-values language when present.
 - Never hallucinate total price from unrelated numbers (phone, dates, qty alone).
 
 json`;
@@ -89,6 +99,9 @@ function buildUserPrompt(input: QuoteFieldExtractionInput): string {
     `Subject: ${input.subject || "(empty)"}`,
     `attachments: ${names.length ? names.join(" | ") : "(none)"}`,
     `deterministic: ${JSON.stringify(input.deterministic)}`,
+    "",
+    "Task: extract Quote amount/identity AND concrete Quote scope items/work from evidence.",
+    "Do not invent a standard structural-steel bill of materials.",
     "",
     "Email body:",
     body || "(empty)",
@@ -135,16 +148,18 @@ function parseResult(raw: unknown): QuoteFieldExtractionResult {
       : null;
 
   const amountStatus = statusOf("amount");
-  const amount =
-    amountStatus === "UNKNOWN" ? null : asAmount(o.amount);
+  const amount = amountStatus === "UNKNOWN" ? null : asAmount(o.amount);
 
   return {
     displayName:
       statusOf("displayName") === "UNKNOWN" ? null : asNullString(o.displayName),
     scope: statusOf("scope") === "UNKNOWN" ? null : asNullString(o.scope),
+    scopeDetail: parseAiScopeDetail(o.scopeDetail),
     amount,
     currency:
-      statusOf("currency") === "UNKNOWN" ? null : asNullString(o.currency) ?? (amount != null ? "USD" : null),
+      statusOf("currency") === "UNKNOWN"
+        ? null
+        : asNullString(o.currency) ?? (amount != null ? "USD" : null),
     revision:
       statusOf("revision") === "UNKNOWN" ? null : asNullString(o.revision),
     projectName:
@@ -180,6 +195,7 @@ export function emptyQuoteFieldExtractionResult(): QuoteFieldExtractionResult {
   return {
     displayName: null,
     scope: null,
+    scopeDetail: null,
     amount: null,
     currency: null,
     revision: null,
@@ -222,7 +238,7 @@ export class OpenAIQuoteFieldExtractor {
       model: this.model,
       instructions: systemPrompt,
       userInput: buildUserPrompt(input),
-      maxOutputTokens: 600,
+      maxOutputTokens: 900,
     });
     try {
       const parsed = await createJsonObjectResponse(

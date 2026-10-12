@@ -6,6 +6,7 @@ import {
   type BidEmailAnalyzeProgressView,
   type BidFolderDiscoveryItem,
   type BidQuoteStagingSummary,
+  type BiddingScopeDetailView,
   type ConnectionSummary,
 } from '../api'
 import {
@@ -105,6 +106,113 @@ function existingJobLabel(status: string | undefined): string {
     default:
       return status || '—'
   }
+}
+
+function scopeListPreview(c: BidCandidateSummary): string {
+  const n = c.scopeItemCount
+  if (typeof n === 'number' && n > 0) {
+    return `Scope: ${n} item${n === 1 ? '' : 's'}`
+  }
+  if (c.proposedScope?.trim()) return c.proposedScope
+  return 'Scope: Needs Review'
+}
+
+function ScopeDetailBlock({
+  title,
+  detail,
+  fallback,
+}: {
+  title: string
+  detail?: BiddingScopeDetailView | null
+  fallback?: string | null
+}) {
+  const items = detail?.items ?? []
+  const work = detail?.work ?? []
+  const exclusions = detail?.exclusions ?? []
+  const qualifications = detail?.qualifications ?? []
+  const hasStructured =
+    items.length > 0 ||
+    work.length > 0 ||
+    exclusions.length > 0 ||
+    qualifications.length > 0
+
+  return (
+    <div style={{ marginBottom: 12, fontSize: 13 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{title}</div>
+      {detail?.tradeCategory ? (
+        <div style={{ color: '#666', marginBottom: 6, fontSize: 12 }}>
+          Trade/category: {detail.tradeCategory}
+          {!detail.detailedComplete ? ' · detailed scope incomplete' : ''}
+        </div>
+      ) : null}
+      {hasStructured ? (
+        <>
+          {items.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ color: '#888', fontSize: 12 }}>Items / Work products</div>
+              <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
+                {items.map((i) => (
+                  <li key={`i-${i.name}`}>
+                    {i.name}
+                    {i.details ? (
+                      <span style={{ color: '#888' }}> — {i.details}</span>
+                    ) : null}
+                    {i.source ? (
+                      <span style={{ color: '#aaa', fontSize: 11 }}> ({i.source})</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {work.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ color: '#888', fontSize: 12 }}>Work performed</div>
+              <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
+                {work.map((i) => (
+                  <li key={`w-${i.name}`}>{i.name}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {exclusions.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ color: '#888', fontSize: 12 }}>Exclusions</div>
+              <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
+                {exclusions.map((i) => (
+                  <li key={`e-${i.name}`}>
+                    {i.name}
+                    {i.details ? (
+                      <span style={{ color: '#888' }}> — {i.details}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {qualifications.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ color: '#888', fontSize: 12 }}>Qualifications</div>
+              <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
+                {qualifications.map((i) => (
+                  <li key={`q-${i.name}`}>
+                    {i.name}
+                    {i.details ? (
+                      <span style={{ color: '#888' }}> — {i.details}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div style={{ color: '#666' }}>
+          {fallback?.trim() || 'Detailed scope unknown / needs review'}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function extractionStatusLabel(input: {
@@ -329,7 +437,18 @@ export function BiddingFolderAnalysisView({
             : ''
         )
         setEditNotes(res.candidate.proposedNotes ?? '')
-        setEditScope(res.candidate.proposedScope ?? '')
+        {
+          const d = res.candidate.proposedScopeDetail
+          const lines = [
+            ...(d?.items ?? []).map((i) => i.name),
+            ...(d?.work ?? []).map((i) => i.name),
+          ]
+          setEditScope(
+            lines.length
+              ? lines.join('\n')
+              : res.candidate.proposedScope ?? ''
+          )
+        }
         setEditing(false)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load candidate')
@@ -1225,13 +1344,13 @@ export function BiddingFolderAnalysisView({
                             style={{
                               fontSize: 11,
                               color: '#888',
-                              maxWidth: 180,
+                              maxWidth: 200,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            {c.proposedNotes || ''}
+                            {scopeListPreview(c)}
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px' }}>
@@ -1372,11 +1491,12 @@ export function BiddingFolderAnalysisView({
                         />
                       </label>
                       <label>
-                        Fabrication scope
+                        Scope items (one per line)
                         <textarea
                           value={editScope}
                           onChange={(e) => setEditScope(e.target.value)}
-                          rows={2}
+                          rows={4}
+                          placeholder={'Beams\nColumns\nSteel stairs\nHandrails'}
                           style={{ width: '100%', marginTop: 2 }}
                         />
                       </label>
@@ -1439,8 +1559,6 @@ export function BiddingFolderAnalysisView({
                               .join(', ')
                           : formatMoney(detail.quoteAmount, detail.quoteCurrency)}
                       </dd>
-                      <dt style={{ color: '#888' }}>Scope</dt>
-                      <dd style={{ margin: 0 }}>{detail.proposedScope || '—'}</dd>
                       <dt style={{ color: '#888' }}>Notes</dt>
                       <dd style={{ margin: 0 }}>{detail.proposedNotes || '—'}</dd>
                       <dt style={{ color: '#888' }}>Extract</dt>
@@ -1452,6 +1570,27 @@ export function BiddingFolderAnalysisView({
                       </dd>
                     </dl>
                   )}
+
+                  {!editing ? (
+                    <ScopeDetailBlock
+                      title="Bid scope (requested)"
+                      detail={detail.proposedScopeDetail}
+                      fallback={detail.proposedScope}
+                    />
+                  ) : null}
+
+                  {!editing && detail.quotes && detail.quotes.length > 0 ? (
+                    <div style={{ marginBottom: 12 }}>
+                      {detail.quotes.map((q) => (
+                        <ScopeDetailBlock
+                          key={q.id}
+                          title={`Quote scope · ${q.matchStatus}`}
+                          detail={q.extractedScopeDetail}
+                          fallback={q.extractedScope}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
 
                   <div
                     style={{
@@ -1741,7 +1880,13 @@ export function BiddingFolderAnalysisView({
                       })()}
                     </td>
                     <td style={{ padding: '8px 10px' }}>
-                      {q.extractedScope || '—'}
+                      {(() => {
+                        const n =
+                          (q.extractedScopeDetail?.items?.length ?? 0) +
+                          (q.extractedScopeDetail?.work?.length ?? 0)
+                        if (n > 0) return `${n} item${n === 1 ? '' : 's'}`
+                        return q.extractedScope || 'Needs Review'
+                      })()}
                     </td>
                     <td style={{ padding: '8px 10px' }}>
                       {formatMoney(q.extractedAmount, q.currency)}

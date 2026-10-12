@@ -2449,7 +2449,10 @@ model BidCandidate {
   proposedBidDueAt        DateTime?
   proposedEstimatorUserId String?
   proposedJobNumber       String?
+  /// Compact scope summary for lists (e.g. "4 items: Beams, Columns…").
   proposedScope           String?
+  /// Structured scope items/work/exclusions (JSON DetailedScope). Independent of Quote scope.
+  proposedScopeDetail     Json?
   proposedNotes           String?
   /// Keys locked against re-analyze overwrite (e.g. ["proposedProjectName"]).
   userEditedFields        Json?
@@ -2495,7 +2498,10 @@ model BidQuoteStaging {
   sourceSubject         String?
   /// Optional user-edited display title; EmailMessage.subject is never overwritten.
   displayName           String?
+  /// Compact Quote scope summary for lists.
   extractedScope        String?
+  /// Structured Quote scope items/work/exclusions (JSON DetailedScope). Independent of Bid scope.
+  extractedScopeDetail  Json?
   extractedAmount       Decimal?            @db.Decimal(14, 2)
   currency              String?
   extractedNotes        String?

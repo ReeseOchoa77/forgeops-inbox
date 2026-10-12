@@ -4,7 +4,7 @@
  */
 
 const SIGNAL_RE =
-  /\b(total|price|quote|proposal|scope|structural\s+steel|misc(?:ellaneous)?\.?\s+metals?|project|job\s*#?|revision|addendum|bid\s+due|amount|sum|fabricat)/i;
+  /\b(total|price|quote|proposal|scope|inclusions?|exclusions?|qualifications?|schedule\s+of\s+values|line\s+items?|structural\s+steel|misc(?:ellaneous)?\.?\s+metals?|project|job\s*#?|revision|addendum|bid\s+due|amount|sum|fabricat|beams?|columns?|stairs?|rail)/i;
 
 const DEFAULT_MAX_CHARS = 12_000;
 const WINDOW_CHARS = 900;
