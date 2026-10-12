@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   ApiRequestError,
-  type BidCandidateSummary,
-  type BidEmailAnalyzeProgressView,
   type ConnectionSummary,
   type DiscoveredFolderItem,
   type JobLookup,
@@ -122,17 +120,17 @@ interface Props {
   /** Global inbox selection — used as initial mailbox hint only. */
   connectionId: string
   userRole?: string
+  /** When true, omit page-level Email Analysis H1 (parent EmailAnalysisView owns it). */
+  embedded?: boolean
 }
 
 /**
- * Workspace → Email Analysis: native /Projects folder discovery + Job matching.
- * Scan is explicit — never runs on Workspace mount.
+ * Project Folder Analysis: native /Projects folder discovery + Job matching.
+ * Scan is explicit — never runs on mount.
  */
-export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: Props) {
+export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER', embedded = false }: Props) {
   const canEdit = ['OWNER', 'ADMIN', 'MANAGER', 'MEMBER'].includes(userRole)
   const canAdmin = userRole === 'OWNER' || userRole === 'ADMIN'
-  const canRunBidAnalysis = userRole === 'OWNER' || userRole === 'ADMIN' || userRole === 'MANAGER'
-  const canPromoteBid = userRole === 'OWNER' || userRole === 'ADMIN'
 
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [selectedConnectionId, setSelectedConnectionId] = useState('')
@@ -152,22 +150,8 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeRunId, setAnalyzeRunId] = useState<string | null>(null)
   const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeRunProgressView | null>(null)
-  const [bidAnalyzing, setBidAnalyzing] = useState(false)
-  const [bidRunId, setBidRunId] = useState<string | null>(null)
-  const [bidProgress, setBidProgress] = useState<BidEmailAnalyzeProgressView | null>(null)
-  const [bidRunStatus, setBidRunStatus] = useState<string | null>(null)
-  const [bidCandidates, setBidCandidates] = useState<BidCandidateSummary[]>([])
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
-  const [candidateDraft, setCandidateDraft] = useState({
-    projectName: '',
-    customerName: '',
-    bidDueAt: '',
-    jobNumber: '',
-  })
-  const [promoteBusy, setPromoteBusy] = useState(false)
   const loadSeqRef = useRef(0)
   const pollGenRef = useRef(0)
-  const bidPollGenRef = useRef(0)
 
   const outlookConnections = useMemo(
     () => connections.filter(isOutlookConnection),
@@ -478,151 +462,6 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
     await startAnalyzeForFolderIds(folderIds)
   }
 
-  const loadBidCandidates = useCallback(async () => {
-    try {
-      const res = await api.listBidCandidates(workspaceId, { limit: 100 })
-      setBidCandidates(res.candidates)
-    } catch {
-      /* non-fatal */
-    }
-  }, [workspaceId])
-
-  const pollBidRun = useCallback(
-    async (runId: string, gen: number) => {
-      for (;;) {
-        if (gen !== bidPollGenRef.current) return
-        const res = await api.getBidAnalysisRun(workspaceId, runId)
-        if (gen !== bidPollGenRef.current) return
-        setBidProgress(res.run.progress)
-        setBidRunStatus(res.run.status)
-        if (res.run.errorMessage) setError(res.run.errorMessage)
-        if (!['PENDING', 'RUNNING'].includes(res.run.status)) {
-          setBidAnalyzing(false)
-          await loadBidCandidates()
-          return
-        }
-        await new Promise((r) => setTimeout(r, 1500))
-      }
-    },
-    [loadBidCandidates, workspaceId]
-  )
-
-  useEffect(() => {
-    if (!selectedConnectionId) return
-    let cancelled = false
-    const gen = ++bidPollGenRef.current
-    void api
-      .getLatestBidAnalysisRun(workspaceId, selectedConnectionId)
-      .then(async (res) => {
-        if (cancelled || gen !== bidPollGenRef.current || !res.run) return
-        setBidRunId(res.run.id)
-        setBidProgress(res.run.progress)
-        setBidRunStatus(res.run.status)
-        if (['PENDING', 'RUNNING'].includes(res.run.status)) {
-          setBidAnalyzing(true)
-          await pollBidRun(res.run.id, gen)
-        }
-      })
-      .catch(() => {})
-    void loadBidCandidates()
-    return () => {
-      cancelled = true
-      bidPollGenRef.current += 1
-    }
-  }, [loadBidCandidates, pollBidRun, selectedConnectionId, workspaceId])
-
-  const handleBidAnalysis = async () => {
-    if (!selectedConnectionId || !selectedConn) {
-      setError('No Outlook mailbox selected')
-      return
-    }
-    if (!isProjectFolderEligible(selectedConn)) {
-      setError('Outlook authorization required')
-      return
-    }
-    setBidAnalyzing(true)
-    setError('')
-    setBidProgress(null)
-    const gen = ++bidPollGenRef.current
-    try {
-      const { runId } = await api.startBidAnalysis(workspaceId, selectedConnectionId)
-      setBidRunId(runId)
-      await pollBidRun(runId, gen)
-    } catch (e) {
-      setBidAnalyzing(false)
-      setError(e instanceof Error ? e.message : 'Bid analysis failed')
-    }
-  }
-
-  const openCandidate = async (id: string) => {
-    setSelectedCandidateId(id)
-    try {
-      const res = await api.getBidCandidate(workspaceId, id)
-      const c = res.candidate
-      setCandidateDraft({
-        projectName: c.proposedProjectName ?? '',
-        customerName: c.proposedCustomerName ?? '',
-        bidDueAt: c.proposedBidDueAt ? c.proposedBidDueAt.slice(0, 10) : '',
-        jobNumber: c.proposedJobNumber ?? '',
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load candidate')
-    }
-  }
-
-  const handlePromoteCandidate = async (forceCreate = false) => {
-    if (!selectedCandidateId || !canPromoteBid) return
-    setPromoteBusy(true)
-    setError('')
-    try {
-      await api.promoteBidCandidate(workspaceId, selectedCandidateId, {
-        mode: 'create',
-        projectName: candidateDraft.projectName || undefined,
-        customerName: candidateDraft.customerName || null,
-        bidDueAt: candidateDraft.bidDueAt
-          ? new Date(`${candidateDraft.bidDueAt}T00:00:00.000Z`).toISOString()
-          : null,
-        jobNumber: candidateDraft.jobNumber || null,
-        confirmCreateDespiteExisting: forceCreate,
-      })
-      setSelectedCandidateId(null)
-      await loadBidCandidates()
-    } catch (e) {
-      if (
-        e instanceof ApiRequestError &&
-        (e.code === 'EXISTING_JOB' || /EXISTING_JOB|already exists/i.test(e.message))
-      ) {
-        if (
-          confirm(
-            `${e.message}\n\nCreate a new Bid anyway? (Cancel to keep reviewing)`
-          )
-        ) {
-          setPromoteBusy(false)
-          await handlePromoteCandidate(true)
-          return
-        }
-      }
-      setError(e instanceof Error ? e.message : 'Create Bid failed')
-    } finally {
-      setPromoteBusy(false)
-    }
-  }
-
-  const handleRejectCandidate = async () => {
-    if (!selectedCandidateId || !canPromoteBid) return
-    if (!confirm('Reject this proposed bid? It will not create a Job.')) return
-    setPromoteBusy(true)
-    try {
-      await api.rejectBidCandidate(workspaceId, selectedCandidateId)
-      setSelectedCandidateId(null)
-      await loadBidCandidates()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Reject failed')
-    } finally {
-      setPromoteBusy(false)
-    }
-  }
-
   const toggleFolderSelected = (folderId: string) => {
     setSelectedFolderIds((prev) => {
       const next = new Set(prev)
@@ -719,20 +558,24 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>
-        Email Analysis
-        {jobsTotal > 0 ? (
-          <span style={{ marginLeft: 8, fontSize: 14, fontWeight: 600, color: '#555' }}>
-            · {jobsTotal} job{jobsTotal !== 1 ? 's' : ''}
-          </span>
-        ) : null}
-      </h2>
+      {!embedded && (
+        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>
+          Project Folder Analysis
+          {jobsTotal > 0 ? (
+            <span style={{ marginLeft: 8, fontSize: 14, fontWeight: 600, color: '#555' }}>
+              · {jobsTotal} job{jobsTotal !== 1 ? 's' : ''}
+            </span>
+          ) : null}
+        </h2>
+      )}
+      {embedded && jobsTotal > 0 ? (
+        <p style={{ fontSize: 13, color: '#555', margin: '0 0 8px', fontWeight: 600 }}>
+          {jobsTotal} job{jobsTotal !== 1 ? 's' : ''}
+        </p>
+      ) : null}
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 8px' }}>
-        Separate operations: <strong>Project Folder Analysis</strong> maps{' '}
-        <code>/Projects</code> children to Jobs (excluding Bid Invites / Quotes).{' '}
-        <strong>Bid Analysis</strong> stages proposed bids from{' '}
-        <code>Projects/Bid Invites</code> + <code>Projects/Quotes</code> only — it never creates
-        BIDDING Jobs until you click Create Bid.
+        Maps Outlook <code>/Projects</code> children to existing Jobs. Bid Invites / Quotes are
+        bidding-workflow folders and are excluded here — use Bidding Folder Analysis for those.
       </p>
       <ol
         style={{
@@ -745,16 +588,13 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
       >
         <li>
           <strong>Scan Project Folders</strong> — enumerate /Projects folder names &amp; IDs, match to
-          existing Jobs (Bid Invites / Quotes are bidding-workflow folders, not project folders)
+          existing Jobs
         </li>
         <li>
           <strong>Review &amp; verify</strong> — accept suggestions or Match Job manually
         </li>
         <li>
           <strong>Analyze Emails</strong> — import/reuse messages from verified project folders only
-        </li>
-        <li>
-          <strong>Bid Analysis</strong> — stage Bid Invites / Quotes for human review, then Create Bid
         </li>
       </ol>
 
@@ -951,233 +791,7 @@ export function FoldersView({ workspaceId, connectionId, userRole = 'MEMBER' }: 
         )}
       </div>
 
-      <div className="card" style={{ marginBottom: 12, padding: 14 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Bid Analysis</div>
-            <p style={{ margin: 0, fontSize: 12, color: '#666', lineHeight: 1.45 }}>
-              Targets only <code>Projects/Bid Invites</code> and <code>Projects/Quotes</code>. Stages
-              proposed bids for review — never auto-creates operational BIDDING Jobs.
-            </p>
-          </div>
-          {canRunBidAnalysis && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={
-                bidAnalyzing ||
-                analyzing ||
-                scanning ||
-                !selectedConnectionId ||
-                !mailboxReady
-              }
-              onClick={() => void handleBidAnalysis()}
-            >
-              {bidAnalyzing ? 'Analyzing bidding folders…' : 'Analyze Bidding Folders'}
-            </button>
-          )}
-        </div>
-
-        {(bidAnalyzing || bidProgress) && (
-          <div style={{ marginTop: 12, fontSize: 12, color: '#333' }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              BID ANALYSIS
-              {bidRunStatus ? ` · ${bidRunStatus}` : ''}
-              {bidRunId && (
-                <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
-                  run {bidRunId.slice(0, 8)}…
-                </span>
-              )}
-            </div>
-            {bidProgress?.warning && (
-              <p style={{ margin: '0 0 6px', color: '#b71c1c' }}>{bidProgress.warning}</p>
-            )}
-            {bidProgress && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <span>
-                  Bid Invites: {bidProgress.bidInvitesScanned}
-                  {bidProgress.bidInvitesTotalEstimate != null
-                    ? ` / ${bidProgress.bidInvitesTotalEstimate}`
-                    : ''}
-                  {bidProgress.bidInvitesFolderFound ? '' : ' (folder missing)'}
-                </span>
-                <span>
-                  Quotes: {bidProgress.quotesScanned}
-                  {bidProgress.quotesTotalEstimate != null
-                    ? ` / ${bidProgress.quotesTotalEstimate}`
-                    : ''}
-                  {bidProgress.quotesFolderFound ? '' : ' (folder missing)'}
-                </span>
-                <span>
-                  Candidates: {bidProgress.candidatesCreated} new · {bidProgress.candidatesUpdated}{' '}
-                  updated
-                </span>
-                <span>Quotes matched: {bidProgress.quotesMatched}</span>
-                <span>Quotes unmatched: {bidProgress.quotesUnmatched}</span>
-                <span>
-                  Emails: {bidProgress.messagesCreated} new · {bidProgress.messagesExisting} reused
-                </span>
-                {bidProgress.currentFolderName && (
-                  <span>Scanning: {bidProgress.currentFolderName}</span>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {bidCandidates.length > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-              Bid Analysis Results
-              <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
-                {bidCandidates.filter((c) => c.status === 'READY').length} ready ·{' '}
-                {bidCandidates.filter((c) => c.status === 'NEEDS_REVIEW').length} needs review ·{' '}
-                {bidCandidates.filter((c) => c.status === 'CONFIRMED').length} confirmed
-              </span>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead>
-                  <tr style={{ textAlign: 'left', color: '#666' }}>
-                    <th style={{ padding: '6px 8px' }}>Project</th>
-                    <th style={{ padding: '6px 8px' }}>Customer</th>
-                    <th style={{ padding: '6px 8px' }}>Bid Due</th>
-                    <th style={{ padding: '6px 8px' }}>Invites</th>
-                    <th style={{ padding: '6px 8px' }}>Quotes</th>
-                    <th style={{ padding: '6px 8px' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bidCandidates.map((c) => (
-                    <tr
-                      key={c.id}
-                      onClick={() => void openCandidate(c.id)}
-                      style={{
-                        borderTop: '1px solid #eee',
-                        cursor: 'pointer',
-                        background:
-                          selectedCandidateId === c.id ? '#f5f9ff' : undefined,
-                      }}
-                    >
-                      <td style={{ padding: '6px 8px' }}>
-                        {c.proposedJobNumber ? `${c.proposedJobNumber} — ` : ''}
-                        {c.proposedProjectName ?? '—'}
-                      </td>
-                      <td style={{ padding: '6px 8px' }}>{c.proposedCustomerName ?? '—'}</td>
-                      <td style={{ padding: '6px 8px' }}>
-                        {c.proposedBidDueAt
-                          ? new Date(c.proposedBidDueAt).toLocaleDateString()
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '6px 8px' }}>{c.inviteCount}</td>
-                      <td style={{ padding: '6px 8px' }}>{c.quoteCount}</td>
-                      <td style={{ padding: '6px 8px' }}>{c.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {selectedCandidateId && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: 12,
-              border: '1px solid #ddd',
-              borderRadius: 6,
-              background: '#fafafa',
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Proposed Bid</div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                gap: 8,
-                marginBottom: 10,
-              }}
-            >
-              <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                Project Name
-                <input
-                  value={candidateDraft.projectName}
-                  onChange={(e) =>
-                    setCandidateDraft((d) => ({ ...d, projectName: e.target.value }))
-                  }
-                  style={{ padding: '6px 8px', fontSize: 13 }}
-                />
-              </label>
-              <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                Customer
-                <input
-                  value={candidateDraft.customerName}
-                  onChange={(e) =>
-                    setCandidateDraft((d) => ({ ...d, customerName: e.target.value }))
-                  }
-                  style={{ padding: '6px 8px', fontSize: 13 }}
-                />
-              </label>
-              <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                Bid Due
-                <input
-                  type="date"
-                  value={candidateDraft.bidDueAt}
-                  onChange={(e) =>
-                    setCandidateDraft((d) => ({ ...d, bidDueAt: e.target.value }))
-                  }
-                  style={{ padding: '6px 8px', fontSize: 13 }}
-                />
-              </label>
-              <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                Job Number
-                <input
-                  value={candidateDraft.jobNumber}
-                  onChange={(e) =>
-                    setCandidateDraft((d) => ({ ...d, jobNumber: e.target.value }))
-                  }
-                  style={{ padding: '6px 8px', fontSize: 13 }}
-                />
-              </label>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {canPromoteBid && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={promoteBusy}
-                  onClick={() => void handlePromoteCandidate(false)}
-                >
-                  Create Bid
-                </button>
-              )}
-              {canPromoteBid && (
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  disabled={promoteBusy}
-                  onClick={() => void handleRejectCandidate()}
-                >
-                  Reject
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setSelectedCandidateId(null)}
-              >
-                Close
-              </button>
-              {!canPromoteBid && (
-                <span style={{ fontSize: 12, color: '#888', alignSelf: 'center' }}>
-                  Only OWNER/ADMIN can Create Bid
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      
 
       {!selectedConnectionId ? (
         <div className="empty-state" style={{ padding: 24 }}>

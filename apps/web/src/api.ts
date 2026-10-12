@@ -704,6 +704,8 @@ export interface BidEmailAnalyzeProgressView {
   bidInvitesTotalEstimate: number | null;
   quotesScanned: number;
   quotesTotalEstimate: number | null;
+  bidInvitesFound?: number;
+  quotesFound?: number;
   messagesCreated: number;
   messagesExisting: number;
   candidatesCreated: number;
@@ -712,9 +714,30 @@ export interface BidEmailAnalyzeProgressView {
   quotesUnmatched: number;
   quotesLinkedToJob: number;
   aiCalls: number;
+  scanRangePreset?: string | null;
+  scanSinceAt?: string | null;
   currentPhase: string | null;
   currentFolderName: string | null;
   warning: string | null;
+  operation?: 'scan' | 'analyze' | null;
+}
+
+export interface BidFolderDiscoveryItem {
+  discoveryId: string;
+  role: 'BID_INVITE' | 'QUOTE';
+  lastSeenAt: string;
+  firstDiscoveredAt: string;
+  email: {
+    id: string;
+    subject: string | null;
+    senderName: string | null;
+    senderEmail: string;
+    sentAt: string;
+    receivedAt: string | null;
+    hasAttachments: boolean;
+    attachmentCount: number;
+    jobId: string | null;
+  };
 }
 
 export interface BidCandidateSummary {
@@ -2970,20 +2993,40 @@ export const api = {
       `/workspaces/${workspaceId}/project-folders/analyze-emails/latest?connectionId=${encodeURIComponent(connectionId)}`
     ),
 
-  startBidAnalysis: (workspaceId: string, connectionId: string) =>
-    request<{ status: string; runId: string }>(
-      `/workspaces/${workspaceId}/bid-analysis/analyze`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ connectionId }),
-      }
-    ),
+  startBidAnalysis: (
+    workspaceId: string,
+    connectionId: string,
+    opts?: {
+      operation?: 'scan' | 'analyze'
+      scanRangePreset?: string
+      customSinceAt?: string | null
+    }
+  ) =>
+    request<{
+      status: string;
+      runId: string;
+      operation?: 'scan' | 'analyze';
+      scanRangePreset?: string;
+      scanSinceAt?: string | null;
+    }>(`/workspaces/${workspaceId}/bid-analysis/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({
+        connectionId,
+        operation: opts?.operation ?? 'scan',
+        scanRangePreset: opts?.scanRangePreset ?? '90d',
+        ...(opts?.customSinceAt !== undefined
+          ? { customSinceAt: opts.customSinceAt }
+          : {}),
+      }),
+    }),
 
   getBidAnalysisRun: (workspaceId: string, runId: string) =>
     request<{
       run: {
         id: string;
         status: string;
+        scanRangePreset?: string | null;
+        scanSinceAt?: string | null;
         progress: BidEmailAnalyzeProgressView;
         errorMessage: string | null;
       };
@@ -2994,11 +3037,45 @@ export const api = {
       run: {
         id: string;
         status: string;
+        scanRangePreset?: string | null;
+        scanSinceAt?: string | null;
         progress: BidEmailAnalyzeProgressView;
         errorMessage: string | null;
       } | null;
     }>(
       `/workspaces/${workspaceId}/bid-analysis/runs/latest?connectionId=${encodeURIComponent(connectionId)}`
+    ),
+
+  listBidFolderDiscovery: (
+    workspaceId: string,
+    params: {
+      connectionId: string;
+      role: 'BID_INVITE' | 'QUOTE';
+      sort?: 'newest' | 'oldest';
+      search?: string;
+      page?: number;
+      pageSize?: number;
+    }
+  ) => {
+    const p = new URLSearchParams({
+      connectionId: params.connectionId,
+      role: params.role,
+      sort: params.sort ?? 'newest',
+      page: String(params.page ?? 1),
+      pageSize: String(params.pageSize ?? 50),
+    });
+    if (params.search) p.set('search', params.search);
+    return request<{
+      total: number;
+      page: number;
+      pageSize: number;
+      items: BidFolderDiscoveryItem[];
+    }>(`/workspaces/${workspaceId}/bid-analysis/discovery?${p.toString()}`);
+  },
+
+  getBidFolderDiscoveryCounts: (workspaceId: string, connectionId: string) =>
+    request<{ bidInvites: number; quotes: number }>(
+      `/workspaces/${workspaceId}/bid-analysis/discovery/counts?connectionId=${encodeURIComponent(connectionId)}`
     ),
 
   listBidCandidates: (

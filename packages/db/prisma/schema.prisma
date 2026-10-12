@@ -837,6 +837,7 @@ model EmailMessage {
   attachments      EmailAttachment[]
   linkedRfqs       JobRfq[]      @relation("JobRfqEmail")
   bidCandidateEmails BidCandidateEmail[]
+  bidFolderDiscoveries BidFolderDiscoveryEmail[]
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -2366,6 +2367,11 @@ model BidAnalysisRun {
   workspaceId       String
   inboxConnectionId String
   status            BidAnalysisRunStatus @default(PENDING)
+  /// Preset key: 30d | 90d | 180d | 365d | all | custom
+  scanRangePreset   String               @default("90d")
+  /// Graph lower bound (null = all history).
+  scanSinceAt       DateTime?
+  scanUntilAt       DateTime?
   /// Rolling progress JSON (folder counters, AI calls, etc.)
   progress          Json                 @default("{}")
   errorMessage      String?
@@ -2378,6 +2384,33 @@ model BidAnalysisRun {
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, inboxConnectionId, status])
+}
+
+/// Role of a discovered email under Bidding Folder Analysis (folder provenance).
+enum BidFolderDiscoveryRole {
+  BID_INVITE
+  QUOTE
+}
+
+/// Lightweight discovery index: canonical EmailMessage in Bid Invites / Quotes.
+/// Survives page reloads without re-scanning Graph. No bodies / binaries.
+model BidFolderDiscoveryEmail {
+  id                String                 @id @default(cuid())
+  workspaceId       String
+  inboxConnectionId String
+  emailMessageId    String
+  role              BidFolderDiscoveryRole
+  lastSeenRunId     String?
+  firstDiscoveredAt DateTime               @default(now())
+  lastSeenAt        DateTime               @default(now())
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  emailMessage      EmailMessage           @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, inboxConnectionId, emailMessageId])
+  @@index([workspaceId, inboxConnectionId, role, lastSeenAt])
+  @@index([emailMessageId])
+  @@index([workspaceId, inboxConnectionId, role])
 }
 
 /// Staging proposed bid — NOT a canonical Job until human confirmation.

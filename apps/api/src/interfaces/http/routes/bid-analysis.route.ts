@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
+  BIDDING_FOLDER_SCAN_RANGE_OPTIONS,
+  DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
   emptyBidEmailAnalyzeProgress,
   type BidEmailAnalyzeProgress,
 } from "@forgeops/shared";
@@ -11,6 +13,10 @@ import {
   BidEmailAnalyzeError,
   enqueueBidEmailAnalyze,
 } from "../../../application/services/enqueue-bid-email-analyze.js";
+import {
+  countBidFolderDiscoveryByRole,
+  listBidFolderDiscoveryEmails,
+} from "../../../application/services/list-bid-folder-discovery.js";
 import {
   PromoteBidCandidateError,
   canPromoteBidCandidate,
@@ -55,6 +61,9 @@ function serializeRun(run: {
   startedAt: Date | null;
   completedAt: Date | null;
   createdAt: Date;
+  scanRangePreset?: string;
+  scanSinceAt?: Date | null;
+  scanUntilAt?: Date | null;
 }) {
   const progress =
     run.progress && typeof run.progress === "object" && !Array.isArray(run.progress)
@@ -68,6 +77,9 @@ function serializeRun(run: {
     workspaceId: run.workspaceId,
     inboxConnectionId: run.inboxConnectionId,
     status: run.status,
+    scanRangePreset: run.scanRangePreset ?? progress.scanRangePreset,
+    scanSinceAt: run.scanSinceAt?.toISOString() ?? progress.scanSinceAt,
+    scanUntilAt: run.scanUntilAt?.toISOString() ?? null,
     progress,
     errorMessage: run.errorMessage,
     startedAt: run.startedAt,
@@ -91,16 +103,26 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
       }
 
       const body = z
-        .object({ connectionId: z.string().min(1) })
+        .object({
+          connectionId: z.string().min(1),
+          operation: z.enum(["scan", "analyze"]).default("scan"),
+          scanRangePreset: z.string().min(1).default(DEFAULT_BIDDING_FOLDER_SCAN_RANGE),
+          customSinceAt: z.string().min(1).nullable().optional(),
+        })
         .parse(request.body);
 
       try {
-        const { runId } = await enqueueBidEmailAnalyze({
+        const result = await enqueueBidEmailAnalyze({
           prisma: app.services.prisma,
           queue: app.services.bidEmailAnalyzeQueue,
           workspaceId,
           connectionId: body.connectionId,
           initiatedByUserId: auth.userId,
+          operation: body.operation,
+          scanRangePreset: body.scanRangePreset,
+          ...(body.customSinceAt !== undefined
+            ? { customSinceAt: body.customSinceAt }
+            : {}),
         });
 
         await app.services.auditEventLogger.log({
@@ -109,11 +131,22 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           entityType: "FOLDER_DISCOVERY",
           entityId: body.connectionId,
           action: "bid_analysis.analyze_queued",
-          metadata: { runId },
+          metadata: {
+            runId: result.runId,
+            operation: result.operation,
+            scanRangePreset: result.scanRangePreset,
+            scanSinceAt: result.scanSinceAt,
+          },
           request,
         });
 
-        return reply.code(202).send({ status: "queued", runId });
+        return reply.code(202).send({
+          status: "queued",
+          runId: result.runId,
+          operation: result.operation,
+          scanRangePreset: result.scanRangePreset,
+          scanSinceAt: result.scanSinceAt,
+        });
       } catch (e) {
         if (e instanceof BidEmailAnalyzeError) {
           const status =
@@ -121,13 +154,83 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               ? 404
               : e.code === "NOT_AUTHORIZED"
                 ? 401
-                : e.code === "ALREADY_RUNNING"
+                : e.code === "ALREADY_RUNNING" ||
+                    e.code === "INVALID_RANGE" ||
+                    e.code === "NO_DISCOVERY"
                   ? 409
                   : 502;
           return reply.code(status).send({ message: e.message, code: e.code });
         }
         throw e;
       }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/scan-range-options",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      return reply.send({
+        defaultPreset: DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
+        options: BIDDING_FOLDER_SCAN_RANGE_OPTIONS,
+      });
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/discovery",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      const query = z
+        .object({
+          connectionId: z.string().min(1),
+          role: z.enum(["BID_INVITE", "QUOTE"]),
+          sort: z.enum(["newest", "oldest"]).default("newest"),
+          search: z.string().optional(),
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await listBidFolderDiscoveryEmails({
+        prisma: app.services.prisma,
+        workspaceId,
+        connectionId: query.connectionId,
+        role: query.role,
+        sort: query.sort,
+        ...(query.search !== undefined ? { search: query.search } : {}),
+        page: query.page,
+        pageSize: query.pageSize,
+      });
+      return reply.send(result);
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/discovery/counts",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      const query = z
+        .object({ connectionId: z.string().min(1) })
+        .parse(request.query);
+      const counts = await countBidFolderDiscoveryByRole({
+        prisma: app.services.prisma,
+        workspaceId,
+        connectionId: query.connectionId,
+      });
+      return reply.send(counts);
     }
   );
 

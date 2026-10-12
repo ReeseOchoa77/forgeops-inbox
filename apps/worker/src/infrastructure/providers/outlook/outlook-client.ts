@@ -770,6 +770,8 @@ export class OutlookClient {
     folderId: string;
     pageSize?: number;
     pageCursor?: string | null;
+    /** Graph `$filter=receivedDateTime ge …` — omit for all history. */
+    receivedAfter?: Date | null;
   }): Promise<{
     items: OutlookMessageSnapshot[];
     nextPageCursor: string | null;
@@ -784,15 +786,24 @@ export class OutlookClient {
     const pageSize = Math.min(Math.max(input.pageSize ?? 50, 1), 50);
     const folderMap = await this.fetchFolderNames(tokenResult.accessToken);
 
-    const url: string =
-      input.pageCursor && input.pageCursor.startsWith("http")
-        ? input.pageCursor
-        : this.mailUrl(
-            `mailFolders/${encodeURIComponent(input.folderId)}/messages` +
-              `?$select=${MESSAGE_SELECT_FIELDS}` +
-              `&$orderby=receivedDateTime desc` +
-              `&$top=${pageSize}`
-          );
+    let url: string;
+    if (input.pageCursor && input.pageCursor.startsWith("http")) {
+      url = input.pageCursor;
+    } else {
+      const receivedAfter = input.receivedAfter ?? null;
+      const filter = receivedAfter
+        ? `&$filter=receivedDateTime ge ${receivedAfter
+            .toISOString()
+            .replace(/\.\d{3}Z$/, "Z")}`
+        : "";
+      url = this.mailUrl(
+        `mailFolders/${encodeURIComponent(input.folderId)}/messages` +
+          `?$select=${MESSAGE_SELECT_FIELDS}` +
+          filter +
+          `&$orderby=receivedDateTime desc` +
+          `&$top=${pageSize}`
+      );
+    }
 
     const response = await this.fetchWithThrottleRetry(url, {
       Authorization: `Bearer ${tokenResult.accessToken}`,

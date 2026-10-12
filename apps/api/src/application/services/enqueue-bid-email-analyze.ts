@@ -3,8 +3,13 @@ import {
   QueueNames,
   buildBidEmailAnalyzeJobId,
   emptyBidEmailAnalyzeProgress,
+  DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
+  isBiddingFolderScanRangePreset,
+  resolveBiddingFolderScanSinceAt,
   type BidEmailAnalyzeJobPayload,
   type BidEmailAnalyzeJobResult,
+  type BidEmailAnalyzeOperation,
+  type BiddingFolderScanRangePreset,
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
@@ -14,6 +19,8 @@ export class BidEmailAnalyzeError extends Error {
     | "NOT_OUTLOOK"
     | "NOT_AUTHORIZED"
     | "ALREADY_RUNNING"
+    | "INVALID_RANGE"
+    | "NO_DISCOVERY"
     | "ENQUEUE_FAILED";
 
   constructor(code: BidEmailAnalyzeError["code"], message: string) {
@@ -24,8 +31,8 @@ export class BidEmailAnalyzeError extends Error {
 }
 
 /**
- * Create BidAnalysisRun and enqueue Bid Invites/Quotes analysis.
- * Never creates Jobs — staging only.
+ * Create BidAnalysisRun and enqueue Bid Invites/Quotes discovery or analysis.
+ * Never creates Jobs — staging only. Scan date range constrains Graph queries.
  */
 export async function enqueueBidEmailAnalyze(input: {
   prisma: PrismaClient;
@@ -33,7 +40,17 @@ export async function enqueueBidEmailAnalyze(input: {
   workspaceId: string;
   connectionId: string;
   initiatedByUserId?: string;
-}): Promise<{ runId: string }> {
+  operation?: BidEmailAnalyzeOperation;
+  scanRangePreset?: string;
+  customSinceAt?: string | null;
+}): Promise<{
+  runId: string;
+  operation: BidEmailAnalyzeOperation;
+  scanRangePreset: string;
+  scanSinceAt: string | null;
+}> {
+  const operation: BidEmailAnalyzeOperation =
+    input.operation === "analyze" ? "analyze" : "scan";
   const connection = await input.prisma.inboxConnection.findFirst({
     where: {
       id: input.connectionId,
@@ -59,10 +76,46 @@ export async function enqueueBidEmailAnalyze(input: {
       "Bid analysis currently supports Outlook only"
     );
   }
-  if (!connection.encryptedRefreshToken) {
+  if (operation === "scan" && !connection.encryptedRefreshToken) {
     throw new BidEmailAnalyzeError(
       "NOT_AUTHORIZED",
-      "Mailbox is not authorized — reconnect OAuth before analyzing bidding folders"
+      "Mailbox is not authorized — reconnect OAuth before scanning bidding folders"
+    );
+  }
+
+  if (operation === "analyze") {
+    const discoveryCount = await input.prisma.bidFolderDiscoveryEmail.count({
+      where: {
+        workspaceId: input.workspaceId,
+        inboxConnectionId: connection.id,
+      },
+    });
+    if (discoveryCount === 0) {
+      throw new BidEmailAnalyzeError(
+        "NO_DISCOVERY",
+        "No discovered Bid Invite / Quote emails yet — run Scan Bidding Folders first"
+      );
+    }
+  }
+
+  const presetRaw = input.scanRangePreset ?? DEFAULT_BIDDING_FOLDER_SCAN_RANGE;
+  if (!isBiddingFolderScanRangePreset(presetRaw)) {
+    throw new BidEmailAnalyzeError("INVALID_RANGE", `Invalid scan range: ${presetRaw}`);
+  }
+  const preset: BiddingFolderScanRangePreset = presetRaw;
+
+  let scanSinceAt: Date | null;
+  try {
+    scanSinceAt = resolveBiddingFolderScanSinceAt({
+      preset,
+      ...(input.customSinceAt !== undefined
+        ? { customSinceAt: input.customSinceAt }
+        : {}),
+    });
+  } catch (e) {
+    throw new BidEmailAnalyzeError(
+      "INVALID_RANGE",
+      e instanceof Error ? e.message : "Invalid scan range"
     );
   }
 
@@ -82,11 +135,17 @@ export async function enqueueBidEmailAnalyze(input: {
   }
 
   const progress = emptyBidEmailAnalyzeProgress();
+  progress.scanRangePreset = preset;
+  progress.scanSinceAt = scanSinceAt?.toISOString() ?? null;
+  progress.operation = operation;
+
   const run = await input.prisma.bidAnalysisRun.create({
     data: {
       workspaceId: input.workspaceId,
       inboxConnectionId: connection.id,
       status: "PENDING",
+      scanRangePreset: preset,
+      scanSinceAt,
       progress: progress as unknown as Prisma.InputJsonValue,
       initiatedByUserId: input.initiatedByUserId ?? null,
     },
@@ -96,6 +155,9 @@ export async function enqueueBidEmailAnalyze(input: {
     workspaceId: input.workspaceId,
     inboxConnectionId: connection.id,
     runId: run.id,
+    operation,
+    scanRangePreset: preset,
+    scanSinceAt: scanSinceAt?.toISOString() ?? null,
     ...(input.initiatedByUserId ? { initiatedBy: input.initiatedByUserId } : {}),
   };
 
@@ -125,5 +187,10 @@ export async function enqueueBidEmailAnalyze(input: {
     );
   }
 
-  return { runId: run.id };
+  return {
+    runId: run.id,
+    operation,
+    scanRangePreset: preset,
+    scanSinceAt: scanSinceAt?.toISOString() ?? null,
+  };
 }

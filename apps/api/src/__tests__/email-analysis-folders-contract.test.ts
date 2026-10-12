@@ -114,17 +114,33 @@ describe("Email Analysis discovered-folders contract", () => {
     expect(view).toContain("Analyze Emails (all verified)");
     expect(view).toContain("Folder scan result");
     expect(view).toContain("Email analysis:");
-    expect(view).toContain("Analyze Bidding Folders");
-    expect(view).toContain("Bid Analysis");
+    expect(view).toContain("Project Folder Analysis");
+    expect(view).not.toContain("Analyze Bidding Folders");
     expect(view).not.toContain(">Analyze Project Folders<");
+
+    const emailAnalysis = readFileSync(
+      join(here, "../../../web/src/views/EmailAnalysisView.tsx"),
+      "utf8"
+    );
+    expect(emailAnalysis).toContain("Project Folder Analysis");
+    expect(emailAnalysis).toContain("Bidding Folder Analysis");
+
+    const bidding = readFileSync(
+      join(here, "../../../web/src/views/BiddingFolderAnalysisView.tsx"),
+      "utf8"
+    );
+    expect(bidding).toContain("Scan Bidding Folders");
+    expect(bidding).toContain("Bid Invites");
+    expect(bidding).toContain("Quotes");
   });
 
   it("retires Job Discovery UI while keeping shared folder-discovery backend", () => {
     const app = readFileSync(join(here, "../../../web/src/App.tsx"), "utf8");
     expect(app).not.toContain("JobDiscoveryView");
     expect(app).not.toContain("label: 'Job Discovery'");
-    expect(app).toContain("Legacy Job Discovery top-level page");
-    expect(app).toContain("setWorkspaceTabHint('folders')");
+    expect(app).toContain("Legacy Job Discovery / Workspace Email Analysis");
+    expect(app).toContain("setPage('email-analysis')");
+    expect(app).toContain("EmailAnalysisView");
 
     const route = readFileSync(
       join(here, "../interfaces/http/routes/folder-discovery.route.ts"),

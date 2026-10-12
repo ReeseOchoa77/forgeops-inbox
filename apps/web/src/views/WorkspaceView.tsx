@@ -4,7 +4,6 @@ import { AddMonitoredMailboxModal } from '../components/AddMonitoredMailboxModal
 import { MonitoredMailboxesPanel } from '../components/MonitoredMailboxesPanel'
 import type { ClearInboxChoice } from '../clear-inbox'
 import { TeamAccessView } from './TeamAccessView'
-import { FoldersView } from './FoldersView'
 
 /** Full-page navigation to an external OAuth authorize URL. */
 function redirectToOAuth(url: string): void {
@@ -17,7 +16,7 @@ interface Props {
   userRole: string
   connectionId: string
   /** Optional tab when redirecting from legacy Team Access nav. */
-  initialTab?: 'mailboxes' | 'team' | 'folders'
+  initialTab?: 'mailboxes' | 'team'
 }
 
 type AuthActionState =
@@ -25,15 +24,16 @@ type AuthActionState =
   | { type: 'loading'; connectionId: string }
   | { type: 'error'; connectionId: string; message: string }
 
-type WsTab = 'mailboxes' | 'team' | 'folders'
+type WsTab = 'mailboxes' | 'team'
 
 export function WorkspaceView({
   workspaceId,
   workspaceName,
   userRole,
-  connectionId,
+  connectionId: _connectionId,
   initialTab = 'mailboxes',
 }: Props) {
+  void _connectionId;
   const [members, setMembers] = useState<ApprovedAccessEntry[]>([])
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [loadedFor, setLoadedFor] = useState<string | null>(null)
@@ -185,7 +185,6 @@ export function WorkspaceView({
   const tabs: Array<{ id: WsTab; label: string }> = [
     { id: 'mailboxes', label: 'Monitored Mailboxes' },
     { id: 'team', label: 'Team Access' },
-    { id: 'folders', label: 'Email Analysis' },
   ]
 
   return (
@@ -205,10 +204,6 @@ export function WorkspaceView({
           }}>{t.label}</button>
         ))}
       </div>
-
-      {wsTab === 'folders' && (
-        <FoldersView workspaceId={workspaceId} connectionId={connectionId} userRole={userRole} />
-      )}
 
       {wsTab === 'team' && (
         <TeamAccessView workspaceId={workspaceId} userRole={userRole} embedded />

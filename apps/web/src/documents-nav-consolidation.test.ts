@@ -10,6 +10,7 @@ const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> 
   { page: 'reference', section: 'Manage' },
   { page: 'workspace' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
+  { page: 'email-analysis', section: 'System', minRole: 'MEMBER' },
   { page: 'worker-jobs', section: 'System' },
   { page: 'admin', section: 'System' },
 ]
@@ -28,20 +29,27 @@ describe('documents navigation consolidation', () => {
 })
 
 describe('job discovery navigation consolidation', () => {
-  it('retires top-level Job Discovery in favor of Workspace → Email Analysis', () => {
+  it('retires top-level Job Discovery; Email Analysis lives under Systems', () => {
     expect(NAV_SECTIONS.map((i) => i.page)).not.toContain('outlook-folders')
-    expect(NAV_SECTIONS.map((i) => i.page)).toContain('workspace')
+    expect(NAV_SECTIONS.map((i) => i.page)).toContain('email-analysis')
     const managePages = NAV_SECTIONS.filter((i) => i.section === 'Manage').map((i) => i.page)
     expect(managePages).toEqual(['dashboard', 'reference'])
   })
 })
 
 describe('email review navigation consolidation', () => {
-  it('Email Review lives under System next to Platform Admin and keeps ADMIN minRole', () => {
+  it('Email Classification, Email Analysis, Worker Jobs order under System', () => {
     const review = NAV_SECTIONS.find((i) => i.page === 'review')
     expect(review?.section).toBe('System')
     expect(review?.minRole).toBe('ADMIN')
     const systemPages = NAV_SECTIONS.filter((i) => i.section === 'System').map((i) => i.page)
-    expect(systemPages).toEqual(['review', 'worker-jobs', 'admin'])
+    expect(systemPages).toEqual(['review', 'email-analysis', 'worker-jobs', 'admin'])
+    const ea = NAV_SECTIONS.find((i) => i.page === 'email-analysis')
+    expect(ea?.minRole).toBe('MEMBER')
+    const reviewIdx = systemPages.indexOf('review')
+    const eaIdx = systemPages.indexOf('email-analysis')
+    const wjIdx = systemPages.indexOf('worker-jobs')
+    expect(eaIdx).toBe(reviewIdx + 1)
+    expect(wjIdx).toBe(eaIdx + 1)
   })
 })

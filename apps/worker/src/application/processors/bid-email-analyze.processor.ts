@@ -10,9 +10,12 @@ import {
   emptyBidEmailAnalyzeProgress,
   extractBidDueDateDeterministic,
   formatMissingBiddingFolders,
+  isBiddingFolderScanRangePreset,
   resolveBidProjectIdentity,
+  resolveBiddingFolderScanSinceAt,
   resolveBiddingWorkflowFolders,
   scoreQuoteToBidCandidate,
+  DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
   QUOTE_AUTO_LINK_THRESHOLD,
   QUOTE_REVIEW_THRESHOLD,
   suggestBidProjectNameFromSubject,
@@ -246,6 +249,280 @@ async function refreshOutlookToken(
   };
 }
 
+/**
+ * Group Bid Invites into BidCandidates and match Quotes — from discovery index only.
+ * Never creates Jobs. Never calls Graph.
+ */
+async function analyzeDiscoveredEmails(input: {
+  prisma: PrismaClient;
+  workspaceId: string;
+  inboxConnectionId: string;
+  runId: string;
+  progress: BidEmailAnalyzeProgress;
+}): Promise<void> {
+  const discoveries = await input.prisma.bidFolderDiscoveryEmail.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      inboxConnectionId: input.inboxConnectionId,
+    },
+    select: { emailMessageId: true, role: true },
+    orderBy: { firstDiscoveredAt: "asc" },
+  });
+
+  const inviteIds = discoveries
+    .filter((d) => d.role === "BID_INVITE")
+    .map((d) => d.emailMessageId);
+  const quoteIds = discoveries
+    .filter((d) => d.role === "QUOTE")
+    .map((d) => d.emailMessageId);
+
+  input.progress.bidInvitesFound = inviteIds.length;
+  input.progress.quotesFound = quoteIds.length;
+  await writeProgress(input.prisma, input.runId, input.progress);
+
+  for (const emailMessageId of inviteIds) {
+    const email = await input.prisma.emailMessage.findFirst({
+      where: { id: emailMessageId, workspaceId: input.workspaceId },
+      select: {
+        id: true,
+        subject: true,
+        bodyText: true,
+        senderName: true,
+        senderEmail: true,
+        attachmentMetadata: true,
+        jobId: true,
+      },
+    });
+    if (!email) continue;
+    const fields = extractInviteFields(email);
+    const identityKey = buildBidCandidateIdentityKey({
+      projectNumber: fields.projectNumber,
+      projectName: fields.projectName,
+      customerName: fields.customerName,
+      fallbackMessageId: email.id,
+    });
+    if (!identityKey) continue;
+
+    const existing = await input.prisma.bidCandidate.findUnique({
+      where: {
+        workspaceId_identityKey: {
+          workspaceId: input.workspaceId,
+          identityKey,
+        },
+      },
+      select: { id: true, status: true },
+    });
+
+    let candidateId: string;
+    if (existing) {
+      candidateId = existing.id;
+      if (existing.status !== "CONFIRMED" && existing.status !== "REJECTED") {
+        await input.prisma.bidCandidate.update({
+          where: { id: existing.id },
+          data: {
+            ...(fields.projectName ? { proposedProjectName: fields.projectName } : {}),
+            ...(fields.customerName
+              ? { proposedCustomerName: fields.customerName }
+              : {}),
+            ...(fields.bidDueAt ? { proposedBidDueAt: fields.bidDueAt } : {}),
+            ...(fields.projectNumber
+              ? { proposedJobNumber: fields.projectNumber }
+              : {}),
+            evidence: {
+              alternateNames: fields.alternateNames,
+              attachments: fields.attachmentNames.slice(0, 20),
+            } as Prisma.InputJsonValue,
+            status:
+              fields.projectName && fields.bidDueAt ? "READY" : "NEEDS_REVIEW",
+            confidence: fields.projectName ? 0.75 : 0.4,
+          },
+        });
+        input.progress.candidatesUpdated += 1;
+      } else {
+        input.progress.candidatesUpdated += 1;
+      }
+    } else {
+      const created = await input.prisma.bidCandidate.create({
+        data: {
+          workspaceId: input.workspaceId,
+          identityKey,
+          proposedProjectName: fields.projectName,
+          proposedCustomerName: fields.customerName,
+          proposedBidDueAt: fields.bidDueAt,
+          proposedJobNumber: fields.projectNumber,
+          evidence: {
+            alternateNames: fields.alternateNames,
+            attachments: fields.attachmentNames.slice(0, 20),
+          } as Prisma.InputJsonValue,
+          status:
+            fields.projectName && fields.bidDueAt
+              ? "READY"
+              : fields.projectName
+                ? "DISCOVERED"
+                : "NEEDS_REVIEW",
+          confidence: fields.projectName ? 0.75 : 0.35,
+        },
+      });
+      candidateId = created.id;
+      input.progress.candidatesCreated += 1;
+    }
+
+    await input.prisma.bidCandidateEmail.upsert({
+      where: {
+        bidCandidateId_emailMessageId: {
+          bidCandidateId: candidateId,
+          emailMessageId: email.id,
+        },
+      },
+      create: {
+        workspaceId: input.workspaceId,
+        bidCandidateId: candidateId,
+        emailMessageId: email.id,
+        role: "BID_INVITE",
+        isPrimary: !existing,
+      },
+      update: {},
+    });
+  }
+
+  await writeProgress(input.prisma, input.runId, input.progress);
+
+  for (const emailMessageId of quoteIds) {
+    const email = await input.prisma.emailMessage.findFirst({
+      where: { id: emailMessageId, workspaceId: input.workspaceId },
+      select: {
+        id: true,
+        subject: true,
+        bodyText: true,
+        senderName: true,
+        senderEmail: true,
+        attachmentMetadata: true,
+        jobId: true,
+      },
+    });
+    if (!email) continue;
+    const fields = extractInviteFields(email);
+
+    if (email.jobId) {
+      input.progress.quotesLinkedToJob += 1;
+      const confirmed = await input.prisma.bidCandidate.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          canonicalJobId: email.jobId,
+          status: "CONFIRMED",
+        },
+        select: { id: true },
+      });
+      if (confirmed) {
+        await input.prisma.bidCandidateEmail.upsert({
+          where: {
+            bidCandidateId_emailMessageId: {
+              bidCandidateId: confirmed.id,
+              emailMessageId: email.id,
+            },
+          },
+          create: {
+            workspaceId: input.workspaceId,
+            bidCandidateId: confirmed.id,
+            emailMessageId: email.id,
+            role: "QUOTE",
+            matchConfidence: 1,
+            matchEvidence: { reason: "existing_job_link", labels: ["existing_job"] },
+          },
+          update: {},
+        });
+        input.progress.quotesMatched += 1;
+      } else {
+        input.progress.quotesUnmatched += 1;
+      }
+      continue;
+    }
+
+    const openCandidates = await input.prisma.bidCandidate.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        status: { in: ["DISCOVERED", "READY", "NEEDS_REVIEW"] },
+      },
+      select: {
+        id: true,
+        proposedProjectName: true,
+        proposedJobNumber: true,
+        proposedCustomerName: true,
+      },
+      take: 200,
+    });
+
+    let best: { id: string; score: number; evidence: string[] } | null = null;
+    for (const c of openCandidates) {
+      const scored = scoreQuoteToBidCandidate({
+        quoteProjectName: fields.projectName,
+        quoteProjectNumber: fields.projectNumber,
+        quoteCustomerName: fields.customerName,
+        quoteSubject: email.subject,
+        quoteAttachmentNames: fields.attachmentNames,
+        candidate: c,
+      });
+      if (!best || scored.score > best.score) {
+        best = { id: c.id, score: scored.score, evidence: scored.evidence };
+      }
+    }
+
+    if (best && best.score >= QUOTE_AUTO_LINK_THRESHOLD) {
+      await input.prisma.bidCandidateEmail.upsert({
+        where: {
+          bidCandidateId_emailMessageId: {
+            bidCandidateId: best.id,
+            emailMessageId: email.id,
+          },
+        },
+        create: {
+          workspaceId: input.workspaceId,
+          bidCandidateId: best.id,
+          emailMessageId: email.id,
+          role: "QUOTE",
+          matchConfidence: best.score,
+          matchEvidence: { labels: best.evidence },
+        },
+        update: {
+          matchConfidence: best.score,
+          matchEvidence: { labels: best.evidence },
+        },
+      });
+      input.progress.quotesMatched += 1;
+    } else if (best && best.score >= QUOTE_REVIEW_THRESHOLD) {
+      await input.prisma.bidCandidateEmail.upsert({
+        where: {
+          bidCandidateId_emailMessageId: {
+            bidCandidateId: best.id,
+            emailMessageId: email.id,
+          },
+        },
+        create: {
+          workspaceId: input.workspaceId,
+          bidCandidateId: best.id,
+          emailMessageId: email.id,
+          role: "QUOTE",
+          matchConfidence: best.score,
+          matchEvidence: { labels: best.evidence, needsReview: true },
+        },
+        update: {
+          matchConfidence: best.score,
+          matchEvidence: { labels: best.evidence, needsReview: true },
+        },
+      });
+      await input.prisma.bidCandidate.update({
+        where: { id: best.id },
+        data: { status: "NEEDS_REVIEW" },
+      });
+      input.progress.quotesMatched += 1;
+    } else {
+      input.progress.quotesUnmatched += 1;
+    }
+  }
+
+  await writeProgress(input.prisma, input.runId, input.progress);
+}
+
 export async function processBidEmailAnalyze(
   payload: BidEmailAnalyzeJobPayload,
   deps: {
@@ -264,6 +541,7 @@ export async function processBidEmailAnalyze(
       folderId: string;
       pageSize: number;
       pageCursor: string | null;
+      receivedAfter?: Date | null;
     }) => Promise<{
       items: OutlookMessageSnapshot[];
       nextPageCursor: string | null;
@@ -280,6 +558,8 @@ export async function processBidEmailAnalyze(
   }
 ): Promise<BidEmailAnalyzeJobResult> {
   const progress = emptyBidEmailAnalyzeProgress();
+  const operation = payload.operation === "analyze" ? "analyze" : "scan";
+  progress.operation = operation;
 
   const run = await deps.prisma.bidAnalysisRun.findFirst({
     where: {
@@ -290,6 +570,22 @@ export async function processBidEmailAnalyze(
   });
   if (!run) throw new Error(`Bid analysis run not found: ${payload.runId}`);
 
+  const presetRaw =
+    payload.scanRangePreset ??
+    (typeof (run as { scanRangePreset?: string }).scanRangePreset === "string"
+      ? (run as { scanRangePreset: string }).scanRangePreset
+      : DEFAULT_BIDDING_FOLDER_SCAN_RANGE);
+  const preset = isBiddingFolderScanRangePreset(presetRaw)
+    ? presetRaw
+    : DEFAULT_BIDDING_FOLDER_SCAN_RANGE;
+  const scanSinceAt =
+    payload.scanSinceAt != null && payload.scanSinceAt !== ""
+      ? new Date(payload.scanSinceAt)
+      : (run as { scanSinceAt?: Date | null }).scanSinceAt ??
+        resolveBiddingFolderScanSinceAt({ preset });
+  progress.scanRangePreset = preset;
+  progress.scanSinceAt = scanSinceAt?.toISOString() ?? null;
+
   const stopped = await cancelledResult(deps.prisma, payload, progress);
   if (stopped) return stopped;
 
@@ -298,6 +594,8 @@ export async function processBidEmailAnalyze(
     data: {
       status: "RUNNING",
       startedAt: new Date(),
+      scanRangePreset: preset,
+      scanSinceAt,
       progress: progress as unknown as Prisma.InputJsonValue,
       errorMessage: null,
     },
@@ -316,8 +614,8 @@ export async function processBidEmailAnalyze(
     },
   });
 
-  if (!connection?.encryptedRefreshToken) {
-    const msg = "Mailbox is not authorized for Graph access";
+  if (!connection) {
+    const msg = "Mailbox connection not found";
     await writeProgress(deps.prisma, run.id, progress, { status: "FAILED", errorMessage: msg });
     return {
       workspaceId: payload.workspaceId,
@@ -330,6 +628,63 @@ export async function processBidEmailAnalyze(
   }
   if (connection.provider !== "OUTLOOK") {
     const msg = "Bid analysis currently supports Outlook only";
+    await writeProgress(deps.prisma, run.id, progress, { status: "FAILED", errorMessage: msg });
+    return {
+      workspaceId: payload.workspaceId,
+      inboxConnectionId: payload.inboxConnectionId,
+      runId: run.id,
+      status: "FAILED",
+      progress,
+      errorMessage: msg,
+    };
+  }
+
+  // Analyze uses discovery index only — no Graph token required.
+  if (operation === "analyze") {
+    try {
+      progress.currentPhase = "ANALYZE_CANDIDATES";
+      await writeProgress(deps.prisma, run.id, progress);
+      await analyzeDiscoveredEmails({
+        prisma: deps.prisma,
+        workspaceId: payload.workspaceId,
+        inboxConnectionId: payload.inboxConnectionId,
+        runId: run.id,
+        progress,
+      });
+      const stop = await cancelledResult(deps.prisma, payload, progress);
+      if (stop) return stop;
+      progress.currentPhase = "DONE";
+      progress.currentFolderName = null;
+      await writeProgress(deps.prisma, run.id, progress, { status: "COMPLETED" });
+      return {
+        workspaceId: payload.workspaceId,
+        inboxConnectionId: payload.inboxConnectionId,
+        runId: run.id,
+        status: "COMPLETED",
+        progress,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (deps.finalAttempt !== false) {
+        await writeProgress(deps.prisma, run.id, progress, {
+          status: "FAILED",
+          errorMessage: msg.slice(0, 2000),
+        });
+        return {
+          workspaceId: payload.workspaceId,
+          inboxConnectionId: payload.inboxConnectionId,
+          runId: run.id,
+          status: "FAILED",
+          progress,
+          errorMessage: msg.slice(0, 2000),
+        };
+      }
+      throw e;
+    }
+  }
+
+  if (!connection.encryptedRefreshToken) {
+    const msg = "Mailbox is not authorized for Graph access";
     await writeProgress(deps.prisma, run.id, progress, { status: "FAILED", errorMessage: msg });
     return {
       workspaceId: payload.workspaceId,
@@ -485,12 +840,14 @@ export async function processBidEmailAnalyze(
               folderId: folder.id,
               pageSize: PAGE_SIZE,
               pageCursor,
+              receivedAfter: scanSinceAt,
             })
           : await client.listMailFolderMessages({
               refreshToken,
               folderId: folder.id,
               pageSize: PAGE_SIZE,
               pageCursor,
+              receivedAfter: scanSinceAt,
             });
 
         if (page.refreshedRefreshToken) refreshToken = page.refreshedRefreshToken;
@@ -551,252 +908,33 @@ export async function processBidEmailAnalyze(
           ]),
         ];
 
+        const discoveryRole = phase === "BID_INVITES" ? "BID_INVITE" : "QUOTE";
         for (const emailMessageId of messageIds) {
-          const email = await deps.prisma.emailMessage.findFirst({
+          await deps.prisma.bidFolderDiscoveryEmail.upsert({
             where: {
-              id: emailMessageId,
-              workspaceId: payload.workspaceId,
+              workspaceId_inboxConnectionId_emailMessageId: {
+                workspaceId: payload.workspaceId,
+                inboxConnectionId: payload.inboxConnectionId,
+                emailMessageId,
+              },
             },
-            select: {
-              id: true,
-              subject: true,
-              bodyText: true,
-              senderName: true,
-              senderEmail: true,
-              attachmentMetadata: true,
-              jobId: true,
-              gmailThreadId: true,
-              providerThreadId: true,
+            create: {
+              workspaceId: payload.workspaceId,
+              inboxConnectionId: payload.inboxConnectionId,
+              emailMessageId,
+              role: discoveryRole,
+              lastSeenRunId: run.id,
+              lastSeenAt: new Date(),
+            },
+            update: {
+              role: discoveryRole,
+              lastSeenRunId: run.id,
+              lastSeenAt: new Date(),
             },
           });
-          if (!email) continue;
-
-          const fields = extractInviteFields(email);
-
-          if (phase === "BID_INVITES") {
-            const identityKey = buildBidCandidateIdentityKey({
-              projectNumber: fields.projectNumber,
-              projectName: fields.projectName,
-              customerName: fields.customerName,
-              fallbackMessageId: email.id,
-            });
-            if (!identityKey) continue;
-
-            const existing = await deps.prisma.bidCandidate.findUnique({
-              where: {
-                workspaceId_identityKey: {
-                  workspaceId: payload.workspaceId,
-                  identityKey,
-                },
-              },
-              select: { id: true, status: true },
-            });
-
-            let candidateId: string;
-            if (existing) {
-              if (existing.status === "CONFIRMED" || existing.status === "REJECTED") {
-                // Still link supporting email; do not reopen status.
-                candidateId = existing.id;
-                progress.candidatesUpdated += 1;
-              } else {
-                await deps.prisma.bidCandidate.update({
-                  where: { id: existing.id },
-                  data: {
-                    ...(fields.projectName
-                      ? { proposedProjectName: fields.projectName }
-                      : {}),
-                    ...(fields.customerName
-                      ? { proposedCustomerName: fields.customerName }
-                      : {}),
-                    ...(fields.bidDueAt
-                      ? { proposedBidDueAt: fields.bidDueAt }
-                      : {}),
-                    ...(fields.projectNumber
-                      ? { proposedJobNumber: fields.projectNumber }
-                      : {}),
-                    evidence: {
-                      alternateNames: fields.alternateNames,
-                      attachments: fields.attachmentNames.slice(0, 20),
-                    } as Prisma.InputJsonValue,
-                    status:
-                      fields.projectName && fields.bidDueAt
-                        ? "READY"
-                        : "NEEDS_REVIEW",
-                    confidence: fields.projectName ? 0.75 : 0.4,
-                  },
-                });
-                candidateId = existing.id;
-                progress.candidatesUpdated += 1;
-              }
-            } else {
-              const created = await deps.prisma.bidCandidate.create({
-                data: {
-                  workspaceId: payload.workspaceId,
-                  identityKey,
-                  proposedProjectName: fields.projectName,
-                  proposedCustomerName: fields.customerName,
-                  proposedBidDueAt: fields.bidDueAt,
-                  proposedJobNumber: fields.projectNumber,
-                  evidence: {
-                    alternateNames: fields.alternateNames,
-                    attachments: fields.attachmentNames.slice(0, 20),
-                  } as Prisma.InputJsonValue,
-                  status:
-                    fields.projectName && fields.bidDueAt
-                      ? "READY"
-                      : fields.projectName
-                        ? "DISCOVERED"
-                        : "NEEDS_REVIEW",
-                  confidence: fields.projectName ? 0.75 : 0.35,
-                },
-              });
-              candidateId = created.id;
-              progress.candidatesCreated += 1;
-            }
-
-            await deps.prisma.bidCandidateEmail.upsert({
-              where: {
-                bidCandidateId_emailMessageId: {
-                  bidCandidateId: candidateId,
-                  emailMessageId: email.id,
-                },
-              },
-              create: {
-                workspaceId: payload.workspaceId,
-                bidCandidateId: candidateId,
-                emailMessageId: email.id,
-                role: "BID_INVITE",
-                isPrimary: !existing,
-              },
-              update: {},
-            });
-          } else {
-            // QUOTES phase — match to staging candidate or existing Job; never create Job.
-            if (email.jobId) {
-              progress.quotesLinkedToJob += 1;
-              // Optionally attach as QUOTE to a confirmed candidate for that job
-              const confirmed = await deps.prisma.bidCandidate.findFirst({
-                where: {
-                  workspaceId: payload.workspaceId,
-                  canonicalJobId: email.jobId,
-                  status: "CONFIRMED",
-                },
-                select: { id: true },
-              });
-              if (confirmed) {
-                await deps.prisma.bidCandidateEmail.upsert({
-                  where: {
-                    bidCandidateId_emailMessageId: {
-                      bidCandidateId: confirmed.id,
-                      emailMessageId: email.id,
-                    },
-                  },
-                  create: {
-                    workspaceId: payload.workspaceId,
-                    bidCandidateId: confirmed.id,
-                    emailMessageId: email.id,
-                    role: "QUOTE",
-                    matchConfidence: 1,
-                    matchEvidence: { reason: "existing_job_link" },
-                  },
-                  update: {},
-                });
-                progress.quotesMatched += 1;
-              } else {
-                progress.quotesUnmatched += 1;
-              }
-              continue;
-            }
-
-            const openCandidates = await deps.prisma.bidCandidate.findMany({
-              where: {
-                workspaceId: payload.workspaceId,
-                status: { in: ["DISCOVERED", "READY", "NEEDS_REVIEW"] },
-              },
-              select: {
-                id: true,
-                proposedProjectName: true,
-                proposedJobNumber: true,
-                proposedCustomerName: true,
-              },
-              take: 200,
-            });
-
-            // Deterministic narrowing — no AI × all pairs.
-            let best: { id: string; score: number; evidence: string[] } | null =
-              null;
-            for (const c of openCandidates) {
-              const scored = scoreQuoteToBidCandidate({
-                quoteProjectName: fields.projectName,
-                quoteProjectNumber: fields.projectNumber,
-                quoteCustomerName: fields.customerName,
-                quoteSubject: email.subject,
-                quoteAttachmentNames: fields.attachmentNames,
-                candidate: c,
-              });
-              if (!best || scored.score > best.score) {
-                best = { id: c.id, score: scored.score, evidence: scored.evidence };
-              }
-            }
-
-            if (best && best.score >= QUOTE_AUTO_LINK_THRESHOLD) {
-              await deps.prisma.bidCandidateEmail.upsert({
-                where: {
-                  bidCandidateId_emailMessageId: {
-                    bidCandidateId: best.id,
-                    emailMessageId: email.id,
-                  },
-                },
-                create: {
-                  workspaceId: payload.workspaceId,
-                  bidCandidateId: best.id,
-                  emailMessageId: email.id,
-                  role: "QUOTE",
-                  matchConfidence: best.score,
-                  matchEvidence: { labels: best.evidence },
-                },
-                update: {
-                  matchConfidence: best.score,
-                  matchEvidence: { labels: best.evidence },
-                },
-              });
-              progress.quotesMatched += 1;
-            } else if (best && best.score >= QUOTE_REVIEW_THRESHOLD) {
-              await deps.prisma.bidCandidateEmail.upsert({
-                where: {
-                  bidCandidateId_emailMessageId: {
-                    bidCandidateId: best.id,
-                    emailMessageId: email.id,
-                  },
-                },
-                create: {
-                  workspaceId: payload.workspaceId,
-                  bidCandidateId: best.id,
-                  emailMessageId: email.id,
-                  role: "QUOTE",
-                  matchConfidence: best.score,
-                  matchEvidence: {
-                    labels: best.evidence,
-                    needsReview: true,
-                  },
-                },
-                update: {
-                  matchConfidence: best.score,
-                  matchEvidence: {
-                    labels: best.evidence,
-                    needsReview: true,
-                  },
-                },
-              });
-              await deps.prisma.bidCandidate.update({
-                where: { id: best.id },
-                data: { status: "NEEDS_REVIEW" },
-              });
-              progress.quotesMatched += 1;
-            } else {
-              progress.quotesUnmatched += 1;
-            }
-          }
+          if (phase === "BID_INVITES") progress.bidInvitesFound += 1;
+          else progress.quotesFound += 1;
+          // Scan = discovery only. Candidate grouping runs via operation=analyze.
         }
 
         await writeProgress(deps.prisma, run.id, progress);

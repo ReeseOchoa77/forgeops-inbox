@@ -55,5 +55,6 @@ export * from "./bidding/resolve-bid-project-identity.js";
 export * from "./bidding/bidding-folder-roles.js";
 export * from "./bidding/bid-candidate-identity.js";
 export * from "./bidding/resolve-bidding-workflow-folders.js";
+export * from "./bidding/bidding-folder-scan-range.js";
 export * from "./calendar/bidding-calendar-inclusion.js";
 export * from "./calendar/calendar-task-assignee-scope.js";

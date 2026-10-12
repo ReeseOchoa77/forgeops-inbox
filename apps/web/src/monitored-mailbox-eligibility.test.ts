@@ -94,8 +94,9 @@ describe('monitored mailbox eligibility', () => {
 
 describe('workspace team access placement', () => {
   it('documents Team Access as a Workspace tab (not top-level nav)', () => {
-    const workspaceTabs = ['mailboxes', 'team', 'folders'] as const
+    const workspaceTabs = ['mailboxes', 'team'] as const
     expect(workspaceTabs).toContain('team')
     expect(workspaceTabs).toContain('mailboxes')
+    expect(workspaceTabs).not.toContain('folders' as never)
   })
 })

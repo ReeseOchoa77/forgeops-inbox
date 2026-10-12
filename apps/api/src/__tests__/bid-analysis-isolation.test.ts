@@ -44,6 +44,29 @@ describe("Bid Analysis never auto-creates Jobs", () => {
     expect(src).not.toMatch(/prisma\.job\.create/);
     expect(src).toContain('origin: "BID_ANALYSIS"');
     expect(src).toContain("bidCandidate.create");
+    expect(src).toContain("analyzeDiscoveredEmails");
+    expect(src).toContain('operation === "analyze"');
+    expect(src).toContain("Scan = discovery only");
+  });
+
+  it("enqueue separates scan vs analyze and blocks analyze without discovery", () => {
+    const src = readFileSync(
+      join(here, "../application/services/enqueue-bid-email-analyze.ts"),
+      "utf8"
+    );
+    expect(src).toContain('input.operation === "analyze" ? "analyze" : "scan"');
+    expect(src).toContain("NO_DISCOVERY");
+    expect(src).toContain("operation,");
+  });
+
+  it("route accepts operation and requires OWNER/ADMIN for promote", () => {
+    const src = readFileSync(
+      join(here, "../interfaces/http/routes/bid-analysis.route.ts"),
+      "utf8"
+    );
+    expect(src).toContain('z.enum(["scan", "analyze"])');
+    expect(src).toContain("canPromoteBidCandidate");
+    expect(src).toContain("Only OWNER/ADMIN can create bids from staging");
   });
 
   it("promote is separate explicit service", () => {
@@ -54,14 +77,5 @@ describe("Bid Analysis never auto-creates Jobs", () => {
     expect(src).toContain("Analysis never calls this");
     expect(src).toContain("ACTIVE_BID_STATUS");
     expect(src).toContain('status: "CONFIRMED"');
-  });
-
-  it("route requires OWNER/ADMIN for promote", () => {
-    const src = readFileSync(
-      join(here, "../interfaces/http/routes/bid-analysis.route.ts"),
-      "utf8"
-    );
-    expect(src).toContain("canPromoteBidCandidate");
-    expect(src).toContain("Only OWNER/ADMIN can create bids from staging");
   });
 });

@@ -40,6 +40,8 @@ describe("Bid Analysis folder scope", () => {
           workspaceId: "ws",
           inboxConnectionId: "conn",
           status: "PENDING",
+          scanRangePreset: "90d",
+          scanSinceAt: new Date("2026-07-14T00:00:00.000Z"),
         })),
         findUnique: vi.fn(async () => ({
           id: "run-1",
@@ -65,6 +67,9 @@ describe("Bid Analysis folder scope", () => {
       },
       bidCandidateEmail: {
         upsert: vi.fn(),
+      },
+      bidFolderDiscoveryEmail: {
+        upsert: vi.fn(async () => ({})),
       },
       emailMessage: {
         findFirst: vi.fn(),
@@ -106,8 +111,9 @@ describe("Bid Analysis folder scope", () => {
             { id: "nova", displayName: "Nova Academy" },
           ];
         },
-        listFolderMessages: async ({ folderId }) => {
+        listFolderMessages: async ({ folderId, receivedAfter }) => {
           openedForMessages.push(folderId);
+          expect(receivedAfter).toBeInstanceOf(Date);
           return { items: [], nextPageCursor: null };
         },
         onFolderMessagesRequested: (folderId) => {
@@ -133,11 +139,87 @@ describe("Bid Analysis folder scope", () => {
       })
     ).toEqual(["invites", "quotes"]);
     expect(result.progress.aiCalls).toBe(0);
+    expect(result.progress.operation).toBe("scan");
+    expect(prisma.bidCandidate.create).not.toHaveBeenCalled();
+    expect(prisma.bidFolderDiscoveryEmail.upsert).not.toHaveBeenCalled();
+  });
+
+  it("analyze groups discovery without Graph folder listing", async () => {
+    const listTopLevelFolders = vi.fn(async () => []);
+    const prisma = {
+      bidAnalysisRun: {
+        findFirst: vi.fn(async () => ({
+          id: "run-2",
+          workspaceId: "ws",
+          inboxConnectionId: "conn",
+          status: "PENDING",
+          scanRangePreset: "90d",
+          scanSinceAt: null,
+        })),
+        findUnique: vi.fn(async () => ({
+          id: "run-2",
+          status: "RUNNING",
+        })),
+        update: vi.fn(async () => ({})),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      inboxConnection: {
+        findFirst: vi.fn(async () => ({
+          id: "conn",
+          provider: "OUTLOOK",
+          email: "user@example.com",
+          encryptedRefreshToken: null,
+        })),
+      },
+      bidFolderDiscoveryEmail: {
+        findMany: vi.fn(async () => []),
+        upsert: vi.fn(),
+      },
+      bidCandidate: {
+        findUnique: vi.fn(),
+        findMany: vi.fn(async () => []),
+        findFirst: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
+      bidCandidateEmail: {
+        upsert: vi.fn(),
+      },
+      emailMessage: {
+        findFirst: vi.fn(),
+      },
+    };
+
+    const result = await processBidEmailAnalyze(
+      {
+        workspaceId: "ws",
+        inboxConnectionId: "conn",
+        runId: "run-2",
+        operation: "analyze",
+      },
+      {
+        prisma: prisma as never,
+        tokenCipher: { decrypt: () => "x" } as never,
+        outlookConfig: {
+          clientId: "cid",
+          clientSecret: "sec",
+          tenantId: "common",
+        },
+        attachmentIngestQueue: { add: vi.fn() } as never,
+        listTopLevelFolders,
+      }
+    );
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.progress.operation).toBe("analyze");
+    expect(listTopLevelFolders).not.toHaveBeenCalled();
+    expect(prisma.bidFolderDiscoveryEmail.findMany).toHaveBeenCalled();
   });
 
   it("does not create Jobs — staging progress only", () => {
     const progress = emptyBidEmailAnalyzeProgress();
     expect(progress.candidatesCreated).toBe(0);
+    expect(progress.operation).toBeNull();
     // Processor never calls prisma.job.create — contract via import mock + no job deps.
     expect(typeof processBidEmailAnalyze).toBe("function");
   });

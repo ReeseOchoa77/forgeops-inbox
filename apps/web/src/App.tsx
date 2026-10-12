@@ -15,6 +15,7 @@ import { WorkerJobsView } from './views/WorkerJobsView'
 import { TasksView } from './views/TasksView'
 import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
+import { EmailAnalysisView } from './views/EmailAnalysisView'
 import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
 import { JobsView } from './views/JobsView'
 import { BiddingView } from './views/BiddingView'
@@ -27,10 +28,11 @@ import {
 } from './mailbox-selection'
 import { prefetchInboxList } from './inbox-list-cache'
 import { shouldShowDevelopmentIndicator } from './app-env'
+import { canAccessPlatformOperatorNav } from './system-nav-access'
 
 const SHOW_DEV_INDICATOR = shouldShowDevelopmentIndicator(import.meta.env)
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'email-analysis' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -44,6 +46,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
+  { page: 'email-analysis', label: 'Email Analysis', icon: '\uD83D\uDCC2', section: 'System', minRole: 'MEMBER' },
   { page: 'worker-jobs', label: 'Worker Jobs', icon: '\u2699', section: 'System', adminOnly: true },
   { page: 'admin', label: 'Platform Admin', icon: '\uD83D\uDD27', section: 'System', adminOnly: true },
 ]
@@ -53,6 +56,7 @@ const PAGE_TITLES: Record<Page, string> = {
   inbox: 'Inbox',
   'message-detail': 'Message',
   review: 'Email Classification',
+  'email-analysis': 'Email Analysis',
   tasks: 'Tasks',
   calendar: 'Calendar',
   bidding: 'Bidding',
@@ -104,7 +108,8 @@ export default function App() {
   const [jobOrigin, setJobOrigin] = useState<'jobs' | 'bidding'>('jobs')
   const [selectedJobSummary, setSelectedJobSummary] = useState<JobSummary | null>(null)
   const [messageBackPage, setMessageBackPage] = useState<Page>('inbox')
-  const [workspaceTabHint, setWorkspaceTabHint] = useState<'mailboxes' | 'team' | 'folders'>('mailboxes')
+  const [workspaceTabHint, setWorkspaceTabHint] = useState<'mailboxes' | 'team'>('mailboxes')
+  const [emailAnalysisModeHint, setEmailAnalysisModeHint] = useState<'project' | 'bidding'>('project')
   const [referenceTabHint, setReferenceTabHint] = useState<ReferenceDataTab>(() => {
     try {
       const fromUrl = new URLSearchParams(window.location.search).get('refTab')
@@ -120,11 +125,11 @@ export default function App() {
     setPage('workspace')
   }, [page])
 
-  // Legacy Job Discovery top-level page → Workspace → Email Analysis tab
+  // Legacy Job Discovery / Workspace Email Analysis → Systems → Email Analysis
   useEffect(() => {
     if (page !== 'outlook-folders') return
-    setWorkspaceTabHint('folders')
-    setPage('workspace')
+    setEmailAnalysisModeHint('project')
+    setPage('email-analysis')
   }, [page])
 
   // Legacy Documents top-level page → Company Data → Documents tab
@@ -363,8 +368,8 @@ export default function App() {
       setWorkspaceTabHint('team')
       setPage('workspace')
     } else if (p === 'outlook-folders') {
-      setWorkspaceTabHint('folders')
-      setPage('workspace')
+      setEmailAnalysisModeHint('project')
+      setPage('email-analysis')
     } else if (p === 'documents') {
       setReferenceTabHint('documents')
       setPage('reference')
@@ -536,6 +541,13 @@ export default function App() {
   const detailConnectionId = messageConnectionId || concreteConnectionId
   const needsConnection = ['inbox', 'review', 'message-detail', 'tasks'].includes(page) && connectionsReady && connections.length === 0
   const isPlatformAdmin = session.user?.isPlatformAdmin || session.user?.platformRole === 'PLATFORM_ADMIN'
+  // Platform operator pages require platform-admin + workspace ownership.
+  // Ownership may be recorded on Membership.role or Membership.workspaceRole.
+  const canSeePlatformOperatorNav = canAccessPlatformOperatorNav({
+    isPlatformAdmin,
+    role: currentWorkspace?.role,
+    workspaceRole: currentWorkspace?.workspaceRole,
+  })
   const showAllMailboxesOption = page === 'inbox' || (page === 'message-detail' && messageBackPage === 'inbox')
   const isPinnedSelected =
     Boolean(pinnedInboxConnectionId) &&
@@ -548,7 +560,7 @@ export default function App() {
   const sidebarWidth = effectiveCollapsed ? 56 : 200
 
   const filteredNav = NAV_ITEMS.filter(item => {
-    if (item.adminOnly && !(isPlatformAdmin && currentRole === 'OWNER')) return false
+    if (item.adminOnly && !canSeePlatformOperatorNav) return false
     if (item.minRole && !hasMinRole(currentRole, item.minRole)) return false
     return true
   })
@@ -883,6 +895,19 @@ export default function App() {
               <ReviewQueueView workspaceId={workspaceId} connectionId={concreteConnectionId} />
             </div>
           )}
+          {!needsConnection && page === 'email-analysis' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <EmailAnalysisView
+                workspaceId={workspaceId}
+                connectionId={concreteConnectionId || connectionId}
+                userRole={currentRole}
+                initialMode={emailAnalysisModeHint}
+                onOpenMessage={(messageId, inboxConnectionId) =>
+                  openMessage(messageId, { connectionId: inboxConnectionId, backPage: 'email-analysis' })
+                }
+              />
+            </div>
+          )}
           {!needsConnection && page === 'tasks' && concreteConnectionId && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <TasksView workspaceId={workspaceId} connectionId={concreteConnectionId} connections={connections} onSelectMessage={openMessage} userRole={currentRole} currentUserId={session.user?.id} />
@@ -961,12 +986,12 @@ export default function App() {
               <SettingsView workspaceName={currentWorkspace?.workspace.name ?? ''} />
             </div>
           )}
-          {page === 'admin' && isPlatformAdmin && currentRole === 'OWNER' && (
+          {page === 'admin' && canSeePlatformOperatorNav && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <PlatformAdminView />
             </div>
           )}
-          {page === 'worker-jobs' && isPlatformAdmin && currentRole === 'OWNER' && (
+          {page === 'worker-jobs' && canSeePlatformOperatorNav && (
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <WorkerJobsView
                 currentWorkspaceId={workspaceId}

@@ -213,11 +213,22 @@ export interface ProjectFolderEmailAnalyzeJobResult {
   errorMessage?: string;
 }
 
+export type BidEmailAnalyzeOperation = "scan" | "analyze";
+
 export interface BidEmailAnalyzeJobPayload {
   workspaceId: string;
   inboxConnectionId: string;
   runId: string;
   initiatedBy?: string;
+  /**
+   * scan = Graph discovery into BidFolderDiscoveryEmail (no Jobs).
+   * analyze = group/match discovery rows into BidCandidates (no Graph, no Jobs).
+   */
+  operation?: BidEmailAnalyzeOperation;
+  /** Preset: 30d | 90d | 180d | 365d | all | custom */
+  scanRangePreset?: string;
+  /** ISO lower bound when preset is custom or pre-resolved. */
+  scanSinceAt?: string | null;
 }
 
 export interface BidEmailAnalyzeProgress {
@@ -229,6 +240,9 @@ export interface BidEmailAnalyzeProgress {
   bidInvitesTotalEstimate: number | null;
   quotesScanned: number;
   quotesTotalEstimate: number | null;
+  /** Unique discovery rows upserted this run (or cumulative in progress). */
+  bidInvitesFound: number;
+  quotesFound: number;
   messagesCreated: number;
   messagesExisting: number;
   candidatesCreated: number;
@@ -237,9 +251,18 @@ export interface BidEmailAnalyzeProgress {
   quotesUnmatched: number;
   quotesLinkedToJob: number;
   aiCalls: number;
-  currentPhase: "RESOLVE_FOLDERS" | "BID_INVITES" | "QUOTES" | "DONE" | null;
+  scanRangePreset: string | null;
+  scanSinceAt: string | null;
+  currentPhase:
+    | "RESOLVE_FOLDERS"
+    | "BID_INVITES"
+    | "QUOTES"
+    | "ANALYZE_CANDIDATES"
+    | "DONE"
+    | null;
   currentFolderName: string | null;
   warning: string | null;
+  operation: BidEmailAnalyzeOperation | null;
 }
 
 export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
@@ -252,6 +275,8 @@ export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
     bidInvitesTotalEstimate: null,
     quotesScanned: 0,
     quotesTotalEstimate: null,
+    bidInvitesFound: 0,
+    quotesFound: 0,
     messagesCreated: 0,
     messagesExisting: 0,
     candidatesCreated: 0,
@@ -260,9 +285,12 @@ export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
     quotesUnmatched: 0,
     quotesLinkedToJob: 0,
     aiCalls: 0,
+    scanRangePreset: null,
+    scanSinceAt: null,
     currentPhase: null,
     currentFolderName: null,
     warning: null,
+    operation: null,
   };
 }
 
