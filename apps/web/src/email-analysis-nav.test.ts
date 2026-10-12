@@ -77,7 +77,7 @@ describe('Email Analysis Systems navigation', () => {
 })
 
 describe('Bidding Folder discovery infinite scroll contracts', () => {
-  it('keeps Analyze bound to discovery totals helpers, not UI row count alone', async () => {
+  it('keeps discovery totals helpers independent of UI row count', async () => {
     const {
       analyzeDiscoveryUsesCanonicalDataset,
       BID_FOLDER_DISCOVERY_PAGE_SIZE,
@@ -90,5 +90,9 @@ describe('Bidding Folder discovery infinite scroll contracts', () => {
         analyzeUsesUiLoadedRowsOnly: false,
       })
     ).toBe(true)
+  })
+
+  it('Bidding Folder Analysis view remains the Scan Bids staging surface', () => {
+    expect(BiddingFolderAnalysisView.name).toBe('BiddingFolderAnalysisView')
   })
 })

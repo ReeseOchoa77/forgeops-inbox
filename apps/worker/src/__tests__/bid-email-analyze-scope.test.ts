@@ -185,8 +185,26 @@ describe("Bid Analysis folder scope", () => {
       bidCandidateEmail: {
         upsert: vi.fn(),
       },
+      bidQuoteStaging: {
+        findMany: vi.fn(async () => []),
+        findUnique: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
       emailMessage: {
         findFirst: vi.fn(),
+      },
+      job: {
+        findMany: vi.fn(async () => []),
+      },
+      entityAlias: {
+        findMany: vi.fn(async () => []),
+      },
+      customer: {
+        findMany: vi.fn(async () => []),
+      },
+      emailThread: {
+        findFirst: vi.fn(async () => null),
       },
     };
 

@@ -50,7 +50,11 @@ export async function enqueueBidEmailAnalyze(input: {
   scanSinceAt: string | null;
 }> {
   const operation: BidEmailAnalyzeOperation =
-    input.operation === "analyze" ? "analyze" : "scan";
+    input.operation === "analyze"
+      ? "analyze"
+      : input.operation === "scan_bids"
+        ? "scan_bids"
+        : "scan";
   const connection = await input.prisma.inboxConnection.findFirst({
     where: {
       id: input.connectionId,
@@ -76,7 +80,10 @@ export async function enqueueBidEmailAnalyze(input: {
       "Bid analysis currently supports Outlook only"
     );
   }
-  if (operation === "scan" && !connection.encryptedRefreshToken) {
+  if (
+    (operation === "scan" || operation === "scan_bids") &&
+    !connection.encryptedRefreshToken
+  ) {
     throw new BidEmailAnalyzeError(
       "NOT_AUTHORIZED",
       "Mailbox is not authorized — reconnect OAuth before scanning bidding folders"

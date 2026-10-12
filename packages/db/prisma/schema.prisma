@@ -523,6 +523,7 @@ model Workspace {
   projectFolderEmailAnalyzeRuns ProjectFolderEmailAnalyzeRun[]
   bidAnalysisRuns      BidAnalysisRun[]
   bidCandidates        BidCandidate[]
+  bidQuoteStagings     BidQuoteStaging[]
   mailboxReclassifyRuns MailboxReclassifyRun[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
@@ -838,6 +839,7 @@ model EmailMessage {
   linkedRfqs       JobRfq[]      @relation("JobRfqEmail")
   bidCandidateEmails BidCandidateEmail[]
   bidFolderDiscoveries BidFolderDiscoveryEmail[]
+  bidQuoteStagings BidQuoteStaging[]
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -1204,6 +1206,7 @@ model Job {
   invoices              JobInvoice[]
   rfqs                  JobRfq[]
   confirmedBidCandidates BidCandidate[] @relation("BidCandidateCanonicalJob")
+  proposedBidCandidates  BidCandidate[] @relation("BidCandidateProposedExistingJob")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -2413,7 +2416,26 @@ model BidFolderDiscoveryEmail {
   @@index([workspaceId, inboxConnectionId, role])
 }
 
-/// Staging proposed bid — NOT a canonical Job until human confirmation.
+/// Staging existing-Job reconciliation (NOT a Job write).
+enum BidExistingJobMatchStatus {
+  NONE
+  POSSIBLE
+  STRONG
+  NEEDS_REVIEW
+  RESOLVED_SAME
+  RESOLVED_DIFFERENT
+}
+
+/// Quote → BidCandidate match status (staging only).
+enum BidQuoteMatchStatus {
+  UNMATCHED
+  POSSIBLE_MATCH
+  MATCHED
+  NEEDS_REVIEW
+  USER_UNMATCHED
+}
+
+/// Staging proposed bid — NOT a canonical Job until human confirmation / import.
 model BidCandidate {
   id                      String             @id @default(cuid())
   workspaceId             String
@@ -2425,10 +2447,20 @@ model BidCandidate {
   proposedBidDueAt        DateTime?
   proposedEstimatorUserId String?
   proposedJobNumber       String?
+  proposedScope           String?
+  proposedNotes           String?
+  /// Keys locked against re-analyze overwrite (e.g. ["proposedProjectName"]).
+  userEditedFields        Json?
   /// Compact evidence labels / match scores (no bodies).
   evidence                Json?
   confidence              Decimal?           @db.Decimal(5, 4)
   reviewNotes             String?
+  /// Staging-only proposed existing Job (never auto-assigned).
+  proposedExistingJobId   String?
+  existingJobMatchStatus  BidExistingJobMatchStatus @default(NONE)
+  existingJobMatchEvidence Json?
+  existingJobMatchConfidence Decimal?        @db.Decimal(5, 4)
+  importBlockedReason     String?
   canonicalJobId          String?
   confirmedAt             DateTime?
   confirmedByUserId       String?
@@ -2439,12 +2471,46 @@ model BidCandidate {
   proposedEstimatorUser   User?              @relation("BidCandidateProposedEstimator", fields: [proposedEstimatorUserId], references: [id], onDelete: SetNull)
   confirmedByUser         User?              @relation("BidCandidateConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
   canonicalJob            Job?               @relation("BidCandidateCanonicalJob", fields: [canonicalJobId], references: [id], onDelete: SetNull)
+  proposedExistingJob     Job?               @relation("BidCandidateProposedExistingJob", fields: [proposedExistingJobId], references: [id], onDelete: SetNull)
   emails                  BidCandidateEmail[]
+  quoteStagings           BidQuoteStaging[]
 
   @@unique([workspaceId, identityKey])
   @@index([workspaceId, status, updatedAt])
   @@index([workspaceId, proposedBidDueAt])
   @@index([canonicalJobId])
+  @@index([proposedExistingJobId])
+  @@index([workspaceId, existingJobMatchStatus])
+}
+
+/// Structured Quote extraction from Projects/Quotes (staging; not a Job).
+model BidQuoteStaging {
+  id                    String              @id @default(cuid())
+  workspaceId           String
+  inboxConnectionId     String
+  emailMessageId        String
+  sourceSubject         String?
+  extractedScope        String?
+  extractedAmount       Decimal?            @db.Decimal(14, 2)
+  currency              String?
+  extractedNotes        String?
+  extractionEvidence    Json?
+  extractionConfidence  Decimal?            @db.Decimal(5, 4)
+  bidCandidateId        String?
+  matchStatus           BidQuoteMatchStatus @default(UNMATCHED)
+  matchConfidence       Decimal?            @db.Decimal(5, 4)
+  matchEvidence         Json?
+  userConfirmedMatch    Boolean             @default(false)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  workspace             Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  emailMessage          EmailMessage        @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  bidCandidate          BidCandidate?       @relation(fields: [bidCandidateId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, emailMessageId])
+  @@index([workspaceId, inboxConnectionId, matchStatus])
+  @@index([bidCandidateId])
+  @@index([emailMessageId])
 }
 
 /// Lightweight BidCandidate ↔ EmailMessage link (no content duplication).

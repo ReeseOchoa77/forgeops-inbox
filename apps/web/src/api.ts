@@ -710,16 +710,21 @@ export interface BidEmailAnalyzeProgressView {
   messagesExisting: number;
   candidatesCreated: number;
   candidatesUpdated: number;
+  quotesExtracted?: number;
   quotesMatched: number;
   quotesUnmatched: number;
+  quotesNeedsReview?: number;
   quotesLinkedToJob: number;
+  existingJobsStrong?: number;
+  existingJobsPossible?: number;
+  existingJobsNone?: number;
   aiCalls: number;
   scanRangePreset?: string | null;
   scanSinceAt?: string | null;
   currentPhase: string | null;
   currentFolderName: string | null;
   warning: string | null;
-  operation?: 'scan' | 'analyze' | null;
+  operation?: 'scan' | 'analyze' | 'scan_bids' | null;
 }
 
 export interface BidFolderDiscoveryItem {
@@ -740,6 +745,23 @@ export interface BidFolderDiscoveryItem {
   };
 }
 
+export interface BidQuoteStagingSummary {
+  id: string;
+  emailMessageId: string;
+  sourceSubject: string | null;
+  extractedScope: string | null;
+  extractedAmount: number | null;
+  currency: string | null;
+  extractedNotes: string | null;
+  matchStatus: string;
+  matchConfidence: number | null;
+  bidCandidateId: string | null;
+  bidCandidateName: string | null;
+  userConfirmedMatch: boolean;
+  updatedAt: string;
+  createdAt: string;
+}
+
 export interface BidCandidateSummary {
   id: string;
   status: string;
@@ -747,6 +769,20 @@ export interface BidCandidateSummary {
   proposedCustomerName: string | null;
   proposedBidDueAt: string | null;
   proposedJobNumber: string | null;
+  proposedScope?: string | null;
+  proposedNotes?: string | null;
+  proposedExistingJobId?: string | null;
+  proposedExistingJob?: {
+    id: string;
+    name: string;
+    jobNumber: string | null;
+    status: string;
+  } | null;
+  existingJobMatchStatus?: string;
+  existingJobMatchConfidence?: number | null;
+  importBlockedReason?: string | null;
+  quoteAmount?: number | null;
+  quoteCurrency?: string | null;
   confidence: number | null;
   inviteCount: number;
   quoteCount: number;
@@ -767,6 +803,18 @@ export interface BidCandidateDetail extends BidCandidateSummary {
   reviewNotes: string | null;
   confirmedAt: string | null;
   confirmedByUserId: string | null;
+  existingJobMatchEvidence?: unknown;
+  userEditedFields?: unknown;
+  quotes?: Array<{
+    id: string;
+    sourceSubject: string | null;
+    extractedScope: string | null;
+    extractedAmount: number | null;
+    currency: string | null;
+    extractedNotes: string | null;
+    matchStatus: string;
+    matchConfidence: number | null;
+  }>;
   emails: Array<{
     id: string;
     role: string;
@@ -2997,7 +3045,7 @@ export const api = {
     workspaceId: string,
     connectionId: string,
     opts?: {
-      operation?: 'scan' | 'analyze'
+      operation?: 'scan' | 'analyze' | 'scan_bids'
       scanRangePreset?: string
       customSinceAt?: string | null
     }
@@ -3005,14 +3053,14 @@ export const api = {
     request<{
       status: string;
       runId: string;
-      operation?: 'scan' | 'analyze';
+      operation?: 'scan' | 'analyze' | 'scan_bids';
       scanRangePreset?: string;
       scanSinceAt?: string | null;
     }>(`/workspaces/${workspaceId}/bid-analysis/analyze`, {
       method: 'POST',
       body: JSON.stringify({
         connectionId,
-        operation: opts?.operation ?? 'scan',
+        operation: opts?.operation ?? 'scan_bids',
         scanRangePreset: opts?.scanRangePreset ?? '90d',
         ...(opts?.customSinceAt !== undefined
           ? { customSinceAt: opts.customSinceAt }
@@ -3104,6 +3152,8 @@ export const api = {
       customerName?: string | null;
       bidDueAt?: string | null;
       jobNumber?: string | null;
+      scope?: string | null;
+      notes?: string | null;
       status?: 'READY' | 'NEEDS_REVIEW' | 'DISCOVERED';
       reviewNotes?: string | null;
     }
@@ -3112,6 +3162,84 @@ export const api = {
       `/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}`,
       { method: 'PATCH', body: JSON.stringify(body) }
     ),
+
+  createBidCandidate: (
+    workspaceId: string,
+    body: {
+      projectName: string;
+      customerName?: string | null;
+      bidDueAt?: string | null;
+      jobNumber?: string | null;
+      notes?: string | null;
+    }
+  ) =>
+    request<{ candidateId: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  resolveBidCandidateExistingJob: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      resolution: 'SAME' | 'DIFFERENT' | 'NEEDS_REVIEW';
+      existingJobId?: string;
+    }
+  ) =>
+    request<{ candidateId: string; existingJobMatchStatus: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/candidates/${candidateId}/resolve-existing-job`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listBidQuotes: (
+    workspaceId: string,
+    params?: {
+      connectionId?: string;
+      matchStatus?: string;
+      page?: number;
+      pageSize?: number;
+    }
+  ) => {
+    const p = new URLSearchParams();
+    if (params?.connectionId) p.set('connectionId', params.connectionId);
+    if (params?.matchStatus) p.set('matchStatus', params.matchStatus);
+    if (params?.page) p.set('page', String(params.page));
+    if (params?.pageSize) p.set('pageSize', String(params.pageSize));
+    const q = p.toString();
+    return request<{
+      total: number;
+      page: number;
+      pageSize: number;
+      quotes: BidQuoteStagingSummary[];
+    }>(`/workspaces/${workspaceId}/bid-analysis/quotes${q ? `?${q}` : ''}`);
+  },
+
+  updateBidQuote: (
+    workspaceId: string,
+    quoteId: string,
+    body: {
+      bidCandidateId?: string | null;
+      unmatch?: boolean;
+      extractedScope?: string | null;
+      extractedAmount?: number | null;
+      currency?: string | null;
+      extractedNotes?: string | null;
+    }
+  ) =>
+    request<{ status: string; quoteId: string }>(
+      `/workspaces/${workspaceId}/bid-analysis/quotes/${quoteId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  importBidCandidates: (workspaceId: string, candidateIds: string[]) =>
+    request<{
+      imported: Array<{ candidateId: string; jobId: string; created: boolean }>;
+      failed: Array<{ candidateId: string; reason: string; code?: string }>;
+      skipped: Array<{ candidateId: string; reason: string }>;
+    }>(`/workspaces/${workspaceId}/bid-analysis/import`, {
+      method: 'POST',
+      body: JSON.stringify({ candidateIds }),
+    }),
 
   promoteBidCandidate: (
     workspaceId: string,

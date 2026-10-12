@@ -129,7 +129,9 @@ describe("Email Analysis discovered-folders contract", () => {
       join(here, "../../../web/src/views/BiddingFolderAnalysisView.tsx"),
       "utf8"
     );
-    expect(bidding).toContain("Scan Bidding Folders");
+    expect(bidding).toContain("Scan Bids");
+    expect(bidding).toContain("Bid Candidates");
+    expect(bidding).toContain("Import");
     expect(bidding).toContain("Bid Invites");
     expect(bidding).toContain("Quotes");
   });

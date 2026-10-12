@@ -18,10 +18,21 @@ import {
   listBidFolderDiscoveryEmails,
 } from "../../../application/services/list-bid-folder-discovery.js";
 import {
+  BidQuoteStagingError,
+  listBidQuoteStaging,
+  updateBidQuoteStaging,
+} from "../../../application/services/bid-quote-staging.js";
+import {
+  ImportBidCandidatesError,
+  importBidCandidates,
+} from "../../../application/services/import-bid-candidates.js";
+import {
   PromoteBidCandidateError,
   canPromoteBidCandidate,
+  createManualBidCandidate,
   promoteBidCandidate,
   rejectBidCandidate,
+  resolveBidCandidateExistingJob,
   updateBidCandidateReview,
 } from "../../../application/services/promote-bid-candidate.js";
 
@@ -105,7 +116,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
       const body = z
         .object({
           connectionId: z.string().min(1),
-          operation: z.enum(["scan", "analyze"]).default("scan"),
+          operation: z.enum(["scan", "analyze", "scan_bids"]).default("scan"),
           scanRangePreset: z.string().min(1).default(DEFAULT_BIDDING_FOLDER_SCAN_RANGE),
           customSinceAt: z.string().min(1).nullable().optional(),
         })
@@ -303,6 +314,17 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           emails: {
             select: { id: true, role: true, matchConfidence: true },
           },
+          quoteStagings: {
+            select: {
+              id: true,
+              extractedAmount: true,
+              currency: true,
+              matchStatus: true,
+            },
+          },
+          proposedExistingJob: {
+            select: { id: true, name: true, jobNumber: true, status: true },
+          },
           canonicalJob: {
             select: { id: true, name: true, jobNumber: true, status: true },
           },
@@ -315,6 +337,9 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             (e) => e.role === "BID_INVITE" || e.role === "ADDENDUM" || e.role === "SUPPORTING"
           ).length;
           const quoteCount = c.emails.filter((e) => e.role === "QUOTE").length;
+          const matchedQuote = c.quoteStagings.find(
+            (q) => q.matchStatus === "MATCHED" || q.matchStatus === "NEEDS_REVIEW"
+          );
           return {
             id: c.id,
             status: c.status,
@@ -323,6 +348,21 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             proposedBidDueAt: c.proposedBidDueAt,
             proposedJobNumber: c.proposedJobNumber,
             proposedEstimatorUserId: c.proposedEstimatorUserId,
+            proposedScope: c.proposedScope,
+            proposedNotes: c.proposedNotes,
+            proposedExistingJobId: c.proposedExistingJobId,
+            proposedExistingJob: c.proposedExistingJob,
+            existingJobMatchStatus: c.existingJobMatchStatus,
+            existingJobMatchConfidence:
+              c.existingJobMatchConfidence != null
+                ? Number(c.existingJobMatchConfidence)
+                : null,
+            importBlockedReason: c.importBlockedReason,
+            quoteAmount:
+              matchedQuote?.extractedAmount != null
+                ? Number(matchedQuote.extractedAmount)
+                : null,
+            quoteCurrency: matchedQuote?.currency ?? null,
             confidence: c.confidence != null ? Number(c.confidence) : null,
             inviteCount,
             quoteCount,
@@ -334,6 +374,52 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           };
         }),
       });
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/candidates",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      if (!["OWNER", "ADMIN", "MANAGER"].includes(auth.role)) {
+        return reply.code(403).send({ message: "Permission denied" });
+      }
+      const body = z
+        .object({
+          projectName: z.string().min(1),
+          customerName: z.string().nullable().optional(),
+          bidDueAt: z.string().datetime().nullable().optional(),
+          jobNumber: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
+        })
+        .parse(request.body);
+
+      try {
+        const result = await createManualBidCandidate({
+          prisma: app.services.prisma,
+          workspaceId,
+          userId: auth.userId,
+          projectName: body.projectName,
+          ...(body.customerName !== undefined
+            ? { customerName: body.customerName }
+            : {}),
+          ...(body.bidDueAt !== undefined
+            ? { bidDueAt: body.bidDueAt ? new Date(body.bidDueAt) : null }
+            : {}),
+          ...(body.jobNumber !== undefined ? { jobNumber: body.jobNumber } : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        });
+        return reply.code(201).send(result);
+      } catch (e) {
+        if (e instanceof PromoteBidCandidateError) {
+          return reply.code(400).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
     }
   );
 
@@ -370,6 +456,21 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             },
             orderBy: { createdAt: "asc" },
           },
+          quoteStagings: {
+            select: {
+              id: true,
+              sourceSubject: true,
+              extractedScope: true,
+              extractedAmount: true,
+              currency: true,
+              extractedNotes: true,
+              matchStatus: true,
+              matchConfidence: true,
+            },
+          },
+          proposedExistingJob: {
+            select: { id: true, name: true, jobNumber: true, status: true },
+          },
           canonicalJob: {
             select: { id: true, name: true, jobNumber: true, status: true },
           },
@@ -387,6 +488,18 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           proposedBidDueAt: c.proposedBidDueAt,
           proposedJobNumber: c.proposedJobNumber,
           proposedEstimatorUserId: c.proposedEstimatorUserId,
+          proposedScope: c.proposedScope,
+          proposedNotes: c.proposedNotes,
+          proposedExistingJobId: c.proposedExistingJobId,
+          proposedExistingJob: c.proposedExistingJob,
+          existingJobMatchStatus: c.existingJobMatchStatus,
+          existingJobMatchEvidence: c.existingJobMatchEvidence,
+          existingJobMatchConfidence:
+            c.existingJobMatchConfidence != null
+              ? Number(c.existingJobMatchConfidence)
+              : null,
+          importBlockedReason: c.importBlockedReason,
+          userEditedFields: c.userEditedFields,
           confidence: c.confidence != null ? Number(c.confidence) : null,
           evidence: c.evidence,
           reviewNotes: c.reviewNotes,
@@ -394,6 +507,18 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           canonicalJob: c.canonicalJob,
           confirmedAt: c.confirmedAt,
           confirmedByUserId: c.confirmedByUserId,
+          quotes: c.quoteStagings.map((q) => ({
+            id: q.id,
+            sourceSubject: q.sourceSubject,
+            extractedScope: q.extractedScope,
+            extractedAmount:
+              q.extractedAmount != null ? Number(q.extractedAmount) : null,
+            currency: q.currency,
+            extractedNotes: q.extractedNotes,
+            matchStatus: q.matchStatus,
+            matchConfidence:
+              q.matchConfidence != null ? Number(q.matchConfidence) : null,
+          })),
           emails: c.emails.map((link) => ({
             id: link.id,
             role: link.role,
@@ -431,6 +556,8 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           bidDueAt: z.string().datetime().nullable().optional(),
           jobNumber: z.string().nullable().optional(),
           estimatorUserId: z.string().nullable().optional(),
+          scope: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
           status: z.enum(["READY", "NEEDS_REVIEW", "DISCOVERED"]).optional(),
           reviewNotes: z.string().nullable().optional(),
         })
@@ -456,6 +583,8 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           ...(body.estimatorUserId !== undefined
             ? { estimatorUserId: body.estimatorUserId }
             : {}),
+          ...(body.scope !== undefined ? { scope: body.scope } : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
           ...(body.status ? { status: body.status } : {}),
           ...(body.reviewNotes !== undefined
             ? { reviewNotes: body.reviewNotes }
@@ -466,6 +595,199 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
         if (e instanceof PromoteBidCandidateError) {
           const code = e.code === "NOT_FOUND" ? 404 : 409;
           return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/candidates/:candidateId/resolve-existing-job",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          candidateId: z.string().min(1),
+        })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, params.workspaceId);
+      if (!auth) return;
+      if (!["OWNER", "ADMIN", "MANAGER"].includes(auth.role)) {
+        return reply.code(403).send({ message: "Permission denied" });
+      }
+      const body = z
+        .object({
+          resolution: z.enum(["SAME", "DIFFERENT", "NEEDS_REVIEW"]),
+          existingJobId: z.string().min(1).optional(),
+        })
+        .parse(request.body ?? {});
+
+      try {
+        const result = await resolveBidCandidateExistingJob({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          candidateId: params.candidateId,
+          resolution: body.resolution,
+          ...(body.existingJobId !== undefined
+            ? { existingJobId: body.existingJobId }
+            : {}),
+        });
+        return reply.send(result);
+      } catch (e) {
+        if (e instanceof PromoteBidCandidateError) {
+          const status =
+            e.code === "NOT_FOUND" || e.code === "ATTACH_JOB_NOT_FOUND"
+              ? 404
+              : 409;
+          return reply.code(status).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/quotes",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      const query = z
+        .object({
+          connectionId: z.string().min(1).optional(),
+          matchStatus: z
+            .enum([
+              "UNMATCHED",
+              "POSSIBLE_MATCH",
+              "MATCHED",
+              "NEEDS_REVIEW",
+              "USER_UNMATCHED",
+            ])
+            .optional(),
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await listBidQuoteStaging({
+        prisma: app.services.prisma,
+        workspaceId,
+        ...(query.connectionId !== undefined
+          ? { connectionId: query.connectionId }
+          : {}),
+        ...(query.matchStatus !== undefined
+          ? { matchStatus: query.matchStatus }
+          : {}),
+        page: query.page,
+        pageSize: query.pageSize,
+      });
+      return reply.send(result);
+    }
+  );
+
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/quotes/:quoteId",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          quoteId: z.string().min(1),
+        })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, params.workspaceId);
+      if (!auth) return;
+      if (!["OWNER", "ADMIN", "MANAGER"].includes(auth.role)) {
+        return reply.code(403).send({ message: "Permission denied" });
+      }
+      const body = z
+        .object({
+          bidCandidateId: z.string().min(1).nullable().optional(),
+          unmatch: z.boolean().optional(),
+          extractedScope: z.string().nullable().optional(),
+          extractedAmount: z.number().nullable().optional(),
+          currency: z.string().nullable().optional(),
+          extractedNotes: z.string().nullable().optional(),
+        })
+        .parse(request.body ?? {});
+
+      try {
+        const result = await updateBidQuoteStaging({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          quoteId: params.quoteId,
+          ...(body.bidCandidateId !== undefined
+            ? { bidCandidateId: body.bidCandidateId }
+            : {}),
+          ...(body.unmatch !== undefined ? { unmatch: body.unmatch } : {}),
+          ...(body.extractedScope !== undefined
+            ? { extractedScope: body.extractedScope }
+            : {}),
+          ...(body.extractedAmount !== undefined
+            ? { extractedAmount: body.extractedAmount }
+            : {}),
+          ...(body.currency !== undefined ? { currency: body.currency } : {}),
+          ...(body.extractedNotes !== undefined
+            ? { extractedNotes: body.extractedNotes }
+            : {}),
+        });
+        return reply.send({ status: "ok", ...result });
+      } catch (e) {
+        if (e instanceof BidQuoteStagingError) {
+          const code =
+            e.code === "NOT_FOUND" || e.code === "CANDIDATE_NOT_FOUND"
+              ? 404
+              : 400;
+          return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/import",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          candidateIds: z.array(z.string().min(1)).min(1).max(100),
+        })
+        .parse(request.body);
+
+      try {
+        const result = await importBidCandidates({
+          prisma: app.services.prisma,
+          workspaceId,
+          userId: auth.userId,
+          role: auth.role,
+          candidateIds: body.candidateIds,
+        });
+
+        await app.services.auditEventLogger.log({
+          workspaceId,
+          actorUserId: auth.userId,
+          entityType: "FOLDER_DISCOVERY",
+          entityId: workspaceId,
+          action: "bid_analysis.import",
+          metadata: {
+            imported: result.imported.length,
+            failed: result.failed.length,
+            skipped: result.skipped.length,
+          },
+          request,
+        });
+
+        return reply.send(result);
+      } catch (e) {
+        if (e instanceof ImportBidCandidatesError) {
+          const status = e.code === "FORBIDDEN" ? 403 : 400;
+          return reply.code(status).send({ message: e.message, code: e.code });
         }
         throw e;
       }

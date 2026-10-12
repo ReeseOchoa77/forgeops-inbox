@@ -6,19 +6,12 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   TokenCipher,
-  buildBidCandidateIdentityKey,
   emptyBidEmailAnalyzeProgress,
-  extractBidDueDateDeterministic,
   formatMissingBiddingFolders,
   isBiddingFolderScanRangePreset,
-  resolveBidProjectIdentity,
   resolveBiddingFolderScanSinceAt,
   resolveBiddingWorkflowFolders,
-  scoreQuoteToBidCandidate,
   DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
-  QUOTE_AUTO_LINK_THRESHOLD,
-  QUOTE_REVIEW_THRESHOLD,
-  suggestBidProjectNameFromSubject,
   type BidEmailAnalyzeJobPayload,
   type BidEmailAnalyzeJobResult,
   type BidEmailAnalyzeProgress,
@@ -30,6 +23,7 @@ import type { Queue } from "bullmq";
 
 import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
+import { runBidStagingPipeline } from "../services/bid-email-staging-pipeline.js";
 import {
   OutlookClient,
   type OutlookClientConfig,
@@ -173,44 +167,6 @@ async function cancelledResult(
   };
 }
 
-function extractInviteFields(msg: {
-  subject: string | null;
-  bodyText: string | null;
-  senderName: string | null;
-  attachmentMetadata: unknown;
-}) {
-  const filenames: string[] = [];
-  if (Array.isArray(msg.attachmentMetadata)) {
-    for (const a of msg.attachmentMetadata) {
-      if (a && typeof a === "object" && typeof (a as { filename?: unknown }).filename === "string") {
-        filenames.push((a as { filename: string }).filename);
-      }
-    }
-  }
-  const identity = resolveBidProjectIdentity({
-    subject: msg.subject,
-    bodyText: msg.bodyText,
-    pdfFilenames: filenames,
-    customerCompanyName: null,
-  });
-  const dueYmd = extractBidDueDateDeterministic({
-    subject: msg.subject,
-    bodyText: msg.bodyText,
-  });
-  const projectName =
-    identity.projectName ?? suggestBidProjectNameFromSubject(msg.subject);
-  const jobNumberMatch = (msg.subject ?? "").match(/\b(\d{2,6})\b/)?.[1] ?? null;
-
-  return {
-    projectName,
-    projectNumber: jobNumberMatch,
-    customerName: msg.senderName?.trim() || null,
-    bidDueAt: dueYmd ? new Date(`${dueYmd}T00:00:00.000Z`) : null,
-    attachmentNames: filenames,
-    alternateNames: identity.alternateProjectNames,
-  };
-}
-
 async function refreshOutlookToken(
   config: OutlookClientConfig,
   refreshToken: string
@@ -250,8 +206,8 @@ async function refreshOutlookToken(
 }
 
 /**
- * Group Bid Invites into BidCandidates and match Quotes — from discovery index only.
- * Never creates Jobs. Never calls Graph.
+ * Group Bid Invites into BidCandidates, extract Quotes, match, propose existing Jobs.
+ * Never creates Jobs. Never calls Graph. Never writes EmailMessage.jobId.
  */
 async function analyzeDiscoveredEmails(input: {
   prisma: PrismaClient;
@@ -260,267 +216,7 @@ async function analyzeDiscoveredEmails(input: {
   runId: string;
   progress: BidEmailAnalyzeProgress;
 }): Promise<void> {
-  const discoveries = await input.prisma.bidFolderDiscoveryEmail.findMany({
-    where: {
-      workspaceId: input.workspaceId,
-      inboxConnectionId: input.inboxConnectionId,
-    },
-    select: { emailMessageId: true, role: true },
-    orderBy: { firstDiscoveredAt: "asc" },
-  });
-
-  const inviteIds = discoveries
-    .filter((d) => d.role === "BID_INVITE")
-    .map((d) => d.emailMessageId);
-  const quoteIds = discoveries
-    .filter((d) => d.role === "QUOTE")
-    .map((d) => d.emailMessageId);
-
-  input.progress.bidInvitesFound = inviteIds.length;
-  input.progress.quotesFound = quoteIds.length;
-  await writeProgress(input.prisma, input.runId, input.progress);
-
-  for (const emailMessageId of inviteIds) {
-    const email = await input.prisma.emailMessage.findFirst({
-      where: { id: emailMessageId, workspaceId: input.workspaceId },
-      select: {
-        id: true,
-        subject: true,
-        bodyText: true,
-        senderName: true,
-        senderEmail: true,
-        attachmentMetadata: true,
-        jobId: true,
-      },
-    });
-    if (!email) continue;
-    const fields = extractInviteFields(email);
-    const identityKey = buildBidCandidateIdentityKey({
-      projectNumber: fields.projectNumber,
-      projectName: fields.projectName,
-      customerName: fields.customerName,
-      fallbackMessageId: email.id,
-    });
-    if (!identityKey) continue;
-
-    const existing = await input.prisma.bidCandidate.findUnique({
-      where: {
-        workspaceId_identityKey: {
-          workspaceId: input.workspaceId,
-          identityKey,
-        },
-      },
-      select: { id: true, status: true },
-    });
-
-    let candidateId: string;
-    if (existing) {
-      candidateId = existing.id;
-      if (existing.status !== "CONFIRMED" && existing.status !== "REJECTED") {
-        await input.prisma.bidCandidate.update({
-          where: { id: existing.id },
-          data: {
-            ...(fields.projectName ? { proposedProjectName: fields.projectName } : {}),
-            ...(fields.customerName
-              ? { proposedCustomerName: fields.customerName }
-              : {}),
-            ...(fields.bidDueAt ? { proposedBidDueAt: fields.bidDueAt } : {}),
-            ...(fields.projectNumber
-              ? { proposedJobNumber: fields.projectNumber }
-              : {}),
-            evidence: {
-              alternateNames: fields.alternateNames,
-              attachments: fields.attachmentNames.slice(0, 20),
-            } as Prisma.InputJsonValue,
-            status:
-              fields.projectName && fields.bidDueAt ? "READY" : "NEEDS_REVIEW",
-            confidence: fields.projectName ? 0.75 : 0.4,
-          },
-        });
-        input.progress.candidatesUpdated += 1;
-      } else {
-        input.progress.candidatesUpdated += 1;
-      }
-    } else {
-      const created = await input.prisma.bidCandidate.create({
-        data: {
-          workspaceId: input.workspaceId,
-          identityKey,
-          proposedProjectName: fields.projectName,
-          proposedCustomerName: fields.customerName,
-          proposedBidDueAt: fields.bidDueAt,
-          proposedJobNumber: fields.projectNumber,
-          evidence: {
-            alternateNames: fields.alternateNames,
-            attachments: fields.attachmentNames.slice(0, 20),
-          } as Prisma.InputJsonValue,
-          status:
-            fields.projectName && fields.bidDueAt
-              ? "READY"
-              : fields.projectName
-                ? "DISCOVERED"
-                : "NEEDS_REVIEW",
-          confidence: fields.projectName ? 0.75 : 0.35,
-        },
-      });
-      candidateId = created.id;
-      input.progress.candidatesCreated += 1;
-    }
-
-    await input.prisma.bidCandidateEmail.upsert({
-      where: {
-        bidCandidateId_emailMessageId: {
-          bidCandidateId: candidateId,
-          emailMessageId: email.id,
-        },
-      },
-      create: {
-        workspaceId: input.workspaceId,
-        bidCandidateId: candidateId,
-        emailMessageId: email.id,
-        role: "BID_INVITE",
-        isPrimary: !existing,
-      },
-      update: {},
-    });
-  }
-
-  await writeProgress(input.prisma, input.runId, input.progress);
-
-  for (const emailMessageId of quoteIds) {
-    const email = await input.prisma.emailMessage.findFirst({
-      where: { id: emailMessageId, workspaceId: input.workspaceId },
-      select: {
-        id: true,
-        subject: true,
-        bodyText: true,
-        senderName: true,
-        senderEmail: true,
-        attachmentMetadata: true,
-        jobId: true,
-      },
-    });
-    if (!email) continue;
-    const fields = extractInviteFields(email);
-
-    if (email.jobId) {
-      input.progress.quotesLinkedToJob += 1;
-      const confirmed = await input.prisma.bidCandidate.findFirst({
-        where: {
-          workspaceId: input.workspaceId,
-          canonicalJobId: email.jobId,
-          status: "CONFIRMED",
-        },
-        select: { id: true },
-      });
-      if (confirmed) {
-        await input.prisma.bidCandidateEmail.upsert({
-          where: {
-            bidCandidateId_emailMessageId: {
-              bidCandidateId: confirmed.id,
-              emailMessageId: email.id,
-            },
-          },
-          create: {
-            workspaceId: input.workspaceId,
-            bidCandidateId: confirmed.id,
-            emailMessageId: email.id,
-            role: "QUOTE",
-            matchConfidence: 1,
-            matchEvidence: { reason: "existing_job_link", labels: ["existing_job"] },
-          },
-          update: {},
-        });
-        input.progress.quotesMatched += 1;
-      } else {
-        input.progress.quotesUnmatched += 1;
-      }
-      continue;
-    }
-
-    const openCandidates = await input.prisma.bidCandidate.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        status: { in: ["DISCOVERED", "READY", "NEEDS_REVIEW"] },
-      },
-      select: {
-        id: true,
-        proposedProjectName: true,
-        proposedJobNumber: true,
-        proposedCustomerName: true,
-      },
-      take: 200,
-    });
-
-    let best: { id: string; score: number; evidence: string[] } | null = null;
-    for (const c of openCandidates) {
-      const scored = scoreQuoteToBidCandidate({
-        quoteProjectName: fields.projectName,
-        quoteProjectNumber: fields.projectNumber,
-        quoteCustomerName: fields.customerName,
-        quoteSubject: email.subject,
-        quoteAttachmentNames: fields.attachmentNames,
-        candidate: c,
-      });
-      if (!best || scored.score > best.score) {
-        best = { id: c.id, score: scored.score, evidence: scored.evidence };
-      }
-    }
-
-    if (best && best.score >= QUOTE_AUTO_LINK_THRESHOLD) {
-      await input.prisma.bidCandidateEmail.upsert({
-        where: {
-          bidCandidateId_emailMessageId: {
-            bidCandidateId: best.id,
-            emailMessageId: email.id,
-          },
-        },
-        create: {
-          workspaceId: input.workspaceId,
-          bidCandidateId: best.id,
-          emailMessageId: email.id,
-          role: "QUOTE",
-          matchConfidence: best.score,
-          matchEvidence: { labels: best.evidence },
-        },
-        update: {
-          matchConfidence: best.score,
-          matchEvidence: { labels: best.evidence },
-        },
-      });
-      input.progress.quotesMatched += 1;
-    } else if (best && best.score >= QUOTE_REVIEW_THRESHOLD) {
-      await input.prisma.bidCandidateEmail.upsert({
-        where: {
-          bidCandidateId_emailMessageId: {
-            bidCandidateId: best.id,
-            emailMessageId: email.id,
-          },
-        },
-        create: {
-          workspaceId: input.workspaceId,
-          bidCandidateId: best.id,
-          emailMessageId: email.id,
-          role: "QUOTE",
-          matchConfidence: best.score,
-          matchEvidence: { labels: best.evidence, needsReview: true },
-        },
-        update: {
-          matchConfidence: best.score,
-          matchEvidence: { labels: best.evidence, needsReview: true },
-        },
-      });
-      await input.prisma.bidCandidate.update({
-        where: { id: best.id },
-        data: { status: "NEEDS_REVIEW" },
-      });
-      input.progress.quotesMatched += 1;
-    } else {
-      input.progress.quotesUnmatched += 1;
-    }
-  }
-
-  await writeProgress(input.prisma, input.runId, input.progress);
+  await runBidStagingPipeline(input);
 }
 
 export async function processBidEmailAnalyze(
@@ -558,7 +254,12 @@ export async function processBidEmailAnalyze(
   }
 ): Promise<BidEmailAnalyzeJobResult> {
   const progress = emptyBidEmailAnalyzeProgress();
-  const operation = payload.operation === "analyze" ? "analyze" : "scan";
+  const operation =
+    payload.operation === "analyze"
+      ? "analyze"
+      : payload.operation === "scan_bids"
+        ? "scan_bids"
+        : "scan";
   progress.operation = operation;
 
   const run = await deps.prisma.bidAnalysisRun.findFirst({
@@ -639,10 +340,10 @@ export async function processBidEmailAnalyze(
     };
   }
 
-  // Analyze uses discovery index only — no Graph token required.
+  // Analyze / post-scan staging uses discovery index only — no Graph token required.
   if (operation === "analyze") {
     try {
-      progress.currentPhase = "ANALYZE_CANDIDATES";
+      progress.currentPhase = "EXTRACTING_BID_CANDIDATES";
       await writeProgress(deps.prisma, run.id, progress);
       await analyzeDiscoveredEmails({
         prisma: deps.prisma,
@@ -653,7 +354,7 @@ export async function processBidEmailAnalyze(
       });
       const stop = await cancelledResult(deps.prisma, payload, progress);
       if (stop) return stop;
-      progress.currentPhase = "DONE";
+      progress.currentPhase = "READY_FOR_REVIEW";
       progress.currentFolderName = null;
       await writeProgress(deps.prisma, run.id, progress, { status: "COMPLETED" });
       return {
@@ -818,7 +519,12 @@ export async function processBidEmailAnalyze(
       folder: { id: string; displayName: string },
       phase: "BID_INVITES" | "QUOTES"
     ) => {
-      progress.currentPhase = phase;
+      progress.currentPhase =
+        operation === "scan_bids"
+          ? phase === "BID_INVITES"
+            ? "SCANNING_BID_INVITES"
+            : "SCANNING_QUOTES"
+          : phase;
       progress.currentFolderName = folder.displayName;
       await writeProgress(deps.prisma, run.id, progress);
 
@@ -953,7 +659,22 @@ export async function processBidEmailAnalyze(
       if (early) return early;
     }
 
-    progress.currentPhase = "DONE";
+    // Full Scan Bids pipeline continues into staging (still no Jobs).
+    if (operation === "scan_bids") {
+      const stopBeforeStaging = await cancelledResult(deps.prisma, payload, progress);
+      if (stopBeforeStaging) return stopBeforeStaging;
+      await analyzeDiscoveredEmails({
+        prisma: deps.prisma,
+        workspaceId: payload.workspaceId,
+        inboxConnectionId: payload.inboxConnectionId,
+        runId: run.id,
+        progress,
+      });
+      const stopAfterStaging = await cancelledResult(deps.prisma, payload, progress);
+      if (stopAfterStaging) return stopAfterStaging;
+    }
+
+    progress.currentPhase = operation === "scan_bids" ? "READY_FOR_REVIEW" : "DONE";
     progress.currentFolderName = null;
     await writeProgress(deps.prisma, run.id, progress, { status: "COMPLETED" });
 

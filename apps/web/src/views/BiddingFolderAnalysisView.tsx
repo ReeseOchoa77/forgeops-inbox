@@ -5,6 +5,7 @@ import {
   type BidCandidateSummary,
   type BidEmailAnalyzeProgressView,
   type BidFolderDiscoveryItem,
+  type BidQuoteStagingSummary,
   type ConnectionSummary,
 } from '../api'
 import {
@@ -25,9 +26,20 @@ const RANGE_OPTIONS = [
 
 const DEFAULT_RANGE = '90d'
 
+const PIPELINE_STAGES = [
+  { phase: 'SCANNING_BID_INVITES', label: 'Scan Bid Invites' },
+  { phase: 'EXTRACTING_BID_CANDIDATES', label: 'Extract Bid Candidates' },
+  { phase: 'SCANNING_QUOTES', label: 'Scan Quotes' },
+  { phase: 'EXTRACTING_QUOTES', label: 'Extract Quotes' },
+  { phase: 'MATCHING_QUOTES', label: 'Match Quotes' },
+  { phase: 'MATCHING_EXISTING_JOBS', label: 'Match Existing Jobs' },
+  { phase: 'READY_FOR_REVIEW', label: 'Ready for Review' },
+] as const
+
 type ListRole = 'BID_INVITE' | 'QUOTE'
 type SortDir = 'newest' | 'oldest'
-type RunKind = 'scan' | 'analyze'
+type MainTab = 'candidates' | 'quotes' | 'source'
+type RunKind = 'scan_bids' | 'scan' | 'analyze'
 
 function isOutlookConnection(c: ConnectionSummary): boolean {
   return c.provider.toLowerCase() === 'outlook' && c.status !== 'DISCONNECTED'
@@ -63,58 +75,79 @@ function formatDateOnly(iso: string | null): string {
   }
 }
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'READY':
-      return 'Ready'
-    case 'NEEDS_REVIEW':
-      return 'Review'
-    case 'DISCOVERED':
-      return 'Discovered'
-    case 'CONFIRMED':
-      return 'Created'
-    case 'REJECTED':
-      return 'Rejected'
-    default:
-      return status
+function formatMoney(amount: number | null | undefined, currency?: string | null): string {
+  if (amount == null) return 'No Quote'
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency || 'USD',
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return String(amount)
   }
 }
 
-function attachmentNames(meta: unknown): string[] {
-  if (!Array.isArray(meta)) return []
-  return meta
-    .map((item) => {
-      if (item && typeof item === 'object' && 'name' in item) {
-        const name = (item as { name?: unknown }).name
-        return typeof name === 'string' ? name : null
-      }
-      if (typeof item === 'string') return item
-      return null
-    })
-    .filter((n): n is string => Boolean(n))
+function existingJobLabel(status: string | undefined): string {
+  switch (status) {
+    case 'NONE':
+      return 'None'
+    case 'POSSIBLE':
+      return 'Possible'
+    case 'STRONG':
+      return 'Strong'
+    case 'NEEDS_REVIEW':
+      return 'Needs review'
+    case 'RESOLVED_SAME':
+      return 'Same Job'
+    case 'RESOLVED_DIFFERENT':
+      return 'Different'
+    default:
+      return status || '—'
+  }
 }
 
-function matchLabelsFromEvidence(matchEvidence: unknown): string[] {
-  if (!matchEvidence || typeof matchEvidence !== 'object') return []
-  const labels = (matchEvidence as { labels?: unknown }).labels
-  return Array.isArray(labels)
-    ? labels.filter((l): l is string => typeof l === 'string')
-    : []
+function stageState(
+  currentPhase: string | null | undefined,
+  stagePhase: string,
+  runDone: boolean
+): 'done' | 'active' | 'pending' {
+  if (runDone || currentPhase === 'DONE' || currentPhase === 'READY_FOR_REVIEW') {
+    return 'done'
+  }
+  const order = PIPELINE_STAGES.map((s) => s.phase)
+  // Legacy phases map into nearby stages
+  const normalized =
+    currentPhase === 'BID_INVITES'
+      ? 'SCANNING_BID_INVITES'
+      : currentPhase === 'QUOTES'
+        ? 'SCANNING_QUOTES'
+        : currentPhase === 'ANALYZE_CANDIDATES'
+          ? 'EXTRACTING_BID_CANDIDATES'
+          : currentPhase === 'RESOLVE_FOLDERS'
+            ? 'SCANNING_BID_INVITES'
+            : currentPhase
+  const curIdx = normalized ? order.indexOf(normalized as (typeof order)[number]) : -1
+  const stageIdx = order.indexOf(stagePhase as (typeof order)[number])
+  if (curIdx < 0) return 'pending'
+  if (stageIdx < curIdx) return 'done'
+  if (stageIdx === curIdx) return 'active'
+  return 'pending'
 }
 
-function matchCheck(
-  labels: string[],
-  keys: string[]
-): 'yes' | 'no' | 'partial' {
-  if (labels.some((l) => keys.includes(l))) return 'yes'
-  if (labels.some((l) => keys.some((k) => l.startsWith(k)))) return 'partial'
-  return 'no'
-}
-
-function mark(state: 'yes' | 'no' | 'partial'): string {
-  if (state === 'yes') return '✓'
-  if (state === 'partial') return '~'
-  return '—'
+function isImportEligible(c: BidCandidateSummary): boolean {
+  if (['CONFIRMED', 'REJECTED'].includes(c.status)) return false
+  if (c.importBlockedReason) return false
+  if (!c.proposedProjectName?.trim()) return false
+  if (
+    c.existingJobMatchStatus === 'POSSIBLE' ||
+    c.existingJobMatchStatus === 'STRONG' ||
+    c.existingJobMatchStatus === 'NEEDS_REVIEW'
+  ) {
+    return false
+  }
+  if (c.status === 'NEEDS_REVIEW') return false
+  return true
 }
 
 interface Props {
@@ -126,7 +159,7 @@ interface Props {
 
 /**
  * Systems → Email Analysis → Bidding Folder Analysis
- * Scan → discovery lists → Analyze → Bid Candidates → Create Bid.
+ * Scan Bids → review staging → Import N Bids.
  * Never auto-creates operational BIDDING Jobs.
  */
 export function BiddingFolderAnalysisView({
@@ -136,7 +169,7 @@ export function BiddingFolderAnalysisView({
   onOpenMessage,
 }: Props) {
   const canScan = ['OWNER', 'ADMIN', 'MANAGER'].includes(userRole)
-  const canPromote = ['OWNER', 'ADMIN'].includes(userRole)
+  const canImport = ['OWNER', 'ADMIN'].includes(userRole)
 
   const [connections, setConnections] = useState<ConnectionSummary[]>([])
   const [selectedConnectionId, setSelectedConnectionId] = useState('')
@@ -148,6 +181,7 @@ export function BiddingFolderAnalysisView({
   const [runStatus, setRunStatus] = useState<string | null>(null)
   const [progress, setProgress] = useState<BidEmailAnalyzeProgressView | null>(null)
   const [error, setError] = useState('')
+  const [mainTab, setMainTab] = useState<MainTab>('candidates')
   const [listRole, setListRole] = useState<ListRole>('BID_INVITE')
   const [sort, setSort] = useState<SortDir>('newest')
   const [search, setSearch] = useState('')
@@ -161,6 +195,8 @@ export function BiddingFolderAnalysisView({
   const [loadingMore, setLoadingMore] = useState(false)
   const [candidates, setCandidates] = useState<BidCandidateSummary[]>([])
   const [loadingCandidates, setLoadingCandidates] = useState(false)
+  const [quotes, setQuotes] = useState<BidQuoteStagingSummary[]>([])
+  const [loadingQuotes, setLoadingQuotes] = useState(false)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null)
   const [detail, setDetail] = useState<BidCandidateDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -169,6 +205,8 @@ export function BiddingFolderAnalysisView({
   const [editCustomer, setEditCustomer] = useState('')
   const [editJobNumber, setEditJobNumber] = useState('')
   const [editBidDue, setEditBidDue] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [actionBusy, setActionBusy] = useState(false)
   const pollGenRef = useRef(0)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -183,13 +221,6 @@ export function BiddingFolderAnalysisView({
   const selectedConn =
     outlookConnections.find((c) => c.id === selectedConnectionId) ?? null
   const mailboxReady = Boolean(selectedConn && isProjectFolderEligible(selectedConn))
-  const discoveryTotal = counts.bidInvites + counts.quotes
-  const activeOperation =
-    progress?.operation ?? busyKind ?? (progress?.currentPhase === 'ANALYZE_CANDIDATES'
-      ? 'analyze'
-      : progress
-        ? 'scan'
-        : null)
 
   useEffect(() => {
     void api.getConnections(workspaceId).then((r) => {
@@ -218,14 +249,42 @@ export function BiddingFolderAnalysisView({
   const loadCandidates = useCallback(async () => {
     setLoadingCandidates(true)
     try {
-      const res = await api.listBidCandidates(workspaceId, { limit: 100 })
+      const res = await api.listBidCandidates(workspaceId, { limit: 200 })
       setCandidates(res.candidates)
+      setSelectedIds((prev) => {
+        const next = new Set<string>()
+        for (const id of prev) {
+          if (res.candidates.some((c) => c.id === id && isImportEligible(c))) {
+            next.add(id)
+          }
+        }
+        return next
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load bid candidates')
     } finally {
       setLoadingCandidates(false)
     }
   }, [workspaceId])
+
+  const loadQuotes = useCallback(
+    async (connId: string) => {
+      if (!connId) return
+      setLoadingQuotes(true)
+      try {
+        const res = await api.listBidQuotes(workspaceId, {
+          connectionId: connId,
+          pageSize: 100,
+        })
+        setQuotes(res.quotes)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load quotes')
+      } finally {
+        setLoadingQuotes(false)
+      }
+    },
+    [workspaceId]
+  )
 
   const loadDetail = useCallback(
     async (candidateId: string) => {
@@ -241,6 +300,7 @@ export function BiddingFolderAnalysisView({
             ? res.candidate.proposedBidDueAt.slice(0, 10)
             : ''
         )
+        setEditNotes(res.candidate.proposedNotes ?? '')
         setEditing(false)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load candidate')
@@ -282,17 +342,17 @@ export function BiddingFolderAnalysisView({
           pageSize: BID_FOLDER_DISCOVERY_PAGE_SIZE,
         })
         if (seq !== discoveryReqSeq.current) return
-        // Drop stale responses from a previous role/search/sort/mailbox.
         if (queryKey !== discoveryQueryKeyRef.current && opts.append) return
         discoveryQueryKeyRef.current = queryKey
         setTotal(res.total)
         setPage(res.page)
-        const more = bidFolderDiscoveryHasMore({
-          page: res.page,
-          pageSize: res.pageSize,
-          total: res.total,
-        })
-        setHasMore(more)
+        setHasMore(
+          bidFolderDiscoveryHasMore({
+            page: res.page,
+            pageSize: res.pageSize,
+            total: res.total,
+          })
+        )
         setItems((prev) =>
           opts.append ? appendBidFolderDiscoveryItems(prev, res.items) : res.items
         )
@@ -337,7 +397,7 @@ export function BiddingFolderAnalysisView({
   )
 
   const pollRun = useCallback(
-    async (id: string, connId: string, gen: number, kind: RunKind) => {
+    async (id: string, connId: string, gen: number) => {
       for (;;) {
         if (gen !== pollGenRef.current) return
         const res = await api.getBidAnalysisRun(workspaceId, id)
@@ -349,17 +409,27 @@ export function BiddingFolderAnalysisView({
           setBusy(false)
           setBusyKind(null)
           await loadCounts(connId)
-          // New scan/analyze completion: refresh discovery from page 1 (no full browser refresh).
-          await resetAndLoadDiscovery(connId, listRole, sort, search)
-          if (kind === 'analyze' || res.run.progress.operation === 'analyze') {
-            await loadCandidates()
+          await loadCandidates()
+          await loadQuotes(connId)
+          if (mainTab === 'source') {
+            await resetAndLoadDiscovery(connId, listRole, sort, search)
           }
           return
         }
         await new Promise((r) => setTimeout(r, 1500))
       }
     },
-    [listRole, loadCandidates, loadCounts, resetAndLoadDiscovery, search, sort, workspaceId]
+    [
+      listRole,
+      loadCandidates,
+      loadCounts,
+      loadQuotes,
+      mainTab,
+      resetAndLoadDiscovery,
+      search,
+      sort,
+      workspaceId,
+    ]
   )
 
   useEffect(() => {
@@ -375,29 +445,32 @@ export function BiddingFolderAnalysisView({
         setRunStatus(res.run.status)
         if (res.run.scanRangePreset) setScanRange(res.run.scanRangePreset)
         if (['PENDING', 'RUNNING'].includes(res.run.status)) {
-          const kind: RunKind =
-            res.run.progress.operation === 'analyze' ? 'analyze' : 'scan'
           setBusy(true)
-          setBusyKind(kind)
-          await pollRun(res.run.id, selectedConnectionId, gen, kind)
+          setBusyKind(
+            res.run.progress.operation === 'analyze'
+              ? 'analyze'
+              : res.run.progress.operation === 'scan'
+                ? 'scan'
+                : 'scan_bids'
+          )
+          await pollRun(res.run.id, selectedConnectionId, gen)
         }
       })
       .catch(() => {})
     void loadCounts(selectedConnectionId)
     void loadCandidates()
+    void loadQuotes(selectedConnectionId)
     return () => {
       cancelled = true
       pollGenRef.current += 1
     }
-    // Intentionally re-load when mailbox changes; list filters have own effects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConnectionId, workspaceId])
 
-  // Role / sort / search / mailbox changes reset infinite pages and fetch page 1 from server.
   useEffect(() => {
-    if (!selectedConnectionId) return
+    if (!selectedConnectionId || mainTab !== 'source') return
     void resetAndLoadDiscovery(selectedConnectionId, listRole, sort, search)
-  }, [listRole, sort, search, selectedConnectionId, resetAndLoadDiscovery])
+  }, [listRole, sort, search, selectedConnectionId, mainTab, resetAndLoadDiscovery])
 
   const requestNextDiscoveryPage = useCallback(() => {
     if (
@@ -445,46 +518,41 @@ export function BiddingFolderAnalysisView({
     void loadDetail(selectedCandidateId)
   }, [selectedCandidateId, loadDetail])
 
-  const startRun = async (operation: RunKind) => {
+  const startScanBids = async () => {
     if (!selectedConnectionId || !selectedConn) {
       setError('No Outlook mailbox selected')
       return
     }
-    if (operation === 'scan' && !mailboxReady) {
+    if (!mailboxReady) {
       setError('Outlook authorization required')
       return
     }
-    if (operation === 'scan' && scanRange === 'custom' && !customSince.trim()) {
+    if (scanRange === 'custom' && !customSince.trim()) {
       setError('Choose a custom start date')
       return
     }
-    if (operation === 'analyze' && discoveryTotal === 0) {
-      setError('No discovered emails yet — run Scan Bidding Folders first')
-      return
-    }
     setBusy(true)
-    setBusyKind(operation)
+    setBusyKind('scan_bids')
     setError('')
     setProgress(null)
     const gen = ++pollGenRef.current
     try {
-      const { runId: id } = await api.startBidAnalysis(workspaceId, selectedConnectionId, {
-        operation,
-        scanRangePreset: scanRange,
-        customSinceAt: scanRange === 'custom' ? customSince : null,
-      })
+      const { runId: id } = await api.startBidAnalysis(
+        workspaceId,
+        selectedConnectionId,
+        {
+          operation: 'scan_bids',
+          scanRangePreset: scanRange,
+          customSinceAt: scanRange === 'custom' ? customSince : null,
+        }
+      )
       setRunId(id)
-      await pollRun(id, selectedConnectionId, gen, operation)
+      await pollRun(id, selectedConnectionId, gen)
     } catch (e) {
       setBusy(false)
       setBusyKind(null)
-      setError(e instanceof Error ? e.message : `${operation} failed`)
+      setError(e instanceof Error ? e.message : 'Scan Bids failed')
     }
-  }
-
-  const applySearch = () => {
-    // Server-side search: changing `search` resets infinite pages via effect.
-    setSearch(searchInput.trim())
   }
 
   const saveEdits = async () => {
@@ -496,7 +564,10 @@ export function BiddingFolderAnalysisView({
         projectName: editProject.trim() || null,
         customerName: editCustomer.trim() || null,
         jobNumber: editJobNumber.trim() || null,
-        bidDueAt: editBidDue ? new Date(`${editBidDue}T12:00:00.000Z`).toISOString() : null,
+        bidDueAt: editBidDue
+          ? new Date(`${editBidDue}T12:00:00.000Z`).toISOString()
+          : null,
+        notes: editNotes.trim() || null,
         status: editProject.trim() && editBidDue ? 'READY' : 'NEEDS_REVIEW',
       })
       await loadDetail(detail.id)
@@ -511,7 +582,7 @@ export function BiddingFolderAnalysisView({
 
   const handleReject = async () => {
     if (!detail) return
-    if (!window.confirm('Reject this bid candidate? It will stay in staging as Rejected.')) {
+    if (!window.confirm('Reject this bid candidate? It stays in staging as Rejected.')) {
       return
     }
     setActionBusy(true)
@@ -520,6 +591,11 @@ export function BiddingFolderAnalysisView({
       await api.rejectBidCandidate(workspaceId, detail.id)
       await loadCandidates()
       await loadDetail(detail.id)
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(detail.id)
+        return next
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to reject candidate')
     } finally {
@@ -527,95 +603,121 @@ export function BiddingFolderAnalysisView({
     }
   }
 
-  const handleCreateBid = async () => {
+  const resolveExisting = async (resolution: 'SAME' | 'DIFFERENT' | 'NEEDS_REVIEW') => {
     if (!detail) return
-    if (!canPromote) {
-      setError('Only OWNER/ADMIN can create bids from staging')
-      return
-    }
     setActionBusy(true)
     setError('')
     try {
-      const result = await api.promoteBidCandidate(workspaceId, detail.id, {
-        mode: 'create',
-        projectName: editProject.trim() || detail.proposedProjectName || undefined,
-        customerName: editCustomer.trim() || detail.proposedCustomerName,
-        jobNumber: editJobNumber.trim() || detail.proposedJobNumber,
-        bidDueAt: editBidDue
-          ? new Date(`${editBidDue}T12:00:00.000Z`).toISOString()
-          : detail.proposedBidDueAt,
+      await api.resolveBidCandidateExistingJob(workspaceId, detail.id, {
+        resolution,
+        ...(resolution === 'SAME' && detail.proposedExistingJobId
+          ? { existingJobId: detail.proposedExistingJobId }
+          : {}),
       })
-      await loadCandidates()
       await loadDetail(detail.id)
-      setError('')
-      window.alert(
-        result.created
-          ? `Bid created (${result.attachedEmailCount} emails linked).`
-          : `Linked to existing bid (${result.attachedEmailCount} emails).`
-      )
+      await loadCandidates()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to create bid'
-      if (msg.toLowerCase().includes('existing') || msg.toLowerCase().includes('already')) {
-        const proceed = window.confirm(`${msg}\n\nCreate anyway?`)
-        if (proceed) {
-          try {
-            await api.promoteBidCandidate(workspaceId, detail.id, {
-              mode: 'create',
-              projectName: editProject.trim() || detail.proposedProjectName || undefined,
-              customerName: editCustomer.trim() || detail.proposedCustomerName,
-              jobNumber: editJobNumber.trim() || detail.proposedJobNumber,
-              bidDueAt: editBidDue
-                ? new Date(`${editBidDue}T12:00:00.000Z`).toISOString()
-                : detail.proposedBidDueAt,
-              confirmCreateDespiteExisting: true,
-            })
-            await loadCandidates()
-            await loadDetail(detail.id)
-          } catch (e2) {
-            setError(e2 instanceof Error ? e2.message : 'Failed to create bid')
-          } finally {
-            setActionBusy(false)
-          }
-          return
-        }
-      }
-      setError(msg)
+      setError(e instanceof Error ? e.message : 'Failed to resolve existing Job')
     } finally {
       setActionBusy(false)
     }
   }
 
-  const inviteEmails =
-    detail?.emails.filter(
-      (e) => e.role === 'BID_INVITE' || e.role === 'ADDENDUM' || e.role === 'SUPPORTING'
-    ) ?? []
-  const quoteEmails = detail?.emails.filter((e) => e.role === 'QUOTE') ?? []
-  const allMatchLabels = (detail?.emails ?? []).flatMap((e) =>
-    matchLabelsFromEvidence(e.matchEvidence)
-  )
-  const projectMatch = matchCheck(allMatchLabels, [
-    'project_name_exact',
-    'project_name_partial',
-    'subject_project',
-    'attachment_project',
-  ])
-  const customerMatch = matchCheck(allMatchLabels, ['customer_exact'])
-  const numberMatch = matchCheck(allMatchLabels, ['project_number'])
-  const conversationMatch = matchCheck(allMatchLabels, [
-    'conversation',
-    'thread',
-    'existing_job',
-  ])
+  const handleImport = async () => {
+    if (!canImport) {
+      setError('Only OWNER/ADMIN can import bids')
+      return
+    }
+    const ids = [...selectedIds]
+    if (ids.length === 0) {
+      setError('Select at least one ready bid candidate')
+      return
+    }
+    if (!window.confirm(`Import ${ids.length} bid${ids.length === 1 ? '' : 's'}?`)) {
+      return
+    }
+    setActionBusy(true)
+    setError('')
+    try {
+      const result = await api.importBidCandidates(workspaceId, ids)
+      await loadCandidates()
+      if (selectedCandidateId) await loadDetail(selectedCandidateId)
+      setSelectedIds(new Set())
+      const parts = [
+        `${result.imported.length} imported`,
+        result.skipped.length ? `${result.skipped.length} skipped` : null,
+        result.failed.length ? `${result.failed.length} failed` : null,
+      ].filter(Boolean)
+      if (result.failed.length > 0) {
+        setError(
+          `${parts.join(' · ')}. ${result.failed
+            .slice(0, 3)
+            .map((f) => f.reason)
+            .join('; ')}`
+        )
+      } else {
+        window.alert(parts.join(' · '))
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const unmatchQuote = async (quoteId: string) => {
+    setActionBusy(true)
+    setError('')
+    try {
+      await api.updateBidQuote(workspaceId, quoteId, { unmatch: true })
+      if (selectedConnectionId) await loadQuotes(selectedConnectionId)
+      await loadCandidates()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to unmatch quote')
+    } finally {
+      setActionBusy(false)
+    }
+  }
 
   const openCandidates = candidates.filter(
     (c) => !['CONFIRMED', 'REJECTED'].includes(c.status)
   )
+  const readyCount = openCandidates.filter(isImportEligible).length
+  const needsReviewCount = openCandidates.filter(
+    (c) =>
+      c.status === 'NEEDS_REVIEW' ||
+      c.existingJobMatchStatus === 'NEEDS_REVIEW' ||
+      c.existingJobMatchStatus === 'POSSIBLE' ||
+      c.existingJobMatchStatus === 'STRONG' ||
+      Boolean(c.importBlockedReason)
+  ).length
+  const runDone = Boolean(
+    runStatus && !['PENDING', 'RUNNING'].includes(runStatus)
+  )
+
+  const toggleSelect = (id: string, eligible: boolean) => {
+    if (!eligible) return
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAllReady = () => {
+    setSelectedIds(
+      new Set(openCandidates.filter(isImportEligible).map((c) => c.id))
+    )
+  }
 
   return (
     <div>
       <p style={{ fontSize: 13, color: '#666', margin: '0 0 12px', lineHeight: 1.45 }}>
-        Scan Bid Invites / Quotes into a discovery list, then analyze into Bid Candidates.
-        Staging never auto-creates operational Bids — use Create Bid after review.
+        Scan Bids extracts Bid Candidates and Quotes into staging, proposes existing Job
+        matches, then waits for your review. Jobs are created only when you Import.
+        Quote amounts/scope come from email body and filenames (PDF attachment text not
+        analyzed yet).
       </p>
 
       {error && (
@@ -663,6 +765,7 @@ export function BiddingFolderAnalysisView({
                 setSelectedConnectionId(e.target.value)
                 setError('')
                 setSelectedCandidateId(null)
+                setSelectedIds(new Set())
               }}
               style={{
                 padding: '6px 8px',
@@ -745,17 +848,17 @@ export function BiddingFolderAnalysisView({
               type="button"
               className="btn btn-primary"
               disabled={busy || !selectedConnectionId || !mailboxReady}
-              onClick={() => void startRun('scan')}
+              onClick={() => void startScanBids()}
             >
-              {busy && busyKind === 'scan' ? 'Scanning…' : 'Scan Bidding Folders'}
+              {busy && busyKind === 'scan_bids' ? 'Scanning Bids…' : 'Scan Bids'}
             </button>
           )}
         </div>
 
         {(busy || progress || runStatus) && (
           <div style={{ marginTop: 12, fontSize: 12, color: '#333' }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {activeOperation === 'analyze' ? 'ANALYZE DISCOVERED EMAILS' : 'BIDDING FOLDER SCAN'}
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>
+              SCAN BIDS
               {runStatus ? ` · ${runStatus}` : ''}
               {runId && (
                 <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
@@ -766,568 +869,713 @@ export function BiddingFolderAnalysisView({
             {progress?.warning && (
               <p style={{ margin: '0 0 6px', color: '#b71c1c' }}>{progress.warning}</p>
             )}
-            {progress && activeOperation !== 'analyze' && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {PIPELINE_STAGES.map((stage) => {
+                const state = stageState(progress?.currentPhase, stage.phase, runDone)
+                const mark =
+                  state === 'done' ? '✓' : state === 'active' ? '●' : '○'
+                const color =
+                  state === 'done'
+                    ? '#2e7d32'
+                    : state === 'active'
+                      ? '#1565c0'
+                      : '#999'
+                return (
+                  <li
+                    key={stage.phase}
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      padding: '2px 0',
+                      color,
+                      fontWeight: state === 'active' ? 600 : 400,
+                    }}
+                  >
+                    <span style={{ width: 14 }}>{mark}</span>
+                    <span>{stage.label}</span>
+                    {state === 'active' && progress?.currentFolderName && (
+                      <span style={{ color: '#888', fontWeight: 400 }}>
+                        · {progress.currentFolderName}
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            {progress && (
+              <div
+                style={{
+                  marginTop: 8,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                  color: '#666',
+                }}
+              >
                 <span>
-                  Bid Invites scanned: {progress.bidInvitesScanned}
-                  {progress.bidInvitesFolderFound ? '' : ' (folder missing)'}
+                  Invites {progress.bidInvitesFound ?? 0} / scanned{' '}
+                  {progress.bidInvitesScanned}
                 </span>
                 <span>
-                  Quotes scanned: {progress.quotesScanned}
-                  {progress.quotesFolderFound ? '' : ' (folder missing)'}
+                  Quotes {progress.quotesFound ?? 0} / extracted{' '}
+                  {progress.quotesExtracted ?? 0}
                 </span>
-                <span>Bid Invites found: {progress.bidInvitesFound ?? counts.bidInvites}</span>
-                <span>Quotes found: {progress.quotesFound ?? counts.quotes}</span>
                 <span>
-                  Emails: {progress.messagesCreated} new · {progress.messagesExisting} reused
+                  Candidates +{progress.candidatesCreated} / ~{progress.candidatesUpdated}
                 </span>
-                {progress.currentFolderName && (
-                  <span>Scanning: {progress.currentFolderName}</span>
-                )}
-                {progress.scanRangePreset && <span>Range: {progress.scanRangePreset}</span>}
-              </div>
-            )}
-            {progress && activeOperation === 'analyze' && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <span>Candidates created: {progress.candidatesCreated}</span>
-                <span>Candidates updated: {progress.candidatesUpdated}</span>
-                <span>Quotes matched: {progress.quotesMatched}</span>
-                <span>Quotes unmatched: {progress.quotesUnmatched}</span>
+                <span>
+                  Quote match {progress.quotesMatched} · review{' '}
+                  {progress.quotesNeedsReview ?? 0} · unmatched{' '}
+                  {progress.quotesUnmatched}
+                </span>
               </div>
             )}
           </div>
         )}
       </div>
 
-      <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        {(
+          [
+            ['candidates', `Bid Candidates (${openCandidates.length})`],
+            ['quotes', `Quotes (${quotes.length})`],
+            [
+              'source',
+              `Source Emails (${counts.bidInvites + counts.quotes})`,
+            ],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={mainTab === id ? 'btn btn-primary' : 'btn'}
+            onClick={() => setMainTab(id)}
+            style={{ fontSize: 13 }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'candidates' && (
         <div
           style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 8,
-            alignItems: 'center',
-            marginBottom: 12,
+            display: 'grid',
+            gridTemplateColumns: detail || loadingDetail ? '1.2fr 1fr' : '1fr',
+            gap: 12,
+            alignItems: 'start',
           }}
         >
-          <button
-            type="button"
-            className={listRole === 'BID_INVITE' ? 'btn btn-primary' : 'btn btn-outline'}
-            onClick={() => setListRole('BID_INVITE')}
-          >
-            Bid Invites ({counts.bidInvites})
-          </button>
-          <button
-            type="button"
-            className={listRole === 'QUOTE' ? 'btn btn-primary' : 'btn btn-outline'}
-            onClick={() => setListRole('QUOTE')}
-          >
-            Quotes ({counts.quotes})
-          </button>
-
-          <label style={{ fontSize: 12, color: '#555', marginLeft: 'auto' }}>
-            Sort{' '}
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as SortDir)}
-              style={{ padding: '4px 6px', fontSize: 12 }}
-            >
-              <option value="newest">Newest → Oldest</option>
-              <option value="oldest">Oldest → Newest</option>
-            </select>
-          </label>
-
-          <div style={{ display: 'flex', gap: 4 }}>
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') applySearch()
-              }}
-              placeholder="Search subject / sender"
-              style={{
-                padding: '4px 8px',
-                fontSize: 12,
-                borderRadius: 4,
-                border: '1px solid #ddd',
-                minWidth: 160,
-              }}
-            />
-            <button type="button" className="btn btn-outline" onClick={applySearch}>
-              Search
-            </button>
-          </div>
-        </div>
-
-        {loadingList && items.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#888' }}>Loading…</p>
-        ) : items.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#888' }}>
-            No {listRole === 'BID_INVITE' ? 'Bid Invite' : 'Quote'} emails discovered yet for this
-            mailbox. Run a scan with a date range.
-          </p>
-        ) : (
-          <>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div
-              ref={listRef}
-              onScroll={handleDiscoveryScroll}
               style={{
-                maxHeight: 'min(420px, 50vh)',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                border: '1px solid #eee',
-                borderRadius: 6,
+                padding: '10px 12px',
+                borderBottom: '1px solid #eee',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
               }}
             >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    background: '#fafafa',
-                    zIndex: 1,
-                  }}
+              <strong style={{ fontSize: 13 }}>Bid Candidates</strong>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ fontSize: 12 }}
+                  onClick={selectAllReady}
+                  disabled={readyCount === 0}
                 >
-                  <tr style={{ textAlign: 'left', color: '#666' }}>
-                    <th style={{ padding: '6px 8px' }}>Date</th>
-                    <th style={{ padding: '6px 8px' }}>Subject</th>
-                    <th style={{ padding: '6px 8px' }}>Sender</th>
-                    <th style={{ padding: '6px 8px' }}>Attachments</th>
+                  Select ready
+                </button>
+                {loadingCandidates && (
+                  <span style={{ fontSize: 12, color: '#888' }}>Loading…</span>
+                )}
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', background: '#fafafa' }}>
+                    <th style={{ padding: '8px 10px', width: 36 }} />
+                    <th style={{ padding: '8px 10px' }}>Project</th>
+                    <th style={{ padding: '8px 10px' }}>Customer</th>
+                    <th style={{ padding: '8px 10px' }}>Due</th>
+                    <th style={{ padding: '8px 10px' }}>Quote</th>
+                    <th style={{ padding: '8px 10px' }}>Existing Job</th>
+                    <th style={{ padding: '8px 10px' }}>Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((row) => {
-                    const dateIso = row.email.receivedAt ?? row.email.sentAt
+                  {candidates.length === 0 && !loadingCandidates && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        style={{ padding: 16, color: '#888', textAlign: 'center' }}
+                      >
+                        No candidates yet — run Scan Bids.
+                      </td>
+                    </tr>
+                  )}
+                  {candidates.map((c) => {
+                    const eligible = isImportEligible(c)
+                    const selected = selectedIds.has(c.id)
+                    const active = selectedCandidateId === c.id
                     return (
                       <tr
-                        key={row.discoveryId}
+                        key={c.id}
+                        onClick={() => setSelectedCandidateId(c.id)}
                         style={{
-                          borderTop: '1px solid #eee',
-                          cursor: onOpenMessage ? 'pointer' : undefined,
-                        }}
-                        onClick={() => {
-                          if (onOpenMessage && selectedConnectionId) {
-                            onOpenMessage(row.email.id, selectedConnectionId)
-                          }
+                          cursor: 'pointer',
+                          background: active ? '#e3f2fd' : undefined,
+                          borderTop: '1px solid #f0f0f0',
+                          opacity: c.status === 'REJECTED' ? 0.55 : 1,
                         }}
                       >
-                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                          {formatWhen(dateIso)}
+                        <td
+                          style={{ padding: '8px 10px' }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            disabled={!eligible || !canImport}
+                            onChange={() => toggleSelect(c.id, eligible)}
+                          />
                         </td>
-                        <td style={{ padding: '6px 8px' }}>
-                          {row.email.subject ?? '(no subject)'}
+                        <td style={{ padding: '8px 10px' }}>
+                          <div style={{ fontWeight: 600 }}>
+                            {c.proposedProjectName || 'Untitled'}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#888' }}>
+                            {c.status}
+                            {c.importBlockedReason
+                              ? ` · ${c.importBlockedReason}`
+                              : ''}
+                          </div>
                         </td>
-                        <td style={{ padding: '6px 8px' }}>
-                          {row.email.senderName || row.email.senderEmail}
+                        <td style={{ padding: '8px 10px' }}>
+                          {c.proposedCustomerName || '—'}
                         </td>
-                        <td style={{ padding: '6px 8px' }}>
-                          {row.email.hasAttachments
-                            ? row.email.attachmentCount > 0
-                              ? String(row.email.attachmentCount)
-                              : 'Yes'
-                            : '—'}
+                        <td style={{ padding: '8px 10px' }}>
+                          {formatDateOnly(c.proposedBidDueAt)}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {formatMoney(c.quoteAmount, c.quoteCurrency)}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {existingJobLabel(c.existingJobMatchStatus)}
+                          {c.proposedExistingJob ? (
+                            <div style={{ fontSize: 11, color: '#666' }}>
+                              {c.proposedExistingJob.jobNumber
+                                ? `${c.proposedExistingJob.jobNumber} — `
+                                : ''}
+                              {c.proposedExistingJob.name}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 10px',
+                            maxWidth: 140,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {c.proposedNotes || '—'}
                         </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
-              {loadingMore && (
-                <p style={{ fontSize: 12, color: '#888', textAlign: 'center', padding: 8 }}>
-                  Loading more emails…
-                </p>
-              )}
-              {hasMore && !loadingMore && (
-                <div style={{ textAlign: 'center', padding: 8 }}>
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => requestNextDiscoveryPage()}
-                  >
-                    Load more
-                  </button>
-                </div>
-              )}
-              {!hasMore && items.length > 0 && (
-                <p style={{ fontSize: 11, color: '#bbb', textAlign: 'center', padding: 8 }}>
-                  End of list
-                </p>
-              )}
             </div>
-            <p style={{ fontSize: 12, color: '#666', margin: '8px 0 0' }}>
-              Loaded {items.length} of {total}
-              {search ? ' matching search' : ''}
-            </p>
-          </>
-        )}
-
-        {canScan && (
-          <div style={{ marginTop: 14, textAlign: 'center' }}>
-            <div style={{ fontSize: 18, color: '#999', marginBottom: 8 }}>↓</div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || discoveryTotal === 0}
-              onClick={() => void startRun('analyze')}
-              title="Analyzes the full persisted discovery dataset for this mailbox, not only rows loaded in this list"
-            >
-              {busy && busyKind === 'analyze'
-                ? 'Analyzing discovered emails…'
-                : 'Analyze Discovered Emails'}
-            </button>
-            {discoveryTotal === 0 && (
-              <p style={{ fontSize: 12, color: '#888', margin: '8px 0 0' }}>
-                Scan first to populate Bid Invites / Quotes, then analyze into candidates.
-              </p>
-            )}
           </div>
-        )}
-      </div>
 
-      <div className="card" style={{ padding: 14, marginBottom: 12 }}>
-        <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>Bid Candidates</h3>
-        {loadingCandidates ? (
-          <p style={{ fontSize: 13, color: '#888' }}>Loading candidates…</p>
-        ) : openCandidates.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#888' }}>
-            No open candidates yet. After discovery, run Analyze Discovered Emails.
-          </p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#666', borderBottom: '1px solid #ddd' }}>
-                  <th style={{ padding: '8px 10px' }}>Project</th>
-                  <th style={{ padding: '8px 10px' }}>Customer</th>
-                  <th style={{ padding: '8px 10px' }}>Status</th>
-                  <th style={{ padding: '8px 10px' }}>Invites</th>
-                  <th style={{ padding: '8px 10px' }}>Quotes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {openCandidates.map((c) => {
-                  const selected = c.id === selectedCandidateId
-                  return (
-                    <tr
-                      key={c.id}
-                      onClick={() => setSelectedCandidateId(c.id)}
+          {(detail || loadingDetail) && (
+            <div className="card" style={{ padding: 14 }}>
+              {loadingDetail && !detail ? (
+                <p style={{ margin: 0, color: '#888', fontSize: 13 }}>Loading…</p>
+              ) : detail ? (
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <strong style={{ fontSize: 14 }}>
+                      {detail.proposedProjectName || 'Untitled project'}
+                    </strong>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ fontSize: 12 }}
+                      onClick={() => setSelectedCandidateId(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {editing ? (
+                    <div
                       style={{
-                        borderTop: '1px solid #eee',
-                        cursor: 'pointer',
-                        background: selected ? '#eef5ff' : undefined,
+                        display: 'grid',
+                        gap: 8,
+                        marginBottom: 12,
+                        fontSize: 13,
                       }}
                     >
-                      <td style={{ padding: '8px 10px', fontWeight: selected ? 600 : 400 }}>
-                        {c.proposedProjectName ?? '(unnamed project)'}
-                      </td>
-                      <td style={{ padding: '8px 10px' }}>
-                        {c.proposedCustomerName ?? '—'}
-                      </td>
-                      <td style={{ padding: '8px 10px' }}>{statusLabel(c.status)}</td>
-                      <td style={{ padding: '8px 10px' }}>{c.inviteCount}</td>
-                      <td style={{ padding: '8px 10px' }}>{c.quoteCount}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {candidates.some((c) => c.status === 'CONFIRMED' || c.status === 'REJECTED') && (
-          <p style={{ fontSize: 12, color: '#888', margin: '10px 0 0' }}>
-            {candidates.filter((c) => c.status === 'CONFIRMED').length} created ·{' '}
-            {candidates.filter((c) => c.status === 'REJECTED').length} rejected (hidden from open
-            list)
-          </p>
-        )}
-      </div>
-
-      {selectedCandidateId && (
-        <div className="card" style={{ padding: 16 }}>
-          {loadingDetail || !detail ? (
-            <p style={{ fontSize: 13, color: '#888' }}>Loading candidate…</p>
-          ) : (
-            <>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  marginBottom: 14,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 11, color: '#888', letterSpacing: 0.4 }}>PROJECT</div>
-                  {editing ? (
-                    <input
-                      value={editProject}
-                      onChange={(e) => setEditProject(e.target.value)}
-                      style={{
-                        fontSize: 18,
-                        fontWeight: 600,
-                        padding: '4px 8px',
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                        minWidth: 260,
-                      }}
-                    />
-                  ) : (
-                    <div style={{ fontSize: 18, fontWeight: 600 }}>
-                      {detail.proposedProjectName ?? '(unnamed project)'}
+                      <label>
+                        Project
+                        <input
+                          value={editProject}
+                          onChange={(e) => setEditProject(e.target.value)}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <label>
+                        Customer
+                        <input
+                          value={editCustomer}
+                          onChange={(e) => setEditCustomer(e.target.value)}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <label>
+                        Job #
+                        <input
+                          value={editJobNumber}
+                          onChange={(e) => setEditJobNumber(e.target.value)}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <label>
+                        Due
+                        <input
+                          type="date"
+                          value={editBidDue}
+                          onChange={(e) => setEditBidDue(e.target.value)}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <label>
+                        Notes
+                        <textarea
+                          value={editNotes}
+                          onChange={(e) => setEditNotes(e.target.value)}
+                          rows={2}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={actionBusy}
+                          onClick={() => void saveEdits()}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => setEditing(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
+                  ) : (
+                    <dl
+                      style={{
+                        margin: '0 0 12px',
+                        fontSize: 13,
+                        display: 'grid',
+                        gridTemplateColumns: '100px 1fr',
+                        gap: '4px 8px',
+                      }}
+                    >
+                      <dt style={{ color: '#888' }}>Customer</dt>
+                      <dd style={{ margin: 0 }}>
+                        {detail.proposedCustomerName || '—'}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Due</dt>
+                      <dd style={{ margin: 0 }}>
+                        {formatDateOnly(detail.proposedBidDueAt)}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Job #</dt>
+                      <dd style={{ margin: 0 }}>
+                        {detail.proposedJobNumber || '—'}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Quote</dt>
+                      <dd style={{ margin: 0 }}>
+                        {detail.quotes && detail.quotes.length > 0
+                          ? detail.quotes
+                              .map((q) =>
+                                formatMoney(q.extractedAmount, q.currency)
+                              )
+                              .join(', ')
+                          : formatMoney(detail.quoteAmount, detail.quoteCurrency)}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Notes</dt>
+                      <dd style={{ margin: 0 }}>{detail.proposedNotes || '—'}</dd>
+                    </dl>
                   )}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  onClick={() => setSelectedCandidateId(null)}
-                >
-                  Close
-                </button>
-              </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-                  gap: 12,
-                  marginBottom: 16,
-                  fontSize: 13,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 11, color: '#888' }}>CUSTOMER</div>
-                  {editing ? (
-                    <input
-                      value={editCustomer}
-                      onChange={(e) => setEditCustomer(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '4px 8px',
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                      }}
-                    />
-                  ) : (
-                    <div>{detail.proposedCustomerName ?? '—'}</div>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888' }}>BID DUE</div>
-                  {editing ? (
-                    <input
-                      type="date"
-                      value={editBidDue}
-                      onChange={(e) => setEditBidDue(e.target.value)}
-                      style={{
-                        padding: '4px 8px',
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                      }}
-                    />
-                  ) : (
-                    <div>{formatDateOnly(detail.proposedBidDueAt)}</div>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888' }}>PROJECT NUMBER</div>
-                  {editing ? (
-                    <input
-                      value={editJobNumber}
-                      onChange={(e) => setEditJobNumber(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '4px 8px',
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                      }}
-                    />
-                  ) : (
-                    <div>{detail.proposedJobNumber ?? '—'}</div>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888' }}>STATUS</div>
-                  <div>{statusLabel(detail.status)}</div>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
-                    SOURCE EVIDENCE · Bid Invites ({inviteEmails.length})
-                  </div>
-                  {inviteEmails.length === 0 ? (
-                    <p style={{ fontSize: 12, color: '#888' }}>No invite emails linked.</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>
-                      {inviteEmails.map((link) => (
-                        <li key={link.id}>
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 10,
+                      background: '#fafafa',
+                      borderRadius: 6,
+                      fontSize: 13,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      Existing Job ·{' '}
+                      {existingJobLabel(detail.existingJobMatchStatus)}
+                    </div>
+                    {detail.proposedExistingJob && (
+                      <div style={{ marginBottom: 8, color: '#444' }}>
+                        {detail.proposedExistingJob.jobNumber
+                          ? `${detail.proposedExistingJob.jobNumber} — `
+                          : ''}
+                        {detail.proposedExistingJob.name}
+                      </div>
+                    )}
+                    {!['CONFIRMED', 'REJECTED'].includes(detail.status) &&
+                      ['POSSIBLE', 'STRONG', 'NEEDS_REVIEW'].includes(
+                        detail.existingJobMatchStatus || ''
+                      ) && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           <button
                             type="button"
-                            onClick={() => {
-                              if (onOpenMessage && selectedConnectionId) {
+                            className="btn btn-primary"
+                            disabled={actionBusy || !detail.proposedExistingJobId}
+                            onClick={() => void resolveExisting('SAME')}
+                            style={{ fontSize: 12 }}
+                          >
+                            Same Job
+                          </button>
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={actionBusy}
+                            onClick={() => void resolveExisting('DIFFERENT')}
+                            style={{ fontSize: 12 }}
+                          >
+                            Different Job
+                          </button>
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={actionBusy}
+                            onClick={() => void resolveExisting('NEEDS_REVIEW')}
+                            style={{ fontSize: 12 }}
+                          >
+                            Needs review
+                          </button>
+                        </div>
+                      )}
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {!editing &&
+                      !['CONFIRMED', 'REJECTED'].includes(detail.status) && (
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => setEditing(true)}
+                        >
+                          Edit
+                        </button>
+                      )}
+                    {!['CONFIRMED', 'REJECTED'].includes(detail.status) && (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={actionBusy}
+                        onClick={() => void handleReject()}
+                      >
+                        Reject
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>
+                      Source emails
+                    </div>
+                    <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                      {detail.emails.map((link) => (
+                        <li
+                          key={link.id}
+                          style={{
+                            fontSize: 12,
+                            padding: '4px 0',
+                            borderTop: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <span style={{ color: '#888' }}>{link.role}</span>{' '}
+                          {link.email.subject || '(no subject)'}
+                          {onOpenMessage && selectedConnectionId && (
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{
+                                marginLeft: 6,
+                                fontSize: 11,
+                                padding: '2px 6px',
+                              }}
+                              onClick={() =>
                                 onOpenMessage(link.email.id, selectedConnectionId)
                               }
-                            }}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              padding: 0,
-                              color: onOpenMessage ? '#1565c0' : 'inherit',
-                              cursor: onOpenMessage ? 'pointer' : 'default',
-                              textAlign: 'left',
-                            }}
-                          >
-                            {link.email.subject ?? '(no subject)'}
-                            {link.isPrimary ? ' · primary' : ''}
-                          </button>
+                            >
+                              Open
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
-                  )}
-                </div>
-
-                <div>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
-                    QUOTES ({quoteEmails.length})
                   </div>
-                  {quoteEmails.length === 0 ? (
-                    <p style={{ fontSize: 12, color: '#888' }}>No quotes matched yet.</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>
-                      {quoteEmails.map((link) => {
-                        const names = attachmentNames(link.email.attachmentMetadata)
-                        return (
-                          <li key={link.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (onOpenMessage && selectedConnectionId) {
-                                  onOpenMessage(link.email.id, selectedConnectionId)
-                                }
-                              }}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                padding: 0,
-                                color: onOpenMessage ? '#1565c0' : 'inherit',
-                                cursor: onOpenMessage ? 'pointer' : 'default',
-                                textAlign: 'left',
-                              }}
-                            >
-                              {names[0] ?? link.email.subject ?? '(quote)'}
-                              {names.length > 1 ? ` (+${names.length - 1})` : ''}
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>MATCH EVIDENCE</div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '160px 40px',
-                    gap: '4px 12px',
-                    fontSize: 13,
-                    maxWidth: 220,
-                  }}
-                >
-                  <span>Project name</span>
-                  <span>{mark(projectMatch)}</span>
-                  <span>Customer</span>
-                  <span>{mark(customerMatch)}</span>
-                  <span>Project number</span>
-                  <span>{mark(numberMatch)}</span>
-                  <span>Conversation</span>
-                  <span>{mark(conversationMatch)}</span>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18 }}>
-                {editing ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={actionBusy}
-                      onClick={() => void saveEdits()}
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      disabled={actionBusy}
-                      onClick={() => {
-                        setEditing(false)
-                        setEditProject(detail.proposedProjectName ?? '')
-                        setEditCustomer(detail.proposedCustomerName ?? '')
-                        setEditJobNumber(detail.proposedJobNumber ?? '')
-                        setEditBidDue(
-                          detail.proposedBidDueAt
-                            ? detail.proposedBidDueAt.slice(0, 10)
-                            : ''
-                        )
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    disabled={
-                      actionBusy ||
-                      detail.status === 'CONFIRMED' ||
-                      detail.status === 'REJECTED'
-                    }
-                    onClick={() => setEditing(true)}
-                  >
-                    Edit
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  disabled={
-                    actionBusy ||
-                    detail.status === 'CONFIRMED' ||
-                    detail.status === 'REJECTED'
-                  }
-                  onClick={() => void handleReject()}
-                >
-                  Reject
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={
-                    actionBusy ||
-                    !canPromote ||
-                    detail.status === 'CONFIRMED' ||
-                    detail.status === 'REJECTED'
-                  }
-                  onClick={() => void handleCreateBid()}
-                  title={
-                    canPromote
-                      ? 'Create operational BIDDING Job from this candidate'
-                      : 'Only OWNER/ADMIN can create bids'
-                  }
-                >
-                  Create Bid
-                </button>
-              </div>
-            </>
+                </>
+              ) : null}
+            </div>
           )}
         </div>
       )}
+
+      {mainTab === 'quotes' && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div
+            style={{
+              padding: '10px 12px',
+              borderBottom: '1px solid #eee',
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <strong style={{ fontSize: 13 }}>Quotes</strong>
+            {loadingQuotes && (
+              <span style={{ fontSize: 12, color: '#888' }}>Loading…</span>
+            )}
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', background: '#fafafa' }}>
+                  <th style={{ padding: '8px 10px' }}>Name</th>
+                  <th style={{ padding: '8px 10px' }}>Scope</th>
+                  <th style={{ padding: '8px 10px' }}>Price</th>
+                  <th style={{ padding: '8px 10px' }}>Bid Match</th>
+                  <th style={{ padding: '8px 10px' }}>Notes</th>
+                  <th style={{ padding: '8px 10px' }} />
+                </tr>
+              </thead>
+              <tbody>
+                {quotes.length === 0 && !loadingQuotes && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      style={{ padding: 16, color: '#888', textAlign: 'center' }}
+                    >
+                      No quote staging rows yet — run Scan Bids.
+                    </td>
+                  </tr>
+                )}
+                {quotes.map((q) => (
+                  <tr key={q.id} style={{ borderTop: '1px solid #f0f0f0' }}>
+                    <td style={{ padding: '8px 10px' }}>
+                      {q.sourceSubject || '—'}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {q.extractedScope || '—'}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {formatMoney(q.extractedAmount, q.currency)}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <div>{q.matchStatus}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>
+                        {q.bidCandidateName || 'Unmatched'}
+                      </div>
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {q.extractedNotes || '—'}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {q.bidCandidateId && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ fontSize: 12 }}
+                          disabled={actionBusy}
+                          onClick={() => void unmatchQuote(q.id)}
+                        >
+                          Unmatch
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {mainTab === 'source' && (
+        <div className="card" style={{ padding: 14 }}>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginBottom: 10,
+              alignItems: 'flex-end',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(
+                [
+                  ['BID_INVITE', `Bid Invites (${counts.bidInvites})`],
+                  ['QUOTE', `Quotes (${counts.quotes})`],
+                ] as const
+              ).map(([role, label]) => (
+                <button
+                  key={role}
+                  type="button"
+                  className={listRole === role ? 'btn btn-primary' : 'btn'}
+                  style={{ fontSize: 12 }}
+                  onClick={() => setListRole(role)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortDir)}
+              style={{ fontSize: 12, padding: '4px 6px' }}
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+            </select>
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setSearch(searchInput.trim())
+              }}
+              placeholder="Search subject/sender…"
+              style={{ fontSize: 12, padding: '4px 8px', minWidth: 180 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              style={{ fontSize: 12 }}
+              onClick={() => setSearch(searchInput.trim())}
+            >
+              Search
+            </button>
+          </div>
+          <div
+            ref={listRef}
+            onScroll={handleDiscoveryScroll}
+            style={{ maxHeight: 420, overflowY: 'auto', fontSize: 13 }}
+          >
+            {loadingList && items.length === 0 && (
+              <p style={{ color: '#888' }}>Loading…</p>
+            )}
+            {!loadingList && items.length === 0 && (
+              <p style={{ color: '#888' }}>No source emails in discovery yet.</p>
+            )}
+            {items.map((item) => (
+              <div
+                key={item.discoveryId}
+                style={{
+                  padding: '8px 0',
+                  borderBottom: '1px solid #f0f0f0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {item.email.subject || '(no subject)'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#666' }}>
+                    {item.email.senderName || item.email.senderEmail} ·{' '}
+                    {formatWhen(item.email.receivedAt || item.email.sentAt)}
+                    {item.email.hasAttachments
+                      ? ` · ${item.email.attachmentCount} att.`
+                      : ''}
+                  </div>
+                </div>
+                {onOpenMessage && selectedConnectionId && (
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ fontSize: 12, alignSelf: 'center' }}
+                    onClick={() =>
+                      onOpenMessage(item.email.id, selectedConnectionId)
+                    }
+                  >
+                    Open
+                  </button>
+                )}
+              </div>
+            ))}
+            {loadingMore && (
+              <p style={{ color: '#888', fontSize: 12 }}>Loading more…</p>
+            )}
+            {!hasMore && items.length > 0 && (
+              <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
+                {total} total
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div
+        className="card"
+        style={{
+          marginTop: 12,
+          padding: 12,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 12,
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ fontSize: 13, color: '#444' }}>
+          <strong>{readyCount}</strong> ready ·{' '}
+          <strong>{needsReviewCount}</strong> needs review ·{' '}
+          <strong>{selectedIds.size}</strong> selected
+        </div>
+        {canImport && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={actionBusy || selectedIds.size === 0 || busy}
+            onClick={() => void handleImport()}
+          >
+            {actionBusy
+              ? 'Importing…'
+              : `Import ${selectedIds.size || ''} Bid${
+                  selectedIds.size === 1 ? '' : 's'
+                }`.replace('  ', ' ')}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

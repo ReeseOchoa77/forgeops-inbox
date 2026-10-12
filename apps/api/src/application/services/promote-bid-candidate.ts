@@ -4,8 +4,13 @@
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { dedupeProjectAliases, normalizeName } from "@forgeops/shared";
+import {
+  buildBidCandidateIdentityKey,
+  dedupeProjectAliases,
+  normalizeName,
+} from "@forgeops/shared";
 import { ACTIVE_BID_STATUS, USER_BID_ASSIGNMENT } from "./bidding.js";
+import { computeImportBlockedReason } from "./bid-import-eligibility.js";
 import { resolveOrCreateBiddingCustomer } from "./resolve-bidding-customer.js";
 
 export class PromoteBidCandidateError extends Error {
@@ -55,6 +60,11 @@ export type PromoteBidCandidateInput = {
   alternateProjectNames?: string[];
   /** Required when an exact/likely Job exists and mode is create */
   confirmCreateDespiteExisting?: boolean;
+  /**
+   * When attaching: only link emails + set Job status BIDDING;
+   * do not overwrite Job name/customer/due/jobNumber (import RESOLVED_SAME).
+   */
+  preserveJobFields?: boolean;
 };
 
 export type PromoteBidCandidateResult = {
@@ -179,8 +189,12 @@ export async function promoteBidCandidate(
         where: { id: existing.id },
         data: {
           status: ACTIVE_BID_STATUS,
-          ...(bidDueAt ? { bidDueAt } : {}),
-          ...(jobNumber ? { jobNumber } : {}),
+          ...(input.preserveJobFields
+            ? {}
+            : {
+                ...(bidDueAt ? { bidDueAt } : {}),
+                ...(jobNumber ? { jobNumber } : {}),
+              }),
         },
       });
 
@@ -209,6 +223,7 @@ export async function promoteBidCandidate(
           proposedBidDueAt: bidDueAt,
           proposedJobNumber: jobNumber,
           proposedEstimatorUserId: estimatorUserId,
+          importBlockedReason: "Already imported",
         },
       });
 
@@ -333,6 +348,7 @@ export async function promoteBidCandidate(
         proposedBidDueAt: bidDueAt,
         proposedJobNumber: jobNumber,
         proposedEstimatorUserId: estimatorUserId,
+        importBlockedReason: "Already imported",
       },
     });
 
@@ -385,12 +401,20 @@ export async function updateBidCandidateReview(input: {
   bidDueAt?: Date | null;
   jobNumber?: string | null;
   estimatorUserId?: string | null;
+  scope?: string | null;
+  notes?: string | null;
   status?: "READY" | "NEEDS_REVIEW" | "DISCOVERED";
   reviewNotes?: string | null;
 }): Promise<{ candidateId: string }> {
   const candidate = await input.prisma.bidCandidate.findFirst({
     where: { id: input.candidateId, workspaceId: input.workspaceId },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      userEditedFields: true,
+      proposedProjectName: true,
+      existingJobMatchStatus: true,
+    },
   });
   if (!candidate) {
     throw new PromoteBidCandidateError("NOT_FOUND", "Bid candidate not found");
@@ -401,6 +425,25 @@ export async function updateBidCandidateReview(input: {
       "Confirmed/rejected candidates cannot be edited here"
     );
   }
+
+  const locked = new Set(
+    Array.isArray(candidate.userEditedFields)
+      ? candidate.userEditedFields.filter((k): k is string => typeof k === "string")
+      : []
+  );
+  if (input.projectName !== undefined) locked.add("proposedProjectName");
+  if (input.customerName !== undefined) locked.add("proposedCustomerName");
+  if (input.bidDueAt !== undefined) locked.add("proposedBidDueAt");
+  if (input.jobNumber !== undefined) locked.add("proposedJobNumber");
+  if (input.scope !== undefined) locked.add("proposedScope");
+  if (input.notes !== undefined) locked.add("proposedNotes");
+
+  const nextName =
+    input.projectName !== undefined
+      ? input.projectName
+      : candidate.proposedProjectName;
+  const nextStatus = input.status ?? candidate.status;
+
   await input.prisma.bidCandidate.update({
     where: { id: candidate.id },
     data: {
@@ -417,11 +460,162 @@ export async function updateBidCandidateReview(input: {
       ...(input.estimatorUserId !== undefined
         ? { proposedEstimatorUserId: input.estimatorUserId }
         : {}),
+      ...(input.scope !== undefined ? { proposedScope: input.scope } : {}),
+      ...(input.notes !== undefined ? { proposedNotes: input.notes } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.reviewNotes !== undefined
         ? { reviewNotes: input.reviewNotes }
         : {}),
+      userEditedFields: [...locked] as Prisma.InputJsonValue,
+      importBlockedReason: computeImportBlockedReason({
+        status: nextStatus,
+        proposedProjectName: nextName,
+        existingJobMatchStatus: candidate.existingJobMatchStatus,
+      }),
     },
   });
   return { candidateId: candidate.id };
+}
+
+export async function resolveBidCandidateExistingJob(input: {
+  prisma: PrismaClient;
+  workspaceId: string;
+  candidateId: string;
+  resolution: "SAME" | "DIFFERENT" | "NEEDS_REVIEW";
+  existingJobId?: string | null;
+}): Promise<{ candidateId: string; existingJobMatchStatus: string }> {
+  const candidate = await input.prisma.bidCandidate.findFirst({
+    where: { id: input.candidateId, workspaceId: input.workspaceId },
+    select: {
+      id: true,
+      status: true,
+      proposedProjectName: true,
+      proposedBidDueAt: true,
+      proposedExistingJobId: true,
+    },
+  });
+  if (!candidate) {
+    throw new PromoteBidCandidateError("NOT_FOUND", "Bid candidate not found");
+  }
+  if (candidate.status === "CONFIRMED" || candidate.status === "REJECTED") {
+    throw new PromoteBidCandidateError(
+      "ALREADY_CONFIRMED",
+      "Confirmed/rejected candidates cannot resolve existing Job here"
+    );
+  }
+
+  let existingJobMatchStatus:
+    | "RESOLVED_SAME"
+    | "RESOLVED_DIFFERENT"
+    | "NEEDS_REVIEW" = "NEEDS_REVIEW";
+  let proposedExistingJobId = candidate.proposedExistingJobId;
+
+  if (input.resolution === "SAME") {
+    const jobId = input.existingJobId?.trim() || candidate.proposedExistingJobId;
+    if (!jobId) {
+      throw new PromoteBidCandidateError(
+        "ATTACH_JOB_NOT_FOUND",
+        "existingJobId is required to resolve as same Job"
+      );
+    }
+    const job = await input.prisma.job.findFirst({
+      where: { id: jobId, workspaceId: input.workspaceId },
+      select: { id: true },
+    });
+    if (!job) {
+      throw new PromoteBidCandidateError(
+        "ATTACH_JOB_NOT_FOUND",
+        "Existing Job not found"
+      );
+    }
+    existingJobMatchStatus = "RESOLVED_SAME";
+    proposedExistingJobId = job.id;
+  } else if (input.resolution === "DIFFERENT") {
+    existingJobMatchStatus = "RESOLVED_DIFFERENT";
+  } else {
+    existingJobMatchStatus = "NEEDS_REVIEW";
+  }
+
+  const nextStatus =
+    existingJobMatchStatus === "NEEDS_REVIEW"
+      ? "NEEDS_REVIEW"
+      : candidate.proposedProjectName && candidate.proposedBidDueAt
+        ? "READY"
+        : candidate.proposedProjectName
+          ? "DISCOVERED"
+          : "NEEDS_REVIEW";
+
+  await input.prisma.bidCandidate.update({
+    where: { id: candidate.id },
+    data: {
+      existingJobMatchStatus,
+      proposedExistingJobId,
+      status: nextStatus,
+      importBlockedReason: computeImportBlockedReason({
+        status: nextStatus,
+        proposedProjectName: candidate.proposedProjectName,
+        existingJobMatchStatus,
+      }),
+    },
+  });
+
+  return { candidateId: candidate.id, existingJobMatchStatus };
+}
+
+export async function createManualBidCandidate(input: {
+  prisma: PrismaClient;
+  workspaceId: string;
+  projectName: string;
+  customerName?: string | null;
+  bidDueAt?: Date | null;
+  jobNumber?: string | null;
+  notes?: string | null;
+  userId: string;
+}): Promise<{ candidateId: string }> {
+  const projectName = input.projectName.trim();
+  if (!projectName) {
+    throw new PromoteBidCandidateError("NAME_REQUIRED", "Project name is required");
+  }
+  const identityKey =
+    buildBidCandidateIdentityKey({
+      projectNumber: input.jobNumber ?? null,
+      projectName,
+      customerName: input.customerName ?? null,
+      fallbackMessageId: `manual:${input.userId}:${Date.now()}`,
+    }) ?? `manual:${input.userId}:${Date.now()}`;
+
+  const status =
+    projectName && input.bidDueAt
+      ? "READY"
+      : projectName
+        ? "DISCOVERED"
+        : "NEEDS_REVIEW";
+
+  const created = await input.prisma.bidCandidate.create({
+    data: {
+      workspaceId: input.workspaceId,
+      identityKey,
+      proposedProjectName: projectName,
+      proposedCustomerName: input.customerName ?? null,
+      proposedBidDueAt: input.bidDueAt ?? null,
+      proposedJobNumber: input.jobNumber?.trim() || null,
+      proposedNotes: input.notes ?? null,
+      userEditedFields: [
+        "proposedProjectName",
+        ...(input.customerName !== undefined ? ["proposedCustomerName"] : []),
+        ...(input.bidDueAt !== undefined ? ["proposedBidDueAt"] : []),
+        ...(input.jobNumber !== undefined ? ["proposedJobNumber"] : []),
+        ...(input.notes !== undefined ? ["proposedNotes"] : []),
+      ],
+      status,
+      confidence: 1,
+      evidence: { labels: ["manual_create"] },
+      importBlockedReason: computeImportBlockedReason({
+        status,
+        proposedProjectName: projectName,
+        existingJobMatchStatus: "NONE",
+      }),
+    },
+  });
+  return { candidateId: created.id };
 }

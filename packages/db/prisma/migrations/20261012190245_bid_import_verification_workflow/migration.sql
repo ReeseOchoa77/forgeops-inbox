@@ -1,0 +1,5 @@
+-- RenameIndex
+ALTER INDEX "BidFolderDiscoveryEmail_workspaceId_inboxConnectionId_emailMess" RENAME TO "BidFolderDiscoveryEmail_workspaceId_inboxConnectionId_email_key";
+
+-- RenameIndex
+ALTER INDEX "BidFolderDiscoveryEmail_workspaceId_inboxConnectionId_role_last" RENAME TO "BidFolderDiscoveryEmail_workspaceId_inboxConnectionId_role__idx";

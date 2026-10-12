@@ -213,7 +213,22 @@ export interface ProjectFolderEmailAnalyzeJobResult {
   errorMessage?: string;
 }
 
-export type BidEmailAnalyzeOperation = "scan" | "analyze";
+export type BidEmailAnalyzeOperation = "scan" | "analyze" | "scan_bids";
+
+export type BidEmailAnalyzePhase =
+  | "RESOLVE_FOLDERS"
+  | "BID_INVITES"
+  | "QUOTES"
+  | "ANALYZE_CANDIDATES"
+  | "SCANNING_BID_INVITES"
+  | "EXTRACTING_BID_CANDIDATES"
+  | "SCANNING_QUOTES"
+  | "EXTRACTING_QUOTES"
+  | "MATCHING_QUOTES"
+  | "MATCHING_EXISTING_JOBS"
+  | "READY_FOR_REVIEW"
+  | "DONE"
+  | null;
 
 export interface BidEmailAnalyzeJobPayload {
   workspaceId: string;
@@ -222,7 +237,8 @@ export interface BidEmailAnalyzeJobPayload {
   initiatedBy?: string;
   /**
    * scan = Graph discovery into BidFolderDiscoveryEmail (no Jobs).
-   * analyze = group/match discovery rows into BidCandidates (no Graph, no Jobs).
+   * analyze = group/match discovery into BidCandidates (no Graph, no Jobs).
+   * scan_bids = full import/verification pipeline (no Jobs until explicit Import).
    */
   operation?: BidEmailAnalyzeOperation;
   /** Preset: 30d | 90d | 180d | 365d | all | custom */
@@ -247,19 +263,18 @@ export interface BidEmailAnalyzeProgress {
   messagesExisting: number;
   candidatesCreated: number;
   candidatesUpdated: number;
+  quotesExtracted: number;
   quotesMatched: number;
   quotesUnmatched: number;
+  quotesNeedsReview: number;
   quotesLinkedToJob: number;
+  existingJobsStrong: number;
+  existingJobsPossible: number;
+  existingJobsNone: number;
   aiCalls: number;
   scanRangePreset: string | null;
   scanSinceAt: string | null;
-  currentPhase:
-    | "RESOLVE_FOLDERS"
-    | "BID_INVITES"
-    | "QUOTES"
-    | "ANALYZE_CANDIDATES"
-    | "DONE"
-    | null;
+  currentPhase: BidEmailAnalyzePhase;
   currentFolderName: string | null;
   warning: string | null;
   operation: BidEmailAnalyzeOperation | null;
@@ -281,9 +296,14 @@ export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
     messagesExisting: 0,
     candidatesCreated: 0,
     candidatesUpdated: 0,
+    quotesExtracted: 0,
     quotesMatched: 0,
     quotesUnmatched: 0,
+    quotesNeedsReview: 0,
     quotesLinkedToJob: 0,
+    existingJobsStrong: 0,
+    existingJobsPossible: 0,
+    existingJobsNone: 0,
     aiCalls: 0,
     scanRangePreset: null,
     scanSinceAt: null,

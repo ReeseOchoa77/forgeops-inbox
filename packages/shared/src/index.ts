@@ -54,6 +54,7 @@ export * from "./bidding/extract-project-name-from-attachments.js";
 export * from "./bidding/resolve-bid-project-identity.js";
 export * from "./bidding/bidding-folder-roles.js";
 export * from "./bidding/bid-candidate-identity.js";
+export * from "./bidding/extract-quote-fields.js";
 export * from "./bidding/resolve-bidding-workflow-folders.js";
 export * from "./bidding/bidding-folder-scan-range.js";
 export * from "./calendar/bidding-calendar-inclusion.js";
