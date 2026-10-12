@@ -278,6 +278,17 @@ export interface BidEmailAnalyzeProgress {
   currentFolderName: string | null;
   warning: string | null;
   operation: BidEmailAnalyzeOperation | null;
+  /**
+   * Observability only: wall-clock ms per Scan Bids stage (no email bodies).
+   * Keys are phase names; values are milliseconds.
+   */
+  stageTimingsMs?: Record<string, number> | null;
+  /**
+   * Observability: OpenAI calls by operation during this run.
+   * Deterministic-complete paths stay 0; optional enrichment may increment
+   * bid_extract / quote_extract / quote_match_adjudicate / existing_job_adjudicate.
+   */
+  aiCallsByOperation?: Record<string, number> | null;
 }
 
 export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
@@ -311,6 +322,8 @@ export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
     currentFolderName: null,
     warning: null,
     operation: null,
+    stageTimingsMs: {},
+    aiCallsByOperation: {},
   };
 }
 

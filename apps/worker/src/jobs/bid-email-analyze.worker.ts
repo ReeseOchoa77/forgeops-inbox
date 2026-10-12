@@ -15,6 +15,7 @@ import {
 } from "../application/processors/bid-email-analyze.processor.js";
 import type { WorkerEnv } from "../config/env.js";
 import { createBullMqConnection } from "../infrastructure/redis/connection.js";
+import { S3AttachmentStorage } from "../infrastructure/storage/attachment-storage.js";
 
 export const startBidEmailAnalyzeWorker = (
   env: WorkerEnv
@@ -23,6 +24,13 @@ export const startBidEmailAnalyzeWorker = (
   queue: Queue<BidEmailAnalyzeJobPayload, BidEmailAnalyzeJobResult>;
 } => {
   const tokenCipher = new TokenCipher(env.TOKEN_ENCRYPTION_SECRET);
+  const attachmentStorage = new S3AttachmentStorage({
+    bucket: env.S3_BUCKET,
+    region: env.S3_REGION,
+    accessKeyId: env.S3_ACCESS_KEY_ID,
+    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+    endpoint: env.S3_ENDPOINT,
+  });
 
   const attachmentIngestQueue = new Queue<
     AttachmentIngestJobPayload,
@@ -53,6 +61,20 @@ export const startBidEmailAnalyzeWorker = (
           tenantId: env.OUTLOOK_TENANT_ID,
         },
         attachmentIngestQueue,
+        ...(env.OPENAI_API_KEY !== undefined
+          ? { openaiApiKey: env.OPENAI_API_KEY }
+          : { openaiApiKey: null }),
+        openaiModel: env.OPENAI_MODEL,
+        readAttachmentObject: attachmentStorage.configured
+          ? async (storageKey) => {
+              try {
+                const obj = await attachmentStorage.getObject(storageKey);
+                return obj.data;
+              } catch {
+                return null;
+              }
+            }
+          : null,
         finalAttempt: job.attemptsMade >= maxAttempts,
       });
     },

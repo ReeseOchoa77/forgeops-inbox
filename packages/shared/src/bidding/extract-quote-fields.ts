@@ -38,6 +38,8 @@ export function extractQuoteFieldsDeterministic(input: {
   subject?: string | null;
   bodyText?: string | null;
   attachmentNames?: string[];
+  /** Bounded PDF plain text (already selected / capped by caller). */
+  pdfText?: string | null;
 }): {
   scope: string | null;
   amount: number | null;
@@ -45,19 +47,40 @@ export function extractQuoteFieldsDeterministic(input: {
   notes: string | null;
   evidence: string[];
   confidence: number;
+  /** Attachment ids are not known here — caller may append. */
+  amountSource: "EMAIL_BODY" | "PDF_TEXT" | null;
+  scopeSource: "EMAIL_BODY" | "ATTACHMENT_FILENAME" | "PDF_TEXT" | null;
 } {
   const subject = input.subject ?? "";
   const body = input.bodyText ?? "";
+  const pdf = input.pdfText ?? "";
   const text = `${subject}\n${body}`;
   const attachments = (input.attachmentNames ?? []).join(" ");
   const evidence: string[] = [];
   let confidence = 0.2;
 
   let scope: string | null = null;
+  let scopeSource: "EMAIL_BODY" | "ATTACHMENT_FILENAME" | "PDF_TEXT" | null =
+    null;
   for (const p of SCOPE_PATTERNS) {
-    if (p.re.test(text) || p.re.test(attachments)) {
+    if (p.re.test(text)) {
       scope = p.label;
+      scopeSource = "EMAIL_BODY";
       evidence.push(`scope:${p.label}`);
+      confidence += 0.25;
+      break;
+    }
+    if (p.re.test(attachments)) {
+      scope = p.label;
+      scopeSource = "ATTACHMENT_FILENAME";
+      evidence.push(`scope:${p.label}:filename`);
+      confidence += 0.25;
+      break;
+    }
+    if (pdf && p.re.test(pdf)) {
+      scope = p.label;
+      scopeSource = "PDF_TEXT";
+      evidence.push(`scope:${p.label}:pdf`);
       confidence += 0.25;
       break;
     }
@@ -65,6 +88,7 @@ export function extractQuoteFieldsDeterministic(input: {
 
   let amount: number | null = null;
   let currency: string | null = null;
+  let amountSource: "EMAIL_BODY" | "PDF_TEXT" | null = null;
   for (const re of AMOUNT_PATTERNS) {
     const m = text.match(re);
     if (!m?.[1]) continue;
@@ -75,14 +99,30 @@ export function extractQuoteFieldsDeterministic(input: {
     if (parsed < 100) continue;
     amount = parsed;
     currency = "USD";
+    amountSource = "EMAIL_BODY";
     evidence.push("amount:body");
     confidence += 0.35;
     break;
   }
+  if (amount == null && pdf) {
+    for (const re of AMOUNT_PATTERNS) {
+      const m = pdf.match(re);
+      if (!m?.[1]) continue;
+      const parsed = parseMoney(m[1]);
+      if (parsed == null || parsed < 100) continue;
+      amount = parsed;
+      currency = "USD";
+      amountSource = "PDF_TEXT";
+      evidence.push("amount:pdf");
+      confidence += 0.35;
+      break;
+    }
+  }
 
   const notes: string[] = [];
+  const noteHaystack = `${text}\n${pdf}`;
   for (const p of NOTE_PATTERNS) {
-    if (p.re.test(text)) {
+    if (p.re.test(noteHaystack)) {
       notes.push(p.note);
       evidence.push(`note:${p.note}`);
     }
@@ -95,5 +135,7 @@ export function extractQuoteFieldsDeterministic(input: {
     notes: notes.length ? notes.slice(0, 6).join("; ") : null,
     evidence,
     confidence: Math.min(0.95, confidence),
+    amountSource,
+    scopeSource,
   };
 }

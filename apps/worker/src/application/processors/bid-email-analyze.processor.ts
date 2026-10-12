@@ -215,6 +215,11 @@ async function analyzeDiscoveredEmails(input: {
   inboxConnectionId: string;
   runId: string;
   progress: BidEmailAnalyzeProgress;
+  openaiApiKey?: string | null;
+  openaiModel?: string;
+  readAttachmentObject?:
+    | ((storageKey: string) => Promise<Buffer | null>)
+    | null;
 }): Promise<void> {
   await runBidStagingPipeline(input);
 }
@@ -226,6 +231,11 @@ export async function processBidEmailAnalyze(
     tokenCipher: TokenCipher;
     outlookConfig: OutlookClientConfig;
     attachmentIngestQueue: Queue<AttachmentIngestJobPayload, AttachmentIngestResult>;
+    openaiApiKey?: string | null;
+    openaiModel?: string;
+    readAttachmentObject?:
+      | ((storageKey: string) => Promise<Buffer | null>)
+      | null;
     /** Injected Graph helpers for tests — production uses OutlookClient + fetch. */
     /** Injected without access token — production wraps Graph calls. */
     listTopLevelFolders?: () => Promise<Array<{ id: string; displayName: string }>>;
@@ -351,6 +361,15 @@ export async function processBidEmailAnalyze(
         inboxConnectionId: payload.inboxConnectionId,
         runId: run.id,
         progress,
+        ...(deps.openaiApiKey !== undefined
+          ? { openaiApiKey: deps.openaiApiKey }
+          : {}),
+        ...(deps.openaiModel !== undefined
+          ? { openaiModel: deps.openaiModel }
+          : {}),
+        ...(deps.readAttachmentObject !== undefined
+          ? { readAttachmentObject: deps.readAttachmentObject }
+          : {}),
       });
       const stop = await cancelledResult(deps.prisma, payload, progress);
       if (stop) return stop;
@@ -519,14 +538,16 @@ export async function processBidEmailAnalyze(
       folder: { id: string; displayName: string },
       phase: "BID_INVITES" | "QUOTES"
     ) => {
-      progress.currentPhase =
+      const scanPhase =
         operation === "scan_bids"
           ? phase === "BID_INVITES"
             ? "SCANNING_BID_INVITES"
             : "SCANNING_QUOTES"
           : phase;
+      progress.currentPhase = scanPhase;
       progress.currentFolderName = folder.displayName;
       await writeProgress(deps.prisma, run.id, progress);
+      const folderStarted = Date.now();
 
       let pageCursor: string | null = null;
       do {
@@ -647,6 +668,11 @@ export async function processBidEmailAnalyze(
         pageCursor = page.nextPageCursor;
       } while (pageCursor);
 
+      const timings = progress.stageTimingsMs ?? {};
+      timings[scanPhase] = (timings[scanPhase] ?? 0) + (Date.now() - folderStarted);
+      progress.stageTimingsMs = timings;
+      await writeProgress(deps.prisma, run.id, progress);
+
       return null as BidEmailAnalyzeJobResult | null;
     };
 
@@ -669,6 +695,15 @@ export async function processBidEmailAnalyze(
         inboxConnectionId: payload.inboxConnectionId,
         runId: run.id,
         progress,
+        ...(deps.openaiApiKey !== undefined
+          ? { openaiApiKey: deps.openaiApiKey }
+          : {}),
+        ...(deps.openaiModel !== undefined
+          ? { openaiModel: deps.openaiModel }
+          : {}),
+        ...(deps.readAttachmentObject !== undefined
+          ? { readAttachmentObject: deps.readAttachmentObject }
+          : {}),
       });
       const stopAfterStaging = await cancelledResult(deps.prisma, payload, progress);
       if (stopAfterStaging) return stopAfterStaging;

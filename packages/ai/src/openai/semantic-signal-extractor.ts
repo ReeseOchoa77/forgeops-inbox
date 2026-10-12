@@ -11,6 +11,10 @@ import {
   type ExtractSemanticSignalsInput,
   type SemanticSignals,
 } from "../semantic-signals/types.js";
+import {
+  extractOpenAiUsage,
+  recordAiOperation,
+} from "./ai-operation-metrics.js";
 import { withOpenAiResponsesDiagnostics } from "./openai-error-diagnostics.js";
 import { buildJsonObjectResponseParams } from "./responses-json.js";
 import { buildSemanticValidationFailedLog } from "./structured-output-diagnostics.js";
@@ -62,35 +66,72 @@ export class OpenAISemanticSignalExtractor {
     }
 
     const params = buildSemanticSignalResponseCreateParams(this.model, input);
-    return withOpenAiResponsesDiagnostics(
-      { stage: "semantic", model: this.model },
-      async () => {
-        const response = await this.client!.responses.create(params);
-
-        const rawContent = response.output_text?.trim();
-        if (!rawContent) {
-          throw new Error(
-            "OpenAI Responses API returned an empty semantic-signal response"
-          );
-        }
-
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(rawContent);
-        } catch {
-          throw new Error("OpenAI returned invalid JSON for semantic signals");
-        }
-
-        try {
-          return parseSemanticSignals(parsed);
-        } catch (error) {
-          if (error instanceof SemanticSignalValidationError) {
-            // Keys / issue paths only — never raw output_text or email content.
-            console.error(buildSemanticValidationFailedLog({ parsed, error }));
+    const started = Date.now();
+    try {
+      return await withOpenAiResponsesDiagnostics(
+        { stage: "semantic", model: this.model },
+        async () => {
+          const response = await this.client!.responses.create(params);
+          const usage = extractOpenAiUsage(response);
+          try {
+            recordAiOperation({
+              operation: "semantic",
+              model: this.model,
+              durationMs: Date.now() - started,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              totalTokens: usage.totalTokens,
+              retryCount: 0,
+              success: true,
+              errorCode: null,
+              recordCount: 1,
+            });
+          } catch {
+            /* ignore */
           }
-          throw error;
+
+          const rawContent = response.output_text?.trim();
+          if (!rawContent) {
+            throw new Error(
+              "OpenAI Responses API returned an empty semantic-signal response"
+            );
+          }
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawContent);
+          } catch {
+            throw new Error("OpenAI returned invalid JSON for semantic signals");
+          }
+
+          try {
+            return parseSemanticSignals(parsed);
+          } catch (error) {
+            if (error instanceof SemanticSignalValidationError) {
+              // Keys / issue paths only — never raw output_text or email content.
+              console.error(buildSemanticValidationFailedLog({ parsed, error }));
+            }
+            throw error;
+          }
         }
+      );
+    } catch (e) {
+      try {
+        recordAiOperation({
+          operation: "semantic",
+          model: this.model,
+          durationMs: Date.now() - started,
+          inputTokens: null,
+          outputTokens: null,
+          retryCount: 0,
+          success: false,
+          errorCode: e instanceof Error ? e.name : "Error",
+          recordCount: 1,
+        });
+      } catch {
+        /* ignore */
       }
-    );
+      throw e;
+    }
   }
 }

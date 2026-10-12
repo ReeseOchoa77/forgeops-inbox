@@ -3,7 +3,17 @@
  * Never includes API keys, Authorization headers, bodies, or tokens.
  */
 
-export type OpenAIResponsesStage = "semantic" | "subtype" | "entity" | "task";
+export type OpenAIResponsesStage =
+  | "semantic"
+  | "subtype"
+  | "entity"
+  | "task"
+  /** Bidding Analysis optional enrichment (not mailbox classification). */
+  | "bid_extract"
+  | "quote_extract"
+  | "quote_match_adjudicate"
+  | "existing_job_adjudicate"
+  | "bid_group_adjudicate";
 
 const MAX_SANITIZE_DEPTH = 8;
 

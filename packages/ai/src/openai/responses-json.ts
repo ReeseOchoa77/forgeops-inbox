@@ -9,6 +9,10 @@ import {
   withOpenAiResponsesDiagnostics,
   type OpenAIResponsesStage,
 } from "./openai-error-diagnostics.js";
+import {
+  extractOpenAiUsage,
+  recordAiOperation,
+} from "./ai-operation-metrics.js";
 
 export const DEFAULT_CLASSIFICATION_AI_MODEL = "chat-latest";
 export const DEFAULT_CLASSIFICATION_MAX_OUTPUT_TOKENS = 1500;
@@ -61,18 +65,55 @@ export async function createJsonObjectResponse(
   stage: OpenAIResponsesStage
 ): Promise<unknown> {
   const model = typeof params.model === "string" ? params.model : String(params.model);
-  return withOpenAiResponsesDiagnostics({ stage, model }, async () => {
-    const response = await client.responses.create(params);
-    const rawContent = response.output_text?.trim();
-    if (!rawContent) {
-      throw new Error("OpenAI Responses API returned an empty response");
-    }
+  const started = Date.now();
+  try {
+    return await withOpenAiResponsesDiagnostics({ stage, model }, async () => {
+      const response = await client.responses.create(params);
+      const usage = extractOpenAiUsage(response);
+      try {
+        recordAiOperation({
+          operation: stage,
+          model,
+          durationMs: Date.now() - started,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.totalTokens,
+          retryCount: 0,
+          success: true,
+          errorCode: null,
+          recordCount: 1,
+        });
+      } catch {
+        /* telemetry must never fail the business path */
+      }
+      const rawContent = response.output_text?.trim();
+      if (!rawContent) {
+        throw new Error("OpenAI Responses API returned an empty response");
+      }
+      try {
+        return JSON.parse(rawContent) as unknown;
+      } catch {
+        throw new Error("OpenAI returned invalid JSON");
+      }
+    });
+  } catch (e) {
     try {
-      return JSON.parse(rawContent) as unknown;
+      recordAiOperation({
+        operation: stage,
+        model,
+        durationMs: Date.now() - started,
+        inputTokens: null,
+        outputTokens: null,
+        retryCount: 0,
+        success: false,
+        errorCode: e instanceof Error ? e.name : "Error",
+        recordCount: 1,
+      });
     } catch {
-      throw new Error("OpenAI returned invalid JSON");
+      /* ignore */
     }
-  });
+    throw e;
+  }
 }
 
 export class StructuredOutputValidationError extends Error {

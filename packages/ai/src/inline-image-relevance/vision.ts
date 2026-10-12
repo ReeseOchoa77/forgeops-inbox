@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses.js";
 
+import { recordAiOperation } from "../openai/ai-operation-metrics.js";
 import { INLINE_IMAGE_VISION_MAX_BYTES, normalizeImageMimeType } from "./constants.js";
 import type { InlineImageDecision } from "./deterministic.js";
 import { parseInlineImageRelevanceOutput } from "./parse.js";
@@ -57,14 +58,45 @@ export async function classifyInlineImageWithVision(
   let outputText = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  const started = Date.now();
   try {
     const response = await client.responses.create(params);
     outputText = response.output_text?.trim() ?? "";
     const usage = response.usage;
     inputTokens = usage?.input_tokens ?? 0;
     outputTokens = usage?.output_tokens ?? 0;
+    try {
+      recordAiOperation({
+        operation: "inline_image_vision",
+        model,
+        durationMs: Date.now() - started,
+        inputTokens,
+        outputTokens,
+        retryCount: 0,
+        success: true,
+        errorCode: null,
+        recordCount: 1,
+      });
+    } catch {
+      /* ignore */
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 240) : "vision request failed";
+    try {
+      recordAiOperation({
+        operation: "inline_image_vision",
+        model,
+        durationMs: Date.now() - started,
+        inputTokens: null,
+        outputTokens: null,
+        retryCount: 0,
+        success: false,
+        errorCode: "vision_failed",
+        recordCount: 1,
+      });
+    } catch {
+      /* ignore */
+    }
     console.error({
       event: "inline-image-relevance-vision-failed",
       model,

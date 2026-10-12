@@ -1,5 +1,6 @@
 /**
- * BidQuoteStaging list / patch (reassign, unmatch, edit fields).
+ * BidQuoteStaging list / patch (reassign, unmatch, reject, edit fields).
+ * Never mutates EmailMessage.subject or deletes EmailMessage.
  */
 
 import { Prisma, type PrismaClient } from "@prisma/client";
@@ -14,11 +15,19 @@ export class BidQuoteStagingError extends Error {
   }
 }
 
+function lockedFields(userEditedFields: unknown): Set<string> {
+  if (!Array.isArray(userEditedFields)) return new Set();
+  return new Set(
+    userEditedFields.filter((k): k is string => typeof k === "string")
+  );
+}
+
 export async function listBidQuoteStaging(input: {
   prisma: PrismaClient;
   workspaceId: string;
   connectionId?: string;
   matchStatus?: string;
+  includeRejected?: boolean;
   page?: number;
   pageSize?: number;
 }): Promise<{
@@ -29,15 +38,20 @@ export async function listBidQuoteStaging(input: {
     id: string;
     emailMessageId: string;
     sourceSubject: string | null;
+    displayName: string | null;
     extractedScope: string | null;
     extractedAmount: number | null;
     currency: string | null;
     extractedNotes: string | null;
+    extractionEvidence: unknown;
+    extractionConfidence: number | null;
+    userEditedFields: unknown;
     matchStatus: string;
     matchConfidence: number | null;
     bidCandidateId: string | null;
     bidCandidateName: string | null;
     userConfirmedMatch: boolean;
+    rejectedAt: Date | null;
     updatedAt: Date;
     createdAt: Date;
   }>;
@@ -56,9 +70,12 @@ export async function listBidQuoteStaging(input: {
             | "POSSIBLE_MATCH"
             | "MATCHED"
             | "NEEDS_REVIEW"
-            | "USER_UNMATCHED",
+            | "USER_UNMATCHED"
+            | "REJECTED",
         }
-      : {}),
+      : input.includeRejected
+        ? {}
+        : { matchStatus: { not: "REJECTED" as const } }),
   };
 
   const [total, rows] = await Promise.all([
@@ -84,17 +101,23 @@ export async function listBidQuoteStaging(input: {
       id: q.id,
       emailMessageId: q.emailMessageId,
       sourceSubject: q.sourceSubject,
+      displayName: q.displayName,
       extractedScope: q.extractedScope,
       extractedAmount:
         q.extractedAmount != null ? Number(q.extractedAmount) : null,
       currency: q.currency,
       extractedNotes: q.extractedNotes,
+      extractionEvidence: q.extractionEvidence,
+      extractionConfidence:
+        q.extractionConfidence != null ? Number(q.extractionConfidence) : null,
+      userEditedFields: q.userEditedFields,
       matchStatus: q.matchStatus,
       matchConfidence:
         q.matchConfidence != null ? Number(q.matchConfidence) : null,
       bidCandidateId: q.bidCandidateId,
       bidCandidateName: q.bidCandidate?.proposedProjectName ?? null,
       userConfirmedMatch: q.userConfirmedMatch,
+      rejectedAt: q.rejectedAt,
       updatedAt: q.updatedAt,
       createdAt: q.createdAt,
     })),
@@ -107,6 +130,8 @@ export async function updateBidQuoteStaging(input: {
   quoteId: string;
   bidCandidateId?: string | null;
   unmatch?: boolean;
+  reject?: boolean;
+  displayName?: string | null;
   extractedScope?: string | null;
   extractedAmount?: number | null;
   currency?: string | null;
@@ -119,10 +144,40 @@ export async function updateBidQuoteStaging(input: {
       emailMessageId: true,
       bidCandidateId: true,
       matchStatus: true,
+      userEditedFields: true,
     },
   });
   if (!quote) {
     throw new BidQuoteStagingError("NOT_FOUND", "Quote staging row not found");
+  }
+
+  if (input.extractedAmount !== undefined && input.extractedAmount != null) {
+    if (!Number.isFinite(input.extractedAmount)) {
+      throw new BidQuoteStagingError("INVALID", "Quote amount must be a number");
+    }
+  }
+
+  if (input.reject) {
+    if (quote.bidCandidateId) {
+      await input.prisma.bidCandidateEmail.deleteMany({
+        where: {
+          bidCandidateId: quote.bidCandidateId,
+          emailMessageId: quote.emailMessageId,
+          role: "QUOTE",
+        },
+      });
+    }
+    await input.prisma.bidQuoteStaging.update({
+      where: { id: quote.id },
+      data: {
+        bidCandidateId: null,
+        matchStatus: "REJECTED",
+        matchConfidence: null,
+        userConfirmedMatch: true,
+        rejectedAt: new Date(),
+      },
+    });
+    return { quoteId: quote.id };
   }
 
   if (input.unmatch) {
@@ -142,20 +197,35 @@ export async function updateBidQuoteStaging(input: {
         matchStatus: "USER_UNMATCHED",
         matchConfidence: null,
         userConfirmedMatch: true,
-        ...(input.extractedScope !== undefined
-          ? { extractedScope: input.extractedScope }
-          : {}),
-        ...(input.extractedAmount !== undefined
-          ? { extractedAmount: input.extractedAmount }
-          : {}),
-        ...(input.currency !== undefined ? { currency: input.currency } : {}),
-        ...(input.extractedNotes !== undefined
-          ? { extractedNotes: input.extractedNotes }
-          : {}),
+        rejectedAt: null,
       },
     });
     return { quoteId: quote.id };
   }
+
+  const locked = lockedFields(quote.userEditedFields);
+  if (input.displayName !== undefined) locked.add("displayName");
+  if (input.extractedScope !== undefined) locked.add("extractedScope");
+  if (input.extractedAmount !== undefined) locked.add("extractedAmount");
+  if (input.currency !== undefined) locked.add("currency");
+  if (input.extractedNotes !== undefined) locked.add("extractedNotes");
+
+  const fieldPatch = {
+    ...(input.displayName !== undefined
+      ? { displayName: input.displayName?.trim() || null }
+      : {}),
+    ...(input.extractedScope !== undefined
+      ? { extractedScope: input.extractedScope }
+      : {}),
+    ...(input.extractedAmount !== undefined
+      ? { extractedAmount: input.extractedAmount }
+      : {}),
+    ...(input.currency !== undefined ? { currency: input.currency } : {}),
+    ...(input.extractedNotes !== undefined
+      ? { extractedNotes: input.extractedNotes }
+      : {}),
+    userEditedFields: [...locked] as Prisma.InputJsonValue,
+  };
 
   if (input.bidCandidateId !== undefined) {
     if (input.bidCandidateId === null) {
@@ -171,9 +241,11 @@ export async function updateBidQuoteStaging(input: {
       await input.prisma.bidQuoteStaging.update({
         where: { id: quote.id },
         data: {
+          ...fieldPatch,
           bidCandidateId: null,
           matchStatus: "USER_UNMATCHED",
           userConfirmedMatch: true,
+          rejectedAt: null,
         },
       });
       return { quoteId: quote.id };
@@ -208,21 +280,13 @@ export async function updateBidQuoteStaging(input: {
       input.prisma.bidQuoteStaging.update({
         where: { id: quote.id },
         data: {
+          ...fieldPatch,
           bidCandidateId: candidate.id,
           matchStatus: "MATCHED",
           matchConfidence: 1,
           userConfirmedMatch: true,
+          rejectedAt: null,
           matchEvidence: { labels: ["user_reassign"] },
-          ...(input.extractedScope !== undefined
-            ? { extractedScope: input.extractedScope }
-            : {}),
-          ...(input.extractedAmount !== undefined
-            ? { extractedAmount: input.extractedAmount }
-            : {}),
-          ...(input.currency !== undefined ? { currency: input.currency } : {}),
-          ...(input.extractedNotes !== undefined
-            ? { extractedNotes: input.extractedNotes }
-            : {}),
         },
       }),
       input.prisma.bidCandidateEmail.upsert({
@@ -251,18 +315,7 @@ export async function updateBidQuoteStaging(input: {
 
   await input.prisma.bidQuoteStaging.update({
     where: { id: quote.id },
-    data: {
-      ...(input.extractedScope !== undefined
-        ? { extractedScope: input.extractedScope }
-        : {}),
-      ...(input.extractedAmount !== undefined
-        ? { extractedAmount: input.extractedAmount }
-        : {}),
-      ...(input.currency !== undefined ? { currency: input.currency } : {}),
-      ...(input.extractedNotes !== undefined
-        ? { extractedNotes: input.extractedNotes }
-        : {}),
-    },
+    data: fieldPatch,
   });
   return { quoteId: quote.id };
 }

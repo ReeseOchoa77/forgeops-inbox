@@ -34,7 +34,23 @@ describe("promoteBidCandidate", () => {
         findMany: vi.fn(async () => []),
         createMany: vi.fn(async () => ({ count: 0 })),
       },
+      bidCandidateEmail: {
+        findMany: vi.fn(async () =>
+          emailIds.map((emailMessageId) => ({ emailMessageId }))
+        ),
+      },
+      bidQuoteStaging: {
+        findMany: vi.fn(async () => []),
+      },
       emailMessage: {
+        findMany: vi.fn(async () =>
+          emailIds.map((id) => ({
+            id,
+            jobId: null,
+            jobAssignmentIsManual: false,
+            jobAssignmentSource: null,
+          }))
+        ),
         updateMany: vi.fn(async () => ({ count: 2 })),
       },
       jobActivityLog: {
@@ -80,6 +96,7 @@ describe("promoteBidCandidate", () => {
 
     expect(result.created).toBe(true);
     expect(result.jobId).toBe("job-new");
+    expect(result.emailConflicts).toEqual([]);
     expect(tx.job.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

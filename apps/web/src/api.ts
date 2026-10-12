@@ -749,15 +749,20 @@ export interface BidQuoteStagingSummary {
   id: string;
   emailMessageId: string;
   sourceSubject: string | null;
+  displayName?: string | null;
   extractedScope: string | null;
   extractedAmount: number | null;
   currency: string | null;
   extractedNotes: string | null;
+  extractionEvidence?: unknown;
+  extractionConfidence?: number | null;
+  userEditedFields?: unknown;
   matchStatus: string;
   matchConfidence: number | null;
   bidCandidateId: string | null;
   bidCandidateName: string | null;
   userConfirmedMatch: boolean;
+  rejectedAt?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -3163,6 +3168,19 @@ export const api = {
       { method: 'PATCH', body: JSON.stringify(body) }
     ),
 
+  clearBidAnalysis: (workspaceId: string, connectionId: string) =>
+    request<{
+      status: string;
+      discoveryDeleted: number;
+      quotesDeleted: number;
+      candidateEmailsUnlinked: number;
+      candidatesDeleted: number;
+      runsDeleted: number;
+    }>(`/workspaces/${workspaceId}/bid-analysis/clear`, {
+      method: 'POST',
+      body: JSON.stringify({ connectionId }),
+    }),
+
   createBidCandidate: (
     workspaceId: string,
     body: {
@@ -3220,6 +3238,8 @@ export const api = {
     body: {
       bidCandidateId?: string | null;
       unmatch?: boolean;
+      reject?: boolean;
+      displayName?: string | null;
       extractedScope?: string | null;
       extractedAmount?: number | null;
       currency?: string | null;
@@ -3233,7 +3253,17 @@ export const api = {
 
   importBidCandidates: (workspaceId: string, candidateIds: string[]) =>
     request<{
-      imported: Array<{ candidateId: string; jobId: string; created: boolean }>;
+      imported: Array<{
+        candidateId: string;
+        jobId: string;
+        created: boolean;
+        attachedEmailCount?: number;
+        emailConflicts?: Array<{
+          emailMessageId: string;
+          existingJobId: string;
+          reason: string;
+        }>;
+      }>;
       failed: Array<{ candidateId: string; reason: string; code?: string }>;
       skipped: Array<{ candidateId: string; reason: string }>;
     }>(`/workspaces/${workspaceId}/bid-analysis/import`, {

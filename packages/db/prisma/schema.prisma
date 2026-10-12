@@ -2433,6 +2433,8 @@ enum BidQuoteMatchStatus {
   MATCHED
   NEEDS_REVIEW
   USER_UNMATCHED
+  /// User removed quote from import/matching dataset (EmailMessage kept).
+  REJECTED
 }
 
 /// Staging proposed bid — NOT a canonical Job until human confirmation / import.
@@ -2489,18 +2491,24 @@ model BidQuoteStaging {
   workspaceId           String
   inboxConnectionId     String
   emailMessageId        String
+  /// Immutable snapshot of EmailMessage.subject at extract time (never user-mutated).
   sourceSubject         String?
+  /// Optional user-edited display title; EmailMessage.subject is never overwritten.
+  displayName           String?
   extractedScope        String?
   extractedAmount       Decimal?            @db.Decimal(14, 2)
   currency              String?
   extractedNotes        String?
   extractionEvidence    Json?
   extractionConfidence  Decimal?            @db.Decimal(5, 4)
+  /// Keys locked against re-extract overwrite (e.g. ["displayName","extractedAmount"]).
+  userEditedFields      Json?
   bidCandidateId        String?
   matchStatus           BidQuoteMatchStatus @default(UNMATCHED)
   matchConfidence       Decimal?            @db.Decimal(5, 4)
   matchEvidence         Json?
   userConfirmedMatch    Boolean             @default(false)
+  rejectedAt            DateTime?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
   workspace             Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -2641,6 +2649,16 @@ enum AttachmentUploadStatus {
   REJECTED
 }
 
+/// Cached PDF (etc.) text extraction for Bidding Analysis / document reuse.
+/// TEXT_UNAVAILABLE = scanned/image PDF with no usable text (OCR not run).
+enum AttachmentTextExtractStatus {
+  NONE
+  READY
+  TEXT_UNAVAILABLE
+  FAILED
+  SKIPPED
+}
+
 model EmailAttachment {
   id                    String                @id @default(cuid())
   workspaceId           String
@@ -2657,6 +2675,13 @@ model EmailAttachment {
   contentId             String?
   uploadStatus          AttachmentUploadStatus @default(PENDING)
   errorMessage          String?
+  /// Cached extracted text status (Bidding Analysis / library reuse). Not OCR.
+  textExtractStatus     AttachmentTextExtractStatus @default(NONE)
+  /// Bounded plain text from text-based PDF/DOCX extraction (never full binary).
+  extractedText         String?
+  extractedTextChars    Int?
+  textExtractedAt       DateTime?
+  textExtractError      String?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -2668,6 +2693,7 @@ model EmailAttachment {
   @@unique([workspaceId, storageKey])
   @@index([workspaceId, emailMessageId])
   @@index([checksum])
+  @@index([workspaceId, textExtractStatus])
 }
 
 /// Metadata about an inline image. The EmailAttachment row and its bytes stay canonical.

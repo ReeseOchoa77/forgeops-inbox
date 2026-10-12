@@ -118,6 +118,7 @@ describe("importBidCandidates", () => {
         jobId: input.mode === "attach" ? input.existingJobId ?? "job-1" : "job-new",
         created: input.mode !== "attach",
         attachedEmailCount: 1,
+        emailConflicts: [],
       })
     );
 

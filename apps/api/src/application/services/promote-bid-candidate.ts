@@ -9,7 +9,12 @@ import {
   dedupeProjectAliases,
   normalizeName,
 } from "@forgeops/shared";
-import { ACTIVE_BID_STATUS, USER_BID_ASSIGNMENT } from "./bidding.js";
+import {
+  associateBidImportEmails,
+  collectBidCandidateImportEmailIds,
+  type BidImportEmailConflict,
+} from "./associate-bid-import-emails.js";
+import { ACTIVE_BID_STATUS } from "./bidding.js";
 import { computeImportBlockedReason } from "./bid-import-eligibility.js";
 import { resolveOrCreateBiddingCustomer } from "./resolve-bidding-customer.js";
 
@@ -72,6 +77,8 @@ export type PromoteBidCandidateResult = {
   jobId: string;
   created: boolean;
   attachedEmailCount: number;
+  /** Protected emails already on another Job — not moved. */
+  emailConflicts: BidImportEmailConflict[];
 };
 
 export async function findLikelyExistingJobs(
@@ -133,6 +140,7 @@ export async function promoteBidCandidate(
       jobId: candidate.canonicalJobId,
       created: false,
       attachedEmailCount: candidate.emails.length,
+      emailConflicts: [],
     };
   }
 
@@ -198,18 +206,17 @@ export async function promoteBidCandidate(
         },
       });
 
-      const emailIds = candidate.emails.map((e) => e.emailMessageId);
-      if (emailIds.length > 0) {
-        await tx.emailMessage.updateMany({
-          where: { workspaceId: input.workspaceId, id: { in: emailIds } },
-          data: {
-            jobId: existing.id,
-            ...USER_BID_ASSIGNMENT,
-            jobAssignedAt: new Date(),
-            jobAssignedByUserId: input.userId,
-          },
-        });
-      }
+      const emailIds = await collectBidCandidateImportEmailIds(tx, {
+        workspaceId: input.workspaceId,
+        candidateId: candidate.id,
+      });
+      const associated = await associateBidImportEmails({
+        prisma: tx,
+        workspaceId: input.workspaceId,
+        jobId: existing.id,
+        userId: input.userId,
+        emailMessageIds: emailIds,
+      });
 
       await tx.bidCandidate.update({
         where: { id: candidate.id },
@@ -231,7 +238,10 @@ export async function promoteBidCandidate(
         candidateId: candidate.id,
         jobId: existing.id,
         created: false,
-        attachedEmailCount: emailIds.length,
+        attachedEmailCount:
+          associated.attachedEmailIds.length +
+          associated.skippedUnchanged.length,
+        emailConflicts: associated.conflicts,
       };
     });
   }
@@ -309,18 +319,18 @@ export async function promoteBidCandidate(
       });
     }
 
-    const emailIds = candidate.emails.map((e) => e.emailMessageId);
-    if (emailIds.length > 0) {
-      await tx.emailMessage.updateMany({
-        where: { workspaceId: input.workspaceId, id: { in: emailIds } },
-        data: {
-          jobId: job.id,
-          ...USER_BID_ASSIGNMENT,
-          jobAssignedAt: now,
-          jobAssignedByUserId: input.userId,
-        },
-      });
-    }
+    const emailIds = await collectBidCandidateImportEmailIds(tx, {
+      workspaceId: input.workspaceId,
+      candidateId: candidate.id,
+    });
+    const associated = await associateBidImportEmails({
+      prisma: tx,
+      workspaceId: input.workspaceId,
+      jobId: job.id,
+      userId: input.userId,
+      emailMessageIds: emailIds,
+      now,
+    });
 
     await tx.jobActivityLog.create({
       data: {
@@ -356,7 +366,9 @@ export async function promoteBidCandidate(
       candidateId: candidate.id,
       jobId: job.id,
       created: true,
-      attachedEmailCount: emailIds.length,
+      attachedEmailCount:
+        associated.attachedEmailIds.length + associated.skippedUnchanged.length,
+      emailConflicts: associated.conflicts,
     };
   });
 }

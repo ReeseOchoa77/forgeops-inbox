@@ -23,6 +23,10 @@ import {
   updateBidQuoteStaging,
 } from "../../../application/services/bid-quote-staging.js";
 import {
+  ClearBiddingAnalysisError,
+  clearBiddingAnalysisStaging,
+} from "../../../application/services/clear-bidding-analysis.js";
+import {
   ImportBidCandidatesError,
   importBidCandidates,
 } from "../../../application/services/import-bid-candidates.js";
@@ -464,6 +468,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               extractedAmount: true,
               currency: true,
               extractedNotes: true,
+              extractionEvidence: true,
               matchStatus: true,
               matchConfidence: true,
             },
@@ -515,6 +520,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               q.extractedAmount != null ? Number(q.extractedAmount) : null,
             currency: q.currency,
             extractedNotes: q.extractedNotes,
+            extractionEvidence: q.extractionEvidence,
             matchStatus: q.matchStatus,
             matchConfidence:
               q.matchConfidence != null ? Number(q.matchConfidence) : null,
@@ -664,6 +670,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               "MATCHED",
               "NEEDS_REVIEW",
               "USER_UNMATCHED",
+              "REJECTED",
             ])
             .optional(),
           page: z.coerce.number().int().min(1).default(1),
@@ -705,6 +712,8 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
         .object({
           bidCandidateId: z.string().min(1).nullable().optional(),
           unmatch: z.boolean().optional(),
+          reject: z.boolean().optional(),
+          displayName: z.string().nullable().optional(),
           extractedScope: z.string().nullable().optional(),
           extractedAmount: z.number().nullable().optional(),
           currency: z.string().nullable().optional(),
@@ -721,6 +730,10 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
             ? { bidCandidateId: body.bidCandidateId }
             : {}),
           ...(body.unmatch !== undefined ? { unmatch: body.unmatch } : {}),
+          ...(body.reject !== undefined ? { reject: body.reject } : {}),
+          ...(body.displayName !== undefined
+            ? { displayName: body.displayName }
+            : {}),
           ...(body.extractedScope !== undefined
             ? { extractedScope: body.extractedScope }
             : {}),
@@ -740,6 +753,48 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               ? 404
               : 400;
           return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bid-analysis/clear",
+    async (request, reply) => {
+      const { workspaceId } = z
+        .object({ workspaceId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, workspaceId);
+      if (!auth) return;
+      if (!["OWNER", "ADMIN", "MANAGER"].includes(auth.role)) {
+        return reply.code(403).send({ message: "Permission denied" });
+      }
+      const body = z
+        .object({ connectionId: z.string().min(1) })
+        .parse(request.body);
+
+      try {
+        const result = await clearBiddingAnalysisStaging({
+          prisma: app.services.prisma,
+          workspaceId,
+          connectionId: body.connectionId,
+        });
+
+        await app.services.auditEventLogger.log({
+          workspaceId,
+          actorUserId: auth.userId,
+          entityType: "FOLDER_DISCOVERY",
+          entityId: body.connectionId,
+          action: "bid_analysis.clear",
+          metadata: result,
+          request,
+        });
+
+        return reply.send({ status: "cleared", ...result });
+      } catch (e) {
+        if (e instanceof ClearBiddingAnalysisError) {
+          return reply.code(400).send({ message: e.message, code: e.code });
         }
         throw e;
       }

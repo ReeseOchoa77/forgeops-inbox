@@ -107,6 +107,27 @@ function existingJobLabel(status: string | undefined): string {
   }
 }
 
+function extractionStatusLabel(input: {
+  evidence?: unknown
+  userEditedFields?: unknown
+  matchStatus?: string
+}): string | null {
+  const edited = Array.isArray(input.userEditedFields)
+    ? input.userEditedFields.length > 0
+    : false
+  if (edited) return 'User Edited'
+  const ev =
+    input.evidence && typeof input.evidence === 'object'
+      ? (input.evidence as Record<string, unknown>)
+      : null
+  if (ev?.requiresOcr || ev?.pdfTextUnavailable) return 'Needs Review (PDF)'
+  if (ev?.aiFailed) return 'Needs Review'
+  if (ev?.extractionMethod === 'AI_ENRICHED') return 'AI Extracted'
+  if (ev?.extractionMethod === 'DETERMINISTIC') return 'Extracted'
+  if (input.matchStatus === 'NEEDS_REVIEW') return 'Needs Review'
+  return null
+}
+
 function stageState(
   currentPhase: string | null | undefined,
   stagePhase: string,
@@ -206,6 +227,13 @@ export function BiddingFolderAnalysisView({
   const [editJobNumber, setEditJobNumber] = useState('')
   const [editBidDue, setEditBidDue] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [editScope, setEditScope] = useState('')
+  const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null)
+  const [quoteEditName, setQuoteEditName] = useState('')
+  const [quoteEditScope, setQuoteEditScope] = useState('')
+  const [quoteEditAmount, setQuoteEditAmount] = useState('')
+  const [quoteEditNotes, setQuoteEditNotes] = useState('')
+  const [quoteEditCandidateId, setQuoteEditCandidateId] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [actionBusy, setActionBusy] = useState(false)
   const pollGenRef = useRef(0)
@@ -301,6 +329,7 @@ export function BiddingFolderAnalysisView({
             : ''
         )
         setEditNotes(res.candidate.proposedNotes ?? '')
+        setEditScope(res.candidate.proposedScope ?? '')
         setEditing(false)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load candidate')
@@ -568,6 +597,7 @@ export function BiddingFolderAnalysisView({
           ? new Date(`${editBidDue}T12:00:00.000Z`).toISOString()
           : null,
         notes: editNotes.trim() || null,
+        scope: editScope.trim() || null,
         status: editProject.trim() && editBidDue ? 'READY' : 'NEEDS_REVIEW',
       })
       await loadDetail(detail.id)
@@ -643,18 +673,20 @@ export function BiddingFolderAnalysisView({
       await loadCandidates()
       if (selectedCandidateId) await loadDetail(selectedCandidateId)
       setSelectedIds(new Set())
+      const conflictCount = result.imported.reduce(
+        (n, row) => n + (row.emailConflicts?.length ?? 0),
+        0
+      )
       const parts = [
         `${result.imported.length} imported`,
         result.skipped.length ? `${result.skipped.length} skipped` : null,
         result.failed.length ? `${result.failed.length} failed` : null,
+        conflictCount
+          ? `${conflictCount} email(s) left on other Jobs (protected assignment)`
+          : null,
       ].filter(Boolean)
-      if (result.failed.length > 0) {
-        setError(
-          `${parts.join(' · ')}. ${result.failed
-            .slice(0, 3)
-            .map((f) => f.reason)
-            .join('; ')}`
-        )
+      if (result.failed.length > 0 || conflictCount > 0) {
+        setError(parts.join(' · '))
       } else {
         window.alert(parts.join(' · '))
       }
@@ -674,6 +706,134 @@ export function BiddingFolderAnalysisView({
       await loadCandidates()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to unmatch quote')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const rejectQuote = async (quoteId: string) => {
+    if (
+      !window.confirm(
+        'Remove this quote from staging? The source email is kept; Outlook is not changed.'
+      )
+    ) {
+      return
+    }
+    setActionBusy(true)
+    setError('')
+    try {
+      await api.updateBidQuote(workspaceId, quoteId, { reject: true })
+      if (selectedConnectionId) await loadQuotes(selectedConnectionId)
+      await loadCandidates()
+      setEditingQuoteId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove quote')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const beginEditQuote = (q: BidQuoteStagingSummary) => {
+    setEditingQuoteId(q.id)
+    setQuoteEditName(q.displayName || q.sourceSubject || '')
+    setQuoteEditScope(q.extractedScope || '')
+    setQuoteEditAmount(q.extractedAmount != null ? String(q.extractedAmount) : '')
+    setQuoteEditNotes(q.extractedNotes || '')
+    setQuoteEditCandidateId(q.bidCandidateId || '')
+  }
+
+  const saveQuoteEdits = async () => {
+    if (!editingQuoteId) return
+    const amountRaw = quoteEditAmount.trim()
+    let extractedAmount: number | null = null
+    if (amountRaw) {
+      const cleaned = amountRaw.replace(/[$,\s]/g, '')
+      const n = Number(cleaned)
+      if (!Number.isFinite(n)) {
+        setError('Quote amount must be a valid number')
+        return
+      }
+      extractedAmount = n
+    }
+    setActionBusy(true)
+    setError('')
+    try {
+      await api.updateBidQuote(workspaceId, editingQuoteId, {
+        displayName: quoteEditName.trim() || null,
+        extractedScope: quoteEditScope.trim() || null,
+        extractedAmount,
+        extractedNotes: quoteEditNotes.trim() || null,
+        ...(quoteEditCandidateId
+          ? { bidCandidateId: quoteEditCandidateId }
+          : { unmatch: true }),
+      })
+      if (selectedConnectionId) await loadQuotes(selectedConnectionId)
+      await loadCandidates()
+      setEditingQuoteId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update quote')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const handleClearAll = async () => {
+    if (!selectedConnectionId) {
+      setError('Select a mailbox first')
+      return
+    }
+    if (
+      !window.confirm(
+        'This clears the current Bidding Analysis results and review data for this mailbox. It does not delete Outlook emails or existing ForgeOps Jobs. User edits and match decisions will be lost.'
+      )
+    ) {
+      return
+    }
+    setActionBusy(true)
+    setError('')
+    try {
+      await api.clearBidAnalysis(workspaceId, selectedConnectionId)
+      setCandidates([])
+      setQuotes([])
+      setItems([])
+      setCounts({ bidInvites: 0, quotes: 0 })
+      setSelectedIds(new Set())
+      setSelectedCandidateId(null)
+      setDetail(null)
+      setProgress(null)
+      setRunId(null)
+      setRunStatus(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Clear All failed')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const rejectCandidateFromRow = async (candidateId: string) => {
+    if (
+      !window.confirm(
+        'Remove this bid candidate from import? Source emails are kept; Outlook is not changed.'
+      )
+    ) {
+      return
+    }
+    setActionBusy(true)
+    setError('')
+    try {
+      await api.rejectBidCandidate(workspaceId, candidateId)
+      await loadCandidates()
+      if (selectedCandidateId === candidateId) {
+        setSelectedCandidateId(null)
+        setDetail(null)
+      }
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(candidateId)
+        return next
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove candidate')
     } finally {
       setActionBusy(false)
     }
@@ -978,7 +1138,9 @@ export function BiddingFolderAnalysisView({
                 flexWrap: 'wrap',
               }}
             >
-              <strong style={{ fontSize: 13 }}>Bid Candidates</strong>
+              <strong style={{ fontSize: 13 }}>
+                Bid Candidates ({candidates.length})
+              </strong>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <button
                   type="button"
@@ -994,24 +1156,39 @@ export function BiddingFolderAnalysisView({
                 )}
               </div>
             </div>
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                borderTop: '1px solid #eee',
+                overflow: 'auto',
+                maxHeight: 560,
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
-                  <tr style={{ textAlign: 'left', background: '#fafafa' }}>
+                  <tr
+                    style={{
+                      textAlign: 'left',
+                      background: '#fafafa',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1,
+                    }}
+                  >
                     <th style={{ padding: '8px 10px', width: 36 }} />
                     <th style={{ padding: '8px 10px' }}>Project</th>
                     <th style={{ padding: '8px 10px' }}>Customer</th>
                     <th style={{ padding: '8px 10px' }}>Due</th>
                     <th style={{ padding: '8px 10px' }}>Quote</th>
                     <th style={{ padding: '8px 10px' }}>Existing Job</th>
-                    <th style={{ padding: '8px 10px' }}>Notes</th>
+                    <th style={{ padding: '8px 10px' }}>Status</th>
+                    <th style={{ padding: '8px 10px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {candidates.length === 0 && !loadingCandidates && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         style={{ padding: 16, color: '#888', textAlign: 'center' }}
                       >
                         No candidates yet — run Scan Bids.
@@ -1022,21 +1199,17 @@ export function BiddingFolderAnalysisView({
                     const eligible = isImportEligible(c)
                     const selected = selectedIds.has(c.id)
                     const active = selectedCandidateId === c.id
+                    const open = !['CONFIRMED', 'REJECTED'].includes(c.status)
                     return (
                       <tr
                         key={c.id}
-                        onClick={() => setSelectedCandidateId(c.id)}
                         style={{
-                          cursor: 'pointer',
                           background: active ? '#e3f2fd' : undefined,
                           borderTop: '1px solid #f0f0f0',
                           opacity: c.status === 'REJECTED' ? 0.55 : 1,
                         }}
                       >
-                        <td
-                          style={{ padding: '8px 10px' }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                        <td style={{ padding: '8px 10px' }}>
                           <input
                             type="checkbox"
                             checked={selected}
@@ -1048,11 +1221,17 @@ export function BiddingFolderAnalysisView({
                           <div style={{ fontWeight: 600 }}>
                             {c.proposedProjectName || 'Untitled'}
                           </div>
-                          <div style={{ fontSize: 11, color: '#888' }}>
-                            {c.status}
-                            {c.importBlockedReason
-                              ? ` · ${c.importBlockedReason}`
-                              : ''}
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: '#888',
+                              maxWidth: 180,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {c.proposedNotes || ''}
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px' }}>
@@ -1075,16 +1254,45 @@ export function BiddingFolderAnalysisView({
                             </div>
                           ) : null}
                         </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            maxWidth: 140,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {c.proposedNotes || '—'}
+                        <td style={{ padding: '8px 10px', fontSize: 12 }}>
+                          {c.status}
+                          {c.importBlockedReason
+                            ? ` · ${c.importBlockedReason}`
+                            : ''}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ fontSize: 11, marginRight: 4 }}
+                            onClick={() => setSelectedCandidateId(c.id)}
+                          >
+                            View
+                          </button>
+                          {open && (
+                            <>
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ fontSize: 11, marginRight: 4 }}
+                                onClick={() => {
+                                  setSelectedCandidateId(c.id)
+                                  setEditing(true)
+                                }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ fontSize: 11 }}
+                                disabled={actionBusy}
+                                onClick={() => void rejectCandidateFromRow(c.id)}
+                              >
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     )
@@ -1164,6 +1372,15 @@ export function BiddingFolderAnalysisView({
                         />
                       </label>
                       <label>
+                        Fabrication scope
+                        <textarea
+                          value={editScope}
+                          onChange={(e) => setEditScope(e.target.value)}
+                          rows={2}
+                          style={{ width: '100%', marginTop: 2 }}
+                        />
+                      </label>
+                      <label>
                         Notes
                         <textarea
                           value={editNotes}
@@ -1222,8 +1439,17 @@ export function BiddingFolderAnalysisView({
                               .join(', ')
                           : formatMoney(detail.quoteAmount, detail.quoteCurrency)}
                       </dd>
+                      <dt style={{ color: '#888' }}>Scope</dt>
+                      <dd style={{ margin: 0 }}>{detail.proposedScope || '—'}</dd>
                       <dt style={{ color: '#888' }}>Notes</dt>
                       <dd style={{ margin: 0 }}>{detail.proposedNotes || '—'}</dd>
+                      <dt style={{ color: '#888' }}>Extract</dt>
+                      <dd style={{ margin: 0, color: '#666', fontSize: 12 }}>
+                        {extractionStatusLabel({
+                          evidence: detail.evidence,
+                          userEditedFields: detail.userEditedFields,
+                        }) || '—'}
+                      </dd>
                     </dl>
                   )}
 
@@ -1302,7 +1528,7 @@ export function BiddingFolderAnalysisView({
                         disabled={actionBusy}
                         onClick={() => void handleReject()}
                       >
-                        Reject
+                        Remove
                       </button>
                     )}
                   </div>
@@ -1360,21 +1586,108 @@ export function BiddingFolderAnalysisView({
               justifyContent: 'space-between',
             }}
           >
-            <strong style={{ fontSize: 13 }}>Quotes</strong>
+            <strong style={{ fontSize: 13 }}>Quotes ({quotes.length})</strong>
             {loadingQuotes && (
               <span style={{ fontSize: 12, color: '#888' }}>Loading…</span>
             )}
           </div>
-          <div style={{ overflowX: 'auto' }}>
+          {editingQuoteId && (
+            <div
+              style={{
+                padding: 12,
+                borderBottom: '1px solid #eee',
+                background: '#fafafa',
+                display: 'grid',
+                gap: 8,
+                fontSize: 13,
+              }}
+            >
+              <strong>Edit quote (staging only — source email unchanged)</strong>
+              <label>
+                Display name
+                <input
+                  value={quoteEditName}
+                  onChange={(e) => setQuoteEditName(e.target.value)}
+                  style={{ width: '100%', marginTop: 2 }}
+                />
+              </label>
+              <label>
+                Scope
+                <input
+                  value={quoteEditScope}
+                  onChange={(e) => setQuoteEditScope(e.target.value)}
+                  style={{ width: '100%', marginTop: 2 }}
+                />
+              </label>
+              <label>
+                Amount
+                <input
+                  value={quoteEditAmount}
+                  onChange={(e) => setQuoteEditAmount(e.target.value)}
+                  placeholder="184500"
+                  style={{ width: '100%', marginTop: 2 }}
+                />
+              </label>
+              <label>
+                Notes
+                <input
+                  value={quoteEditNotes}
+                  onChange={(e) => setQuoteEditNotes(e.target.value)}
+                  style={{ width: '100%', marginTop: 2 }}
+                />
+              </label>
+              <label>
+                Bid candidate
+                <select
+                  value={quoteEditCandidateId}
+                  onChange={(e) => setQuoteEditCandidateId(e.target.value)}
+                  style={{ width: '100%', marginTop: 2 }}
+                >
+                  <option value="">Unmatched</option>
+                  {openCandidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.proposedProjectName || c.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={actionBusy}
+                  onClick={() => void saveQuoteEdits()}
+                >
+                  Save quote
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setEditingQuoteId(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          <div style={{ overflow: 'auto', maxHeight: 560 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr style={{ textAlign: 'left', background: '#fafafa' }}>
+                <tr
+                  style={{
+                    textAlign: 'left',
+                    background: '#fafafa',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 1,
+                  }}
+                >
                   <th style={{ padding: '8px 10px' }}>Name</th>
                   <th style={{ padding: '8px 10px' }}>Scope</th>
                   <th style={{ padding: '8px 10px' }}>Price</th>
                   <th style={{ padding: '8px 10px' }}>Bid Match</th>
                   <th style={{ padding: '8px 10px' }}>Notes</th>
-                  <th style={{ padding: '8px 10px' }} />
+                  <th style={{ padding: '8px 10px' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1391,7 +1704,41 @@ export function BiddingFolderAnalysisView({
                 {quotes.map((q) => (
                   <tr key={q.id} style={{ borderTop: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '8px 10px' }}>
-                      {q.sourceSubject || '—'}
+                      {q.displayName || q.sourceSubject || '—'}
+                      {q.displayName && q.sourceSubject && q.displayName !== q.sourceSubject ? (
+                        <div style={{ fontSize: 11, color: '#888' }}>
+                          Source: {q.sourceSubject}
+                        </div>
+                      ) : null}
+                      {(() => {
+                        const label = extractionStatusLabel({
+                          evidence: q.extractionEvidence,
+                          userEditedFields: q.userEditedFields,
+                          matchStatus: q.matchStatus,
+                        })
+                        return label ? (
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                            {label}
+                            {(() => {
+                              const ev =
+                                q.extractionEvidence &&
+                                typeof q.extractionEvidence === 'object'
+                                  ? (q.extractionEvidence as {
+                                      amountSource?: string
+                                      attachmentIds?: string[]
+                                    })
+                                  : null
+                              if (ev?.amountSource === 'PDF_TEXT') {
+                                return ' · from PDF'
+                              }
+                              if (ev?.attachmentIds?.length) {
+                                return ` · ${ev.attachmentIds.length} attachment(s)`
+                              }
+                              return ''
+                            })()}
+                          </div>
+                        ) : null
+                      })()}
                     </td>
                     <td style={{ padding: '8px 10px' }}>
                       {q.extractedScope || '—'}
@@ -1408,18 +1755,79 @@ export function BiddingFolderAnalysisView({
                     <td style={{ padding: '8px 10px' }}>
                       {q.extractedNotes || '—'}
                     </td>
-                    <td style={{ padding: '8px 10px' }}>
+                    <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                      {onOpenMessage && selectedConnectionId && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ fontSize: 11, marginRight: 4 }}
+                          onClick={() =>
+                            onOpenMessage(q.emailMessageId, selectedConnectionId)
+                          }
+                        >
+                          View Email
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 11, marginRight: 4 }}
+                        onClick={() => beginEditQuote(q)}
+                      >
+                        Edit
+                      </button>
+                      {q.matchStatus === 'NEEDS_REVIEW' && q.bidCandidateId ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ fontSize: 11, marginRight: 4 }}
+                          disabled={actionBusy}
+                          onClick={() =>
+                            void (async () => {
+                              if (!selectedConnectionId || !q.bidCandidateId) return
+                              setActionBusy(true)
+                              setError('')
+                              try {
+                                await api.updateBidQuote(
+                                  workspaceId,
+                                  q.id,
+                                  { bidCandidateId: q.bidCandidateId }
+                                )
+                                await loadQuotes(selectedConnectionId)
+                                await loadCandidates()
+                              } catch (e) {
+                                setError(
+                                  e instanceof Error ? e.message : 'Confirm failed'
+                                )
+                              } finally {
+                                setActionBusy(false)
+                              }
+                            })()
+                          }
+                        >
+                          Confirm Match
+                        </button>
+                      ) : null}
                       {q.bidCandidateId && (
                         <button
                           type="button"
                           className="btn"
-                          style={{ fontSize: 12 }}
+                          style={{ fontSize: 11, marginRight: 4 }}
                           disabled={actionBusy}
                           onClick={() => void unmatchQuote(q.id)}
                         >
                           Unmatch
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 11 }}
+                        disabled={actionBusy}
+                        onClick={() => void rejectQuote(q.id)}
+                      >
+                        Remove
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1561,20 +1969,32 @@ export function BiddingFolderAnalysisView({
           <strong>{needsReviewCount}</strong> needs review ·{' '}
           <strong>{selectedIds.size}</strong> selected
         </div>
-        {canImport && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={actionBusy || selectedIds.size === 0 || busy}
-            onClick={() => void handleImport()}
-          >
-            {actionBusy
-              ? 'Importing…'
-              : `Import ${selectedIds.size || ''} Bid${
-                  selectedIds.size === 1 ? '' : 's'
-                }`.replace('  ', ' ')}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canScan && (
+            <button
+              type="button"
+              className="btn"
+              disabled={actionBusy || busy || !selectedConnectionId}
+              onClick={() => void handleClearAll()}
+            >
+              Clear All
+            </button>
+          )}
+          {canImport && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={actionBusy || selectedIds.size === 0 || busy}
+              onClick={() => void handleImport()}
+            >
+              {actionBusy
+                ? 'Importing…'
+                : `Import ${selectedIds.size || ''} Bid${
+                    selectedIds.size === 1 ? '' : 's'
+                  }`.replace('  ', ' ')}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

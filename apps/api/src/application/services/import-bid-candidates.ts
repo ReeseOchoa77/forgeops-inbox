@@ -24,7 +24,17 @@ export class ImportBidCandidatesError extends Error {
 }
 
 export type ImportBidCandidatesResult = {
-  imported: Array<{ candidateId: string; jobId: string; created: boolean }>;
+  imported: Array<{
+    candidateId: string;
+    jobId: string;
+    created: boolean;
+    attachedEmailCount: number;
+    emailConflicts: Array<{
+      emailMessageId: string;
+      existingJobId: string;
+      reason: string;
+    }>;
+  }>;
   failed: Array<{ candidateId: string; reason: string; code?: string }>;
   skipped: Array<{ candidateId: string; reason: string }>;
 };
@@ -118,6 +128,12 @@ export async function importBidCandidates(input: {
         candidateId: promoted.candidateId,
         jobId: promoted.jobId,
         created: promoted.created,
+        attachedEmailCount: promoted.attachedEmailCount,
+        emailConflicts: promoted.emailConflicts.map((c) => ({
+          emailMessageId: c.emailMessageId,
+          existingJobId: c.existingJobId,
+          reason: c.reason,
+        })),
       });
       await input.prisma.bidCandidate.update({
         where: { id: candidate.id },

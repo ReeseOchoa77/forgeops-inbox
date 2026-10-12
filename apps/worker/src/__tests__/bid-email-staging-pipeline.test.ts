@@ -39,6 +39,7 @@ describe("override-safe extract", () => {
           senderName: "Mortenson",
           senderEmail: "a@b.com",
           attachmentMetadata: [],
+          threadId: "thread-1",
         })),
       },
       bidCandidate: {
@@ -50,12 +51,18 @@ describe("override-safe extract", () => {
           proposedCustomerName: null,
           proposedBidDueAt: null,
           proposedJobNumber: null,
+          proposedScope: null,
+          proposedNotes: null,
           existingJobMatchStatus: "NONE",
+          evidence: null,
+          confidence: 0.75,
         })),
+        findFirst: vi.fn(async () => null),
         update: vi.fn(async () => ({})),
         create: vi.fn(),
       },
       bidCandidateEmail: {
+        findFirst: vi.fn(async () => null),
         upsert: vi.fn(async () => ({})),
       },
     };
