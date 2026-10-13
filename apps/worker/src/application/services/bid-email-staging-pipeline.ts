@@ -41,6 +41,10 @@ import {
   type BidStagingAiContext,
 } from "./bid-staging-ai-context.js";
 import { createPrismaJobMatchLoader } from "./prisma-job-match-loader.js";
+import {
+  groupQuotesIntoProjects,
+  reconstructCandidatesFromQuoteGroups,
+} from "./quote-first-reconstruction.js";
 
 function lockedFields(userEditedFields: unknown): Set<string> {
   if (!Array.isArray(userEditedFields)) return new Set();
@@ -215,7 +219,10 @@ async function resolveExistingCandidateForInvite(input: {
   return null;
 }
 
-/** Extract BidCandidates from Bid Invite discovery (override-safe). */
+/**
+ * @deprecated Bid-first extract — retained for override-safety unit tests.
+ * Production pipeline uses quote-first reconstruction via runBidStagingPipeline.
+ */
 export async function extractBidCandidatesFromDiscovery(input: {
   prisma: PrismaClient;
   workspaceId: string;
@@ -1283,7 +1290,10 @@ export type RunBidStagingPipelineInput = {
     | null;
 };
 
-/** Full staging analysis after discovery (no Graph, no Jobs). */
+/**
+ * Quote-first staging after discovery (no Graph, no Jobs).
+ * Quotes define population → group → match Bid Invites / Inbox → Candidates.
+ */
 export async function runBidStagingPipeline(
   input: RunBidStagingPipelineInput
 ): Promise<void> {
@@ -1310,9 +1320,12 @@ export async function runBidStagingPipeline(
     ai,
   };
 
-  await extractBidCandidatesFromDiscovery(withAi);
   await extractQuotesFromDiscovery(withAi);
-  await matchQuotesToCandidates(withAi);
+  const groups = await groupQuotesIntoProjects(withAi);
+  await reconstructCandidatesFromQuoteGroups({
+    ...withAi,
+    groups,
+  });
   await matchExistingJobsForCandidates({
     prisma: input.prisma,
     workspaceId: input.workspaceId,
@@ -1327,9 +1340,14 @@ export async function runBidStagingPipeline(
       JSON.stringify({
         event: "bid_staging_pipeline_timing",
         runId: input.runId,
+        quoteFirst: true,
         aiCalls: input.progress.aiCalls ?? 0,
         aiCallsByOperation: input.progress.aiCallsByOperation ?? {},
         stageTimingsMs: input.progress.stageTimingsMs ?? {},
+        quoteProjectsIdentified: input.progress.quoteProjectsIdentified,
+        originalBidFromInvites: input.progress.originalBidFromInvites,
+        originalBidFromInbox: input.progress.originalBidFromInbox,
+        originalBidNotFound: input.progress.originalBidNotFound,
         candidatesCreated: input.progress.candidatesCreated,
         candidatesUpdated: input.progress.candidatesUpdated,
         quotesExtracted: input.progress.quotesExtracted,

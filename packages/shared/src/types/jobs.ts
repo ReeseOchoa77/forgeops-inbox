@@ -220,10 +220,18 @@ export type BidEmailAnalyzePhase =
   | "BID_INVITES"
   | "QUOTES"
   | "ANALYZE_CANDIDATES"
+  /** @deprecated Bid-first; kept for older run progress JSON. */
   | "SCANNING_BID_INVITES"
+  /** @deprecated Bid-first; kept for older run progress JSON. */
   | "EXTRACTING_BID_CANDIDATES"
   | "SCANNING_QUOTES"
   | "EXTRACTING_QUOTES"
+  | "GROUPING_QUOTES"
+  | "SEARCHING_BID_INVITES"
+  | "MATCHING_BID_INVITES"
+  | "SEARCHING_INBOX_FALLBACK"
+  | "BUILDING_CANDIDATES"
+  /** @deprecated Prefer MATCHING_BID_INVITES; kept for older progress JSON. */
   | "MATCHING_QUOTES"
   | "MATCHING_EXISTING_JOBS"
   | "READY_FOR_REVIEW"
@@ -268,6 +276,16 @@ export interface BidEmailAnalyzeProgress {
   quotesUnmatched: number;
   quotesNeedsReview: number;
   quotesLinkedToJob: number;
+  /** Quote-first: distinct project groups built from Quotes. */
+  quoteProjectsIdentified?: number;
+  /** Original Bid email found under Projects/Bid Invites. */
+  originalBidFromInvites?: number;
+  /** Original Bid email found via Inbox DB fallback. */
+  originalBidFromInbox?: number;
+  /** Candidates with no original Bid email (Quote-only). */
+  originalBidNotFound?: number;
+  /** Lower bound used when Graph-scanning Bid Invites (may predate Quote range). */
+  bidInviteSearchSinceAt?: string | null;
   existingJobsStrong: number;
   existingJobsPossible: number;
   existingJobsNone: number;
@@ -312,6 +330,11 @@ export function emptyBidEmailAnalyzeProgress(): BidEmailAnalyzeProgress {
     quotesUnmatched: 0,
     quotesNeedsReview: 0,
     quotesLinkedToJob: 0,
+    quoteProjectsIdentified: 0,
+    originalBidFromInvites: 0,
+    originalBidFromInbox: 0,
+    originalBidNotFound: 0,
+    bidInviteSearchSinceAt: null,
     existingJobsStrong: 0,
     existingJobsPossible: 0,
     existingJobsNone: 0,

@@ -3,6 +3,7 @@
  */
 
 import { normalizeName } from "../reference/normalize.js";
+import { normalizeBiddingProjectName } from "./project-name-similarity.js";
 
 export function buildBidCandidateIdentityKey(input: {
   projectNumber?: string | null;
@@ -22,6 +23,30 @@ export function buildBidCandidateIdentityKey(input: {
 
   const msg = input.fallbackMessageId?.trim();
   if (msg) return `msg:${msg}`;
+  return null;
+}
+
+/**
+ * Quote-first project group key — strips bidding wrappers so Quote revisions
+ * ("Rev 2", "Revised Quote") collapse to one Candidate when the project matches.
+ */
+export function buildQuoteProjectGroupKey(input: {
+  projectNumber?: string | null;
+  projectName?: string | null;
+  customerName?: string | null;
+  fallbackMessageId?: string | null;
+}): string | null {
+  const num = input.projectNumber?.trim().toLowerCase();
+  if (num) return `qnum:${num}`;
+
+  const name = normalizeBiddingProjectName(input.projectName);
+  if (name && name.length >= 3) {
+    const cust = normalizeName(input.customerName ?? "");
+    return cust ? `qname:${name}|cust:${cust}` : `qname:${name}`;
+  }
+
+  const msg = input.fallbackMessageId?.trim();
+  if (msg) return `qmsg:${msg}`;
   return null;
 }
 

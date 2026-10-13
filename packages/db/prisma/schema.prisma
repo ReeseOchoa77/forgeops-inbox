@@ -2356,6 +2356,14 @@ enum BidCandidateEmailRole {
   ADDENDUM
 }
 
+/// Where the reconstructed original Bid email was found (Quote-first workflow).
+enum BidOriginalBidSource {
+  /// No original Bid email located — Quote-only Candidate.
+  NONE
+  BID_INVITES_FOLDER
+  INBOX_FALLBACK
+}
+
 enum BidAnalysisRunStatus {
   PENDING
   RUNNING
@@ -2454,6 +2462,8 @@ model BidCandidate {
   /// Structured scope items/work/exclusions (JSON DetailedScope). Independent of Quote scope.
   proposedScopeDetail     Json?
   proposedNotes           String?
+  /// Provenance of linked original Bid email (Quote-first reconstruction).
+  originalBidSource       BidOriginalBidSource @default(NONE)
   /// Keys locked against re-analyze overwrite (e.g. ["proposedProjectName"]).
   userEditedFields        Json?
   /// Compact evidence labels / match scores (no bodies).

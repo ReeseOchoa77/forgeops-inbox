@@ -114,6 +114,17 @@ describe("Bid Analysis folder scope", () => {
         listFolderMessages: async ({ folderId, receivedAfter }) => {
           openedForMessages.push(folderId);
           expect(receivedAfter).toBeInstanceOf(Date);
+          // Quotes use scanSinceAt; Bid Invites use an earlier lookback bound.
+          if (folderId === "quotes") {
+            expect(receivedAfter!.getTime()).toBeGreaterThan(
+              Date.now() - 100 * 24 * 60 * 60 * 1000
+            );
+          }
+          if (folderId === "invites") {
+            expect(receivedAfter!.getTime()).toBeLessThan(
+              Date.now() - 100 * 24 * 60 * 60 * 1000
+            );
+          }
           return { items: [], nextPageCursor: null };
         },
         onFolderMessagesRequested: (folderId) => {
@@ -124,9 +135,10 @@ describe("Bid Analysis folder scope", () => {
 
     expect(result.status).toBe("COMPLETED");
     expect(childListCalls).toEqual(["projects"]);
+    // Quote-first: Quotes folder scanned before Bid Invites (lookback).
     expect(openedForMessages.filter((id) => !id.startsWith("hook:"))).toEqual([
-      "invites",
       "quotes",
+      "invites",
     ]);
     expect(openedForMessages).not.toContain("falcon");
     expect(openedForMessages).not.toContain("nova");

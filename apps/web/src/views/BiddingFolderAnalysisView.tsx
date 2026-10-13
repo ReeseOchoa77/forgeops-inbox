@@ -28,11 +28,13 @@ const RANGE_OPTIONS = [
 const DEFAULT_RANGE = '90d'
 
 const PIPELINE_STAGES = [
-  { phase: 'SCANNING_BID_INVITES', label: 'Scan Bid Invites' },
-  { phase: 'EXTRACTING_BID_CANDIDATES', label: 'Extract Bid Candidates' },
   { phase: 'SCANNING_QUOTES', label: 'Scan Quotes' },
   { phase: 'EXTRACTING_QUOTES', label: 'Extract Quotes' },
-  { phase: 'MATCHING_QUOTES', label: 'Match Quotes' },
+  { phase: 'GROUPING_QUOTES', label: 'Group Quote Projects' },
+  { phase: 'SEARCHING_BID_INVITES', label: 'Search Bid Invites' },
+  { phase: 'MATCHING_BID_INVITES', label: 'Match Bid Invites' },
+  { phase: 'SEARCHING_INBOX_FALLBACK', label: 'Inbox Fallback' },
+  { phase: 'BUILDING_CANDIDATES', label: 'Build Candidates' },
   { phase: 'MATCHING_EXISTING_JOBS', label: 'Match Existing Jobs' },
   { phase: 'READY_FOR_REVIEW', label: 'Ready for Review' },
 ] as const
@@ -245,23 +247,39 @@ function stageState(
     return 'done'
   }
   const order = PIPELINE_STAGES.map((s) => s.phase)
-  // Legacy phases map into nearby stages
+  // Legacy / intermediate phases map into nearby Quote-first stages
   const normalized =
-    currentPhase === 'BID_INVITES'
-      ? 'SCANNING_BID_INVITES'
+    currentPhase === 'BID_INVITES' || currentPhase === 'SCANNING_BID_INVITES'
+      ? 'SEARCHING_BID_INVITES'
       : currentPhase === 'QUOTES'
         ? 'SCANNING_QUOTES'
-        : currentPhase === 'ANALYZE_CANDIDATES'
-          ? 'EXTRACTING_BID_CANDIDATES'
-          : currentPhase === 'RESOLVE_FOLDERS'
-            ? 'SCANNING_BID_INVITES'
-            : currentPhase
+        : currentPhase === 'ANALYZE_CANDIDATES' ||
+            currentPhase === 'EXTRACTING_BID_CANDIDATES'
+          ? 'BUILDING_CANDIDATES'
+          : currentPhase === 'MATCHING_QUOTES'
+            ? 'MATCHING_BID_INVITES'
+            : currentPhase === 'RESOLVE_FOLDERS'
+              ? 'SCANNING_QUOTES'
+              : currentPhase
   const curIdx = normalized ? order.indexOf(normalized as (typeof order)[number]) : -1
   const stageIdx = order.indexOf(stagePhase as (typeof order)[number])
   if (curIdx < 0) return 'pending'
   if (stageIdx < curIdx) return 'done'
   if (stageIdx === curIdx) return 'active'
   return 'pending'
+}
+
+function originalBidSourceLabel(source: string | undefined | null): string {
+  switch (source) {
+    case 'BID_INVITES_FOLDER':
+      return 'Bid Invites'
+    case 'INBOX_FALLBACK':
+      return 'Inbox fallback'
+    case 'NONE':
+      return 'Not found'
+    default:
+      return source || '—'
+  }
 }
 
 function isImportEligible(c: BidCandidateSummary): boolean {
@@ -1192,20 +1210,29 @@ export function BiddingFolderAnalysisView({
                 }}
               >
                 <span>
-                  Invites {progress.bidInvitesFound ?? 0} / scanned{' '}
-                  {progress.bidInvitesScanned}
+                  Quotes scanned {progress.quotesScanned} · projects{' '}
+                  {progress.quoteProjectsIdentified ?? 0}
                 </span>
                 <span>
-                  Quotes {progress.quotesFound ?? 0} / extracted{' '}
-                  {progress.quotesExtracted ?? 0}
+                  Bid emails (Invites) {progress.originalBidFromInvites ?? 0}
                 </span>
                 <span>
-                  Candidates +{progress.candidatesCreated} / ~{progress.candidatesUpdated}
+                  Bid emails (Inbox) {progress.originalBidFromInbox ?? 0}
                 </span>
                 <span>
-                  Quote match {progress.quotesMatched} · review{' '}
-                  {progress.quotesNeedsReview ?? 0} · unmatched{' '}
-                  {progress.quotesUnmatched}
+                  Original Bid not found {progress.originalBidNotFound ?? 0}
+                </span>
+                <span>
+                  Candidates {progress.candidatesCreated}
+                  {(progress.candidatesUpdated ?? 0) > 0
+                    ? ` (+${progress.candidatesUpdated} updated)`
+                    : ''}
+                </span>
+                <span>
+                  Possible Jobs {progress.existingJobsPossible ?? 0}
+                  {(progress.existingJobsStrong ?? 0) > 0
+                    ? ` · strong ${progress.existingJobsStrong}`
+                    : ''}
                 </span>
               </div>
             )}
@@ -1549,14 +1576,44 @@ export function BiddingFolderAnalysisView({
                       <dd style={{ margin: 0 }}>
                         {detail.proposedJobNumber || '—'}
                       </dd>
-                      <dt style={{ color: '#888' }}>Quote</dt>
+                      <dt style={{ color: '#888' }}>Original Bid</dt>
+                      <dd style={{ margin: 0 }}>
+                        {(() => {
+                          const invite = detail.emails?.find(
+                            (e) =>
+                              e.role === 'BID_INVITE' ||
+                              e.isPrimary
+                          )
+                          if (!invite?.email?.subject) {
+                            return detail.originalBidSource === 'NONE' ||
+                              !detail.originalBidSource
+                              ? 'Not found · Needs Review'
+                              : '—'
+                          }
+                          return invite.email.subject
+                        })()}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Source</dt>
+                      <dd style={{ margin: 0 }}>
+                        {originalBidSourceLabel(detail.originalBidSource)}
+                        {detail.originalBidSource === 'NONE' ? (
+                          <span style={{ color: '#b71c1c', marginLeft: 6 }}>
+                            Needs Review
+                          </span>
+                        ) : null}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Quotes</dt>
                       <dd style={{ margin: 0 }}>
                         {detail.quotes && detail.quotes.length > 0
                           ? detail.quotes
-                              .map((q) =>
-                                formatMoney(q.extractedAmount, q.currency)
+                              .map(
+                                (q, i) =>
+                                  `Quote ${i + 1} — ${formatMoney(
+                                    q.extractedAmount,
+                                    q.currency
+                                  )}`
                               )
-                              .join(', ')
+                              .join('; ')
                           : formatMoney(detail.quoteAmount, detail.quoteCurrency)}
                       </dd>
                       <dt style={{ color: '#888' }}>Notes</dt>

@@ -363,6 +363,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               return (d.items?.length ?? 0) + (d.work?.length ?? 0);
             })(),
             proposedNotes: c.proposedNotes,
+            originalBidSource: c.originalBidSource,
             proposedExistingJobId: c.proposedExistingJobId,
             proposedExistingJob: c.proposedExistingJob,
             existingJobMatchStatus: c.existingJobMatchStatus,
@@ -506,6 +507,7 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           proposedScope: c.proposedScope,
           proposedScopeDetail: c.proposedScopeDetail,
           proposedNotes: c.proposedNotes,
+          originalBidSource: c.originalBidSource,
           proposedExistingJobId: c.proposedExistingJobId,
           proposedExistingJob: c.proposedExistingJob,
           existingJobMatchStatus: c.existingJobMatchStatus,

@@ -18,6 +18,18 @@ describe("bid-email-staging-pipeline trust boundary", () => {
     expect(src).not.toMatch(/\.job\.create\b/);
     expect(src).not.toMatch(/emailMessage\.update/);
     expect(src).not.toMatch(/persistJobMatchResult\(/);
+    expect(src).toContain("groupQuotesIntoProjects");
+    expect(src).toContain("reconstructCandidatesFromQuoteGroups");
+  });
+
+  it("quote-first reconstruction never creates Jobs", () => {
+    const src = readFileSync(
+      join(here, "../application/services/quote-first-reconstruction.ts"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/\.job\.create\b/);
+    expect(src).not.toMatch(/emailMessage\.update/);
+    expect(src).not.toMatch(/persistJobMatchResult\(/);
   });
 });
 

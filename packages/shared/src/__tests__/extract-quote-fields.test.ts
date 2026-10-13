@@ -7,7 +7,9 @@ describe("extractQuoteFieldsDeterministic", () => {
       subject: "RE: Maple Grove DC Quote",
       bodyText: "Please find our structural steel quote.\nTotal: $184,500.00\nExcludes erection.",
     });
-    expect(r.scope).toBe("Structural steel");
+    // Scope summary reflects trade + detailed-scope completeness signaling.
+    expect(r.scope).toMatch(/Structural steel/i);
+    expect(r.scopeDetail.tradeCategory?.toLowerCase()).toContain("structural");
     expect(r.amount).toBe(184500);
     expect(r.currency).toBe("USD");
     expect(r.notes).toMatch(/Excludes erection/i);

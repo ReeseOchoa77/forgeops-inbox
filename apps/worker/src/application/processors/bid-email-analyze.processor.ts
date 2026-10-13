@@ -1,6 +1,6 @@
 /**
- * Bid Analysis processor: Projects/Bid Invites + Projects/Quotes only.
- * Stages BidCandidates — NEVER creates Jobs.
+ * Bid Analysis processor (Quote-first): scan Quotes (selected range), then Bid
+ * Invites (lookback), stage BidCandidates — NEVER creates Jobs.
  */
 
 import { Prisma, type PrismaClient } from "@prisma/client";
@@ -9,6 +9,7 @@ import {
   emptyBidEmailAnalyzeProgress,
   formatMissingBiddingFolders,
   isBiddingFolderScanRangePreset,
+  resolveBidInviteSearchSinceAt,
   resolveBiddingFolderScanSinceAt,
   resolveBiddingWorkflowFolders,
   DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
@@ -206,7 +207,7 @@ async function refreshOutlookToken(
 }
 
 /**
- * Group Bid Invites into BidCandidates, extract Quotes, match, propose existing Jobs.
+ * Quote-first staging: extract/group Quotes, match Bid Invites / Inbox, propose Jobs.
  * Never creates Jobs. Never calls Graph. Never writes EmailMessage.jobId.
  */
 async function analyzeDiscoveredEmails(input: {
@@ -296,6 +297,10 @@ export async function processBidEmailAnalyze(
         resolveBiddingFolderScanSinceAt({ preset });
   progress.scanRangePreset = preset;
   progress.scanSinceAt = scanSinceAt?.toISOString() ?? null;
+  // Bid Invites may predate the Quote range — bounded lookback (default 180d).
+  const bidInviteSearchSinceAt = resolveBidInviteSearchSinceAt(scanSinceAt);
+  progress.bidInviteSearchSinceAt =
+    bidInviteSearchSinceAt?.toISOString() ?? null;
 
   const stopped = await cancelledResult(deps.prisma, payload, progress);
   if (stopped) return stopped;
@@ -353,7 +358,7 @@ export async function processBidEmailAnalyze(
   // Analyze / post-scan staging uses discovery index only — no Graph token required.
   if (operation === "analyze") {
     try {
-      progress.currentPhase = "EXTRACTING_BID_CANDIDATES";
+      progress.currentPhase = "EXTRACTING_QUOTES";
       await writeProgress(deps.prisma, run.id, progress);
       await analyzeDiscoveredEmails({
         prisma: deps.prisma,
@@ -536,12 +541,13 @@ export async function processBidEmailAnalyze(
 
     const processFolder = async (
       folder: { id: string; displayName: string },
-      phase: "BID_INVITES" | "QUOTES"
+      phase: "BID_INVITES" | "QUOTES",
+      receivedAfter: Date | null
     ) => {
       const scanPhase =
         operation === "scan_bids"
           ? phase === "BID_INVITES"
-            ? "SCANNING_BID_INVITES"
+            ? "SEARCHING_BID_INVITES"
             : "SCANNING_QUOTES"
           : phase;
       progress.currentPhase = scanPhase;
@@ -567,14 +573,14 @@ export async function processBidEmailAnalyze(
               folderId: folder.id,
               pageSize: PAGE_SIZE,
               pageCursor,
-              receivedAfter: scanSinceAt,
+              receivedAfter,
             })
           : await client.listMailFolderMessages({
               refreshToken,
               folderId: folder.id,
               pageSize: PAGE_SIZE,
               pageCursor,
-              receivedAfter: scanSinceAt,
+              receivedAfter,
             });
 
         if (page.refreshedRefreshToken) refreshToken = page.refreshedRefreshToken;
@@ -676,12 +682,17 @@ export async function processBidEmailAnalyze(
       return null as BidEmailAnalyzeJobResult | null;
     };
 
-    if (result.bidInvites) {
-      const early = await processFolder(result.bidInvites, "BID_INVITES");
+    // Quote-first: Quotes use the user-selected range; Bid Invites use lookback.
+    if (result.quotes) {
+      const early = await processFolder(result.quotes, "QUOTES", scanSinceAt);
       if (early) return early;
     }
-    if (result.quotes) {
-      const early = await processFolder(result.quotes, "QUOTES");
+    if (result.bidInvites) {
+      const early = await processFolder(
+        result.bidInvites,
+        "BID_INVITES",
+        bidInviteSearchSinceAt
+      );
       if (early) return early;
     }
 

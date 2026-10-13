@@ -715,6 +715,11 @@ export interface BidEmailAnalyzeProgressView {
   quotesUnmatched: number;
   quotesNeedsReview?: number;
   quotesLinkedToJob: number;
+  quoteProjectsIdentified?: number;
+  originalBidFromInvites?: number;
+  originalBidFromInbox?: number;
+  originalBidNotFound?: number;
+  bidInviteSearchSinceAt?: string | null;
   existingJobsStrong?: number;
   existingJobsPossible?: number;
   existingJobsNone?: number;
@@ -797,6 +802,8 @@ export interface BidCandidateSummary {
   proposedScopeDetail?: BiddingScopeDetailView | null;
   scopeItemCount?: number;
   proposedNotes?: string | null;
+  /** NONE | BID_INVITES_FOLDER | INBOX_FALLBACK */
+  originalBidSource?: string;
   proposedExistingJobId?: string | null;
   proposedExistingJob?: {
     id: string;
