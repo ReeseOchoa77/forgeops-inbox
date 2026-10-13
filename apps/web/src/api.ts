@@ -3206,6 +3206,7 @@ export const api = {
       candidateEmailsUnlinked: number;
       candidatesDeleted: number;
       runsDeleted: number;
+      confirmedRetained?: number;
     }>(`/workspaces/${workspaceId}/bid-analysis/clear`, {
       method: 'POST',
       body: JSON.stringify({ connectionId }),

@@ -921,26 +921,51 @@ export function BiddingFolderAnalysisView({
     }
     if (
       !window.confirm(
-        'This clears the current Bidding Analysis results and review data for this mailbox. It does not delete Outlook emails or existing ForgeOps Jobs. User edits and match decisions will be lost.'
+        'This clears the current Bidding Analysis results and review data for this mailbox. It does not delete Outlook emails or existing ForgeOps Jobs. User edits and match decisions will be lost. Imported (confirmed) Bid history is kept but removed from the active review list.'
       )
     ) {
       return
     }
+    const connId = selectedConnectionId
     setActionBusy(true)
     setError('')
     try {
-      await api.clearBidAnalysis(workspaceId, selectedConnectionId)
-      setCandidates([])
-      setQuotes([])
-      setItems([])
-      setCounts({ bidInvites: 0, quotes: 0 })
-      setSelectedIds(new Set())
-      setSelectedCandidateId(null)
-      setDetail(null)
+      // Cancel any in-flight run poll before mutating UI.
+      pollGenRef.current += 1
+      setBusy(false)
+      setBusyKind(null)
+
+      await api.clearBidAnalysis(workspaceId, connId)
+
+      // Only after backend success — reset active analysis UI immediately.
       setProgress(null)
       setRunId(null)
       setRunStatus(null)
+      setSelectedIds(new Set())
+      setSelectedCandidateId(null)
+      setDetail(null)
+      setEditing(false)
+      setEditingQuoteId(null)
+      setItems([])
+      setPage(1)
+      setTotal(0)
+      setHasMore(false)
+      discoveryQueryKeyRef.current = ''
+      loadMoreLock.current = false
+      discoveryReqSeq.current += 1
+
+      // Re-fetch so UI matches server (quotes/discovery empty; CONFIRMED retained
+      // in DB but filtered out of the active Bid Candidates list).
+      await Promise.all([
+        loadCounts(connId),
+        loadCandidates(),
+        loadQuotes(connId),
+      ])
+      if (mainTab === 'source') {
+        await resetAndLoadDiscovery(connId, listRole, sort, search)
+      }
     } catch (e) {
+      // Do not clear local lists on failure — existing data stays visible.
       setError(e instanceof Error ? e.message : 'Clear All failed')
     } finally {
       setActionBusy(false)
@@ -1011,10 +1036,10 @@ export function BiddingFolderAnalysisView({
   return (
     <div>
       <p style={{ fontSize: 13, color: '#666', margin: '0 0 12px', lineHeight: 1.45 }}>
-        Scan Bids extracts Bid Candidates and Quotes into staging, proposes existing Job
-        matches, then waits for your review. Jobs are created only when you Import.
-        Quote amounts/scope come from email body and filenames (PDF attachment text not
-        analyzed yet).
+        Scan Bids reconstructs Bid Candidates from Quotes (quote-first), matches original
+        Bid emails from Bid Invites or Inbox fallback, proposes existing Job matches, then
+        waits for your review. Jobs are created only when you Import. Clear All removes
+        this mailbox&apos;s active staging only — not Outlook mail, Jobs, or imported history.
       </p>
 
       {error && (
