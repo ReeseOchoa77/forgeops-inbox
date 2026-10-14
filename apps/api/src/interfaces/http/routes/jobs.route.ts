@@ -10,6 +10,7 @@ import {
   tasksForEmailJobLink,
   JOB_FILE_TYPE_FILTERS,
   normalizeName,
+  workspaceCurrentJobNumberCollisionWhere,
   buildOperationalTasksWhere,
   taskListOrderBy,
   BUSINESS_SUBTYPE_KEYS,
@@ -486,10 +487,16 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
     const normalizedName = normalizeName(body.name);
 
     const existingByNumber = await app.services.prisma.job.findFirst({
-      where: { workspaceId, jobNumber: body.jobNumber },
+      where: workspaceCurrentJobNumberCollisionWhere({
+        workspaceId,
+        jobNumber: body.jobNumber,
+      }),
     });
     if (existingByNumber) {
-      return reply.code(409).send({ message: "A job with this job number already exists in this workspace" });
+      return reply.code(409).send({
+        code: "JOB_NUMBER_TAKEN",
+        message: "A job with this job number already exists in this workspace",
+      });
     }
 
     const existingByName = await app.services.prisma.job.findFirst({
@@ -842,10 +849,17 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
 
     if (body.jobNumber && body.jobNumber !== existing.jobNumber) {
       const dup = await app.services.prisma.job.findFirst({
-        where: { workspaceId, jobNumber: body.jobNumber, id: { not: jobId } },
+        where: workspaceCurrentJobNumberCollisionWhere({
+          workspaceId,
+          jobNumber: body.jobNumber,
+          excludeJobId: jobId,
+        }),
       });
       if (dup) {
-        return reply.code(409).send({ message: "A job with this job number already exists in this workspace" });
+        return reply.code(409).send({
+          code: "JOB_NUMBER_TAKEN",
+          message: "A job with this job number already exists in this workspace",
+        });
       }
     }
 
@@ -1077,6 +1091,30 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
 
     if (!existing.archivedAt) {
       return reply.code(409).send({ message: "Job is not archived" });
+    }
+
+    // Archived numbers are reusable — restoring must not create two current Jobs
+    // with the same jobNumber.
+    if (existing.jobNumber?.trim()) {
+      const numberTaken = await app.services.prisma.job.findFirst({
+        where: workspaceCurrentJobNumberCollisionWhere({
+          workspaceId,
+          jobNumber: existing.jobNumber,
+          excludeJobId: jobId,
+        }),
+        select: { id: true, name: true, jobNumber: true },
+      });
+      if (numberTaken) {
+        return reply.code(409).send({
+          code: "JOB_NUMBER_TAKEN",
+          message: `Cannot restore: Job number ${existing.jobNumber} is already used by a current Job (${numberTaken.name}). Resolve the conflict before restoring.`,
+          cause: {
+            jobId: numberTaken.id,
+            name: numberTaken.name,
+            jobNumber: numberTaken.jobNumber,
+          },
+        });
+      }
     }
 
     const job = await app.services.prisma.$transaction(async (tx) => {

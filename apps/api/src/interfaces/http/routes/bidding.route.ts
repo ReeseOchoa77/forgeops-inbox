@@ -5,6 +5,7 @@ import {
   dedupeProjectAliases,
   normalizeName,
   tasksForEmailJobLink,
+  workspaceCurrentJobNumberCollisionWhere,
 } from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
@@ -306,7 +307,10 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
       }
       if (body.jobNumber) {
         const numberTaken = await app.services.prisma.job.findFirst({
-          where: { workspaceId, jobNumber: body.jobNumber },
+          where: workspaceCurrentJobNumberCollisionWhere({
+            workspaceId,
+            jobNumber: body.jobNumber,
+          }),
           select: { id: true, name: true, jobNumber: true },
         });
         if (numberTaken) {

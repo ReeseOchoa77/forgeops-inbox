@@ -372,8 +372,13 @@ export const registerFolderDiscoveryRoutes = async (app: FastifyInstance): Promi
         detectedJobName = info.jobName;
 
         if (info.jobNumber) {
+          // Prefer current (non-archived) Job when numbers are reused after archive.
           const jobByNumber = await app.services.prisma.job.findFirst({
-            where: { workspaceId, jobNumber: info.jobNumber },
+            where: {
+              workspaceId,
+              jobNumber: info.jobNumber,
+              archivedAt: null,
+            },
             select: { id: true }
           });
           if (jobByNumber) {

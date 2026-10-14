@@ -95,10 +95,16 @@ function formatMoney(amount: number | null | undefined, currency?: string | null
 
 function scopeListPreview(c: BidCandidateSummary): string {
   const n = c.scopeItemCount
-  if (typeof n === 'number' && n > 0) {
+  if (typeof n === 'number' && n > 0 && c.proposedScopeDetail?.detailedComplete) {
     return `${n} item${n === 1 ? '' : 's'}`
   }
-  if (c.proposedScope?.trim()) return c.proposedScope
+  if (
+    c.proposedScope?.trim() &&
+    c.proposedScopeDetail?.detailedComplete &&
+    !/needs review/i.test(c.proposedScope)
+  ) {
+    return c.proposedScope
+  }
   return 'Needs Review'
 }
 
@@ -136,20 +142,22 @@ function ScopeDetailBlock({
           {!detail.detailedComplete ? ' · detailed scope incomplete' : ''}
         </div>
       ) : null}
+      {!detail?.detailedComplete && items.length === 0 ? (
+        <div style={{ color: '#b45309', fontSize: 12, marginBottom: 6 }}>
+          Scope needs review — specific items were not identified in the available evidence.
+        </div>
+      ) : null}
       {hasStructured ? (
         <>
           {items.length > 0 ? (
             <div style={{ marginBottom: 6 }}>
-              <div style={{ color: '#888', fontSize: 12 }}>Items / Work products</div>
+              <div style={{ color: '#888', fontSize: 12 }}>Items</div>
               <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
                 {items.map((i) => (
                   <li key={`i-${i.name}`}>
                     {i.name}
                     {i.details ? (
                       <span style={{ color: '#888' }}> — {i.details}</span>
-                    ) : null}
-                    {i.source ? (
-                      <span style={{ color: '#aaa', fontSize: 11 }}> ({i.source})</span>
                     ) : null}
                   </li>
                 ))}
@@ -158,7 +166,9 @@ function ScopeDetailBlock({
           ) : null}
           {work.length > 0 ? (
             <div style={{ marginBottom: 6 }}>
-              <div style={{ color: '#888', fontSize: 12 }}>Work performed</div>
+              <div style={{ color: '#888', fontSize: 12 }}>
+                {items.length === 0 ? 'Work identified' : 'Work'}
+              </div>
               <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
                 {work.map((i) => (
                   <li key={`w-${i.name}`}>{i.name}</li>

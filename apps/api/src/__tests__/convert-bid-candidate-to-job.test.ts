@@ -178,6 +178,90 @@ describe("convertBidCandidateToJob", () => {
     );
   });
 
+  it("10) Scope needs review placeholder does not become Job.description", async () => {
+    const tx = {
+      $queryRaw: vi.fn(async () => [{ id: "cand-1" }]),
+      bidCandidate: {
+        findFirst: vi.fn(async () => ({
+          id: "cand-1",
+          lifecycle: "OPEN",
+          canonicalJobId: null,
+          status: "READY",
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      customer: {
+        findFirst: vi.fn(async () => ({ id: "cust-1", name: "Mortenson" })),
+        findMany: vi.fn(async () => []),
+        create: vi.fn(),
+        findUnique: vi.fn(),
+      },
+      job: {
+        create: vi.fn(async () => ({
+          id: "job-new",
+          jobNumber: "26011",
+          name: "Project Falcon",
+          status: CONVERTED_JOB_STATUS,
+        })),
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => []),
+      },
+      entityAlias: { createMany: vi.fn(async () => ({ count: 0 })) },
+      bidCandidateEmail: {
+        findMany: vi.fn(async () => []),
+      },
+      bidQuoteStaging: { findMany: vi.fn(async () => []) },
+      emailMessage: {
+        findMany: vi.fn(async () => []),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      jobActivityLog: { create: vi.fn(async () => ({})) },
+    };
+    const prisma = {
+      bidCandidate: {
+        findFirst: vi.fn(async () =>
+          baseCandidate({
+            proposedScope: "Scope needs review",
+            proposedScopeDetail: {
+              work: [
+                { kind: "WORK", name: "Furnish/supply" },
+                { kind: "WORK", name: "Installation" },
+              ],
+              items: [],
+              summary: "Scope needs review",
+              exclusions: [],
+              qualifications: [],
+              tradeCategory: null,
+              detailedComplete: true,
+              extractionMethod: "DETERMINISTIC",
+            },
+          })
+        ),
+      },
+      job: {
+        findMany: vi.fn(async () => []),
+        findFirst: vi.fn(async () => null),
+      },
+      $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    };
+
+    await convertBidCandidateToJob({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      candidateId: "cand-1",
+      userId: "user-1",
+      jobNumber: "26011",
+    });
+
+    expect(tx.job.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: null,
+        }),
+      })
+    );
+  });
+
   it("B) QUOTED Candidate can convert", async () => {
     const tx = {
       $queryRaw: vi.fn(async () => [{ id: "cand-1" }]),
@@ -290,6 +374,69 @@ describe("convertBidCandidateToJob", () => {
       })
     ).rejects.toMatchObject({ code: "NOT_CONVERTIBLE" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("M) Convert can reuse archived Job number (current-only collision)", async () => {
+    const tx = {
+      $queryRaw: vi.fn(async () => [{ id: "cand-1" }]),
+      bidCandidate: {
+        findFirst: vi.fn(async () => ({
+          id: "cand-1",
+          lifecycle: "OPEN",
+          canonicalJobId: null,
+          status: "READY",
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      customer: {
+        findFirst: vi.fn(async () => ({ id: "cust-1", name: "Mortenson" })),
+        findMany: vi.fn(async () => []),
+        create: vi.fn(),
+        findUnique: vi.fn(),
+      },
+      job: {
+        create: vi.fn(async () => ({
+          id: "job-new",
+          jobNumber: "1004",
+          name: "Project Falcon",
+          status: CONVERTED_JOB_STATUS,
+        })),
+        // First findFirst (collision) → null because archived rows are excluded by where.
+        // findMany for EXISTING_JOB → empty.
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => []),
+      },
+      entityAlias: { createMany: vi.fn(async () => ({ count: 0 })) },
+      bidCandidateEmail: { findMany: vi.fn(async () => []) },
+      bidQuoteStaging: { findMany: vi.fn(async () => []) },
+      emailMessage: {
+        findMany: vi.fn(async () => []),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      jobActivityLog: { create: vi.fn(async () => ({})) },
+    };
+    const prisma = {
+      bidCandidate: { findFirst: vi.fn(async () => baseCandidate()) },
+      job: {
+        findMany: vi.fn(async () => []),
+        findFirst: vi.fn(async (args: { where?: { archivedAt?: null } }) => {
+          // Simulate: only archived Job has 1004 — current-only where returns null.
+          expect(args.where?.archivedAt).toBeNull();
+          return null;
+        }),
+      },
+      $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    };
+
+    const result = await convertBidCandidateToJob({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      candidateId: "cand-1",
+      userId: "user-1",
+      jobNumber: "1004",
+    });
+    expect(result.created).toBe(true);
+    expect(result.jobNumber).toBe("1004");
   });
 
   it("AC) Job number collision returns JOB_NUMBER_TAKEN (not EXISTING_JOB)", async () => {

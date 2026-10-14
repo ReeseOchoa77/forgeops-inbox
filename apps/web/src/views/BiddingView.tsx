@@ -12,6 +12,11 @@ import {
 import { QuotedBadge } from '../components/Badges'
 import { formatBidDue } from '../bidding-display'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import {
+  isScopeReviewPlaceholder,
+  parseDetailedScope,
+  type DetailedScope,
+} from '@forgeops/shared'
 
 type Props = {
   workspaceId: string
@@ -471,28 +476,12 @@ function CandidateDetail({
         <KV label="Notes" value={detail.notes || '—'} />
       </Section>
 
-      {Boolean(detail.scopeSummary || detail.scopeDetail) && (
-        <Section title="Scope">
-          <div style={{ fontSize: 13, color: '#111827', whiteSpace: 'pre-wrap' }}>
-            {detail.scopeSummary || '—'}
-          </div>
-          {detail.scopeDetail != null && (
-            <pre
-              style={{
-                fontSize: 11,
-                color: '#6b7280',
-                background: '#f9fafb',
-                padding: 10,
-                borderRadius: 6,
-                overflow: 'auto',
-                marginTop: 8,
-              }}
-            >
-              {JSON.stringify(detail.scopeDetail, null, 2)}
-            </pre>
-          )}
-        </Section>
-      )}
+      <Section title="Scope">
+        <CandidateScopePanel
+          scopeSummary={detail.scopeSummary}
+          scopeDetail={detail.scopeDetail}
+        />
+      </Section>
 
       {detail.emails.length > 0 && (
         <Section title="Emails">
@@ -597,6 +586,94 @@ function collectAttachmentNames(detail: OperationalBidCandidateDetail): string[]
   for (const e of detail.emails) ingest(e.message.attachmentMetadata)
   for (const q of detail.quotes) ingest(q.message.attachmentMetadata)
   return [...names]
+}
+
+function CandidateScopePanel({
+  scopeSummary,
+  scopeDetail,
+}: {
+  scopeSummary: string | null
+  scopeDetail: unknown
+}) {
+  const detail: DetailedScope | null = parseDetailedScope(scopeDetail)
+  const items = detail?.items ?? []
+  const work = detail?.work ?? []
+  const exclusions = detail?.exclusions ?? []
+  const qualifications = detail?.qualifications ?? []
+  const complete = Boolean(detail?.detailedComplete && items.length > 0)
+  const summaryText =
+    scopeSummary && !isScopeReviewPlaceholder(scopeSummary)
+      ? scopeSummary
+      : detail?.summary && !isScopeReviewPlaceholder(detail.summary)
+        ? detail.summary
+        : null
+
+  return (
+    <div style={{ fontSize: 13 }}>
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 650,
+          color: complete ? '#2e7d32' : '#b45309',
+          marginBottom: 8,
+        }}
+      >
+        {complete ? 'Complete' : 'Needs review'}
+      </div>
+      {!complete && items.length === 0 && (
+        <div style={{ color: '#6b7280', marginBottom: 10 }}>
+          Specific scope items were not identified in the available evidence.
+        </div>
+      )}
+      {summaryText && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>Summary</div>
+          <div style={{ color: '#111827', whiteSpace: 'pre-wrap' }}>{summaryText}</div>
+        </div>
+      )}
+      {detail?.tradeCategory && (
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+          Trade / category: {detail.tradeCategory}
+        </div>
+      )}
+      {items.length > 0 && (
+        <ScopeList title="Items" rows={items.map((i) => i.name)} />
+      )}
+      {work.length > 0 && (
+        <ScopeList
+          title={items.length === 0 ? 'Work identified' : 'Work'}
+          rows={work.map((w) => w.name)}
+        />
+      )}
+      {exclusions.length > 0 && (
+        <ScopeList title="Exclusions" rows={exclusions.map((e) => e.name)} />
+      )}
+      {qualifications.length > 0 && (
+        <ScopeList
+          title="Qualifications / Notes"
+          rows={qualifications.map((q) =>
+            q.details ? `${q.name} — ${q.details}` : q.name
+          )}
+        />
+      )}
+      {!detail && !summaryText && items.length === 0 && work.length === 0 && (
+        <div style={{ color: '#6b7280' }}>No scope extracted yet.</div>
+      )}
+    </div>
+  )
+}
+
+function ScopeList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 2 }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: 18, color: '#111827' }}>
+        {rows.map((name) => (
+          <li key={`${title}-${name}`}>{name}</li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

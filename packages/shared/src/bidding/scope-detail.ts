@@ -31,12 +31,47 @@ export type DetailedScope = {
   work: ScopeItem[];
   exclusions: ScopeItem[];
   qualifications: ScopeItem[];
-  /** Compact preview for lists (e.g. "4 items" or trade + needs review). */
+  /** Compact preview for lists (item names). Never a workflow placeholder. */
   summary: string | null;
-  /** True only when at least one concrete ITEM or WORK is evidence-backed. */
+  /**
+   * True only when meaningful ITEM evidence exists (what is being furnished/installed).
+   * Work actions alone (furnish/install) or trade labels are NOT complete detailed scope.
+   * Does NOT mean "deterministic extractor finished running".
+   */
   detailedComplete: boolean;
   extractionMethod?: "DETERMINISTIC" | "AI_ENRICHED" | "USER_EDITED" | null;
 };
+
+/** Workflow / review placeholders — never meaningful business scope content. */
+const SCOPE_REVIEW_PLACEHOLDERS = new Set(
+  [
+    "scope needs review",
+    "needs review",
+    "detailed scope unknown / needs review",
+    "scope incomplete",
+  ].map((s) => s.toLowerCase())
+);
+
+export function isScopeReviewPlaceholder(
+  text: string | null | undefined
+): boolean {
+  if (!text?.trim()) return false;
+  const t = text.trim().toLowerCase();
+  if (SCOPE_REVIEW_PLACEHOLDERS.has(t)) return true;
+  // e.g. "Structural steel · Needs Review"
+  if (/\bneeds review\b/i.test(t) && !/\bitem/i.test(t)) return true;
+  return false;
+}
+
+/** Meaningful concrete ITEM rows (not generic trade labels). */
+export function hasMeaningfulScopeItems(
+  detail: Pick<DetailedScope, "items"> | null | undefined
+): boolean {
+  if (!detail?.items?.length) return false;
+  return detail.items.some(
+    (i) => Boolean(i.name?.trim()) && !isGenericScopeLabel(i.name)
+  );
+}
 
 /** Trade/category labels that must NOT count as detailed scope by themselves. */
 export const GENERIC_SCOPE_LABELS = new Set(
@@ -233,34 +268,39 @@ function extractInclusionExclusionBlocks(
   return { exclusions, qualifications, workHints };
 }
 
-export function formatScopeSummary(detail: DetailedScope): string {
-  const itemCount = detail.items.length;
-  const workCount = detail.work.length;
-  if (itemCount > 0) {
-    const preview = detail.items
-      .slice(0, 3)
-      .map((i) => i.name)
-      .join(", ");
-    const more = itemCount > 3 ? ` +${itemCount - 3}` : "";
-    return `${itemCount} item${itemCount === 1 ? "" : "s"}: ${preview}${more}`;
-  }
-  if (workCount > 0 && !isGenericScopeLabel(detail.tradeCategory)) {
-    return `${workCount} work item${workCount === 1 ? "" : "s"}`;
-  }
-  if (detail.tradeCategory) {
-    return `${detail.tradeCategory} · Needs Review`;
-  }
-  return "Scope needs review";
+/**
+ * Compact summary for storage/display when items exist.
+ * Returns null when incomplete — UI shows "Scope incomplete" / "Needs review"
+ * as presentation, not persisted business content.
+ */
+export function formatScopeSummary(detail: DetailedScope): string | null {
+  const meaningful = detail.items.filter(
+    (i) => Boolean(i.name?.trim()) && !isGenericScopeLabel(i.name)
+  );
+  if (meaningful.length === 0) return null;
+  const preview = meaningful
+    .slice(0, 3)
+    .map((i) => i.name)
+    .join(", ");
+  const more = meaningful.length > 3 ? ` +${meaningful.length - 3}` : "";
+  return `${meaningful.length} item${meaningful.length === 1 ? "" : "s"}: ${preview}${more}`;
 }
 
+/**
+ * Completeness rule:
+ * detailedComplete ⇔ at least one non-generic ITEM is present.
+ * Work-only / trade-only / placeholder summary ⇒ incomplete.
+ */
 export function finalizeDetailedScope(detail: DetailedScope): DetailedScope {
-  const detailedComplete =
-    detail.items.length > 0 ||
-    detail.work.some((w) => !isGenericScopeLabel(w.name));
+  const detailedComplete = hasMeaningfulScopeItems(detail);
+  const summary = formatScopeSummary({ ...detail, detailedComplete });
+  // Never persist review placeholders as summary content.
+  const cleanSummary =
+    summary && !isScopeReviewPlaceholder(summary) ? summary : null;
   return {
     ...detail,
     detailedComplete,
-    summary: formatScopeSummary({ ...detail, detailedComplete }),
+    summary: cleanSummary,
   };
 }
 
@@ -347,6 +387,13 @@ export function extractDetailedScopeDeterministic(input: {
     ) {
       continue;
     }
+    // Prefer compound "Furnish and install" over separate furnish + install.
+    if (
+      (p.name === "Furnish/supply" || p.name === "Installation") &&
+      work.some((w) => /furnish and install|provide and install/i.test(w.name))
+    ) {
+      continue;
+    }
     pushUnique(
       work,
       {
@@ -414,9 +461,11 @@ export function extractDetailedScopeDeterministic(input: {
 
 /** Compact string for proposedScope / extractedScope columns. */
 export function scopeSummaryString(detail: DetailedScope): string | null {
-  if (detail.detailedComplete) return detail.summary;
-  if (detail.tradeCategory) return `${detail.tradeCategory} · Needs Review`;
-  return detail.summary;
+  if (!detail.detailedComplete) return null;
+  if (detail.summary && !isScopeReviewPlaceholder(detail.summary)) {
+    return detail.summary;
+  }
+  return formatScopeSummary(detail);
 }
 
 /**

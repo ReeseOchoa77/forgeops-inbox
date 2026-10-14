@@ -7,6 +7,7 @@ import {
 import {
   parseSequentialJobNumber,
   suggestNextJobNumberFromList,
+  workspaceCurrentJobNumberCollisionWhere,
   workspaceJobNumbersForSuggestionWhere,
 } from "../bidding/suggest-next-job-number.js";
 
@@ -58,7 +59,26 @@ describe("suggestBidProjectNameFromSubject", () => {
   });
 });
 
-describe("suggestNextJobNumberFromList", () => {
+describe("suggestNextJobNumberFromList — archived reuse", () => {
+  it("A) current 1001–1003, archived 1010 omitted → suggest 1004", () => {
+    expect(suggestNextJobNumberFromList(["1001", "1002", "1003"])).toBe("1004");
+  });
+
+  it("B/C) current 1001–1003; archived 1004/1005/1050 omitted → still 1004", () => {
+    // Caller must pass only non-archived rows.
+    expect(suggestNextJobNumberFromList(["1001", "1002", "1003"])).toBe("1004");
+    expect(suggestNextJobNumberFromList(["1001", "1002", "1003"])).not.toBe(
+      "1005"
+    );
+    expect(suggestNextJobNumberFromList(["1001", "1002", "1003"])).not.toBe(
+      "1051"
+    );
+  });
+
+  it("I) numeric ordering: 999 then 1000", () => {
+    expect(suggestNextJobNumberFromList(["999", "1000"])).toBe("1001");
+  });
+
   it("increments plain numeric job numbers", () => {
     expect(suggestNextJobNumberFromList(["2148", "2100", "1999"])).toBe("2149");
   });
@@ -67,12 +87,6 @@ describe("suggestNextJobNumberFromList", () => {
     expect(suggestNextJobNumberFromList(["26-184", "26-200", "25-999"])).toBe(
       "26-201"
     );
-  });
-
-  it("includes BIDDING / archived / completed numbers when present in the list", () => {
-    expect(
-      suggestNextJobNumberFromList(["26-200", "26-201", "26-150"])
-    ).toBe("26-202");
   });
 
   it("ignores non-numeric special job numbers safely", () => {
@@ -91,12 +105,7 @@ describe("suggestNextJobNumberFromList", () => {
     expect(suggestNextJobNumberFromList(["2198", "26-200"])).toBe("26-201");
   });
 
-  it("matrix: existing 3000,3001,3002 → suggest 3003", () => {
-    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
-  });
-
-  it("matrix: after deleting max 3002, current 3000,3001 → suggest 3002 (reuse)", () => {
-    // Deleted Jobs are absent from the list — they do not reserve numbers.
+  it("matrix: after deleting max 3002, current 3000,3001 → suggest 3002", () => {
     expect(suggestNextJobNumberFromList(["3000", "3001"])).toBe("3002");
   });
 
@@ -106,32 +115,33 @@ describe("suggestNextJobNumberFromList", () => {
     ).toBe("3004");
   });
 
-  it("matrix: archived + bidding + active all count toward max", () => {
-    // Caller includes all existing rows regardless of status/archivedAt.
-    expect(
-      suggestNextJobNumberFromList(["3000", "3001", "3002"])
-    ).toBe("3003");
-  });
-
-  it("matrix: historical deleted-only max must not appear in the list", () => {
-    // Audit/history may remember 4000, but the Job table list must not include it.
-    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
-    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).not.toBe(
-      "4001"
-    );
-  });
-
-  it("matrix: create 3003 then next is 3004; delete 3003 returns to 3003", () => {
-    expect(
-      suggestNextJobNumberFromList(["3000", "3001", "3002", "3003"])
-    ).toBe("3004");
-    expect(suggestNextJobNumberFromList(["3000", "3001", "3002"])).toBe("3003");
-  });
-
-  it("exposes Job-table-only where helper (no status/archive filter)", () => {
+  it("exposes current-Job where helpers (archivedAt null)", () => {
     expect(workspaceJobNumbersForSuggestionWhere("ws-1")).toEqual({
       workspaceId: "ws-1",
+      archivedAt: null,
       AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
+    });
+    expect(
+      workspaceCurrentJobNumberCollisionWhere({
+        workspaceId: "ws-1",
+        jobNumber: "1004",
+      })
+    ).toEqual({
+      workspaceId: "ws-1",
+      jobNumber: "1004",
+      archivedAt: null,
+    });
+    expect(
+      workspaceCurrentJobNumberCollisionWhere({
+        workspaceId: "ws-1",
+        jobNumber: "1004",
+        excludeJobId: "job-a",
+      })
+    ).toEqual({
+      workspaceId: "ws-1",
+      jobNumber: "1004",
+      archivedAt: null,
+      id: { not: "job-a" },
     });
   });
 });

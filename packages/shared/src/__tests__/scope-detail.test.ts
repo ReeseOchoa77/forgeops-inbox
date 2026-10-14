@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   extractDetailedScopeDeterministic,
+  finalizeDetailedScope,
+  formatScopeSummary,
   isDetailedScopeComplete,
   isGenericScopeLabel,
+  isScopeReviewPlaceholder,
   mergeAiScopeDetail,
   scopeDetailFromUserText,
+  scopeSummaryString,
 } from "../bidding/scope-detail.js";
 
 describe("extractDetailedScopeDeterministic", () => {
@@ -16,19 +20,99 @@ describe("extractDetailedScopeDeterministic", () => {
     expect(d.tradeCategory).toMatch(/structural steel/i);
     expect(d.items).toEqual([]);
     expect(isDetailedScopeComplete(d)).toBe(false);
-    expect(d.summary).toMatch(/Needs Review/i);
+    expect(d.summary).toBeNull();
+    expect(scopeSummaryString(d)).toBeNull();
   });
 
-  it("extracts concrete items from explicit language", () => {
+  it("1) work-only furnish/install → detailedComplete=false", () => {
+    const d = extractDetailedScopeDeterministic({
+      subject: "ITB",
+      bodyText: "Please furnish and install per plans.",
+    });
+    expect(d.items).toEqual([]);
+    expect(d.work.length).toBeGreaterThan(0);
+    expect(isDetailedScopeComplete(d)).toBe(false);
+    expect(d.summary).toBeNull();
+    expect(isScopeReviewPlaceholder(d.summary)).toBe(false);
+  });
+
+  it("2) Scope needs review is never a meaningful summary", () => {
+    expect(isScopeReviewPlaceholder("Scope needs review")).toBe(true);
+    expect(isScopeReviewPlaceholder("Structural steel · Needs Review")).toBe(
+      true
+    );
+    expect(isScopeReviewPlaceholder("3 items: Stairs, Handrails")).toBe(false);
+    const forced = finalizeDetailedScope({
+      tradeCategory: null,
+      items: [],
+      work: [
+        { name: "Furnish/supply", kind: "WORK" },
+        { name: "Installation", kind: "WORK" },
+      ],
+      exclusions: [],
+      qualifications: [],
+      summary: "Scope needs review",
+      detailedComplete: true,
+      extractionMethod: "DETERMINISTIC",
+    });
+    expect(forced.detailedComplete).toBe(false);
+    expect(forced.summary).toBeNull();
+  });
+
+  it("3) source identifies stairs + handrails → items", () => {
+    const d = extractDetailedScopeDeterministic({
+      subject: "Bid invite",
+      bodyText: "Provide steel stairs S1 and S2 with handrails.",
+    });
+    const names = d.items.map((i) => i.name.toLowerCase());
+    expect(names).toEqual(
+      expect.arrayContaining(["steel stairs", "handrails"])
+    );
+    expect(isDetailedScopeComplete(d)).toBe(true);
+  });
+
+  it("4) stairs only → do not invent railings/beams/columns", () => {
+    const d = extractDetailedScopeDeterministic({
+      subject: "ITB",
+      bodyText: "Furnish steel stairs only.",
+    });
+    const names = d.items.map((i) => i.name.toLowerCase());
+    expect(names).toEqual(expect.arrayContaining(["steel stairs"]));
+    expect(names.some((n) => /rail|beam|column/i.test(n))).toBe(false);
+  });
+
+  it("5) uses PDF text when richer than email body", () => {
+    const d = extractDetailedScopeDeterministic({
+      subject: "See attached",
+      bodyText: "Please furnish and install. See PDF.",
+      pdfText: "Miscellaneous metals: ladders, bollards, embeds",
+    });
+    expect(d.tradeCategory).toMatch(/miscellaneous metals/i);
+    const names = d.items.map((i) => i.name.toLowerCase());
+    expect(names).toEqual(
+      expect.arrayContaining(["ladders", "bollards", "embeds"])
+    );
+    expect(isDetailedScopeComplete(d)).toBe(true);
+  });
+
+  it("6) no useful evidence → incomplete, no invented items", () => {
+    const d = extractDetailedScopeDeterministic({
+      subject: "Hello",
+      bodyText: "Thanks",
+    });
+    expect(d.items).toEqual([]);
+    expect(isDetailedScopeComplete(d)).toBe(false);
+    expect(formatScopeSummary(d)).toBeNull();
+  });
+
+  it("11) complete meaningful scope → detailedComplete=true", () => {
     const d = extractDetailedScopeDeterministic({
       subject: "Bid invite",
       bodyText: "Provide beams, columns, steel stairs and handrails.",
     });
-    const names = d.items.map((i) => i.name.toLowerCase());
-    expect(names).toEqual(
-      expect.arrayContaining(["beams", "columns", "steel stairs", "handrails"])
-    );
     expect(isDetailedScopeComplete(d)).toBe(true);
+    expect(d.summary).toMatch(/item/i);
+    expect(scopeSummaryString(d)).toBeTruthy();
   });
 
   it("extracts work and exclusions when evidence supports them", () => {
@@ -41,19 +125,6 @@ describe("extractDetailedScopeDeterministic", () => {
     );
     expect(d.work.some((w) => /furnish|install/i.test(w.name))).toBe(true);
     expect(d.exclusions.some((e) => /paint/i.test(e.name))).toBe(true);
-  });
-
-  it("extracts misc metals items from PDF-only text", () => {
-    const d = extractDetailedScopeDeterministic({
-      subject: "See attached",
-      bodyText: "Please see PDF.",
-      pdfText: "Miscellaneous metals: ladders, bollards, embeds",
-    });
-    expect(d.tradeCategory).toMatch(/miscellaneous metals/i);
-    const names = d.items.map((i) => i.name.toLowerCase());
-    expect(names).toEqual(
-      expect.arrayContaining(["ladders", "bollards", "embeds"])
-    );
   });
 });
 
@@ -72,9 +143,6 @@ describe("mergeAiScopeDetail anti-hallucination", () => {
       exclusions: [],
       qualifications: [],
     });
-    // Generic label dropped; concrete Beams kept only if AI provided it —
-    // but for "Structural Steel only" evidence we still accept AI Beams only
-    // when model returns them; here we verify generic is not kept as item.
     expect(merged.items.every((i) => !isGenericScopeLabel(i.name))).toBe(true);
   });
 
@@ -94,7 +162,7 @@ describe("mergeAiScopeDetail anti-hallucination", () => {
 });
 
 describe("scopeDetailFromUserText", () => {
-  it("stores user lines as items and marks USER_EDITED", () => {
+  it("7) user-edited scope stores items and marks USER_EDITED", () => {
     const d = scopeDetailFromUserText("Beams\nColumns\nHandrails");
     expect(d.extractionMethod).toBe("USER_EDITED");
     expect(d.items.map((i) => i.name)).toEqual([

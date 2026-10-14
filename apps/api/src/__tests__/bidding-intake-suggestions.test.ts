@@ -120,17 +120,19 @@ describe("bidding intake suggestions service", () => {
     expect(prisma.job.create).not.toHaveBeenCalled();
     expect(prisma.customer.create).not.toHaveBeenCalled();
     expect(prisma.entityAlias.createMany).not.toHaveBeenCalled();
-    // Job numbers come only from live Job.jobNumber rows (no status / history filter).
+    // MAX from non-archived Jobs only — archived history is not inspected.
+    expect(prisma.job.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.job.findMany).toHaveBeenCalledWith({
       where: {
         workspaceId: "ws",
+        archivedAt: null,
         AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
       },
       select: { jobNumber: true },
     });
   });
 
-  it("reuses highest deleted job number; archived/status rows still count", async () => {
+  it("reuses hard-deleted max; archived Jobs do not push the sequence", async () => {
     // Live set after deleting former max 26-200: only 26-199 remains → suggest 26-200.
     const afterDeleteHighest = basePrisma({
       jobNumbers: ["26-199"],
@@ -143,12 +145,12 @@ describe("bidding intake suggestions service", () => {
     });
     expect(reuse?.jobNumber).toBe("26-200");
 
-    // Archived / BIDDING / ACTIVE all exist → max 3002 → suggest 3003 (not history 4000).
-    const withArchiveAndStatuses = basePrisma({
+    // Non-archived current max 3002 → suggest 3003 (not history 4000).
+    const withCurrent = basePrisma({
       jobNumbers: ["3000", "3001", "3002"],
     });
     const next = await buildBiddingIntakeSuggestions({
-      prisma: withArchiveAndStatuses as never,
+      prisma: withCurrent as never,
       workspaceId: "ws",
       messageId: "msg-1",
       openaiApiKey: null,

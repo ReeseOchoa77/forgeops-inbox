@@ -102,15 +102,10 @@ export async function buildBiddingIntakeSuggestions(input: {
       ? attachmentEvidence.projectName
       : null;
 
-  // Job number: CURRENT Job table only (all statuses + archived). Hard-deleted
-  // Jobs are absent and do not reserve numbers. Never AuditEvent / EntityAlias /
-  // AI / historical max.
-  const jobRows = await input.prisma.job.findMany({
-    where: workspaceJobNumbersForSuggestionWhere(input.workspaceId),
-    select: { jobNumber: true },
-  });
-  const jobNumber = suggestNextJobNumberFromList(
-    jobRows.map((r) => r.jobNumber)
+  // Job number: non-archived Jobs for MAX; skip numbers still taken (incl. archived).
+  const jobNumber = await suggestNextJobNumberForWorkspace(
+    input.prisma,
+    input.workspaceId
   );
 
   let bidDueAt = extractBidDueDateDeterministic({
@@ -204,16 +199,16 @@ export async function buildBiddingIntakeSuggestions(input: {
 
 /**
  * DB-backed next job number suggestion (no reservation).
- * Reads only Job.jobNumber from currently existing rows — deleted Jobs do not
- * participate. Prefer this over any cached / historical maximum.
+ * MAX among non-archived Jobs only. Archived numbers are reusable and are
+ * not inspected after calculating the suggestion.
  */
 export async function suggestNextJobNumberForWorkspace(
   prisma: PrismaClient,
   workspaceId: string
 ): Promise<string | null> {
-  const jobRows = await prisma.job.findMany({
+  const currentRows = await prisma.job.findMany({
     where: workspaceJobNumbersForSuggestionWhere(workspaceId),
     select: { jobNumber: true },
   });
-  return suggestNextJobNumberFromList(jobRows.map((r) => r.jobNumber));
+  return suggestNextJobNumberFromList(currentRows.map((r) => r.jobNumber));
 }

@@ -12,8 +12,10 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   dedupeProjectAliases,
   formatScopeSummary,
+  isScopeReviewPlaceholder,
   normalizeName,
   parseDetailedScope,
+  workspaceCurrentJobNumberCollisionWhere,
 } from "@forgeops/shared";
 import {
   associateBidImportEmails,
@@ -133,15 +135,18 @@ function jobDescriptionFromCandidateScope(input: {
     const t = input.override?.trim();
     return t || null;
   }
-  const summary = input.proposedScope?.trim() || null;
+  const rawSummary = input.proposedScope?.trim() || null;
+  const summary =
+    rawSummary && !isScopeReviewPlaceholder(rawSummary) ? rawSummary : null;
   const detail = parseDetailedScope(input.proposedScopeDetail);
-  if (detail) {
+  if (detail?.detailedComplete) {
     const formatted = formatScopeSummary(detail)?.trim() || null;
     if (formatted && summary && formatted !== summary) {
       return `${summary}\n\n${formatted}`;
     }
     return formatted || summary;
   }
+  // Incomplete / work-only / placeholder — do not invent or carry review text.
   return summary;
 }
 
@@ -346,8 +351,12 @@ export async function convertBidCandidateToJob(
   }
 
   // Prefer explicit number-collision code over name-similarity EXISTING_JOB.
+  // Collision among CURRENT (non-archived) Jobs only — archived numbers reusable.
   const taken = await input.prisma.job.findFirst({
-    where: { workspaceId: input.workspaceId, jobNumber },
+    where: workspaceCurrentJobNumberCollisionWhere({
+      workspaceId: input.workspaceId,
+      jobNumber,
+    }),
     select: { id: true, name: true, jobNumber: true },
   });
   if (taken) {
@@ -425,7 +434,10 @@ export async function convertBidCandidateToJob(
     }
 
     const takenInside = await tx.job.findFirst({
-      where: { workspaceId: input.workspaceId, jobNumber },
+      where: workspaceCurrentJobNumberCollisionWhere({
+        workspaceId: input.workspaceId,
+        jobNumber,
+      }),
       select: { id: true, name: true, jobNumber: true },
     });
     if (takenInside) {

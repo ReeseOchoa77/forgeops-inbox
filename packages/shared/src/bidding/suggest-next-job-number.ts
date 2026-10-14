@@ -6,19 +6,19 @@
  * CANONICAL V1 NUMBERING RULE
  * ============================================================
  *
- * NEXT = highest valid CURRENTLY EXISTING Job.jobNumber + 1
+ * NEXT = highest valid CURRENT (non-archived) Job.jobNumber + 1
  *
- * Source of truth: the current Job table only.
+ * Source of truth: Job rows with archivedAt IS NULL.
  *
- * - Hard-deleted Jobs are gone → they do NOT reserve numbers.
- *   Example: existing 3000,3001,3002 → delete 3002 → suggest 3002.
- * - Deleting a non-max Job does NOT fill internal gaps.
- *   Example: 3000..3003, delete 3001 → still suggest 3004.
- * - Archived Jobs still EXIST → they count toward the maximum.
- * - Status does not matter (LEAD / BIDDING / ACTIVE / ARCHIVED / …).
+ * - Archived Jobs (archivedAt set) do NOT participate in MAX.
+ * - Archived Job numbers are reusable by new current Jobs.
+ * - Hard-deleted Jobs are gone → they do NOT participate.
+ * - Status COMPLETE / ACTIVE / BIDDING etc. still count when not archived.
+ * - BidCandidate.proposedJobNumber and EntityAlias are ignored.
  *
- * Do NOT use AuditEvent, JobActivityLog, EntityAlias history, email history,
- * AI, or any cached historical maximum as a numbering floor.
+ * Uniqueness (commit-time): among CURRENT / non-archived Jobs only.
+ * An archived Job with jobNumber=1004 does NOT block creating current 1004.
+ * Restoring an archived Job must check for a current collision first.
  *
  * Supported sequential formats (highest wins within its kind):
  * - Plain digits: "2148" → "2149"
@@ -26,9 +26,6 @@
  *
  * Prefer year-prefix when any yy-seq numbers exist (shop convention).
  * Non-numeric / special values (e.g. "J-1000", "ALT-A") are ignored for max.
- *
- * Callers must pass job numbers from currently existing Job rows only
- * (all statuses / archived included; hard-deleted absent).
  */
 
 export type ParsedSequentialJobNumber =
@@ -69,7 +66,7 @@ function compareYySeq(
 
 /**
  * Pure suggestion from an in-memory list of CURRENT Job.jobNumber values.
- * Pass only numbers from existing Job rows (post-delete list excludes deleted).
+ * Pass only numbers from non-archived Job rows.
  */
 export function suggestNextJobNumberFromList(
   jobNumbers: ReadonlyArray<string | null | undefined>
@@ -108,15 +105,48 @@ export function suggestNextJobNumberFromList(
 }
 
 /**
- * Prisma `where` for Job rows that participate in next-number suggestion.
- * No archivedAt / status filter — existence only. Hard-deleted rows are absent.
+ * Prisma `where` for Job rows that participate in next-number MAX calculation.
+ * Current = archivedAt IS NULL. Hard-deleted rows are absent.
  */
 export function workspaceJobNumbersForSuggestionWhere(workspaceId: string): {
   workspaceId: string;
+  archivedAt: null;
   AND: Array<{ jobNumber: { not: null } } | { jobNumber: { not: string } }>;
 } {
   return {
     workspaceId,
+    archivedAt: null,
     AND: [{ jobNumber: { not: null } }, { jobNumber: { not: "" } }],
   };
+}
+
+/**
+ * Canonical collision predicate for Job numbers among CURRENT Jobs only.
+ * Archived Jobs do not collide. Pass excludeJobId when editing / restoring.
+ */
+export function workspaceCurrentJobNumberCollisionWhere(input: {
+  workspaceId: string;
+  jobNumber: string;
+  /** Exclude this Job id (edit self / restore self). */
+  excludeJobId?: string | null;
+}): {
+  workspaceId: string;
+  jobNumber: string;
+  archivedAt: null;
+  id?: { not: string };
+} {
+  const where: {
+    workspaceId: string;
+    jobNumber: string;
+    archivedAt: null;
+    id?: { not: string };
+  } = {
+    workspaceId: input.workspaceId,
+    jobNumber: input.jobNumber,
+    archivedAt: null,
+  };
+  if (input.excludeJobId) {
+    where.id = { not: input.excludeJobId };
+  }
+  return where;
 }
