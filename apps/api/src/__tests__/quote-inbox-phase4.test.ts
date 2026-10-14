@@ -44,11 +44,20 @@ describe("Phase 4 — Quote / Sent mail", () => {
     expect(sent).not.toContain("BID_OPPORTUNITY");
   });
 
-  it("G) Quote Inbox filter is server-side (inbox-read)", () => {
+  it("G) Quote Inbox filter is server-side (inbox-read) — unchanged predicate", () => {
     const src = readSrc("../interfaces/http/routes/inbox-read.route.ts");
     expect(src).toContain('businessTypeKey === "ESTIMATE_QUOTE"');
     expect(src).toContain('role: "QUOTE"');
     expect(src).toMatch(/andConditions\.push/);
+    // Regression: Quote still uses subtype OR BidCandidateEmail.role=QUOTE.
+    // Bid Candidate narrowed to discoveredInBidInvitesFolder; Quote must not.
+    const quoteBlock = src.slice(
+      src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'),
+      src.indexOf("} else {", src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'))
+    );
+    expect(quoteBlock).toContain('businessTypeKey: "ESTIMATE_QUOTE"');
+    expect(quoteBlock).toContain('role: "QUOTE"');
+    expect(quoteBlock).not.toContain("discoveredInBidInvitesFolder");
   });
 
   it("C/D) deterministic Quotes subtype — no AI, ESTIMATE_QUOTE", () => {

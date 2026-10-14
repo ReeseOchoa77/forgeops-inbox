@@ -803,6 +803,11 @@ model EmailMessage {
   /// Verified project-folder analysis created or refreshed this message.
   /// Once set, a later historical import must not make this row removable as imported mail.
   fromProjectFolder Boolean      @default(false)
+  /// Durable Projects/Bid Invites folder discovery provenance.
+  /// Set when ForgeOps imported/discovered this EmailMessage in that Outlook folder.
+  /// Survives Clear Analysis, AI/manual subtype changes, and Candidate reassignment.
+  /// Inbox "Bid Candidate" filter uses this — not BID_OPPORTUNITY alone.
+  discoveredInBidInvitesFolder Boolean @default(false)
   isArchived       Boolean       @default(false)
   archivedAt       DateTime?
   mailboxCategory  MailboxCategory @default(BUSINESS)
@@ -863,6 +868,8 @@ model EmailMessage {
   @@index([inboxConnectionId, internetMessageId])
   @@index([workspaceId, inboxConnectionId, direction, sentAt])
   @@index([workspaceId, inboxConnectionId, composedInForgeOps, sentAt])
+  @@index([workspaceId, discoveredInBidInvitesFolder, sentAt])
+  @@index([workspaceId, inboxConnectionId, discoveredInBidInvitesFolder, sentAt])
   @@index([senderEmail])
   @@index([jobId])
   @@index([workspaceId, jobId, sentAt])

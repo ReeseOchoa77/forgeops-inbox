@@ -38,6 +38,8 @@ describe("Phase 3 — Bid Invites lossless ingestion", () => {
     expect(src).toContain("bid_invites_folder");
     expect(src).toContain("deterministic");
     expect(src).toContain('businessTypeKey: "BID_OPPORTUNITY"');
+    expect(src).toContain("discoveredInBidInvitesFolder");
+    expect(src).toContain("recordFolderProvenance");
     expect(src).not.toMatch(/openai|generateObject|chat\.completions/i);
   });
 
@@ -195,24 +197,74 @@ describe("Phase 3 — Bid Invites lossless ingestion", () => {
     expect(src).toContain("userLocked");
   });
 
-  it("C) applyDeterministicBidInviteSubtype sets BID_OPPORTUNITY", async () => {
+  it("C) applyDeterministicBidInviteSubtype sets BID_OPPORTUNITY + provenance", async () => {
     const upsert = vi.fn(async () => ({}));
+    const update = vi.fn(async () => ({}));
     const prisma = {
       emailMessage: {
         findMany: vi.fn(async () => [
-          { id: "e1", threadId: "t1", classifications: [] },
+          {
+            id: "e1",
+            threadId: "t1",
+            discoveredInBidInvitesFolder: false,
+            classifications: [],
+          },
         ]),
-        update: vi.fn(),
+        update,
       },
       classification: { upsert },
     };
-    await applyDeterministicBidInviteSubtype({
+    const r = await applyDeterministicBidInviteSubtype({
       prisma: prisma as never,
       workspaceId: "ws",
       emailMessageIds: ["e1"],
     });
     expect(upsert.mock.calls[0]![0].create.businessTypeKey).toBe(
       "BID_OPPORTUNITY"
+    );
+    expect(r.provenanceMarked).toBe(1);
+    expect(
+      update.mock.calls.some(
+        (c) => c[0]?.data?.discoveredInBidInvitesFolder === true
+      )
+    ).toBe(true);
+  });
+
+  it("folder provenance stamps even when USER_EXPLICIT blocks subtype", async () => {
+    const update = vi.fn(async () => ({}));
+    const upsert = vi.fn(async () => ({}));
+    const prisma = {
+      emailMessage: {
+        findMany: vi.fn(async () => [
+          {
+            id: "e1",
+            threadId: "t1",
+            discoveredInBidInvitesFolder: false,
+            classifications: [
+              {
+                reviewedByUserId: "user-1",
+                routingHints: {
+                  authority: "USER_EXPLICIT",
+                  source: "manual",
+                },
+              },
+            ],
+          },
+        ]),
+        update,
+      },
+      classification: { upsert },
+    };
+    const r = await applyDeterministicBidInviteSubtype({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      emailMessageIds: ["e1"],
+    });
+    expect(r.applied).toBe(0);
+    expect(r.provenanceMarked).toBe(1);
+    expect(upsert).not.toHaveBeenCalled();
+    expect(update.mock.calls[0]![0].data.discoveredInBidInvitesFolder).toBe(
+      true
     );
   });
 });

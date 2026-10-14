@@ -1146,22 +1146,12 @@ export const buildMessagesWhere = (input: {
   }
 
   if (input.businessTypeKey) {
-    // Bid Candidate / Quote: subtype OR durable Candidate-email role.
-    // Matching may leave subtype set without Candidate association (and vice versa).
+    // Bid Candidate filter = durable Projects/Bid Invites folder provenance ONLY.
+    // Not BID_OPPORTUNITY subtype, not BidCandidateEmail.role=BID_INVITE.
+    // Quote filter unchanged: subtype OR BidCandidateEmail.role=QUOTE.
     if (input.businessTypeKey === "BID_OPPORTUNITY") {
       andConditions.push({
-        OR: [
-          {
-            classifications: {
-              some: { businessTypeKey: "BID_OPPORTUNITY" },
-            },
-          },
-          {
-            bidCandidateEmails: {
-              some: { role: "BID_INVITE" },
-            },
-          },
-        ],
+        discoveredInBidInvitesFolder: true,
       });
     } else if (input.businessTypeKey === "ESTIMATE_QUOTE") {
       andConditions.push({

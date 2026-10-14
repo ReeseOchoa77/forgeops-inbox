@@ -332,10 +332,23 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       const and = where.AND as Array<Record<string, unknown>>;
       expect(JSON.stringify(where)).toContain('"direction":"SENT"');
       const serialized = JSON.stringify(where);
-      // Bid Candidate / Quote use subtype OR Candidate-email role.
-      if (key === "BID_OPPORTUNITY" || key === "ESTIMATE_QUOTE") {
+      if (key === "BID_OPPORTUNITY") {
+        // Bid Candidate = durable Projects/Bid Invites provenance only.
+        expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
+        expect(serialized).not.toContain('"role":"BID_INVITE"');
+        expect(
+          and.some(
+            (c) =>
+              c &&
+              "discoveredInBidInvitesFolder" in c &&
+              c.discoveredInBidInvitesFolder === true
+          )
+        ).toBe(true);
+      } else if (key === "ESTIMATE_QUOTE") {
+        // Quote filter unchanged: subtype OR Candidate-email role.
         expect(serialized).toContain(`"businessTypeKey":"${key}"`);
         expect(serialized).toContain("bidCandidateEmails");
+        expect(serialized).toContain('"role":"QUOTE"');
       } else {
         expect(
           and.some(
@@ -348,6 +361,75 @@ describe("buildMessagesWhere — Sent AND composition", () => {
         ).toBe(true);
       }
     }
+  });
+
+  it("Bid Candidate filter = discoveredInBidInvitesFolder only (not subtype/role)", () => {
+    const where = baseWhere({
+      businessCategory: "BUSINESS",
+      businessTypeKey: "BID_OPPORTUNITY",
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const serialized = JSON.stringify(where);
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "discoveredInBidInvitesFolder" in c &&
+          c.discoveredInBidInvitesFolder === true
+      )
+    ).toBe(true);
+    expect(serialized).not.toContain('"role":"BID_INVITE"');
+    // Must not match via subtype alone.
+    expect(serialized).not.toMatch(
+      /"classifications":\{"some":\{"businessTypeKey":"BID_OPPORTUNITY"\}\}/
+    );
+  });
+
+  it("K/L/M/N) Incoming + Bid Candidate composes with sender/content/pinned/date", () => {
+    const after = new Date("2026-08-01T00:00:00.000Z");
+    const before = new Date("2026-08-31T23:59:59.000Z");
+    const where = baseWhere({
+      businessCategory: "BUSINESS",
+      businessTypeKey: "BID_OPPORTUNITY",
+      search: "mortenson",
+      searchIn: "sender",
+      pinnedOnly: true,
+      unreadOnly: true,
+      receivedAfter: after,
+      receivedBefore: before,
+    });
+    const and = where.AND as Array<Record<string, unknown>>;
+    const serialized = JSON.stringify(where);
+    expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
+    expect(serialized).not.toContain('"direction":"SENT"');
+    expect(and.some((c) => c && "isPinned" in c && c.isPinned === true)).toBe(
+      true
+    );
+    expect(and.some((c) => c && "isRead" in c && c.isRead === false)).toBe(true);
+    expect(
+      and.some(
+        (c) =>
+          c &&
+          "OR" in c &&
+          Array.isArray(c.OR) &&
+          (c.OR as object[]).some(
+            (o) =>
+              o && "senderEmail" in o && JSON.stringify(o).includes("mortenson")
+          )
+      )
+    ).toBe(true);
+  });
+
+  it("Quote filter predicate unchanged (subtype OR role=QUOTE)", () => {
+    const where = baseWhere({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      businessTypeKey: "ESTIMATE_QUOTE",
+    });
+    const serialized = JSON.stringify(where);
+    expect(serialized).toContain('"businessTypeKey":"ESTIMATE_QUOTE"');
+    expect(serialized).toContain('"role":"QUOTE"');
+    expect(serialized).not.toContain("discoveredInBidInvitesFolder");
   });
 
   it("Sent + Pinned ANDs isPinned", () => {

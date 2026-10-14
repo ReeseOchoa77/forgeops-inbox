@@ -28,20 +28,34 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
     expect(subtypes).not.toContain("BID_CANDIDATE");
   });
 
-  it("E) Bid Candidate Inbox filter is server-side (inbox-read)", () => {
+  it("E) Bid Candidate Inbox filter = durable Bid Invites provenance only", () => {
     const src = readSrc("../interfaces/http/routes/inbox-read.route.ts");
     expect(src).toContain('businessTypeKey === "BID_OPPORTUNITY"');
-    expect(src).toContain("bidCandidateEmails");
-    expect(src).toContain('role: "BID_INVITE"');
+    expect(src).toContain("discoveredInBidInvitesFolder: true");
+    // Must NOT use subtype OR BidCandidateEmail.role as filter predicates.
+    const bidBlock = src.slice(
+      src.indexOf('businessTypeKey === "BID_OPPORTUNITY"'),
+      src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"')
+    );
+    expect(bidBlock).toContain("discoveredInBidInvitesFolder");
+    expect(bidBlock).not.toContain('businessTypeKey: "BID_OPPORTUNITY"');
+    expect(bidBlock).not.toContain('role: "BID_INVITE"');
     expect(src).toMatch(/andConditions\.push/);
   });
 
-  it("C/D) deterministic Bid Invites subtype — no AI, BID_OPPORTUNITY", () => {
+  it("C/D) deterministic Bid Invites subtype — no AI, BID_OPPORTUNITY + provenance", () => {
     const src = readSrc("../application/services/apply-bid-invite-subtype.ts");
     expect(src).toContain('businessTypeKey: "BID_OPPORTUNITY"');
     expect(src).toContain("bid_invites_folder");
+    expect(src).toContain("discoveredInBidInvitesFolder");
+    expect(src).toContain("recordFolderProvenance");
     expect(src).toContain("deterministic");
     expect(src).not.toMatch(/openai|chat\.completions|classifySubtype/i);
+  });
+
+  it("manual Assign does not stamp Bid Invites folder provenance", () => {
+    const src = readSrc("../application/services/link-email-to-bid-candidate.ts");
+    expect(src).toContain("recordFolderProvenance: false");
   });
 
   it("J/K/L/M) Create Bid Candidate from email — no Job / Job number", async () => {
@@ -56,6 +70,7 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
             id: "msg-1",
             threadId: "th-1",
             mailboxCategory: "BUSINESS",
+            discoveredInBidInvitesFolder: false,
             classifications: [],
           },
         ]),
@@ -98,6 +113,14 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
     expect(
       isUserConfirmedBidCandidateEmail(emailLinks[0]!.matchEvidence)
     ).toBe(true);
+    // G) Create from ordinary Inbox must not stamp folder provenance.
+    const updates = (prisma.emailMessage.update as ReturnType<typeof vi.fn>).mock
+      .calls as Array<[{ data: { discoveredInBidInvitesFolder?: boolean } }]>;
+    expect(
+      updates.every(
+        (c) => c[0]?.data?.discoveredInBidInvitesFolder !== true
+      )
+    ).toBe(true);
 
     const fromEmailSrc = readSrc(
       "../application/services/create-bid-candidate-from-email.ts"
@@ -107,8 +130,9 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
     expect(fromEmailSrc).toContain("linkEmailToBidCandidate");
   });
 
-  it("N) Assign email to existing Candidate works", async () => {
+  it("N) Assign email to existing Candidate works without folder provenance", async () => {
     const upserts: unknown[] = [];
+    const updates: Array<{ data: Record<string, unknown> }> = [];
     const prisma = {
       bidCandidate: {
         findFirst: vi.fn(async () => ({ id: "cand-2", lifecycle: "OPEN" })),
@@ -120,10 +144,14 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
             id: "msg-2",
             threadId: "th-2",
             mailboxCategory: "BUSINESS",
+            discoveredInBidInvitesFolder: false,
             classifications: [],
           },
         ]),
-        update: vi.fn(),
+        update: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          updates.push(args);
+          return {};
+        }),
       },
       bidCandidateEmail: {
         findMany: vi.fn(async () => []),
@@ -145,6 +173,10 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
     });
     expect(result).toEqual({ candidateId: "cand-2", emailMessageId: "msg-2" });
     expect(upserts).toHaveLength(1);
+    // F) Manual assign without folder provenance must not set the flag.
+    expect(
+      updates.every((u) => u.data?.discoveredInBidInvitesFolder !== true)
+    ).toBe(true);
   });
 
   it("O) Manual association evidence is user_confirmed", () => {
@@ -215,14 +247,24 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
     expect(src).not.toMatch(/convertToJob/i);
   });
 
-  it("deterministic subtype upsert sets BID_OPPORTUNITY", async () => {
+  it("A) folder discovery stamps durable discoveredInBidInvitesFolder", async () => {
+    const updates: Array<{ data: Record<string, unknown> }> = [];
     const upserts: Array<{ create: { businessTypeKey: string }; update: { businessTypeKey: string } }> = [];
     const prisma = {
       emailMessage: {
         findMany: vi.fn(async () => [
-          { id: "m1", threadId: "t1", mailboxCategory: null, classifications: [] },
+          {
+            id: "m1",
+            threadId: "t1",
+            mailboxCategory: null,
+            discoveredInBidInvitesFolder: false,
+            classifications: [],
+          },
         ]),
-        update: vi.fn(),
+        update: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          updates.push(args);
+          return {};
+        }),
       },
       classification: {
         upsert: vi.fn(async (args: { create: { businessTypeKey: string }; update: { businessTypeKey: string } }) => {
@@ -237,7 +279,58 @@ describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
       emailMessageIds: ["m1"],
     });
     expect(r.applied).toBe(1);
+    expect(r.provenanceMarked).toBe(1);
     expect(upserts[0]!.create.businessTypeKey).toBe("BID_OPPORTUNITY");
     expect(upserts[0]!.update.businessTypeKey).toBe("BID_OPPORTUNITY");
+    expect(updates.some((u) => u.data.discoveredInBidInvitesFolder === true)).toBe(
+      true
+    );
+  });
+
+  it("J) analysis rerun is idempotent for provenance (no duplicate stamp work)", async () => {
+    const updates: unknown[] = [];
+    const prisma = {
+      emailMessage: {
+        findMany: vi.fn(async () => [
+          {
+            id: "m1",
+            threadId: "t1",
+            discoveredInBidInvitesFolder: true,
+            classifications: [
+              {
+                reviewedByUserId: null,
+                routingHints: {
+                  authority: "SYSTEM_DETERMINISTIC",
+                  source: "bid_invites_folder",
+                },
+              },
+            ],
+          },
+        ]),
+        update: vi.fn(async (args: unknown) => {
+          updates.push(args);
+          return {};
+        }),
+      },
+      classification: {
+        upsert: vi.fn(async () => ({})),
+      },
+    };
+    const r = await applyDeterministicBidInviteSubtype({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      emailMessageIds: ["m1"],
+    });
+    expect(r.provenanceMarked).toBe(0);
+    // May still refresh subtype when authority allows — provenanceMarked stays 0.
+    expect(r.applied).toBeGreaterThanOrEqual(0);
+  });
+
+  it("H) Clear Analysis does not erase EmailMessage (provenance lives on message)", async () => {
+    const clearSrc = readSrc("../application/services/clear-bidding-analysis.ts");
+    expect(clearSrc).toContain("bidFolderDiscoveryEmail");
+    expect(clearSrc).toContain("EmailMessage");
+    expect(clearSrc).not.toMatch(/discoveredInBidInvitesFolder\s*[:=]\s*false/);
+    expect(clearSrc).not.toMatch(/emailMessage\.updateMany/);
   });
 });
