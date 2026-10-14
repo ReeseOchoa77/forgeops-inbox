@@ -213,6 +213,14 @@ describe("Phase 4 — Quote / Sent mail", () => {
     expect(withoutS).toContain("isDurable");
   });
 
+  it("H regression) With/Without Quote durable predicate unchanged", () => {
+    const src = readSrc("../application/services/list-bid-candidates.ts");
+    expect(src).toContain("isDurable: true");
+    expect(src).toContain('role: "QUOTE"');
+    expect(src).toContain('quote === "with"');
+    expect(src).toContain('quote === "without"');
+  });
+
   it("R/T) Clear Analysis preserves EmailMessage + durable Quote links", async () => {
     const tx = {
       bidCandidate: { count: vi.fn(async () => 1), deleteMany: vi.fn() },

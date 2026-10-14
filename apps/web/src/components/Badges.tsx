@@ -118,3 +118,15 @@ export function StatusBadge({ status }: { status: string }) {
   }
   return <span style={{ ...badgeBase, background: '#f0f0f0', color: '#555' }}>{labels[status] ?? status}</span>
 }
+
+/** Durable Quote evidence on a Bid Candidate (not lifecycle). Success tokens match ReviewQueue / TypeBadge. */
+export function QuotedBadge() {
+  return (
+    <span
+      data-testid="bid-candidate-quoted-badge"
+      style={{ ...badgeBase, background: '#e8f5e9', color: '#2e7d32' }}
+    >
+      Quoted
+    </span>
+  )
+}

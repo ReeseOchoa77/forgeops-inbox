@@ -5,6 +5,11 @@ import {
   type OperationalBidCandidate,
   type OperationalBidCandidateDetail,
 } from '../api'
+import {
+  candidateHasDurableQuote,
+  quotedCandidateRowStyle,
+} from '../bid-candidate-quoted'
+import { QuotedBadge } from '../components/Badges'
 import { formatBidDue } from '../bidding-display'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
@@ -71,6 +76,16 @@ export function BiddingView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, search, quoteFilter, dueSoon, includeArchived])
 
+  // Refetch when returning to the tab so Quote assign/match updates Quoted visuals.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !selectedId) reload()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, search, quoteFilter, dueSoon, includeArchived, selectedId])
+
   useEffect(() => {
     if (!selectedId) {
       setDetail(null)
@@ -110,13 +125,31 @@ export function BiddingView({
         <div style={{ padding: isPhone ? '14px 14px 8px' : '18px 22px 10px' }}>
           <button
             type="button"
-            onClick={() => setSelectedId(null)}
+            onClick={() => {
+              setSelectedId(null)
+              reload()
+            }}
             style={linkBtn}
           >
             ← Bid Candidates
           </button>
-          <div style={{ fontSize: 20, fontWeight: 680, color: '#111827', marginTop: 8 }}>
-            {detail?.projectName ?? 'Bid Candidate'}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              flexWrap: 'wrap',
+              marginTop: 8,
+            }}
+          >
+            <div style={{ fontSize: 20, fontWeight: 680, color: '#111827' }}>
+              {detail?.projectName ?? 'Bid Candidate'}
+            </div>
+            {detail &&
+              candidateHasDurableQuote({
+                quotes: detail.quotes,
+                emails: detail.emails,
+              }) && <QuotedBadge />}
           </div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
             Permanent opportunity — not a Job until Convert to Job.
@@ -253,10 +286,13 @@ export function BiddingView({
             {rows.map((row) => {
               const dueLabel = formatBidDue(row.bidDueAt)
               const startLabel = formatBidDue(row.anticipatedStartAt)
+              const isQuoted = candidateHasDurableQuote({ quoteCount: row.quoteCount })
               return (
                 <button
                   key={row.id}
                   type="button"
+                  data-testid="bid-candidate-row"
+                  data-quoted={isQuoted ? 'true' : 'false'}
                   onClick={() => setSelectedId(row.id)}
                   style={{
                     display: 'grid',
@@ -269,18 +305,34 @@ export function BiddingView({
                     padding: '12px 14px',
                     border: 'none',
                     borderBottom: '1px solid #f3f4f6',
-                    background: '#fff',
+                    background: isQuoted ? quotedCandidateRowStyle.background : '#fff',
+                    borderLeft: isQuoted
+                      ? quotedCandidateRowStyle.borderLeft
+                      : '3px solid transparent',
                     cursor: 'pointer',
                     alignItems: 'center',
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 14, fontWeight: 650, color: '#111827' }}>
-                      {row.projectName || 'Untitled'}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ fontSize: 14, fontWeight: 650, color: '#111827' }}>
+                        {row.projectName || 'Untitled'}
+                      </div>
+                      {isQuoted && <QuotedBadge />}
                     </div>
                     {isPhone && (
                       <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
                         {row.customerName || 'No customer'} · {lifecycleLabel(row.lifecycle)}
+                        {isQuoted && row.quoteCount > 0
+                          ? ` · ${row.quoteCount} quote${row.quoteCount === 1 ? '' : 's'}`
+                          : ''}
                       </div>
                     )}
                   </div>
