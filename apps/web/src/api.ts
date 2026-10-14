@@ -1292,7 +1292,8 @@ export const api = {
   ) => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters?.search) params.set('search', filters.search);
-    if (filters?.searchIn && filters.searchIn !== 'all') params.set('searchIn', filters.searchIn);
+    // Only exact id lookup still uses searchIn; unified search omits it (OR participant+content).
+    if (filters?.searchIn === 'id') params.set('searchIn', 'id');
     if (filters?.businessCategory) params.set('businessCategory', filters.businessCategory);
     if (filters?.classificationType) params.set('classificationType', filters.classificationType);
     if (filters?.hasTaskCandidate !== undefined) params.set('hasTaskCandidate', String(filters.hasTaskCandidate));

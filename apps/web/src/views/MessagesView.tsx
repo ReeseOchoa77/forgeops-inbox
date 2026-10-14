@@ -27,7 +27,10 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
-import { businessSubtypeFilterOptionsForDirection } from '@forgeops/shared/business-subtypes'
+import {
+  businessSubtypeFilterOptionsForDirection,
+  inboxBusinessTypeFilterOptionLabel,
+} from '@forgeops/shared/business-subtypes'
 import {
   INBOX_ACTIONS_COLUMN_WIDTH_PX,
   MailboxCategoryDot,
@@ -308,12 +311,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
-  /** Exact subtype — Bid Candidate (BID_OPPORTUNITY). Server-side before pagination. */
+  /**
+   * Inbox source/subtype filter key. BID_OPPORTUNITY = Bid Invites provenance
+   * (not subtype membership). Server-side before pagination.
+   */
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [excludeBusinessTypeGroups, setExcludeBusinessTypeGroups] = useState<InboxBusinessTypeGroup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
-  const [searchIn, setSearchIn] = useState<'all' | 'sender' | 'id'>('all')
   const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
   const browserTimeZone =
     typeof Intl !== 'undefined'
@@ -413,10 +418,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     return msgs
   }, [inboxTab, canSeeAllPersonal, isOwnInbox])
 
-  const filteredMessages =
-    searchIn === 'id' && activeSearch.trim()
-      ? messages
-      : applyRoleFilter(applyClientFilter(messages))
+  const filteredMessages = applyRoleFilter(applyClientFilter(messages))
 
   const buildFilters = useCallback(() => {
     return buildInboxMessageListFilters({
@@ -426,12 +428,11 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       timezone: browserTimeZone,
       jobFilter,
       activeSearch,
-      searchIn,
       excludeBusinessTypeGroups,
       businessTypeKey: businessTypeKey || undefined,
       pinnedOnly,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups, businessTypeKey, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, dateRange, browserTimeZone, excludeBusinessTypeGroups, businessTypeKey, pinnedOnly])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     // Direction composes with the current tab/classification — do not reset them.
@@ -626,7 +627,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     setSearch('')
     setActiveSearch('')
-    setSearchIn('all')
     setInboxTab('ALL_BUSINESS')
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
@@ -699,7 +699,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
-  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, dateRange, excludeBusinessTypeGroups, pinnedOnly])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -1441,34 +1441,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {'\uD83D\uDDD1'}
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fff', flex: isPhone ? '1 1 180px' : '0 1 auto', minWidth: isPhone ? 0 : undefined }}>
-            <select
-              value={searchIn}
-              onChange={e => setSearchIn(e.target.value as 'all' | 'sender' | 'id')}
-              aria-label="Search in"
-              style={{
-                padding: '6px 6px 6px 10px', fontSize: 12, border: 'none', borderRight: '1px solid #eee',
-                background: '#fafafa', color: '#555', cursor: 'pointer', outline: 'none',
-              }}
-            >
-              <option value="all">All</option>
-              <option value="sender">Sender</option>
-              <option value="id">Email ID</option>
-            </select>
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fff', flex: isPhone ? '1 1 180px' : '0 1 auto', minWidth: isPhone ? 0 : undefined }}>
             <input
-              type="text"
-              placeholder={
-                searchIn === 'sender'
-                  ? 'Filter by sender name or email…'
-                  : searchIn === 'id'
-                    ? 'Paste EmailMessage id or provider message id…'
-                    : 'Search emails…'
-              }
+              type="search"
+              data-testid="inbox-unified-search"
+              aria-label="Search emails"
+              placeholder="Search emails…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{
                 padding: '6px 12px', border: 'none', fontSize: 13, outline: 'none',
-                width: isPhone ? '100%' : searchIn === 'id' ? 360 : 320,
+                width: isPhone ? '100%' : 320,
                 minWidth: isPhone ? 120 : undefined,
                 background: 'transparent',
               }}
@@ -1703,12 +1686,14 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 {businessSubtypeFilterOptionsForDirection(
                   isSentView ? 'sent' : 'incoming'
                 )
-                  // Phase 4: surface Bid Candidate (incoming) and Quote (sent) at minimum.
+                  // Bid Invites (provenance) + Quote (subtype/role). Labels differ from keys.
                   .filter((o) =>
                     o.key === 'BID_OPPORTUNITY' || o.key === 'ESTIMATE_QUOTE'
                   )
                   .map((o) => (
-                    <option key={o.key} value={o.key}>{o.label}</option>
+                    <option key={o.key} value={o.key}>
+                      {inboxBusinessTypeFilterOptionLabel(o.key)}
+                    </option>
                   ))}
               </select>
 
@@ -1743,11 +1728,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               ? `No sent ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`
               : `No ${INBOX_TABS.find(t => t.key === inboxTab)?.label.toLowerCase() ?? ''} emails`}</h3>
             <p>{activeSearch
-              ? (searchIn === 'sender'
-                ? `No senders match "${activeSearch}"`
-                : searchIn === 'id'
-                  ? `No email found for id "${activeSearch}"`
-                  : `No messages match "${activeSearch}"`)
+              ? `No messages match "${activeSearch}"`
               : inboxTab === 'UNCLASSIFIED'
                 ? 'Emails waiting for classification (or where classify failed) will appear here.'
                 : 'Emails will appear here after syncing and classification.'}</p>

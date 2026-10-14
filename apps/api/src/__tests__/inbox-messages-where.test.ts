@@ -333,7 +333,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       expect(JSON.stringify(where)).toContain('"direction":"SENT"');
       const serialized = JSON.stringify(where);
       if (key === "BID_OPPORTUNITY") {
-        // Bid Candidate = durable Projects/Bid Invites provenance only.
+        // Bid Invites source filter = durable Projects/Bid Invites provenance only.
         expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
         expect(serialized).not.toContain('"role":"BID_INVITE"');
         expect(
@@ -363,7 +363,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     }
   });
 
-  it("Bid Candidate filter = discoveredInBidInvitesFolder only (not subtype/role)", () => {
+  it("Bid Invites source filter = discoveredInBidInvitesFolder only (not subtype/role)", () => {
     const where = baseWhere({
       businessCategory: "BUSINESS",
       businessTypeKey: "BID_OPPORTUNITY",
@@ -385,14 +385,13 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     );
   });
 
-  it("K/L/M/N) Incoming + Bid Candidate composes with sender/content/pinned/date", () => {
+  it("K/L/M/N) Incoming + Bid Invites filter composes with unified search/pinned/date", () => {
     const after = new Date("2026-08-01T00:00:00.000Z");
     const before = new Date("2026-08-31T23:59:59.000Z");
     const where = baseWhere({
       businessCategory: "BUSINESS",
       businessTypeKey: "BID_OPPORTUNITY",
       search: "mortenson",
-      searchIn: "sender",
       pinnedOnly: true,
       unreadOnly: true,
       receivedAfter: after,
@@ -415,7 +414,9 @@ describe("buildMessagesWhere — Sent AND composition", () => {
           (c.OR as object[]).some(
             (o) =>
               o && "senderEmail" in o && JSON.stringify(o).includes("mortenson")
-          )
+          ) &&
+          (c.OR as object[]).some((o) => o && "bodyText" in o) &&
+          (c.OR as object[]).some((o) => o && "toAddresses" in o)
       )
     ).toBe(true);
   });
@@ -489,12 +490,11 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     ).toBe(true);
   });
 
-  it("Sent + search ANDs search OR clauses with direction", () => {
+  it("Sent + unified search ANDs participant/content OR with direction", () => {
     const where = baseWhere({
       sentOnly: true,
       businessCategory: "BUSINESS",
       search: "mortenson",
-      searchIn: "sender",
     });
     const and = where.AND as Array<Record<string, unknown>>;
     expect(JSON.stringify(where)).toContain('"direction":"SENT"');
@@ -506,7 +506,9 @@ describe("buildMessagesWhere — Sent AND composition", () => {
           Array.isArray(c.OR) &&
           (c.OR as object[]).some(
             (o) => o && "senderEmail" in o && JSON.stringify(o).includes("mortenson")
-          )
+          ) &&
+          (c.OR as object[]).some((o) => o && "toAddresses" in o) &&
+          (c.OR as object[]).some((o) => o && "bodyText" in o)
       )
     ).toBe(true);
   });

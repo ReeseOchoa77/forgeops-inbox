@@ -131,19 +131,17 @@ describe("buildInboxMessageListFilters — Sent composes with other filters", ()
     });
   });
 
-  it("10. Sent + search composes", () => {
+  it("10. Sent + unified search composes (no searchIn mode)", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "ALL_BUSINESS",
         readFilter: "sent",
         activeSearch: "mortenson",
-        searchIn: "sender",
       })
     ).toEqual({
       sentOnly: true,
       businessCategory: "BUSINESS",
       search: "mortenson",
-      searchIn: "sender",
     });
   });
 
@@ -316,18 +314,19 @@ describe("buildInboxMessageListFilters — Sent composes with other filters", ()
     ).toEqual({ unclassifiedOnly: true, unreadOnly: true });
   });
 
-  it("Email ID search ignores tab filters and uses searchIn=id", () => {
+  it("unified search composes with tab/job filters (no Email ID mode in UI)", () => {
     expect(
       buildInboxMessageListFilters({
         inboxTab: "ALL_BUSINESS",
         readFilter: "sent",
         jobFilter: "job1",
         activeSearch: "clmsg123",
-        searchIn: "id",
       })
     ).toEqual({
+      sentOnly: true,
+      businessCategory: "BUSINESS",
+      jobId: "job1",
       search: "clmsg123",
-      searchIn: "id",
     });
   });
 

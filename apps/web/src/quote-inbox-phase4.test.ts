@@ -29,32 +29,19 @@ describe('Phase 4 — web Sent + Quote Inbox', () => {
     })
   })
 
-  it('H) Quote + sender search', () => {
+  it('H/I) Quote + Sent + unified search', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: 'sent',
       businessTypeKey: 'ESTIMATE_QUOTE',
       activeSearch: 'estimator@',
-      searchIn: 'sender',
     })
     expect(f).toMatchObject({
       businessTypeKey: 'ESTIMATE_QUOTE',
       sentOnly: true,
       search: 'estimator@',
-      searchIn: 'sender',
     })
-  })
-
-  it('I) Quote + content search', () => {
-    const f = buildInboxMessageListFilters({
-      inboxTab: 'ALL_BUSINESS',
-      readFilter: 'sent',
-      businessTypeKey: 'ESTIMATE_QUOTE',
-      activeSearch: 'falcon quote',
-      searchIn: 'all',
-    })
-    expect(f.businessTypeKey).toBe('ESTIMATE_QUOTE')
-    expect(f.search).toBe('falcon quote')
+    expect(f.searchIn).toBeUndefined()
   })
 
   it('J) Quote + pinned + date', () => {

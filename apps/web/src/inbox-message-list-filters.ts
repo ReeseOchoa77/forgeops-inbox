@@ -46,7 +46,10 @@ export type InboxDateRangeFilter = "" | "TODAY" | "WEEK" | "MONTH";
 export type InboxMessageListFilters = {
   businessCategory?: "BUSINESS" | "NON_BUSINESS";
   businessTypeGroup?: string;
-  /** Exact subtype (e.g. BID_OPPORTUNITY = Bid Candidate). Server-side before pagination. */
+  /**
+   * Exact filter key (e.g. BID_OPPORTUNITY = Bid Invites provenance filter).
+   * Server-side before pagination.
+   */
   businessTypeKey?: string;
   /** Hide selected Business type groups (server-side Exclude filter). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
@@ -59,7 +62,12 @@ export type InboxMessageListFilters = {
   pinnedOnly?: true;
   dateRange?: "TODAY" | "WEEK" | "MONTH";
   timezone?: string;
+  /**
+   * Unified Inbox search term. Server matches participant OR content.
+   * Optional searchIn=id remains API-only for exact message id lookup.
+   */
   search?: string;
+  /** @deprecated Prefer omit — unified search is default. Only "id" remains meaningful. */
   searchIn?: "all" | "sender" | "id";
 };
 
@@ -70,22 +78,13 @@ export function buildInboxMessageListFilters(input: {
   timezone?: string;
   jobFilter?: string;
   activeSearch?: string;
-  searchIn?: "all" | "sender" | "id";
   /** Applied only on Business tabs (not Personal / Unclassified / Trash). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
-  /** Exact subtype filter — ANDs with tab/group when set (e.g. Bid Candidate). */
+  /** Filter key — ANDs with tab/group when set (e.g. Bid Invites provenance). */
   businessTypeKey?: string;
   pinnedOnly?: boolean;
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
-
-  // ID lookup: exact message/provider id — ignore tab/direction filters so the email is found.
-  if (input.searchIn === "id" && input.activeSearch?.trim()) {
-    return {
-      search: input.activeSearch.trim(),
-      searchIn: "id",
-    };
-  }
 
   // Direction predicate — composes with tab/classification filters below.
   if (input.readFilter === "sent") {
@@ -122,9 +121,9 @@ export function buildInboxMessageListFilters(input: {
     if (input.timezone) f.timezone = input.timezone;
   }
 
+  // Unified search — no searchIn mode; server ORs participant + content fields.
   if (input.activeSearch) {
     f.search = input.activeSearch;
-    if (input.searchIn === "sender") f.searchIn = "sender";
   }
 
   if (input.pinnedOnly) {

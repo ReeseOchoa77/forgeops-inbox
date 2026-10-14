@@ -9,6 +9,7 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import { buildAuthorizationFields } from "../../../application/services/inbox-authorization-status.js";
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { trashEmailMessagesWithOptionalProviderDelete } from "../../../application/services/trash-email-with-provider-delete.js";
+import { buildUnifiedInboxSearchOr } from "../../../application/services/inbox-unified-search.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
   mapStoredPriorityToN8n,
@@ -1016,6 +1017,10 @@ export const buildMessagesWhere = (input: {
   receivedBefore?: Date;
   mailboxEmails?: string[];
   search?: string;
+  /**
+   * Unified search ignores "all"/"sender" (always participant OR content).
+   * Only "id" remains special-cased for exact message/provider id lookup.
+   */
   searchIn?: "all" | "sender" | "id";
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
@@ -1097,24 +1102,9 @@ export const buildMessagesWhere = (input: {
 
   if (input.search) {
     const term = input.search.trim();
-    if (input.searchIn === "sender") {
-      andConditions.push({
-        OR: [
-          { senderEmail: { contains: term, mode: "insensitive" } },
-          { senderName: { contains: term, mode: "insensitive" } },
-        ],
-      });
-    } else {
-      andConditions.push({
-        OR: [
-          { subject: { contains: term, mode: "insensitive" } },
-          { senderEmail: { contains: term, mode: "insensitive" } },
-          { senderName: { contains: term, mode: "insensitive" } },
-          { snippet: { contains: term, mode: "insensitive" } },
-          { bodyText: { contains: term, mode: "insensitive" } },
-        ],
-      });
-    }
+    // Unified search: participant OR content. searchIn=sender is ignored/deprecated.
+    // searchIn=id is handled above with an early return.
+    andConditions.push(buildUnifiedInboxSearchOr(term));
   }
 
   if (input.reclassifiedOnly) {
@@ -1146,9 +1136,10 @@ export const buildMessagesWhere = (input: {
   }
 
   if (input.businessTypeKey) {
-    // Bid Candidate filter = durable Projects/Bid Invites folder provenance ONLY.
-    // Not BID_OPPORTUNITY subtype, not BidCandidateEmail.role=BID_INVITE.
-    // Quote filter unchanged: subtype OR BidCandidateEmail.role=QUOTE.
+    // Inbox "Bid Invites" source filter (key BID_OPPORTUNITY for API compat) =
+    // durable Projects/Bid Invites folder provenance ONLY.
+    // Not BID_OPPORTUNITY subtype membership, not BidCandidateEmail.role=BID_INVITE,
+    // not BidCandidate entity association. Quote filter unchanged.
     if (input.businessTypeKey === "BID_OPPORTUNITY") {
       andConditions.push({
         discoveredInBidInvitesFolder: true,

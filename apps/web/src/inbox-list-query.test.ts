@@ -54,7 +54,6 @@ describe("inboxListQueryKey", () => {
       inboxTab: "ALL_BUSINESS",
       readFilter: "",
       activeSearch: "steel",
-      searchIn: "all",
     });
     const keys = [
       inboxListQueryKey(base),
