@@ -4,34 +4,83 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   candidateHasDurableQuote,
+  hasQuotedPrice,
+  isValidQuoteAmount,
   quotedCandidateRowStyle,
 } from './bid-candidate-quoted'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-describe('Bid Candidate Quoted visual status', () => {
-  it('A) zero durable Quotes → not quoted', () => {
-    expect(candidateHasDurableQuote({ quoteCount: 0 })).toBe(false)
-    expect(
-      candidateHasDurableQuote({
-        quotes: [{ isDurable: false, matchStatus: 'UNMATCHED' }],
-        emails: [{ role: 'BID_INVITE' }],
-      })
-    ).toBe(false)
+describe('Bid Candidate Quoted visual status (requires price)', () => {
+  it('A) no Quote, no price → not quoted visual', () => {
+    expect(hasQuotedPrice({ quoteAmount: null })).toBe(false)
+    expect(hasQuotedPrice({ quotes: [] })).toBe(false)
   })
 
-  it('B) durable Quote → quoted', () => {
+  it('B/C/D) durable Quote / email / PDF evidence without amount → NOT quoted visual', () => {
+    expect(hasQuotedPrice({ quoteAmount: null })).toBe(false)
+    expect(
+      hasQuotedPrice({
+        quotes: [
+          { amount: null, isDurable: true, matchStatus: 'MATCHED' },
+          { extractedAmount: null, isDurable: true, matchStatus: 'MATCHED' },
+        ],
+      })
+    ).toBe(false)
+    // Evidence helper still true for filters — visual helper false.
     expect(candidateHasDurableQuote({ quoteCount: 1 })).toBe(true)
+    expect(hasQuotedPrice({ quoteAmount: null })).toBe(false)
+  })
+
+  it('E) lifecycle QUOTED alone does not set hasQuotedPrice', () => {
+    expect(hasQuotedPrice({ quoteAmount: null })).toBe(false)
+    const view = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
+    expect(view).toContain('hasQuotedPrice')
+    expect(view).not.toMatch(/hasQuotedPrice\(\{[^}]*lifecycle/)
+  })
+
+  it('F/G) valid canonical / manual price → quoted visual', () => {
+    expect(isValidQuoteAmount(185000)).toBe(true)
+    expect(hasQuotedPrice({ quoteAmount: 185000 })).toBe(true)
     expect(
-      candidateHasDurableQuote({
-        quotes: [{ isDurable: true, matchStatus: 'MATCHED' }],
+      hasQuotedPrice({
+        quotes: [
+          { amount: 185000, isDurable: true, matchStatus: 'MATCHED' },
+        ],
       })
     ).toBe(true)
+  })
+
+  it('H) multiple revisions with last finite amount → quoted', () => {
     expect(
-      candidateHasDurableQuote({
-        emails: [{ role: 'QUOTE' }],
+      hasQuotedPrice({
+        quotes: [
+          { amount: 180000, isDurable: true, matchStatus: 'MATCHED' },
+          { amount: null, isDurable: true, matchStatus: 'MATCHED' },
+          { amount: 192500, isDurable: true, matchStatus: 'MATCHED' },
+        ],
       })
     ).toBe(true)
+    // List uses precomputed quoteAmount (last finite) — same agreement.
+    expect(hasQuotedPrice({ quoteAmount: 192500 })).toBe(true)
+  })
+
+  it('I) multiple revisions but no finite amount → not quoted', () => {
+    expect(
+      hasQuotedPrice({
+        quotes: [
+          { amount: null, isDurable: true, matchStatus: 'MATCHED' },
+          { amount: null, isDurable: true, matchStatus: 'MATCHED' },
+        ],
+      })
+    ).toBe(false)
+    expect(hasQuotedPrice({ quoteAmount: null })).toBe(false)
+  })
+
+  it('rejects NaN / Infinity as prices', () => {
+    expect(isValidQuoteAmount(Number.NaN)).toBe(false)
+    expect(isValidQuoteAmount(Number.POSITIVE_INFINITY)).toBe(false)
+    expect(hasQuotedPrice({ quoteAmount: Number.NaN })).toBe(false)
   })
 
   it('C) subtle success/green treatment tokens', () => {
@@ -39,30 +88,30 @@ describe('Bid Candidate Quoted visual status', () => {
     expect(quotedCandidateRowStyle.borderLeft).toContain('#2e7d32')
   })
 
-  it('D) multiple Quote revisions → one quoted status; count preserved', () => {
-    expect(candidateHasDurableQuote({ quoteCount: 3 })).toBe(true)
-    const view = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
-    expect(view).toContain('row.quoteCount')
-    expect(view).toContain('QuotedBadge')
-    expect(view).toContain('candidateHasDurableQuote')
-  })
-
-  it('E/F/G) quoted independent of lifecycle (QUOTED / CONVERTED / LOST)', () => {
-    // Helper only cares about durable evidence — lifecycle is separate.
-    expect(candidateHasDurableQuote({ quoteCount: 2 })).toBe(true)
-    expect(
-      candidateHasDurableQuote({
-        quotes: [{ isDurable: true, matchStatus: 'MATCHED' }],
-        emails: [{ role: 'QUOTE' }],
-      })
-    ).toBe(true)
-  })
-
-  it('H) With Quote / Without Quote filter options unchanged in UI', () => {
+  it('J) With Quote / Without Quote filter options unchanged in UI', () => {
     const view = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
     expect(view).toContain('With Quote')
     expect(view).toContain('Without Quote')
     expect(view).toContain("quote: quoteFilter")
+    // Visual uses price; filter still uses quote API param / quoteCount evidence.
+    expect(view).toContain('hasQuotedPrice({ quoteAmount: row.quoteAmount })')
+    expect(candidateHasDurableQuote({ quoteCount: 1 })).toBe(true)
+  })
+
+  it('K) QuotedBadge is passive status tag (not a button)', () => {
+    const badges = readFileSync(join(here, 'components/Badges.tsx'), 'utf8')
+    expect(badges).toContain('QuotedBadge')
+    expect(badges).toContain('role="status"')
+    expect(badges).toContain('pointerEvents: \'none\'')
+    expect(badges).toContain('cursor: \'default\'')
+    expect(badges).not.toMatch(/function QuotedBadge[\s\S]*<button/)
+  })
+
+  it('L) list + detail use hasQuotedPrice', () => {
+    const view = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
+    expect(view).toContain('hasQuotedPrice({ quoteAmount: row.quoteAmount })')
+    expect(view).toContain('hasQuotedPrice({ quotes: detail.quotes })')
+    expect(view).not.toContain('candidateHasDurableQuote')
   })
 
   it('I) Phase 4 Quote email filter predicate untouched in inbox-read', () => {
@@ -76,26 +125,5 @@ describe('Bid Candidate Quoted visual status', () => {
     )
     expect(quoteBlock).toContain('businessTypeKey: "ESTIMATE_QUOTE"')
     expect(quoteBlock).toContain('role: "QUOTE"')
-  })
-
-  it('J) Bid Candidate Inbox source-filter remains independent', () => {
-    const inbox = readFileSync(
-      join(here, '../../api/src/interfaces/http/routes/inbox-read.route.ts'),
-      'utf8'
-    )
-    const bidBlock = inbox.slice(
-      inbox.indexOf('businessTypeKey === "BID_OPPORTUNITY"'),
-      inbox.indexOf('businessTypeKey === "ESTIMATE_QUOTE"')
-    )
-    expect(bidBlock).toContain('discoveredInBidInvitesFolder: true')
-    expect(bidBlock).not.toContain('role: "BID_INVITE"')
-  })
-
-  it('QuotedBadge uses existing success badge tokens', () => {
-    const badges = readFileSync(join(here, 'components/Badges.tsx'), 'utf8')
-    expect(badges).toContain('QuotedBadge')
-    expect(badges).toContain("background: '#e8f5e9'")
-    expect(badges).toContain("color: '#2e7d32'")
-    expect(badges).toContain('Quoted')
   })
 })

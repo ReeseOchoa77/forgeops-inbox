@@ -6,7 +6,7 @@ import {
   type OperationalBidCandidateDetail,
 } from '../api'
 import {
-  candidateHasDurableQuote,
+  hasQuotedPrice,
   quotedCandidateRowStyle,
 } from '../bid-candidate-quoted'
 import { QuotedBadge } from '../components/Badges'
@@ -151,10 +151,7 @@ export function BiddingView({
               {detail?.projectName ?? 'Bid Candidate'}
             </div>
             {detail &&
-              candidateHasDurableQuote({
-                quotes: detail.quotes,
-                emails: detail.emails,
-              }) && <QuotedBadge />}
+              hasQuotedPrice({ quotes: detail.quotes }) && <QuotedBadge />}
           </div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
             Permanent opportunity — not a Job until Convert to Job.
@@ -291,7 +288,7 @@ export function BiddingView({
             {rows.map((row) => {
               const dueLabel = formatBidDue(row.bidDueAt)
               const startLabel = formatBidDue(row.anticipatedStartAt)
-              const isQuoted = candidateHasDurableQuote({ quoteCount: row.quoteCount })
+              const isQuoted = hasQuotedPrice({ quoteAmount: row.quoteAmount })
               return (
                 <button
                   key={row.id}
@@ -335,7 +332,7 @@ export function BiddingView({
                     {isPhone && (
                       <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
                         {row.customerName || 'No customer'} · {lifecycleLabel(row.lifecycle)}
-                        {isQuoted && row.quoteCount > 0
+                        {row.quoteCount > 0
                           ? ` · ${row.quoteCount} quote${row.quoteCount === 1 ? '' : 's'}`
                           : ''}
                       </div>

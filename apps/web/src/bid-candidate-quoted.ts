@@ -1,11 +1,24 @@
 /**
- * Durable Quote evidence for Bid Candidate UI — same meaning as Phase 4
- * With Quote / Without Quote (list API quoteCount + durableQuoteWhere).
+ * Bid Candidate Quote presentation helpers.
  *
- * List rows: use quoteCount from listBidCandidates (durable staging and/or
- * BidCandidateEmail role=QUOTE). Do not invent a parallel rule.
+ * Two distinct concepts:
+ * 1) Durable Quote evidence (With Quote / Without Quote filters) — quoteCount /
+ *    BidCandidateEmail role=QUOTE / durable staging. Unchanged.
+ * 2) Quoted visual state (green row + passive "Quoted" tag) — requires a
+ *    canonical displayed PRICE (list API quoteAmount), not evidence alone.
  */
 
+/** Finite number usable as a displayed quote price (not null/NaN/Infinity). */
+export function isValidQuoteAmount(
+  amount: number | null | undefined
+): boolean {
+  return typeof amount === 'number' && Number.isFinite(amount)
+}
+
+/**
+ * Durable Quote evidence — same meaning as Phase 4 With Quote / Without Quote
+ * (list API quoteCount + durableQuoteWhere). Does NOT drive green/Quoted UI.
+ */
 export function candidateHasDurableQuote(input: {
   /** From listBidCandidates — already durable-only. */
   quoteCount?: number
@@ -23,7 +36,41 @@ export function candidateHasDurableQuote(input: {
   return durableStaging || quoteEmail
 }
 
-/** Subtle success treatment for quoted Candidate rows (existing green tokens). */
+/**
+ * Canonical price for Quoted visual state.
+ *
+ * List authority: `quoteAmount` from listBidCandidates
+ * (last finite extractedAmount among durable non-rejected stagings by createdAt).
+ *
+ * Detail: same rule from `quotes[]` (durable, non-rejected, last finite amount).
+ *
+ * NOT: lifecycle QUOTE, Quote email alone, or durable staging without amount.
+ */
+export function hasQuotedPrice(input: {
+  /** List row: canonical displayed amount from listBidCandidates. */
+  quoteAmount?: number | null
+  /** Detail: quote rows with amount (and durability flags). */
+  quotes?: Array<{
+    amount?: number | null
+    extractedAmount?: number | null
+    isDurable?: boolean
+    matchStatus?: string
+  }>
+}): boolean {
+  if ('quoteAmount' in input && input.quoteAmount !== undefined) {
+    return isValidQuoteAmount(input.quoteAmount)
+  }
+  const amounts = (input.quotes ?? [])
+    .filter((q) => q.isDurable === true && q.matchStatus !== 'REJECTED')
+    .map((q) => {
+      const a = q.amount ?? q.extractedAmount ?? null
+      return isValidQuoteAmount(a) ? a : null
+    })
+    .filter((n): n is number => n != null)
+  return amounts.length > 0
+}
+
+/** Subtle success treatment for priced/quoted Candidate rows. */
 export const quotedCandidateRowStyle: {
   background: string
   borderLeft: string
