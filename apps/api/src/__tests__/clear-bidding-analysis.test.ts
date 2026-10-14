@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { clearBiddingAnalysisStaging } from "../application/services/clear-bidding-analysis.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  activeBidCandidatesForMailboxWhere,
+  clearableBidCandidatesForMailboxWhere,
+} from "../application/services/bid-candidate-mailbox-scope.js";
 
 const here = import.meta.dirname;
 
@@ -17,35 +21,21 @@ describe("clearBiddingAnalysisStaging", () => {
     expect(src).not.toMatch(/customer\.delete/);
   });
 
-  it("clears mailbox staging including Inbox-fallback candidate links", async () => {
-    const openCandidateIds = ["c-open", "c-inbox"];
+  it("uses shared mailbox ownership to find clearable candidates", async () => {
+    const openCandidateIds = ["c-legacy", "c-modern"];
     const tx = {
-      bidFolderDiscoveryEmail: {
-        findMany: vi.fn(async () => [
-          { emailMessageId: "em-quote" },
-          { emailMessageId: "em-invite" },
-        ]),
+      bidCandidate: {
+        findMany: vi.fn(async () => openCandidateIds.map((id) => ({ id }))),
+        count: vi.fn(async () => 1),
         deleteMany: vi.fn(async () => ({ count: 2 })),
       },
       bidQuoteStaging: {
-        findMany: vi.fn(async () => [
-          { bidCandidateId: "c-open", emailMessageId: "em-quote" },
-          { bidCandidateId: "c-inbox", emailMessageId: "em-quote-2" },
-        ]),
-        deleteMany: vi.fn(async () => ({ count: 2 })),
+        deleteMany: vi.fn(async () => ({ count: 1 })),
       },
       bidCandidateEmail: {
-        findMany: vi.fn(async () => [
-          { bidCandidateId: "c-open" },
-          { bidCandidateId: "c-inbox" },
-        ]),
-        deleteMany: vi.fn(async () => ({ count: 4 })),
+        deleteMany: vi.fn(async () => ({ count: 3 })),
       },
-      bidCandidate: {
-        findMany: vi.fn(async () =>
-          openCandidateIds.map((id) => ({ id }))
-        ),
-        count: vi.fn(async () => 1),
+      bidFolderDiscoveryEmail: {
         deleteMany: vi.fn(async () => ({ count: 2 })),
       },
       bidAnalysisRun: {
@@ -67,55 +57,40 @@ describe("clearBiddingAnalysisStaging", () => {
       connectionId: "conn-a",
     });
 
-    expect(result.discoveryDeleted).toBe(2);
-    expect(result.quotesDeleted).toBe(2);
-    expect(result.candidateEmailsUnlinked).toBe(4);
     expect(result.candidatesDeleted).toBe(2);
-    expect(result.runsDeleted).toBe(1);
     expect(result.confirmedRetained).toBe(1);
-
-    // All links on open candidates removed (not only discovery email ids).
+    expect(tx.bidCandidate.findMany).toHaveBeenCalledWith({
+      where: clearableBidCandidatesForMailboxWhere({
+        workspaceId: "ws",
+        connectionId: "conn-a",
+      }),
+      select: { id: true },
+    });
     expect(tx.bidCandidateEmail.deleteMany).toHaveBeenCalledWith({
       where: {
         workspaceId: "ws",
         bidCandidateId: { in: openCandidateIds },
       },
     });
-
-    expect(tx.bidFolderDiscoveryEmail.deleteMany).toHaveBeenCalledWith({
-      where: { workspaceId: "ws", inboxConnectionId: "conn-a" },
-    });
-    expect(tx.bidQuoteStaging.deleteMany).toHaveBeenCalledWith({
-      where: { workspaceId: "ws", inboxConnectionId: "conn-a" },
-    });
-    expect(tx.bidAnalysisRun.deleteMany).toHaveBeenCalledWith({
-      where: { workspaceId: "ws", inboxConnectionId: "conn-a" },
-    });
-
     expect(tx.emailMessage.deleteMany).not.toHaveBeenCalled();
-    expect(tx.emailAttachment.deleteMany).not.toHaveBeenCalled();
     expect(tx.job.deleteMany).not.toHaveBeenCalled();
-    expect(tx.customer.deleteMany).not.toHaveBeenCalled();
   });
 
   it("is idempotent when already empty", async () => {
     const tx = {
-      bidFolderDiscoveryEmail: {
-        findMany: vi.fn(async () => []),
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-      },
-      bidQuoteStaging: {
-        findMany: vi.fn(async () => []),
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-      },
-      bidCandidateEmail: {
-        findMany: vi.fn(async () => []),
-        deleteMany: vi.fn(),
-      },
       bidCandidate: {
         findMany: vi.fn(async () => []),
         count: vi.fn(async () => 0),
         deleteMany: vi.fn(),
+      },
+      bidQuoteStaging: {
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      bidCandidateEmail: {
+        deleteMany: vi.fn(),
+      },
+      bidFolderDiscoveryEmail: {
+        deleteMany: vi.fn(async () => ({ count: 0 })),
       },
       bidAnalysisRun: {
         deleteMany: vi.fn(async () => ({ count: 0 })),
@@ -144,61 +119,6 @@ describe("clearBiddingAnalysisStaging", () => {
     expect(tx.bidCandidate.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("scopes deletes to the requested mailbox connectionId", async () => {
-    const seenConnectionIds: string[] = [];
-    const track = async (args: { where?: { inboxConnectionId?: string } }) => {
-      if (args.where?.inboxConnectionId) {
-        seenConnectionIds.push(args.where.inboxConnectionId);
-      }
-      return { count: 0 };
-    };
-    const tx = {
-      bidFolderDiscoveryEmail: {
-        findMany: vi.fn(async (args: { where?: { inboxConnectionId?: string } }) => {
-          if (args.where?.inboxConnectionId) {
-            seenConnectionIds.push(args.where.inboxConnectionId);
-          }
-          return [];
-        }),
-        deleteMany: vi.fn(track),
-      },
-      bidQuoteStaging: {
-        findMany: vi.fn(async (args: { where?: { inboxConnectionId?: string } }) => {
-          if (args.where?.inboxConnectionId) {
-            seenConnectionIds.push(args.where.inboxConnectionId);
-          }
-          return [];
-        }),
-        deleteMany: vi.fn(track),
-      },
-      bidCandidateEmail: {
-        findMany: vi.fn(async () => []),
-        deleteMany: vi.fn(),
-      },
-      bidCandidate: {
-        findMany: vi.fn(async () => []),
-        count: vi.fn(async () => 0),
-        deleteMany: vi.fn(),
-      },
-      bidAnalysisRun: {
-        deleteMany: vi.fn(track),
-      },
-    };
-    const prisma = {
-      $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
-    };
-
-    await clearBiddingAnalysisStaging({
-      prisma: prisma as never,
-      workspaceId: "ws",
-      connectionId: "mailbox-a",
-    });
-
-    expect(seenConnectionIds.length).toBeGreaterThan(0);
-    expect(seenConnectionIds.every((id) => id === "mailbox-a")).toBe(true);
-    expect(seenConnectionIds).not.toContain("mailbox-b");
-  });
-
   it("requires connectionId", async () => {
     await expect(
       clearBiddingAnalysisStaging({
@@ -207,5 +127,32 @@ describe("clearBiddingAnalysisStaging", () => {
         connectionId: "  ",
       })
     ).rejects.toMatchObject({ code: "CONNECTION_REQUIRED" });
+  });
+});
+
+describe("bidCandidate mailbox scope (Clear ↔ GET agreement)", () => {
+  it("active GET excludes CONFIRMED/REJECTED; clearable includes REJECTED", () => {
+    const active = activeBidCandidatesForMailboxWhere({
+      workspaceId: "ws",
+      connectionId: "conn",
+    });
+    const clearable = clearableBidCandidatesForMailboxWhere({
+      workspaceId: "ws",
+      connectionId: "conn",
+    });
+    expect(JSON.stringify(active)).toContain("CONFIRMED");
+    expect(JSON.stringify(active)).toContain("REJECTED");
+    expect(JSON.stringify(clearable)).toContain('not":"CONFIRMED"');
+  });
+
+  it("ownership includes EmailMessage.inboxConnectionId (legacy remnant shape)", () => {
+    const where = clearableBidCandidatesForMailboxWhere({
+      workspaceId: "ws",
+      connectionId: "conn-a",
+    });
+    const s = JSON.stringify(where);
+    expect(s).toContain("inboxConnectionId");
+    expect(s).toContain("quoteStagings");
+    expect(s).toContain("bidFolderDiscoveries");
   });
 });

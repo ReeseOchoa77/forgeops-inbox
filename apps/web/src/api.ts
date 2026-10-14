@@ -3163,14 +3163,16 @@ export const api = {
 
   listBidCandidates: (
     workspaceId: string,
-    params?: { status?: string; limit?: number }
+    params: { connectionId: string; status?: string; limit?: number; includeHistory?: boolean }
   ) => {
     const p = new URLSearchParams();
-    if (params?.status) p.set('status', params.status);
-    if (params?.limit) p.set('limit', String(params.limit));
+    p.set('connectionId', params.connectionId);
+    if (params.status) p.set('status', params.status);
+    if (params.limit) p.set('limit', String(params.limit));
+    if (params.includeHistory) p.set('includeHistory', 'true');
     const q = p.toString();
     return request<{ candidates: BidCandidateSummary[] }>(
-      `/workspaces/${workspaceId}/bid-analysis/candidates${q ? `?${q}` : ''}`
+      `/workspaces/${workspaceId}/bid-analysis/candidates?${q}`
     );
   },
 

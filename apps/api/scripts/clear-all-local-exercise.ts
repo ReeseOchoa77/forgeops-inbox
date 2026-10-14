@@ -231,6 +231,46 @@ async function main() {
     confirmed: true,
   });
 
+  // Legacy remnant on A: BidCandidateEmail only (no discovery / quotes).
+  const legacyThread = await p.emailThread.create({
+    data: {
+      workspaceId: workspace.id,
+      inboxConnectionId: connA.id,
+      gmailThreadId: `th-legacy-${suffix}`,
+      subject: "Legacy",
+    },
+  });
+  const legacyMsg = await p.emailMessage.create({
+    data: {
+      workspaceId: workspace.id,
+      inboxConnectionId: connA.id,
+      threadId: legacyThread.id,
+      gmailMessageId: `gm-legacy-remnant-${suffix}`,
+      gmailThreadId: legacyThread.gmailThreadId,
+      subject: "Legacy remnant ITB",
+      senderEmail: "gc@example.com",
+      sentAt: new Date(),
+      receivedAt: new Date(),
+    },
+  });
+  const legacyCandidate = await p.bidCandidate.create({
+    data: {
+      workspaceId: workspace.id,
+      identityKey: `legacy-remnant:${suffix}`,
+      status: "READY",
+      proposedProjectName: "Legacy Remnant",
+    },
+  });
+  await p.bidCandidateEmail.create({
+    data: {
+      workspaceId: workspace.id,
+      bidCandidateId: legacyCandidate.id,
+      emailMessageId: legacyMsg.id,
+      role: "BID_INVITE",
+      isPrimary: true,
+    },
+  });
+
   const beforeA = await counts(connA.id);
   const beforeB = await counts(connB.id);
   const beforeMsgs = await p.emailMessage.count({
@@ -282,6 +322,9 @@ async function main() {
   const openAGone = !(await p.bidCandidate.findUnique({
     where: { id: seededA.candidate.id },
   }));
+  const legacyGone = !(await p.bidCandidate.findUnique({
+    where: { id: legacyCandidate.id },
+  }));
   const confirmedKept = await p.bidCandidate.findUnique({
     where: { id: seededConfirmed.candidate.id },
     select: { status: true, id: true },
@@ -305,6 +348,7 @@ async function main() {
         mailboxA: afterA,
         mailboxB: afterB,
         openCandidateADeleted: openAGone,
+        legacyRemnantDeleted: legacyGone,
         inboxFallbackLinkGone,
         emailMessages: afterMsgs,
         attachmentText: afterAttText?.extractedText,
@@ -332,6 +376,7 @@ async function main() {
     confirmedKept?.status === "CONFIRMED" &&
     Boolean(bCandidateKept) &&
     openAGone &&
+    legacyGone &&
     inboxFallbackLinkGone &&
     result2.candidatesDeleted === 0;
 

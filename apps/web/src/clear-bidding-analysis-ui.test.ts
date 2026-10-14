@@ -21,9 +21,10 @@ describe('BiddingFolderAnalysis Clear All UI', () => {
     // Candidates are refreshed via loadCandidates after await, not wiped first.
     expect(awaitIdx).toBeGreaterThan(0)
     expect(fn.indexOf('setProgress(null)')).toBeGreaterThan(awaitIdx)
-    expect(fn).toContain('loadCandidates()')
+    expect(fn).toContain('loadCandidates(connId)')
     expect(fn).toContain('loadQuotes(connId)')
     expect(fn).toContain('loadCounts(connId)')
+    expect(viewSrc).toContain('connectionId: id')
     // Failure path must not wipe lists
     expect(fn).toContain("setError(e instanceof Error ? e.message : 'Clear All failed')")
     expect(setCandidatesIdx).toBe(-1)

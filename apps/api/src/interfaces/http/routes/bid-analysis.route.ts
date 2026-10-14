@@ -23,6 +23,10 @@ import {
   updateBidQuoteStaging,
 } from "../../../application/services/bid-quote-staging.js";
 import {
+  activeBidCandidatesForMailboxWhere,
+  bidCandidateBelongsToMailboxWhere,
+} from "../../../application/services/bid-candidate-mailbox-scope.js";
+import {
   ClearBiddingAnalysisError,
   clearBiddingAnalysisStaging,
 } from "../../../application/services/clear-bidding-analysis.js";
@@ -300,18 +304,40 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
       if (!auth) return;
       const query = z
         .object({
+          /** Required — active analysis is mailbox-scoped (same as Clear All). */
+          connectionId: z.string().min(1),
           status: z
             .enum(["DISCOVERED", "READY", "NEEDS_REVIEW", "CONFIRMED", "REJECTED"])
             .optional(),
+          /**
+           * When true with no status filter, include CONFIRMED/REJECTED history.
+           * Default false = active review dataset only.
+           */
+          includeHistory: z
+            .enum(["true", "false"])
+            .optional()
+            .transform((v) => v === "true"),
           limit: z.coerce.number().int().min(1).max(200).default(100),
         })
         .parse(request.query);
 
+      const mailbox = {
+        workspaceId,
+        connectionId: query.connectionId,
+      };
+      const where = query.status
+        ? {
+            AND: [
+              bidCandidateBelongsToMailboxWhere(mailbox),
+              { status: query.status },
+            ],
+          }
+        : query.includeHistory
+          ? bidCandidateBelongsToMailboxWhere(mailbox)
+          : activeBidCandidatesForMailboxWhere(mailbox);
+
       const rows = await app.services.prisma.bidCandidate.findMany({
-        where: {
-          workspaceId,
-          ...(query.status ? { status: query.status } : {}),
-        },
+        where,
         orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
         take: query.limit,
         include: {

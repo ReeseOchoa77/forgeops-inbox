@@ -400,26 +400,37 @@ export function BiddingFolderAnalysisView({
     [workspaceId]
   )
 
-  const loadCandidates = useCallback(async () => {
-    setLoadingCandidates(true)
-    try {
-      const res = await api.listBidCandidates(workspaceId, { limit: 200 })
-      setCandidates(res.candidates)
-      setSelectedIds((prev) => {
-        const next = new Set<string>()
-        for (const id of prev) {
-          if (res.candidates.some((c) => c.id === id && isImportEligible(c))) {
-            next.add(id)
+  const loadCandidates = useCallback(
+    async (connId?: string) => {
+      const id = connId ?? selectedConnectionId
+      if (!id) {
+        setCandidates([])
+        return
+      }
+      setLoadingCandidates(true)
+      try {
+        const res = await api.listBidCandidates(workspaceId, {
+          connectionId: id,
+          limit: 200,
+        })
+        setCandidates(res.candidates)
+        setSelectedIds((prev) => {
+          const next = new Set<string>()
+          for (const cid of prev) {
+            if (res.candidates.some((c) => c.id === cid && isImportEligible(c))) {
+              next.add(cid)
+            }
           }
-        }
-        return next
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load bid candidates')
-    } finally {
-      setLoadingCandidates(false)
-    }
-  }, [workspaceId])
+          return next
+        })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load bid candidates')
+      } finally {
+        setLoadingCandidates(false)
+      }
+    },
+    [selectedConnectionId, workspaceId]
+  )
 
   const loadQuotes = useCallback(
     async (connId: string) => {
@@ -575,7 +586,7 @@ export function BiddingFolderAnalysisView({
           setBusy(false)
           setBusyKind(null)
           await loadCounts(connId)
-          await loadCandidates()
+          await loadCandidates(connId)
           await loadQuotes(connId)
           if (mainTab === 'source') {
             await resetAndLoadDiscovery(connId, listRole, sort, search)
@@ -624,7 +635,7 @@ export function BiddingFolderAnalysisView({
       })
       .catch(() => {})
     void loadCounts(selectedConnectionId)
-    void loadCandidates()
+    void loadCandidates(selectedConnectionId)
     void loadQuotes(selectedConnectionId)
     return () => {
       cancelled = true
@@ -958,7 +969,7 @@ export function BiddingFolderAnalysisView({
       // in DB but filtered out of the active Bid Candidates list).
       await Promise.all([
         loadCounts(connId),
-        loadCandidates(),
+        loadCandidates(connId),
         loadQuotes(connId),
       ])
       if (mainTab === 'source') {
