@@ -11,6 +11,7 @@ export function inboxListQueryKey(filters: InboxMessageListFilters): string {
   return [
     filters.businessCategory ?? "",
     filters.businessTypeGroup ?? "",
+    filters.businessTypeKey ?? "",
     filters.category ?? "",
     filters.sentOnly ? "sent" : "",
     filters.unreadOnly ? "unread" : "",

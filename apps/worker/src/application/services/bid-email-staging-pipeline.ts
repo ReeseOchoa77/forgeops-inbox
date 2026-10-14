@@ -556,9 +556,11 @@ export async function extractBidCandidatesFromDiscovery(input: {
         data: {
           workspaceId: input.workspaceId,
           identityKey,
+          lifecycle: "OPEN",
           proposedProjectName: fields.projectName,
           proposedCustomerName: fields.customerName,
           proposedBidDueAt: fields.bidDueAt,
+          // External project/bid evidence only — not a ForgeOps Job number.
           proposedJobNumber: fields.projectNumber,
           proposedScope: scopeSummary,
           proposedScopeDetail: scopeDetail as unknown as Prisma.InputJsonValue,
@@ -1003,12 +1005,31 @@ export async function matchQuotesToCandidates(input: {
     }
 
     if (best && best.score >= QUOTE_AUTO_LINK_THRESHOLD) {
+      const { isUserConfirmedBidCandidateEmail } = await import(
+        "@forgeops/shared"
+      );
+      const priorQuoteLinks = await input.prisma.bidCandidateEmail.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          emailMessageId: q.emailMessageId,
+          role: "QUOTE",
+        },
+        select: { bidCandidateId: true, matchEvidence: true },
+      });
+      const quoteUserLocked = priorQuoteLinks.find((l) =>
+        isUserConfirmedBidCandidateEmail(l.matchEvidence)
+      );
+      if (quoteUserLocked && quoteUserLocked.bidCandidateId !== best.id) {
+        // Manual association wins — leave staging unmatched to analysis candidate.
+        unmatched += 1;
+      } else {
       await input.prisma.bidQuoteStaging.update({
         where: { id: q.id },
         data: {
           bidCandidateId: best.id,
           matchStatus: "MATCHED",
           matchConfidence: best.score,
+          isDurable: true,
           matchEvidence: { labels: best.evidence },
         },
       });
@@ -1027,13 +1048,52 @@ export async function matchQuotesToCandidates(input: {
           matchConfidence: best.score,
           matchEvidence: { labels: best.evidence },
         },
-        update: {
-          matchConfidence: best.score,
-          matchEvidence: { labels: best.evidence },
+        update: quoteUserLocked
+          ? {}
+          : {
+              matchConfidence: best.score,
+              matchEvidence: { labels: best.evidence },
+            },
+      });
+      // OPEN → QUOTED only; never overwrite CONVERTED / LOST / ARCHIVED.
+      await input.prisma.bidCandidate.updateMany({
+        where: {
+          id: best.id,
+          workspaceId: input.workspaceId,
+          lifecycle: "OPEN",
         },
+        data: { lifecycle: "QUOTED" },
       });
       matched += 1;
+      }
     } else if (best && best.score >= QUOTE_REVIEW_THRESHOLD) {
+      const { isUserConfirmedBidCandidateEmail: isUserQuote } = await import(
+        "@forgeops/shared"
+      );
+      const lockedManual = await input.prisma.bidCandidateEmail.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          emailMessageId: q.emailMessageId,
+          role: "QUOTE",
+        },
+        select: { matchEvidence: true },
+      });
+      if (lockedManual && isUserQuote(lockedManual.matchEvidence)) {
+        // Keep staging proposal but never remove manual QUOTE links.
+        await input.prisma.bidQuoteStaging.update({
+          where: { id: q.id },
+          data: {
+            matchStatus: "NEEDS_REVIEW",
+            matchConfidence: best.score,
+            matchEvidence: {
+              labels: best.evidence,
+              needsReview: true,
+              manualAssociationPreserved: true,
+            },
+          },
+        });
+        needsReview += 1;
+      } else {
       // Ambiguous: stage proposal only — do NOT create BidCandidateEmail until MATCHED.
       await input.prisma.bidQuoteStaging.update({
         where: { id: q.id },
@@ -1061,6 +1121,7 @@ export async function matchQuotesToCandidates(input: {
         data: { status: "NEEDS_REVIEW" },
       });
       needsReview += 1;
+      }
     } else {
       await input.prisma.bidQuoteStaging.update({
         where: { id: q.id },
@@ -1325,6 +1386,17 @@ export async function runBidStagingPipeline(
   await reconstructCandidatesFromQuoteGroups({
     ...withAi,
     groups,
+  });
+  // Bid Invites with zero Quotes still become permanent Candidates (OPEN).
+  const { ensureBidInviteCandidates } = await import(
+    "./ensure-bid-invite-candidates.js"
+  );
+  await ensureBidInviteCandidates({
+    prisma: input.prisma,
+    workspaceId: input.workspaceId,
+    inboxConnectionId: input.inboxConnectionId,
+    runId: input.runId,
+    progress: input.progress,
   });
   await matchExistingJobsForCandidates({
     prisma: input.prisma,

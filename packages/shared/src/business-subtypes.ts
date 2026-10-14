@@ -5,6 +5,8 @@
  */
 
 export const BUSINESS_SUBTYPE_KEYS = [
+  /** Explicit user "no specialized type" — distinct from null/unclassified. */
+  "GENERAL",
   "BID_OPPORTUNITY",
   "BID_UPDATE",
   "ESTIMATE_QUOTE",
@@ -26,9 +28,13 @@ export const BUSINESS_SUBTYPE_KEYS = [
 export type BusinessSubtypeKey = (typeof BUSINESS_SUBTYPE_KEYS)[number];
 
 export const BUSINESS_SUBTYPE_LABELS: Record<BusinessSubtypeKey, string> = {
-  BID_OPPORTUNITY: "Bid Opportunity",
+  /** Explicit General — USER_EXPLICIT custom; AI must not overwrite. */
+  GENERAL: "General",
+  /** User-facing: Bid Candidate (canonical key remains BID_OPPORTUNITY). */
+  BID_OPPORTUNITY: "Bid Candidate",
   BID_UPDATE: "Bid Update / Addendum",
-  ESTIMATE_QUOTE: "Estimate / Quote",
+  /** User-facing: Quote (canonical key remains ESTIMATE_QUOTE). */
+  ESTIMATE_QUOTE: "Quote",
   PURCHASE_ORDER_CONTRACT: "Purchase Order / Contract",
   PROJECT_COORDINATION: "Project Coordination",
   RFI_CLARIFICATION: "RFI / Clarification",
@@ -44,6 +50,36 @@ export const BUSINESS_SUBTYPE_LABELS: Record<BusinessSubtypeKey, string> = {
   OTHER_BUSINESS: "Other Business",
 };
 
+/**
+ * Lightweight direction hint for Inbox subtype filter UX.
+ * Direction (SENT/RECEIVED) remains independent of subtype.
+ * BOTH = show in either direction filter context.
+ */
+export type BusinessSubtypeDirectionHint = "INCOMING" | "SENT" | "BOTH";
+
+export const BUSINESS_SUBTYPE_DIRECTION_HINTS: Record<
+  BusinessSubtypeKey,
+  BusinessSubtypeDirectionHint
+> = {
+  GENERAL: "BOTH",
+  BID_OPPORTUNITY: "INCOMING",
+  BID_UPDATE: "BOTH",
+  ESTIMATE_QUOTE: "SENT",
+  PURCHASE_ORDER_CONTRACT: "BOTH",
+  PROJECT_COORDINATION: "BOTH",
+  RFI_CLARIFICATION: "BOTH",
+  SUBMITTAL_SHOP_DRAWING: "BOTH",
+  CHANGE_ORDER_SCOPE: "BOTH",
+  FABRICATION_PRODUCTION: "BOTH",
+  MATERIAL_PURCHASING: "BOTH",
+  DELIVERY_LOGISTICS: "BOTH",
+  FIELD_INSTALLATION: "BOTH",
+  INVOICE_PAYMENT: "BOTH",
+  COMPLIANCE_LEGAL: "BOTH",
+  INTERNAL_ADMIN: "BOTH",
+  OTHER_BUSINESS: "BOTH",
+};
+
 /** Filter / dropdown options in stable display order. */
 export const BUSINESS_SUBTYPE_FILTER_OPTIONS: Array<{
   key: BusinessSubtypeKey;
@@ -52,6 +88,36 @@ export const BUSINESS_SUBTYPE_FILTER_OPTIONS: Array<{
   key,
   label: BUSINESS_SUBTYPE_LABELS[key],
 }));
+
+/** Inbox subtype options filtered by mail direction context. */
+export function businessSubtypeFilterOptionsForDirection(
+  direction: "incoming" | "sent" | "all"
+): Array<{ key: BusinessSubtypeKey; label: string }> {
+  return BUSINESS_SUBTYPE_FILTER_OPTIONS.filter(({ key }) => {
+    const hint = BUSINESS_SUBTYPE_DIRECTION_HINTS[key];
+    if (direction === "all") return true;
+    if (hint === "BOTH") return true;
+    if (direction === "sent") return hint === "SENT";
+    return hint === "INCOMING";
+  });
+}
+
+/**
+ * ForgeOps compose Email Type options (outbound).
+ * General first, then Sent-relevant subtypes from shared direction metadata.
+ */
+export function businessSubtypeComposeOptions(): Array<{
+  key: BusinessSubtypeKey;
+  label: string;
+}> {
+  const outbound = businessSubtypeFilterOptionsForDirection("sent").filter(
+    (o) => o.key !== "GENERAL"
+  );
+  return [
+    { key: "GENERAL", label: BUSINESS_SUBTYPE_LABELS.GENERAL },
+    ...outbound,
+  ];
+}
 
 export function businessSubtypeLabel(
   key: string | null | undefined

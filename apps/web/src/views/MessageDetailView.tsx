@@ -1179,6 +1179,7 @@ export function MessageDetailView({ workspaceId, connectionId, messageId, onBack
         files: payload.files,
         existingAttachmentIds:
           payload.existingAttachmentIds ?? [],
+        businessTypeKey: payload.businessTypeKey,
       })
       setSendResult({ type: 'success', message: composeMode === 'reply' ? 'Reply sent' : 'Message forwarded' })
       setComposeMode(null)

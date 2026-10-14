@@ -6,7 +6,7 @@ import {
 } from "../application/services/promote-bid-candidate.js";
 
 describe("canPromoteBidCandidate", () => {
-  it("allows OWNER/ADMIN only", () => {
+  it("allows OWNER/ADMIN only (legacy staging gate)", () => {
     expect(canPromoteBidCandidate("OWNER")).toBe(true);
     expect(canPromoteBidCandidate("ADMIN")).toBe(true);
     expect(canPromoteBidCandidate("MANAGER")).toBe(false);
@@ -14,18 +14,24 @@ describe("canPromoteBidCandidate", () => {
   });
 });
 
-describe("promoteBidCandidate", () => {
-  it("never auto-promotes — requires explicit call and creates BIDDING Job", async () => {
+describe("promoteBidCandidate → Convert to Job", () => {
+  it("never auto-promotes — creates ACTIVE Job (not BIDDING)", async () => {
     const emailIds = ["em1", "em2"];
     const tx = {
+      $queryRaw: vi.fn(async () => [{ id: "cand-1" }]),
       customer: {
-        findFirst: vi.fn(),
+        findFirst: vi.fn(async () => ({ id: "cust-1", name: "Mortenson" })),
         findMany: vi.fn(async () => []),
         create: vi.fn(async () => ({ id: "cust-1" })),
         findUnique: vi.fn(),
       },
       job: {
-        create: vi.fn(async () => ({ id: "job-new" })),
+        create: vi.fn(async () => ({
+          id: "job-new",
+          jobNumber: "26010",
+          name: "Project Falcon",
+          status: "ACTIVE",
+        })),
         findMany: vi.fn(async () => []),
         findFirst: vi.fn(async () => null),
         update: vi.fn(),
@@ -36,7 +42,10 @@ describe("promoteBidCandidate", () => {
       },
       bidCandidateEmail: {
         findMany: vi.fn(async () =>
-          emailIds.map((emailMessageId) => ({ emailMessageId }))
+          emailIds.map((emailMessageId) => ({
+            emailMessageId,
+            role: "BID_INVITE",
+          }))
         ),
       },
       bidQuoteStaging: {
@@ -57,7 +66,14 @@ describe("promoteBidCandidate", () => {
         create: vi.fn(async () => ({})),
       },
       bidCandidate: {
+        findFirst: vi.fn(async () => ({
+          id: "cand-1",
+          lifecycle: "OPEN",
+          canonicalJobId: null,
+          status: "READY",
+        })),
         update: vi.fn(async () => ({})),
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
     };
 
@@ -67,16 +83,23 @@ describe("promoteBidCandidate", () => {
           id: "cand-1",
           workspaceId: "ws",
           status: "READY",
+          lifecycle: "OPEN",
           proposedProjectName: "Project Falcon",
           proposedCustomerName: "Mortenson",
+          customerId: null,
           proposedBidDueAt: new Date("2026-10-22T00:00:00.000Z"),
+          anticipatedStartAt: null,
           proposedJobNumber: "25104",
           proposedEstimatorUserId: null,
+          proposedScope: null,
+          proposedScopeDetail: null,
+          proposedNotes: null,
           canonicalJobId: null,
           emails: emailIds.map((emailMessageId) => ({
             emailMessageId,
             role: "BID_INVITE",
           })),
+          customer: null,
         })),
       },
       job: {
@@ -92,6 +115,7 @@ describe("promoteBidCandidate", () => {
       candidateId: "cand-1",
       userId: "user-1",
       mode: "create",
+      jobNumber: "26010",
     });
 
     expect(result.created).toBe(true);
@@ -100,32 +124,45 @@ describe("promoteBidCandidate", () => {
     expect(tx.job.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          status: "BIDDING",
+          status: "ACTIVE",
           name: "Project Falcon",
-          jobNumber: "25104",
+          jobNumber: "26010",
+          // proposedJobNumber is external, not ForgeOps Job #
+          externalRef: "25104",
         }),
       })
     );
     expect(tx.emailMessage.updateMany).toHaveBeenCalled();
-    expect(tx.bidCandidate.update).toHaveBeenCalledWith(
+    expect(tx.bidCandidate.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           status: "CONFIRMED",
+          lifecycle: "CONVERTED",
           canonicalJobId: "job-new",
         }),
       })
     );
   });
 
-  it("idempotent: confirmed candidate returns existing Job without create", async () => {
+  it("idempotent: converted candidate returns existing Job without create", async () => {
     const prisma = {
       bidCandidate: {
         findFirst: vi.fn(async () => ({
           id: "cand-1",
           workspaceId: "ws",
           status: "CONFIRMED",
+          lifecycle: "CONVERTED",
           canonicalJobId: "job-existing",
           emails: [{ emailMessageId: "em1", role: "BID_INVITE" }],
+          customer: null,
+        })),
+      },
+      job: {
+        findFirst: vi.fn(async () => ({
+          id: "job-existing",
+          jobNumber: "26001",
+          name: "Project Falcon",
+          status: "ACTIVE",
         })),
       },
       $transaction: vi.fn(),
@@ -137,6 +174,7 @@ describe("promoteBidCandidate", () => {
       candidateId: "cand-1",
       userId: "user-1",
       mode: "create",
+      jobNumber: "26099",
     });
 
     expect(result.jobId).toBe("job-existing");
@@ -151,13 +189,20 @@ describe("promoteBidCandidate", () => {
           id: "cand-1",
           workspaceId: "ws",
           status: "READY",
+          lifecycle: "OPEN",
           proposedProjectName: "Project Falcon",
           proposedCustomerName: null,
+          customerId: null,
           proposedBidDueAt: null,
-          proposedJobNumber: "25104",
+          anticipatedStartAt: null,
+          proposedJobNumber: null,
           proposedEstimatorUserId: null,
+          proposedScope: null,
+          proposedScopeDetail: null,
+          proposedNotes: null,
           canonicalJobId: null,
           emails: [],
+          customer: null,
         })),
       },
       job: {
@@ -181,6 +226,7 @@ describe("promoteBidCandidate", () => {
         candidateId: "cand-1",
         userId: "user-1",
         mode: "create",
+        jobNumber: "25104",
       })
     ).rejects.toMatchObject({
       code: "EXISTING_JOB",

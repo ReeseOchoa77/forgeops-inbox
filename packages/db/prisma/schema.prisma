@@ -788,6 +788,9 @@ model EmailMessage {
   bodyHtml         String?
   /// RECEIVED | SENT when known. Null for legacy rows (sender-heuristic fallback in queries).
   direction        EmailDirection?
+  /// True when this EmailMessage was created by ForgeOps compose/send (not Outlook-direct).
+  /// Survives Sent Items re-ingestion; used for reconciliation + provenance.
+  composedInForgeOps Boolean     @default(false)
   labelIds         String[]      @default([])
   hasAttachments   Boolean       @default(false)
   isRead           Boolean       @default(false)
@@ -859,6 +862,7 @@ model EmailMessage {
   @@index([workspaceId, itemStatus, sentAt])
   @@index([inboxConnectionId, internetMessageId])
   @@index([workspaceId, inboxConnectionId, direction, sentAt])
+  @@index([workspaceId, inboxConnectionId, composedInForgeOps, sentAt])
   @@index([senderEmail])
   @@index([jobId])
   @@index([workspaceId, jobId, sentAt])
@@ -1091,6 +1095,7 @@ model Customer {
   contacts        EntityContact[]
   jobParticipations JobParticipant[] @relation("JobParticipantCustomer")
   billedInvoices    JobInvoice[]     @relation("JobInvoiceBillTo")
+  bidCandidates     BidCandidate[]   @relation("BidCandidateCustomer")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -2339,13 +2344,22 @@ model ProjectFolderEmailAnalyzeRun {
   @@index([workspaceId, inboxConnectionId, status])
 }
 
-/// Staging status for Bid Analysis candidates (NOT a Job).
+/// Analysis/import reconciliation status (NOT business lifecycle; NOT a Job).
 enum BidCandidateStatus {
   DISCOVERED
   READY
   NEEDS_REVIEW
   CONFIRMED
   REJECTED
+}
+
+/// Permanent business lifecycle for a Bid Candidate opportunity.
+enum BidCandidateLifecycle {
+  OPEN
+  QUOTED
+  CONVERTED
+  LOST
+  ARCHIVED
 }
 
 /// Role of an EmailMessage linked to a BidCandidate.
@@ -2445,17 +2459,28 @@ enum BidQuoteMatchStatus {
   REJECTED
 }
 
-/// Staging proposed bid — NOT a canonical Job until human confirmation / import.
+/// Permanent operational Bid Candidate (opportunity before Job).
+/// Analysis status (status) is separate from business lifecycle.
+/// workspaceId is the ownership boundary — mailbox links are provenance only.
 model BidCandidate {
   id                      String             @id @default(cuid())
   workspaceId             String
-  /// Deterministic grouping key for idempotent upserts (normalized name/number).
+  /// Deterministic grouping key for idempotent upserts (normalized name/external #).
   identityKey             String
+  /// Analysis/import reconciliation — not business lifecycle.
   status                  BidCandidateStatus @default(DISCOVERED)
+  /// Permanent business lifecycle of the opportunity.
+  lifecycle               BidCandidateLifecycle @default(OPEN)
   proposedProjectName     String?
   proposedCustomerName    String?
+  /// Resolved Customer when known. Null until human/manual resolve.
+  customerId              String?
   proposedBidDueAt        DateTime?
+  /// Customer/anticipated start — independent of bid due date.
+  anticipatedStartAt      DateTime?
   proposedEstimatorUserId String?
+  /// Deprecated for ForgeOps Job numbers. May hold external customer/GC project
+  /// or bid identifiers from email evidence. Never consumes Job numbering.
   proposedJobNumber       String?
   /// Compact scope summary for lists (e.g. "4 items: Beams, Columns…").
   proposedScope           String?
@@ -2483,6 +2508,7 @@ model BidCandidate {
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
   workspace               Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer                Customer?          @relation("BidCandidateCustomer", fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   proposedEstimatorUser   User?              @relation("BidCandidateProposedEstimator", fields: [proposedEstimatorUserId], references: [id], onDelete: SetNull)
   confirmedByUser         User?              @relation("BidCandidateConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
   canonicalJob            Job?               @relation("BidCandidateCanonicalJob", fields: [canonicalJobId], references: [id], onDelete: SetNull)
@@ -2492,13 +2518,17 @@ model BidCandidate {
 
   @@unique([workspaceId, identityKey])
   @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, lifecycle, updatedAt])
   @@index([workspaceId, proposedBidDueAt])
+  @@index([workspaceId, anticipatedStartAt])
+  @@index([workspaceId, customerId])
   @@index([canonicalJobId])
   @@index([proposedExistingJobId])
   @@index([workspaceId, existingJobMatchStatus])
 }
 
-/// Structured Quote extraction from Projects/Quotes (staging; not a Job).
+/// Quote extraction linked to EmailMessage. Becomes durable business evidence
+/// when isDurable=true (linked Candidate / user confirm / user edits).
 model BidQuoteStaging {
   id                    String              @id @default(cuid())
   workspaceId           String
@@ -2524,6 +2554,8 @@ model BidQuoteStaging {
   matchConfidence       Decimal?            @db.Decimal(5, 4)
   matchEvidence         Json?
   userConfirmedMatch    Boolean             @default(false)
+  /// When true, Clear Analysis must not delete this row (permanent Candidate evidence).
+  isDurable             Boolean             @default(false)
   rejectedAt            DateTime?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
@@ -2533,6 +2565,7 @@ model BidQuoteStaging {
 
   @@unique([workspaceId, emailMessageId])
   @@index([workspaceId, inboxConnectionId, matchStatus])
+  @@index([workspaceId, isDurable])
   @@index([bidCandidateId])
   @@index([emailMessageId])
 }

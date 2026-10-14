@@ -19,14 +19,17 @@ export const BIDDING_FOLDER_DISPLAY_NAMES: Record<BiddingFolderRole, string> = {
   QUOTES: "Quotes",
 };
 
-export function normalizeFolderDisplayName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, " ");
+export function normalizeFolderDisplayName(
+  name: string | null | undefined
+): string {
+  return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export function biddingFolderRoleFromDisplayName(
-  displayName: string
+  displayName: string | null | undefined
 ): BiddingFolderRole | null {
   const n = normalizeFolderDisplayName(displayName);
+  if (!n) return null;
   for (const [role, label] of Object.entries(BIDDING_FOLDER_DISPLAY_NAMES) as Array<
     [BiddingFolderRole, string]
   >) {
@@ -36,7 +39,9 @@ export function biddingFolderRoleFromDisplayName(
 }
 
 /** True for Bid Invites / Quotes — not ordinary project folders. */
-export function isBiddingWorkflowFolderName(displayName: string): boolean {
+export function isBiddingWorkflowFolderName(
+  displayName: string | null | undefined
+): boolean {
   return biddingFolderRoleFromDisplayName(displayName) != null;
 }
 

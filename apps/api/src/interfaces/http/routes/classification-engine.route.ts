@@ -12,9 +12,10 @@ import { requireWorkspaceMembership } from "../../../application/services/worksp
 import { legacyBusinessCategoryFromMailbox } from "../../../application/services/mailbox-category.js";
 
 const SYSTEM_BUSINESS_TYPES = [
-  { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Opportunity", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
+  { systemKey: "GENERAL", displayLabel: "General", description: "Explicit general / no specialized type", displayGroup: "OTHER", displayOrder: 0 },
+  { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Candidate", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
   { systemKey: "BID_UPDATE", displayLabel: "Bid Update / Addendum", description: "Update or addendum to existing bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 2 },
-  { systemKey: "ESTIMATE_QUOTE", displayLabel: "Estimate / Quote", description: "Estimate or quote for work or materials", displayGroup: "BIDS_ESTIMATING", displayOrder: 3 },
+  { systemKey: "ESTIMATE_QUOTE", displayLabel: "Quote", description: "Estimate or quote for work or materials", displayGroup: "BIDS_ESTIMATING", displayOrder: 3 },
   { systemKey: "PURCHASE_ORDER_CONTRACT", displayLabel: "Purchase Order / Contract", description: "Purchase order or contract", displayGroup: "PURCHASING", displayOrder: 1 },
   { systemKey: "PROJECT_COORDINATION", displayLabel: "Project Coordination", description: "General project coordination", displayGroup: "PROJECTS", displayOrder: 1 },
   { systemKey: "RFI_CLARIFICATION", displayLabel: "RFI / Clarification", description: "Request for information", displayGroup: "PROJECTS", displayOrder: 2 },
@@ -189,7 +190,7 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
     const message = await app.services.prisma.emailMessage.findFirst({
       where: { workspaceId: params.workspaceId, OR: [{ id: params.messageId }, { gmailMessageId: params.messageId }] },
       select: { id: true, mailboxCategory: true, previousCategory: true, senderEmail: true, senderName: true, threadId: true,
-        classifications: { select: { id: true, mailboxCategory: true, businessTypeKey: true, customerId: true, vendorId: true, jobId: true, priority: true }, take: 1, orderBy: { createdAt: "desc" } }
+        classifications: { select: { id: true, mailboxCategory: true, businessTypeKey: true, customerId: true, vendorId: true, jobId: true, priority: true, routingHints: true }, take: 1, orderBy: { createdAt: "desc" } }
       }
     });
 
@@ -258,7 +259,18 @@ export const registerClassificationEngineRoutes = async (app: FastifyInstance): 
         itemStatus: "NEW",
         reviewQueue: null,
       };
-      if (body.businessType !== undefined) classUpdate.businessTypeKey = body.businessType;
+      if (body.businessType !== undefined) {
+        classUpdate.businessTypeKey = body.businessType;
+        // Manual subtype choice is USER_EXPLICIT — AI must not overwrite later.
+        const { withClassificationAuthority } = await import("@forgeops/shared");
+        classUpdate.routingHints = withClassificationAuthority(
+          classification.routingHints,
+          "USER_EXPLICIT",
+          "manual_reclassify",
+          { note: "User changed subtype after ingestion" }
+        );
+        classUpdate.businessTypeConfidence = 1;
+      }
       if (body.customerId !== undefined) classUpdate.customerId = body.customerId;
       if (body.vendorId !== undefined) classUpdate.vendorId = body.vendorId;
       if (body.jobId !== undefined) classUpdate.jobId = body.jobId;

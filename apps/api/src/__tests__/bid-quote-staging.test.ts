@@ -138,6 +138,7 @@ describe("updateBidQuoteStaging", () => {
       },
       bidCandidate: {
         findFirst: vi.fn(async () => ({ id: "c-new" })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       bidCandidateEmail: {
         deleteMany: vi.fn(async () => ({ count: 1 })),

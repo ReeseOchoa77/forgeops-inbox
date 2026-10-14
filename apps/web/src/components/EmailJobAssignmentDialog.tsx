@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { ApiRequestError, api, type CustomerSummary, type JobLookup } from '../api'
+import { api, type CustomerSummary, type JobLookup, type OperationalBidCandidate } from '../api'
 import { suggestBidProjectNameFromSubject, suggestedBidName } from '../bidding-display'
 import { JobAssignPicker } from './JobAssignPicker'
 
@@ -18,23 +18,30 @@ type Props = {
   businessTypeKey?: string | null
   currentJob?: CurrentJob | null
   suggestedJobName?: string | null
-  /** Open directly on create-new-job form. */
-  initialMode?: 'assign' | 'create'
+  /** Open directly on create Bid Candidate form. */
+  initialMode?: 'assign' | 'create' | 'assign-candidate'
   onClose: () => void
   onAssigned: (job: JobLookup) => void
   onRemoved: () => void
+  /** Fired after Create Bid Candidate (no Job). */
   onCreated: (job: { id: string; name: string; jobNumber: string | null; status: string }) => void
+  /** Optional: fired when email is linked to a Bid Candidate. */
+  onBidCandidateLinked?: (candidateId: string) => void
 }
 
+type DialogMode = 'assign' | 'create' | 'assign-candidate'
+
 /**
- * Unified Inbox Job assignment modal:
- * - assign / change / remove existing Job (USER_ASSIGNED via assign APIs)
- * - create new BIDDING Job (reuses bidding intake + from-email)
+ * Unified Inbox assignment modal:
+ * - assign / change / remove existing Job
+ * - Create Bid Candidate (permanent opportunity — no Job / Job number)
+ * - Assign to Bid Candidate (manual association is authoritative)
  */
 export function EmailJobAssignmentDialog({
   workspaceId,
   messageId,
   subject,
+  businessTypeKey,
   currentJob,
   suggestedJobName,
   initialMode = 'assign',
@@ -42,15 +49,20 @@ export function EmailJobAssignmentDialog({
   onAssigned,
   onRemoved,
   onCreated,
+  onBidCandidateLinked,
 }: Props) {
-  const [mode, setMode] = useState<'assign' | 'create'>(initialMode)
+  const [mode, setMode] = useState<DialogMode>(
+    initialMode === 'create' ? 'create' : initialMode === 'assign-candidate' ? 'assign-candidate' : 'assign'
+  )
   const [assignBusy, setAssignBusy] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
 
   const immediateName = suggestedBidName(subject, currentJob?.name ?? suggestedJobName)
   const [name, setName] = useState(immediateName)
-  const [jobNumber, setJobNumber] = useState('')
   const [bidDue, setBidDue] = useState('')
+  const [anticipatedStart, setAnticipatedStart] = useState('')
+  const [scope, setScope] = useState('')
+  const [notes, setNotes] = useState('')
   const [customerId, setCustomerId] = useState('')
   const [proposedCustomerName, setProposedCustomerName] = useState('')
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
@@ -58,29 +70,28 @@ export function EmailJobAssignmentDialog({
   const [createBusy, setCreateBusy] = useState(false)
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [confirmMove, setConfirmMove] = useState(false)
-  const [existingOffer, setExistingOffer] = useState<CurrentJob | null>(null)
   const [nameHint, setNameHint] = useState<string | null>(
     immediateName && !currentJob?.name ? 'Suggested from email' : null
   )
-  const [jobNumberHint, setJobNumberHint] = useState<string | null>(null)
   const [bidDueHint, setBidDueHint] = useState<string | null>(null)
   const [customerHint, setCustomerHint] = useState<string | null>(null)
 
+  const [candidateSearch, setCandidateSearch] = useState('')
+  const [candidates, setCandidates] = useState<OperationalBidCandidate[]>([])
+  const [candidatesLoading, setCandidatesLoading] = useState(false)
+  const [candidateBusy, setCandidateBusy] = useState(false)
+  const [candidateError, setCandidateError] = useState<string | null>(null)
+
   const nameDirty = useRef(false)
-  const jobNumberDirty = useRef(false)
   const bidDueDirty = useRef(false)
   const customerDirty = useRef(false)
   const suggestionsLoadedFor = useRef<string | null>(null)
-  /** Credible alternates from intake — persisted as JOB aliases only on Create Job. */
-  const alternateProjectNamesRef = useRef<string[]>([])
 
   useEffect(() => {
     if (mode !== 'create') return
     api.getCustomers(workspaceId).then((res) => setCustomers(res.customers)).catch(() => setCustomers([]))
   }, [mode, workspaceId])
 
-  // Create form: load intake suggestions once per message. Never overwrite dirty fields.
   useEffect(() => {
     if (mode !== 'create') return
     if (suggestionsLoadedFor.current === messageId) return
@@ -100,9 +111,6 @@ export function EmailJobAssignmentDialog({
       .then((res) => {
         if (cancelled) return
         const s = res.suggestions
-        alternateProjectNamesRef.current = Array.isArray(s.alternateProjectNames)
-          ? s.alternateProjectNames
-          : []
         if (!nameDirty.current && s.projectName) {
           setName(s.projectName)
           setNameHint(
@@ -110,10 +118,6 @@ export function EmailJobAssignmentDialog({
               ? 'Suggested from drawing filename'
               : 'Suggested from email'
           )
-        }
-        if (!jobNumberDirty.current && s.jobNumber) {
-          setJobNumber(s.jobNumber)
-          setJobNumberHint('Suggested next number')
         }
         if (!bidDueDirty.current && s.bidDueAt) {
           setBidDue(s.bidDueAt.slice(0, 10))
@@ -150,6 +154,37 @@ export function EmailJobAssignmentDialog({
       cancelled = true
     }
   }, [mode, workspaceId, messageId, subject])
+
+  useEffect(() => {
+    if (mode !== 'assign-candidate') return
+    let cancelled = false
+    setCandidatesLoading(true)
+    setCandidateError(null)
+    const q = candidateSearch.trim()
+    const timer = setTimeout(() => {
+      api
+        .listOperationalBidCandidates(workspaceId, {
+          search: q || undefined,
+          includeArchived: false,
+        })
+        .then((res) => {
+          if (!cancelled) setCandidates(res.candidates)
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setCandidateError(e instanceof Error ? e.message : 'Could not load Bid Candidates')
+            setCandidates([])
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setCandidatesLoading(false)
+        })
+    }, q ? 200 : 0)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [mode, workspaceId, candidateSearch])
 
   const customerChoices = useMemo(() => {
     const q = customerQuery.trim().toLowerCase()
@@ -234,60 +269,74 @@ export function EmailJobAssignmentDialog({
     }
   }
 
-  const submitCreate = async (extra?: { confirmMove?: boolean; jobId?: string; action?: 'use_job' | 'create' }) => {
+  const submitCreateCandidate = async () => {
     setCreateBusy(true)
     setCreateError(null)
-    const action = extra?.action ?? 'create'
     const createCustomerId = customerId || null
     const createCustomerName = createCustomerId
       ? null
       : (proposedCustomerName.trim() || customerQuery.trim() || null)
     try {
-      const res = await api.addEmailToBidding(workspaceId, {
+      const res = await api.createBidCandidateFromEmail(workspaceId, {
         messageId,
-        action,
-        ...(extra?.jobId ? { jobId: extra.jobId } : {}),
-        ...(action === 'create' ? {
-          name: name.trim(),
-          jobNumber: jobNumber.trim() || null,
-          customerId: createCustomerId,
-          customerName: createCustomerName,
-          alternateProjectNames: alternateProjectNamesRef.current,
-          bidDueAt: bidDue || null,
-        } : {}),
-        ...((extra?.confirmMove ?? confirmMove) ? { confirmMove: true } : {}),
+        projectName: name.trim(),
+        customerId: createCustomerId,
+        customerName: createCustomerName,
+        resolveCreateCustomer: Boolean(createCustomerName) && !createCustomerId,
+        bidDueAt: bidDue ? new Date(`${bidDue}T12:00:00.000Z`).toISOString() : null,
+        anticipatedStartAt: anticipatedStart
+          ? new Date(`${anticipatedStart}T12:00:00.000Z`).toISOString()
+          : null,
+        scope: scope.trim() || null,
+        notes: notes.trim() || null,
+        // Quote emails become durable QUOTE evidence on the new Candidate.
+        ...(businessTypeKey === 'ESTIMATE_QUOTE'
+          ? { role: 'QUOTE' as const }
+          : {}),
       })
-      onCreated(res.job)
+      onBidCandidateLinked?.(res.candidateId)
+      // Compat callback — no Job created; surface Candidate id as pseudo job id for refresh.
+      onCreated({
+        id: res.candidateId,
+        name: name.trim(),
+        jobNumber: null,
+        status: 'BID_CANDIDATE',
+      })
     } catch (e) {
-      if (e instanceof ApiRequestError && e.code === 'EXISTING_JOB') {
-        const cause = e.causePayload as CurrentJob & { jobId?: string } | undefined
-        const jobIdFromCause = cause?.jobId ?? cause?.id
-        if (jobIdFromCause) {
-          setExistingOffer({
-            id: jobIdFromCause,
-            name: cause?.name ?? name,
-            status: cause?.status ?? 'ACTIVE',
-            jobNumber: cause?.jobNumber ?? null,
-          })
-        }
-        setCreateError(e.message)
-      } else if (e instanceof ApiRequestError && e.code === 'JOB_NUMBER_TAKEN') {
-        const cause = e.causePayload as { suggestedJobNumber?: string | null } | undefined
-        const next = cause?.suggestedJobNumber
-        setCreateError(next ? `${e.message} Next available suggestion: ${next}` : e.message)
-      } else if (e instanceof ApiRequestError && e.code === 'THREAD_JOB_CONFLICT') {
-        setConfirmMove(true)
-        setCreateError(e.message)
-      } else {
-        setCreateError(e instanceof Error ? e.message : 'Could not create Job')
-      }
+      setCreateError(e instanceof Error ? e.message : 'Could not create Bid Candidate')
     } finally {
       setCreateBusy(false)
     }
   }
 
-  const title = mode === 'create' ? 'Create new job' : 'Assign to Job'
-  const busy = assignBusy || createBusy
+  const handleAssignCandidate = async (candidateId: string) => {
+    setCandidateBusy(true)
+    setCandidateError(null)
+    // Quote emails use QUOTE role; Bid Invites / other mail default to BID_INVITE.
+    const role =
+      businessTypeKey === 'ESTIMATE_QUOTE' ? 'QUOTE' : 'BID_INVITE'
+    try {
+      await api.assignEmailToBidCandidate(workspaceId, candidateId, {
+        messageId,
+        role,
+        forceReassign: true,
+      })
+      onBidCandidateLinked?.(candidateId)
+      onClose()
+    } catch (e) {
+      setCandidateError(e instanceof Error ? e.message : 'Could not assign Bid Candidate')
+    } finally {
+      setCandidateBusy(false)
+    }
+  }
+
+  const title =
+    mode === 'create'
+      ? 'Create Bid Candidate'
+      : mode === 'assign-candidate'
+        ? 'Assign to Bid Candidate'
+        : 'Assign to Job'
+  const busy = assignBusy || createBusy || candidateBusy
 
   return (
     <div
@@ -316,7 +365,7 @@ export function EmailJobAssignmentDialog({
         {mode === 'assign' ? (
           <>
             <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.45, marginBottom: 10 }}>
-              Choose which Job this email belongs to. Creating a new Job from Inbox starts it as Bidding.
+              Assign this email to a Job, or capture it as a Bid Candidate opportunity (no Job number).
             </div>
             {currentJob && (
               <div style={{
@@ -332,12 +381,25 @@ export function EmailJobAssignmentDialog({
               type="button"
               disabled={busy}
               onClick={() => setMode('create')}
+              data-testid="inbox-create-bid-candidate"
               style={{
-                ...quietButton, width: '100%', textAlign: 'left', marginBottom: 10,
+                ...quietButton, width: '100%', textAlign: 'left', marginBottom: 8,
                 fontWeight: 650, color: '#1d4ed8', borderColor: '#bfdbfe', background: '#eff6ff',
               }}
             >
-              + Create new job
+              + Create Bid Candidate
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setMode('assign-candidate')}
+              data-testid="inbox-assign-bid-candidate"
+              style={{
+                ...quietButton, width: '100%', textAlign: 'left', marginBottom: 10,
+                fontWeight: 600, color: '#0f766e', borderColor: '#99f6e4', background: '#f0fdfa',
+              }}
+            >
+              Assign to Bid Candidate
             </button>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
               <JobAssignPicker
@@ -357,24 +419,78 @@ export function EmailJobAssignmentDialog({
               <button type="button" onClick={onClose} style={quietButton}>Cancel</button>
             </div>
           </>
-        ) : (
+        ) : mode === 'assign-candidate' ? (
           <>
             <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.45, marginBottom: 10 }}>
-              Creates a Bidding Job and assigns this email thread. Suggestions prepare the form — nothing is saved until you confirm.
+              Link this email to an existing Bid Candidate. Manual assignment survives analysis reruns.
             </div>
             <button
               type="button"
               onClick={() => setMode('assign')}
               style={{ ...quietButton, marginBottom: 10, alignSelf: 'flex-start' }}
             >
-              ← Assign existing Job
+              ← Back
+            </button>
+            <input
+              value={candidateSearch}
+              onChange={(e) => setCandidateSearch(e.target.value)}
+              placeholder="Search Bid Candidates…"
+              aria-label="Search Bid Candidates"
+              style={{ ...fieldStyle, marginBottom: 8 }}
+            />
+            <div style={{ flex: 1, minHeight: 120, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+              {candidatesLoading && (
+                <div style={{ padding: 12, fontSize: 12, color: '#6b7280' }}>Loading…</div>
+              )}
+              {!candidatesLoading && candidates.length === 0 && (
+                <div style={{ padding: 12, fontSize: 12, color: '#6b7280' }}>No Bid Candidates found.</div>
+              )}
+              {candidates.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={candidateBusy}
+                  onClick={() => void handleAssignCandidate(c.id)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px',
+                    border: 'none', borderBottom: '1px solid #f3f4f6', background: '#fff',
+                    cursor: candidateBusy ? 'not-allowed' : 'pointer', fontSize: 13,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: '#111827' }}>{c.projectName}</div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                    {c.customerName ?? 'No customer'}
+                    {c.lifecycle ? ` · ${c.lifecycle}` : ''}
+                    {typeof c.quoteCount === 'number' ? ` · ${c.quoteCount} quote${c.quoteCount === 1 ? '' : 's'}` : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+            {candidateError && (
+              <div style={{ marginTop: 10, fontSize: 12, color: '#b42318', lineHeight: 1.4 }}>{candidateError}</div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+              <button type="button" onClick={onClose} style={quietButton}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.45, marginBottom: 10 }}>
+              Creates a permanent Bid Candidate and links this email as evidence. No Job and no ForgeOps Job number are created.
+            </div>
+            <button
+              type="button"
+              onClick={() => setMode('assign')}
+              style={{ ...quietButton, marginBottom: 10, alignSelf: 'flex-start' }}
+            >
+              ← Back
             </button>
             <div style={{ display: 'grid', gap: 8, overflow: 'auto', flex: 1, minHeight: 0 }}>
               {suggestLoading && (
                 <div style={{ fontSize: 11, color: '#6b7280' }}>Preparing suggestions…</div>
               )}
               <div style={{ fontSize: 11, color: '#6b7280' }}>
-                Status: <strong style={{ color: '#1d4ed8' }}>Bidding</strong>
+                Lifecycle: <strong style={{ color: '#1d4ed8' }}>OPEN</strong>
               </div>
               <label style={labelStyle}>
                 Project name
@@ -390,7 +506,7 @@ export function EmailJobAssignmentDialog({
                 />
               </label>
               <label style={labelStyle}>
-                Customer
+                Customer / GC
                 {customerHint && <span style={hintStyle}> · {customerHint}</span>}
                 <input
                   value={customerQuery}
@@ -422,19 +538,6 @@ export function EmailJobAssignmentDialog({
               )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <label style={labelStyle}>
-                  Job number
-                  {jobNumberHint && <span style={hintStyle}> · {jobNumberHint}</span>}
-                  <input
-                    value={jobNumber}
-                    onChange={(e) => {
-                      jobNumberDirty.current = true
-                      setJobNumberHint(null)
-                      setJobNumber(e.target.value)
-                    }}
-                    style={fieldStyle}
-                  />
-                </label>
-                <label style={labelStyle}>
                   Bid due
                   {bidDueHint && <span style={hintStyle}> · {bidDueHint}</span>}
                   <input
@@ -448,31 +551,38 @@ export function EmailJobAssignmentDialog({
                     style={fieldStyle}
                   />
                 </label>
+                <label style={labelStyle}>
+                  Anticipated start
+                  <input
+                    type="date"
+                    value={anticipatedStart}
+                    onChange={(e) => setAnticipatedStart(e.target.value)}
+                    style={fieldStyle}
+                  />
+                </label>
               </div>
+              <label style={labelStyle}>
+                Detailed scope
+                <textarea
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value)}
+                  rows={3}
+                  style={{ ...fieldStyle, resize: 'vertical' }}
+                />
+              </label>
+              <label style={labelStyle}>
+                Notes
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                  style={{ ...fieldStyle, resize: 'vertical' }}
+                />
+              </label>
             </div>
 
             {createError && (
               <div style={{ marginTop: 10, fontSize: 12, color: '#b42318', lineHeight: 1.4 }}>{createError}</div>
-            )}
-            {existingOffer && (
-              <button
-                type="button"
-                disabled={createBusy}
-                onClick={() => void submitCreate({ action: 'use_job', jobId: existingOffer.id, confirmMove: true })}
-                style={{ ...primaryButton(createBusy), marginTop: 8 }}
-              >
-                Use existing {existingOffer.name}
-              </button>
-            )}
-            {confirmMove && !existingOffer && (
-              <button
-                type="button"
-                disabled={createBusy}
-                onClick={() => void submitCreate({ confirmMove: true })}
-                style={{ ...primaryButton(createBusy), marginTop: 8 }}
-              >
-                Move thread
-              </button>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
@@ -480,10 +590,11 @@ export function EmailJobAssignmentDialog({
               <button
                 type="button"
                 disabled={createBusy || !name.trim()}
-                onClick={() => void submitCreate()}
+                onClick={() => void submitCreateCandidate()}
+                data-testid="confirm-create-bid-candidate"
                 style={primaryButton(createBusy)}
               >
-                {createBusy ? 'Saving…' : 'Create Job'}
+                {createBusy ? 'Saving…' : 'Create Bid Candidate'}
               </button>
             </div>
           </>

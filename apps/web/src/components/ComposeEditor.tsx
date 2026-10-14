@@ -4,6 +4,7 @@ import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
 import { useEffect, useRef, useState, useCallback, type ClipboardEvent } from 'react'
+import { businessSubtypeComposeOptions } from '@forgeops/shared/business-subtypes'
 import { RecipientField } from './RecipientField'
 import {
   disarmAttachmentClipboardPaste,
@@ -29,6 +30,8 @@ export interface ComposeSendPayload {
   html: string
   files: File[]
   existingAttachmentIds: string[]
+  /** Canonical business subtype key (e.g. ESTIMATE_QUOTE, GENERAL). */
+  businessTypeKey: string
 }
 
 export interface ComposeExistingAttachment {
@@ -126,6 +129,9 @@ export function ComposeEditor({
   )
   const [clipboardCount, setClipboardCount] = useState(() => getCopiedAttachments(workspaceId).length)
   const [localError, setLocalError] = useState('')
+  /** Compose Email Type — USER_EXPLICIT classification (default General). */
+  const [businessTypeKey, setBusinessTypeKey] = useState('GENERAL')
+  const composeTypeOptions = businessSubtypeComposeOptions()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingLock = useRef(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -264,6 +270,7 @@ export function ComposeEditor({
         html: editor.getHTML(),
         files,
         existingAttachmentIds: [...includedExistingIds],
+        businessTypeKey,
       })
     } finally {
       sendingLock.current = false
@@ -413,6 +420,36 @@ export function ComposeEditor({
           </div>
         </>
       )}
+
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <label
+          htmlFor="compose-email-type"
+          style={{ fontSize: 12, color: '#888', fontWeight: 600 }}
+        >
+          Email Type
+        </label>
+        <select
+          id="compose-email-type"
+          data-testid="compose-email-type"
+          aria-label="Email Type"
+          value={businessTypeKey}
+          disabled={noMailbox || sending}
+          onChange={(e) => setBusinessTypeKey(e.target.value)}
+          style={{
+            minWidth: 180,
+            maxWidth: 280,
+            padding: '6px 10px',
+            border: '1px solid #ddd',
+            borderRadius: 6,
+            fontSize: 13,
+            background: '#fff',
+          }}
+        >
+          {composeTypeOptions.map((o) => (
+            <option key={o.key} value={o.key}>{o.label}</option>
+          ))}
+        </select>
+      </div>
 
       <div style={{ display: 'flex', gap: 2, padding: '6px 0', borderBottom: '1px solid #eee', flexWrap: 'wrap' }}>
         <button type="button" style={btnStyle(editor.isActive('bold'))} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold"><b>B</b></button>

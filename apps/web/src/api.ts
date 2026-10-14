@@ -1738,6 +1738,8 @@ export const api = {
       files?: File[];
       /** Non-inline EmailAttachment IDs to include (forward). */
       existingAttachmentIds?: string[];
+      /** Compose Email Type — canonical subtype (USER_EXPLICIT). */
+      businessTypeKey?: string;
     }
   ) => {
     const files = payload.files ?? [];
@@ -1762,6 +1764,7 @@ export const api = {
           subject: payload.subject,
           body: payload.body,
           bodyFormat: payload.bodyFormat ?? 'html',
+          businessTypeKey: payload.businessTypeKey ?? 'GENERAL',
         }),
       });
     }
@@ -1777,6 +1780,7 @@ export const api = {
     form.append('subject', payload.subject);
     form.append('body', payload.body);
     form.append('bodyFormat', payload.bodyFormat ?? 'html');
+    form.append('businessTypeKey', payload.businessTypeKey ?? 'GENERAL');
     if (existingIds.length > 0) {
       form.append('existingAttachmentIds', JSON.stringify(existingIds));
     }
@@ -3209,11 +3213,14 @@ export const api = {
       candidatesDeleted: number;
       runsDeleted: number;
       confirmedRetained?: number;
+      candidatesRetained?: number;
+      durableQuotesRetained?: number;
     }>(`/workspaces/${workspaceId}/bid-analysis/clear`, {
       method: 'POST',
       body: JSON.stringify({ connectionId }),
     }),
 
+  /** @deprecated Prefer createOperationalBidCandidate — no Job number. */
   createBidCandidate: (
     workspaceId: string,
     body: {
@@ -3226,7 +3233,190 @@ export const api = {
   ) =>
     request<{ candidateId: string }>(
       `/workspaces/${workspaceId}/bid-analysis/candidates`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          projectName: body.projectName,
+          customerName: body.customerName,
+          bidDueAt: body.bidDueAt,
+          notes: body.notes,
+          // jobNumber intentionally omitted — Candidates do not get Job numbers.
+        }),
+      }
+    ),
+
+  listOperationalBidCandidates: (
+    workspaceId: string,
+    params?: {
+      quote?: 'all' | 'with' | 'without';
+      dueSoon?: boolean;
+      includeArchived?: boolean;
+      search?: string;
+    }
+  ) => {
+    const q = new URLSearchParams();
+    if (params?.quote) q.set('quote', params.quote);
+    if (params?.dueSoon) q.set('dueSoon', 'true');
+    if (params?.includeArchived) q.set('includeArchived', 'true');
+    if (params?.search) q.set('search', params.search);
+    const qs = q.toString();
+    return request<{
+      candidates: OperationalBidCandidate[];
+      summary: {
+        total: number;
+        withQuote: number;
+        withoutQuote: number;
+        dueSoon: number;
+      };
+    }>(`/workspaces/${workspaceId}/bid-candidates${qs ? `?${qs}` : ''}`);
+  },
+
+  getOperationalBidCandidate: (workspaceId: string, candidateId: string) =>
+    request<{ candidate: OperationalBidCandidateDetail }>(
+      `/workspaces/${workspaceId}/bid-candidates/${candidateId}`
+    ),
+
+  previewConvertBidCandidateToJob: (workspaceId: string, candidateId: string) =>
+    request<{
+      preview: {
+        candidateId: string
+        lifecycle: string
+        convertible: boolean
+        alreadyConverted: boolean
+        existingJobId: string | null
+        projectName: string
+        customerId: string | null
+        customerName: string | null
+        suggestedJobNumber: string | null
+        startDate: string | null
+        bidDueAt: string | null
+        scopeSummary: string | null
+        notes: string | null
+        estimatorUserId: string | null
+        externalProjectNumber: string | null
+        emailCount: number
+        quoteCount: number
+        carryForward: {
+          emails: boolean
+          quotes: boolean
+          attachmentsViaEmails: boolean
+          aliases: boolean
+          notes: boolean
+          scope: boolean
+        }
+      }
+    }>(`/workspaces/${workspaceId}/bid-candidates/${candidateId}/convert-to-job`),
+
+  convertBidCandidateToJob: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      projectName?: string
+      customerName?: string | null
+      customerId?: string | null
+      jobNumber: string
+      startDate?: string | null
+      bidDueAt?: string | null
+      description?: string | null
+      notes?: string | null
+      estimatorUserId?: string | null
+      confirmCreateDespiteExisting?: boolean
+    }
+  ) =>
+    request<{
+      candidate: {
+        id: string
+        lifecycle: string
+        canonicalJobId: string
+      }
+      job: {
+        id: string
+        jobNumber: string | null
+        name: string
+        status: string
+      }
+      created: boolean
+      reused: boolean
+      attachedEmailCount: number
+    }>(`/workspaces/${workspaceId}/bid-candidates/${candidateId}/convert-to-job`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  createOperationalBidCandidate: (
+    workspaceId: string,
+    body: {
+      projectName: string;
+      customerName?: string | null;
+      customerId?: string | null;
+      resolveCreateCustomer?: boolean;
+      bidDueAt?: string | null;
+      anticipatedStartAt?: string | null;
+      scope?: string | null;
+      notes?: string | null;
+      externalProjectNumber?: string | null;
+    }
+  ) =>
+    request<{ candidateId: string; lifecycle: string }>(
+      `/workspaces/${workspaceId}/bid-candidates`,
       { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  /** Inbox → permanent Bid Candidate (no Job / Job number). */
+  createBidCandidateFromEmail: (
+    workspaceId: string,
+    body: {
+      messageId: string;
+      projectName: string;
+      customerName?: string | null;
+      customerId?: string | null;
+      resolveCreateCustomer?: boolean;
+      bidDueAt?: string | null;
+      anticipatedStartAt?: string | null;
+      scope?: string | null;
+      notes?: string | null;
+      externalProjectNumber?: string | null;
+      role?: 'BID_INVITE' | 'QUOTE' | 'SUPPORTING' | 'ADDENDUM';
+    }
+  ) =>
+    request<{ candidateId: string; emailMessageId: string; lifecycle: string }>(
+      `/workspaces/${workspaceId}/bid-candidates/from-email`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  /** Inbox → assign EmailMessage to existing Bid Candidate (manual = authoritative). */
+  assignEmailToBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      messageId: string;
+      role?: 'BID_INVITE' | 'SUPPORTING' | 'ADDENDUM' | 'QUOTE';
+      forceReassign?: boolean;
+    }
+  ) =>
+    request<{ candidateId: string; emailMessageId: string }>(
+      `/workspaces/${workspaceId}/bid-candidates/${candidateId}/assign-email`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  patchOperationalBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    body: {
+      projectName?: string;
+      customerName?: string | null;
+      customerId?: string | null;
+      bidDueAt?: string | null;
+      anticipatedStartAt?: string | null;
+      scope?: string | null;
+      notes?: string | null;
+      lifecycle?: 'OPEN' | 'QUOTED' | 'CONVERTED' | 'LOST' | 'ARCHIVED';
+      externalProjectNumber?: string | null;
+    }
+  ) =>
+    request<{ candidateId: string }>(
+      `/workspaces/${workspaceId}/bid-candidates/${candidateId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
     ),
 
   resolveBidCandidateExistingJob: (
@@ -3685,6 +3875,100 @@ export interface BiddingProject {
   unreadCount: number
   lastActivityAt: string | null
   recentSender: string | null
+}
+
+export type BidCandidateLifecycle =
+  | 'OPEN'
+  | 'QUOTED'
+  | 'CONVERTED'
+  | 'LOST'
+  | 'ARCHIVED'
+
+export interface OperationalBidCandidate {
+  id: string
+  identityKey: string
+  lifecycle: BidCandidateLifecycle
+  analysisStatus: string
+  projectName: string | null
+  customerName: string | null
+  customerId: string | null
+  bidDueAt: string | null
+  anticipatedStartAt: string | null
+  scopeSummary: string | null
+  notes: string | null
+  quoteCount: number
+  emailCount: number
+  quoteAmount: number | null
+  quoteCurrency: string | null
+  externalProjectNumber: string | null
+  canonicalJobId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface OperationalBidCandidateDetail {
+  id: string
+  identityKey: string
+  lifecycle: BidCandidateLifecycle
+  analysisStatus: string
+  projectName: string | null
+  customerName: string | null
+  customerId: string | null
+  bidDueAt: string | null
+  anticipatedStartAt: string | null
+  estimator: { id: string; name: string | null; email: string } | null
+  externalProjectNumber: string | null
+  scopeSummary: string | null
+  scopeDetail: unknown
+  notes: string | null
+  originalBidSource: string
+  canonicalJobId: string | null
+  canonicalJob: {
+    id: string
+    jobNumber: string | null
+    name: string
+    status: string
+  } | null
+  createdAt: string
+  updatedAt: string
+  emails: Array<{
+    id: string
+    role: string
+    isPrimary: boolean
+    matchConfidence: number | null
+    message: {
+      id: string
+      subject: string | null
+      senderName: string | null
+      senderEmail: string
+      receivedAt: string | null
+      sentAt: string
+      direction: string | null
+      hasAttachments: boolean
+      attachmentMetadata: unknown
+      inboxConnectionId: string
+    }
+  }>
+  quotes: Array<{
+    id: string
+    displayName: string | null
+    amount: number | null
+    currency: string | null
+    scopeSummary: string | null
+    scopeDetail: unknown
+    notes: string | null
+    isDurable: boolean
+    matchStatus: string
+    message: {
+      id: string
+      subject: string | null
+      sentAt: string
+      receivedAt: string | null
+      hasAttachments: boolean
+      attachmentMetadata: unknown
+      inboxConnectionId: string
+    }
+  }>
 }
 
 export interface JobFabricationItem {

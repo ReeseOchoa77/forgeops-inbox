@@ -746,50 +746,6 @@ export function BiddingFolderAnalysisView({
     }
   }
 
-  const handleImport = async () => {
-    if (!canImport) {
-      setError('Only OWNER/ADMIN can import bids')
-      return
-    }
-    const ids = [...selectedIds]
-    if (ids.length === 0) {
-      setError('Select at least one ready bid candidate')
-      return
-    }
-    if (!window.confirm(`Import ${ids.length} bid${ids.length === 1 ? '' : 's'}?`)) {
-      return
-    }
-    setActionBusy(true)
-    setError('')
-    try {
-      const result = await api.importBidCandidates(workspaceId, ids)
-      await loadCandidates()
-      if (selectedCandidateId) await loadDetail(selectedCandidateId)
-      setSelectedIds(new Set())
-      const conflictCount = result.imported.reduce(
-        (n, row) => n + (row.emailConflicts?.length ?? 0),
-        0
-      )
-      const parts = [
-        `${result.imported.length} imported`,
-        result.skipped.length ? `${result.skipped.length} skipped` : null,
-        result.failed.length ? `${result.failed.length} failed` : null,
-        conflictCount
-          ? `${conflictCount} email(s) left on other Jobs (protected assignment)`
-          : null,
-      ].filter(Boolean)
-      if (result.failed.length > 0 || conflictCount > 0) {
-        setError(parts.join(' · '))
-      } else {
-        window.alert(parts.join(' · '))
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed')
-    } finally {
-      setActionBusy(false)
-    }
-  }
-
   const unmatchQuote = async (quoteId: string) => {
     setActionBusy(true)
     setError('')
@@ -996,7 +952,8 @@ export function BiddingFolderAnalysisView({
       <p style={{ fontSize: 13, color: '#666', margin: '0 0 8px', lineHeight: 1.45 }}>
         Reconstruct historical bids from Quotes: find the original Bid email (Bid Invites
         first, Inbox fallback), build Bid Candidates, check existing Jobs, then Import
-        explicitly. Clear All clears this mailbox&apos;s analysis staging only.
+        explicitly. Clear Analysis removes reconstructable scan indexes for this
+        mailbox only — permanent Bid Candidates and durable Quote links are kept.
       </p>
       <p
         style={{
@@ -2297,20 +2254,19 @@ export function BiddingFolderAnalysisView({
             </button>
           )}
           {canImport && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={actionBusy || selectedIds.size === 0 || busy}
-              onClick={() => void handleImport()}
+            <div
+              style={{
+                fontSize: 12,
+                color: '#374151',
+                maxWidth: 320,
+                textAlign: 'right',
+                lineHeight: 1.35,
+              }}
             >
-              {actionBusy
-                ? 'Importing…'
-                : selectedIds.size > 0
-                  ? `Import ${selectedIds.size} Bid${
-                      selectedIds.size === 1 ? '' : 's'
-                    }`
-                  : 'Import Selected Bids'}
-            </button>
+              Jobs are created from{' '}
+              <strong>Bid Candidates → Convert to Job</strong> (review Job
+              number and fields). Bulk Import no longer creates Jobs.
+            </div>
           )}
         </div>
       </div>

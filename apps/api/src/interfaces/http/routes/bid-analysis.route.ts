@@ -433,12 +433,14 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           projectName: z.string().min(1),
           customerName: z.string().nullable().optional(),
           bidDueAt: z.string().datetime().nullable().optional(),
+          /** Ignored — Candidates do not receive ForgeOps Job numbers. */
           jobNumber: z.string().nullable().optional(),
           notes: z.string().nullable().optional(),
         })
         .parse(request.body);
 
       try {
+        // Canonical permanent Candidate create — never assigns a Job number.
         const result = await createManualBidCandidate({
           prisma: app.services.prisma,
           workspaceId,
@@ -450,7 +452,6 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
           ...(body.bidDueAt !== undefined
             ? { bidDueAt: body.bidDueAt ? new Date(body.bidDueAt) : null }
             : {}),
-          ...(body.jobNumber !== undefined ? { jobNumber: body.jobNumber } : {}),
           ...(body.notes !== undefined ? { notes: body.notes } : {}),
         });
         return reply.code(201).send(result);
@@ -901,9 +902,10 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
       const auth = await requireAuth(app, request, reply, params.workspaceId);
       if (!auth) return;
       if (!canPromoteBidCandidate(auth.role)) {
-        return reply
-          .code(403)
-          .send({ message: "Only OWNER/ADMIN can create bids from staging" });
+        return reply.code(403).send({
+          message:
+            "Only OWNER/ADMIN can Convert to Job from staging. Prefer Bid Candidates → Convert to Job.",
+        });
       }
 
       const body = z

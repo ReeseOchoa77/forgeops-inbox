@@ -29,6 +29,7 @@ describe("AttachmentIngestionService", () => {
 
   const outlookClient = {
     isConfigured: vi.fn(() => true),
+    setGraphMailboxEmail: vi.fn(),
     acquireAccessToken: vi.fn(async () => ({
       accessToken: "access",
       expiresAt: new Date(),

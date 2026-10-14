@@ -248,11 +248,10 @@ export async function persistOutboundSentAttachments(input: {
   originalThreadId: string | null;
   originalGmailThreadId: string | null;
   attachments: OutboundAttachment[];
-}): Promise<{ emailMessageId: string } | null> {
-  if (input.attachments.length === 0) {
-    // Still persist a lightweight sent row without attachments when possible
-  }
-
+  /** Canonical business subtype from compose Email Type (USER_EXPLICIT). */
+  businessTypeKey?: string | null;
+  userId?: string | null;
+}): Promise<{ emailMessageId: string; threadId: string } | null> {
   const now = new Date();
   const localMessageId = `forgeops-sent-${randomBytes(12).toString("hex")}`;
   const threadProviderId =
@@ -287,6 +286,8 @@ export async function persistOutboundSentAttachments(input: {
       select: { id: true, gmailThreadId: true },
     }));
 
+  // Graph sendMail/reply returns 202 with no message id — keep local forgeops-sent-*
+  // until Sent Items sync reconciles providerMessageId / internetMessageId.
   const message = await input.prisma.emailMessage.create({
     data: {
       workspaceId: input.workspaceId,
@@ -309,12 +310,17 @@ export async function persistOutboundSentAttachments(input: {
       snippet: input.body.replace(/<[^>]+>/g, " ").slice(0, 240),
       bodyText: input.bodyFormat === "text" ? input.body : null,
       bodyHtml: input.bodyFormat === "html" ? input.body : null,
+      direction: "SENT",
+      composedInForgeOps: true,
       hasAttachments: input.attachments.length > 0,
       isRead: true,
       mailboxCategory: "BUSINESS",
       sentAt: now,
       receivedAt: now,
       itemStatus: "NEW",
+      // Skip AI classify reconcile — USER_EXPLICIT classification written below.
+      classificationStatus: input.businessTypeKey ? "CLASSIFIED" : "PENDING",
+      classificationLastAttemptAt: input.businessTypeKey ? now : null,
       attachmentMetadata: input.attachments.map((a) => ({
         filename: a.filename,
         mimeType: a.mimeType,
@@ -391,5 +397,20 @@ export async function persistOutboundSentAttachments(input: {
     }
   }
 
-  return { emailMessageId: message.id };
+  if (input.businessTypeKey && input.userId) {
+    const { persistUserExplicitClassification } = await import(
+      "./persist-user-explicit-classification.js"
+    );
+    await persistUserExplicitClassification({
+      prisma: input.prisma,
+      workspaceId: input.workspaceId,
+      threadId: ensuredThread.id,
+      emailMessageId: message.id,
+      businessTypeKey: input.businessTypeKey,
+      userId: input.userId,
+      source: "forgeops_compose",
+    });
+  }
+
+  return { emailMessageId: message.id, threadId: ensuredThread.id };
 }

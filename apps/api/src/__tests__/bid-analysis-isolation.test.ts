@@ -85,17 +85,22 @@ describe("Bid Analysis never auto-creates Jobs", () => {
     expect(src).toContain('z.enum(["scan", "analyze", "scan_bids"])');
     expect(src).toContain("canPromoteBidCandidate");
     expect(src).toContain("importBidCandidates");
-    expect(src).toContain("Only OWNER/ADMIN can create bids from staging");
+    expect(src).toContain("Convert to Job from staging");
   });
 
-  it("promote is separate explicit service", () => {
+  it("promote delegates to Convert to Job (ACTIVE, not BIDDING)", () => {
     const src = readFileSync(
       join(here, "../application/services/promote-bid-candidate.ts"),
       "utf8"
     );
-    expect(src).toContain("Analysis never calls this");
-    expect(src).toContain("ACTIVE_BID_STATUS");
-    expect(src).toContain('status: "CONFIRMED"');
+    expect(src).toContain("Analysis never auto-calls this");
+    expect(src).toContain("convertBidCandidateToJob");
     expect(src).toContain("preserveJobFields");
+    const convertSrc = readFileSync(
+      join(here, "../application/services/convert-bid-candidate-to-job.ts"),
+      "utf8"
+    );
+    expect(convertSrc).toContain('CONVERTED_JOB_STATUS = "ACTIVE"');
+    expect(convertSrc).toContain('lifecycle: "CONVERTED"');
   });
 });

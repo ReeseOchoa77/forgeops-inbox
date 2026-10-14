@@ -14,6 +14,9 @@ import {
   extractBidDueDateDeterministic,
   extractDetailedScopeDeterministic,
   isDetailedScopeComplete,
+  isTrustworthyBiddingProjectNumber,
+  isUserConfirmedBidCandidateEmail,
+  quoteGroupKeyBasisLabel,
   quoteMatchNeedsAiAdjudication,
   resolveBidInviteSearchSinceAt,
   resolveBidProjectIdentity,
@@ -144,8 +147,12 @@ function quoteIdentityFromEmail(msg: {
   });
   const projectName =
     identity.projectName ?? suggestBidProjectNameFromSubject(msg.subject);
+  // Bare subject digits only when distinctive enough for identity (not PR-01 → 01).
+  const bareNumber = (msg.subject ?? "").match(/\b(\d{2,6})\b/)?.[1] ?? null;
   const projectNumber =
-    (msg.subject ?? "").match(/\b(\d{2,6})\b/)?.[1] ?? null;
+    bareNumber && isTrustworthyBiddingProjectNumber(bareNumber)
+      ? bareNumber
+      : null;
   return {
     projectName,
     projectNumber,
@@ -671,9 +678,10 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
       if (!notes && qr.extractedNotes) notes = qr.extractedNotes;
     }
 
+    // Email-extracted number is external project/bid evidence — not a ForgeOps Job #.
     const identityKey =
       buildBidCandidateIdentityKey({
-        projectNumber,
+        externalProjectNumber: projectNumber,
         projectName,
         customerName,
         fallbackMessageId: group.quoteRows[0]?.emailMessageId ?? null,
@@ -689,10 +697,13 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
       select: {
         id: true,
         status: true,
+        lifecycle: true,
         userEditedFields: true,
         proposedProjectName: true,
         proposedCustomerName: true,
+        customerId: true,
         proposedBidDueAt: true,
+        anticipatedStartAt: true,
         proposedJobNumber: true,
         proposedScope: true,
         proposedScopeDetail: true,
@@ -704,11 +715,17 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
     });
 
     const needsReviewNoBid = source === "NONE";
+    const hasQuotes = group.quoteRows.some((q) => q.matchStatus !== "REJECTED");
     let candidateId: string;
 
     if (existing) {
       candidateId = existing.id;
-      if (existing.status !== "CONFIRMED" && existing.status !== "REJECTED") {
+      // Never mutate converted Candidates; preserve user lifecycle/customer/start.
+      if (
+        existing.status !== "CONFIRMED" &&
+        existing.status !== "REJECTED" &&
+        existing.lifecycle !== "CONVERTED"
+      ) {
         const locked = lockedFields(existing.userEditedFields);
         const nextName = locked.has("proposedProjectName")
           ? existing.proposedProjectName
@@ -719,6 +736,7 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
         const nextDue = locked.has("proposedBidDueAt")
           ? existing.proposedBidDueAt
           : bidDueAt ?? existing.proposedBidDueAt;
+        // proposedJobNumber stores external evidence only — never generate Job #s.
         const nextNumber = locked.has("proposedJobNumber")
           ? existing.proposedJobNumber
           : projectNumber ?? existing.proposedJobNumber;
@@ -730,12 +748,25 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
             : nextName && nextDue
               ? "READY"
               : "DISCOVERED";
+        let nextLifecycle = existing.lifecycle;
+        if (!locked.has("lifecycle")) {
+          if (hasQuotes && existing.lifecycle === "OPEN") {
+            nextLifecycle = "QUOTED";
+          }
+        }
         const prevEv = evidenceObject(existing.evidence);
         await input.prisma.bidCandidate.update({
           where: { id: existing.id },
           data: {
             proposedProjectName: nextName,
             proposedCustomerName: nextCustomer,
+            // Preserve resolved customer + start date always when set/locked.
+            customerId: locked.has("customerId")
+              ? existing.customerId
+              : existing.customerId,
+            anticipatedStartAt: locked.has("anticipatedStartAt")
+              ? existing.anticipatedStartAt
+              : existing.anticipatedStartAt,
             proposedBidDueAt: nextDue,
             proposedJobNumber: nextNumber,
             proposedScope: scopeLocked
@@ -747,6 +778,7 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
             proposedNotes: locked.has("proposedNotes")
               ? existing.proposedNotes
               : notes ?? existing.proposedNotes,
+            lifecycle: nextLifecycle,
             originalBidSource: source,
             evidence: {
               ...prevEv,
@@ -780,9 +812,11 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
         data: {
           workspaceId: input.workspaceId,
           identityKey,
+          lifecycle: hasQuotes ? "QUOTED" : "OPEN",
           proposedProjectName: projectName,
           proposedCustomerName: customerName,
           proposedBidDueAt: bidDueAt,
+          // External project/bid evidence only — not a ForgeOps Job number.
           proposedJobNumber: projectNumber,
           proposedScope: scopeSummary,
           proposedScopeDetail: scopeDetail as unknown as Prisma.InputJsonValue,
@@ -809,43 +843,58 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
     }
 
     if (original) {
-      const role = inviteEmailRoleFromSubject(original.subject);
-      await input.prisma.bidCandidateEmail.upsert({
+      // Manual Inbox association is authoritative — never re-home the email.
+      const priorLinks = await input.prisma.bidCandidateEmail.findMany({
         where: {
-          bidCandidateId_emailMessageId: {
+          workspaceId: input.workspaceId,
+          emailMessageId: original.emailMessageId,
+        },
+        select: { bidCandidateId: true, matchEvidence: true },
+      });
+      const userLocked = priorLinks.find((l) =>
+        isUserConfirmedBidCandidateEmail(l.matchEvidence)
+      );
+      if (!userLocked || userLocked.bidCandidateId === candidateId) {
+        const role = inviteEmailRoleFromSubject(original.subject);
+        await input.prisma.bidCandidateEmail.upsert({
+          where: {
+            bidCandidateId_emailMessageId: {
+              bidCandidateId: candidateId,
+              emailMessageId: original.emailMessageId,
+            },
+          },
+          create: {
+            workspaceId: input.workspaceId,
             bidCandidateId: candidateId,
             emailMessageId: original.emailMessageId,
+            role: role === "ADDENDUM" ? "BID_INVITE" : role,
+            isPrimary: true,
+            matchConfidence: original.score,
+            matchEvidence: {
+              labels: original.evidence,
+              source,
+            } as Prisma.InputJsonValue,
           },
-        },
-        create: {
+          update: userLocked
+            ? {}
+            : {
+                isPrimary: true,
+                matchConfidence: original.score,
+                matchEvidence: {
+                  labels: original.evidence,
+                  source,
+                } as Prisma.InputJsonValue,
+              },
+        });
+        await linkSupportingThreadEmails({
+          prisma: input.prisma,
           workspaceId: input.workspaceId,
-          bidCandidateId: candidateId,
-          emailMessageId: original.emailMessageId,
-          role: role === "ADDENDUM" ? "BID_INVITE" : role,
-          isPrimary: true,
-          matchConfidence: original.score,
-          matchEvidence: {
-            labels: original.evidence,
-            source,
-          } as Prisma.InputJsonValue,
-        },
-        update: {
-          isPrimary: true,
-          matchConfidence: original.score,
-          matchEvidence: {
-            labels: original.evidence,
-            source,
-          } as Prisma.InputJsonValue,
-        },
-      });
-      await linkSupportingThreadEmails({
-        prisma: input.prisma,
-        workspaceId: input.workspaceId,
-        candidateId,
-        primaryEmailId: original.emailMessageId,
-        threadId: original.threadId,
-        invitePoolIds,
-      });
+          candidateId,
+          primaryEmailId: original.emailMessageId,
+          threadId: original.threadId,
+          invitePoolIds,
+        });
+      }
     }
 
     for (const qr of group.quoteRows) {
@@ -854,14 +903,35 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
         // Preserve explicit user unmatch / review decisions.
         continue;
       }
+      // Manual Inbox Quote association is authoritative — never re-home.
+      const priorQuoteLinks = await input.prisma.bidCandidateEmail.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          emailMessageId: qr.emailMessageId,
+          role: "QUOTE",
+        },
+        select: { bidCandidateId: true, matchEvidence: true },
+      });
+      const quoteUserLocked = priorQuoteLinks.find((l) =>
+        isUserConfirmedBidCandidateEmail(l.matchEvidence)
+      );
+      if (quoteUserLocked && quoteUserLocked.bidCandidateId !== candidateId) {
+        continue;
+      }
+
       await input.prisma.bidQuoteStaging.update({
         where: { id: qr.stagingId },
         data: {
           bidCandidateId: candidateId,
           matchStatus: "MATCHED",
           matchConfidence: 0.9,
+          isDurable: true,
           matchEvidence: {
-            labels: ["quote_first_group", group.groupKey],
+            labels: [
+              "quote_first_group",
+              group.groupKey,
+              quoteGroupKeyBasisLabel(group.groupKey),
+            ],
             quoteFirst: true,
           } as Prisma.InputJsonValue,
         },
@@ -879,13 +949,27 @@ export async function reconstructCandidatesFromQuoteGroups(input: {
           emailMessageId: qr.emailMessageId,
           role: "QUOTE",
           matchConfidence: 0.9,
-          matchEvidence: { labels: ["quote_first_group"] },
+          matchEvidence: {
+            labels: [
+              "quote_first_group",
+              group.groupKey,
+              quoteGroupKeyBasisLabel(group.groupKey),
+            ],
+          },
           isPrimary: false,
         },
-        update: {
-          matchConfidence: 0.9,
-          matchEvidence: { labels: ["quote_first_group"] },
-        },
+        update: quoteUserLocked
+          ? {}
+          : {
+              matchConfidence: 0.9,
+              matchEvidence: {
+                labels: [
+                  "quote_first_group",
+                  group.groupKey,
+                  quoteGroupKeyBasisLabel(group.groupKey),
+                ],
+              },
+            },
       });
       matchedQuotes += 1;
     }

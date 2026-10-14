@@ -43,6 +43,7 @@ describe("matchQuotesToCandidates import safety", () => {
         update: vi.fn(async () => ({})),
       },
       bidCandidateEmail: {
+        findFirst: vi.fn(async () => null),
         upsert,
         deleteMany,
       },

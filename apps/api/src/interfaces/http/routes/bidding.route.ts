@@ -237,6 +237,11 @@ export const registerBiddingRoutes = async (app: FastifyInstance): Promise<void>
     return reply.send({ suggestions });
   });
 
+  /**
+   * @deprecated Phase 6 — historical Job(BIDDING) path. No active web callers.
+   * New workflows use Bid Candidates → Convert to Job (ACTIVE).
+   * Kept for historical data / API compatibility; do not wire UI to this.
+   */
   app.post("/api/v1/workspaces/:workspaceId/bidding/from-email", async (request, reply) => {
     const { workspaceId } = wsParams.parse(request.params);
     const auth = await requireAuth(app, request, reply, workspaceId);

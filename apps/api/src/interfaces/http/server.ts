@@ -92,6 +92,7 @@ import { registerJobBillingRoutes } from "./routes/job-billing.route.js";
 import { registerJobRfqRoutes } from "./routes/job-rfqs.route.js";
 import { registerBiddingRoutes } from "./routes/bidding.route.js";
 import { registerBidAnalysisRoutes } from "./routes/bid-analysis.route.js";
+import { registerBidCandidatesRoutes } from "./routes/bid-candidates.route.js";
 import { registerTaskBulkRoutes } from "./routes/task-bulk.route.js";
 import { registerTasksRoutes } from "./routes/tasks.route.js";
 import { registerJobFilesRoutes } from "./routes/job-files.route.js";
@@ -478,6 +479,7 @@ export const buildServer = async () => {
   registerJobRfqRoutes(app);
   await registerBiddingRoutes(app);
   await registerBidAnalysisRoutes(app);
+  await registerBidCandidatesRoutes(app);
   await registerTaskBulkRoutes(app);
   await registerTasksRoutes(app);
   await registerJobFilesRoutes(app);

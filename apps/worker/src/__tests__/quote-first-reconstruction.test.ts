@@ -27,6 +27,7 @@ function basePrisma() {
       update: vi.fn(async () => ({})),
     },
     bidCandidateEmail: {
+      findMany: vi.fn(async () => []),
       upsert: vi.fn(async () => ({})),
     },
   };
@@ -365,5 +366,163 @@ describe("quote-first reconstruction", () => {
 
     const created = prisma.bidCandidate.create.mock.calls[0]![0].data;
     expect(created.originalBidSource).toBe("NONE");
+  });
+
+  it("does not group ESC PR-01 with unrelated Quotes that also contain 01", async () => {
+    const progress = emptyBidEmailAnalyzeProgress();
+    const prisma = basePrisma();
+    prisma.bidQuoteStaging.findMany = vi.fn(async () => [
+      {
+        id: "qs-esc",
+        emailMessageId: "em-esc",
+        displayName: "ESC Swing Space",
+        extractedScope: null,
+        extractedScopeDetail: null,
+        extractedAmount: null,
+        extractedNotes: null,
+        userConfirmedMatch: false,
+        userEditedFields: null,
+        matchStatus: "UNMATCHED",
+        emailMessage: {
+          id: "em-esc",
+          subject: "ESC Swing Space - Added PR-01 Steel Scope",
+          bodyText: "Quote",
+          senderName: "Vendor A",
+          attachmentMetadata: [],
+          receivedAt: new Date("2026-01-10"),
+        },
+      },
+      {
+        id: "qs-zayo",
+        emailMessageId: "em-zayo",
+        displayName: "Zayo Group",
+        extractedScope: null,
+        extractedScopeDetail: null,
+        extractedAmount: null,
+        extractedNotes: null,
+        userConfirmedMatch: false,
+        userEditedFields: null,
+        matchStatus: "UNMATCHED",
+        emailMessage: {
+          id: "em-zayo",
+          subject: "Zayo Group - Quote Rev 01",
+          bodyText: "Quote",
+          senderName: "Vendor B",
+          attachmentMetadata: [],
+          receivedAt: new Date("2026-01-11"),
+        },
+      },
+      {
+        id: "qs-morries",
+        emailMessageId: "em-morries",
+        displayName: "Morries Cadillac",
+        extractedScope: null,
+        extractedScopeDetail: null,
+        extractedAmount: null,
+        extractedNotes: null,
+        userConfirmedMatch: false,
+        userEditedFields: null,
+        matchStatus: "UNMATCHED",
+        emailMessage: {
+          id: "em-morries",
+          subject: "Morries Cadillac - Pricing 01",
+          bodyText: "Quote",
+          senderName: "Vendor C",
+          attachmentMetadata: [],
+          receivedAt: new Date("2026-01-12"),
+        },
+      },
+    ]);
+
+    const groups = await groupQuotesIntoProjects({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      inboxConnectionId: "conn",
+      runId: "run-1",
+      progress,
+    });
+
+    expect(groups).toHaveLength(3);
+    expect(groups.every((g) => !g.groupKey.startsWith("qnum:"))).toBe(true);
+    expect(groups.every((g) => g.projectNumber == null)).toBe(true);
+  });
+
+  it("does not collapse distinct Quote groups into one Candidate via weak number", async () => {
+    const progress = emptyBidEmailAnalyzeProgress();
+    const prisma = basePrisma();
+    const createdKeys: string[] = [];
+    prisma.bidCandidate.create = vi.fn(
+      async ({ data }: { data: { identityKey: string } }) => {
+        createdKeys.push(data.identityKey);
+        return { id: `cand-${createdKeys.length}`, ...data };
+      }
+    );
+    prisma.bidFolderDiscoveryEmail.findMany = vi.fn(async () => []);
+    prisma.emailMessage.findMany = vi.fn(async () => []);
+
+    await reconstructCandidatesFromQuoteGroups({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      inboxConnectionId: "conn",
+      runId: "run-1",
+      progress,
+      groups: [
+        {
+          groupKey: "qname:esc swing space added pr 01 steel scope|cust:vendor a",
+          projectName: "ESC Swing Space - Added PR-01 Steel Scope",
+          // Simulate enrichment handing both groups the same weak number.
+          projectNumber: "01",
+          customerName: "Vendor A",
+          quoteRows: [
+            {
+              stagingId: "qs-esc",
+              emailMessageId: "em-esc",
+              subject: "ESC Swing Space - Added PR-01 Steel Scope",
+              bodyText: "Quote",
+              senderName: "Vendor A",
+              attachmentMetadata: [],
+              receivedAt: new Date("2026-01-10"),
+              displayName: null,
+              extractedScope: null,
+              extractedScopeDetail: null,
+              extractedAmount: null,
+              extractedNotes: null,
+              userConfirmedMatch: false,
+              userEditedFields: null,
+              matchStatus: "UNMATCHED",
+            },
+          ],
+        },
+        {
+          groupKey: "qname:zayo group fiber build|cust:vendor b",
+          projectName: "Zayo Group Fiber Build",
+          projectNumber: "01",
+          customerName: "Vendor B",
+          quoteRows: [
+            {
+              stagingId: "qs-zayo",
+              emailMessageId: "em-zayo",
+              subject: "Zayo Group Fiber Build Quote",
+              bodyText: "Quote",
+              senderName: "Vendor B",
+              attachmentMetadata: [],
+              receivedAt: new Date("2026-01-11"),
+              displayName: null,
+              extractedScope: null,
+              extractedScopeDetail: null,
+              extractedAmount: null,
+              extractedNotes: null,
+              userConfirmedMatch: false,
+              userEditedFields: null,
+              matchStatus: "UNMATCHED",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(createdKeys).toHaveLength(2);
+    expect(createdKeys[0]).not.toBe(createdKeys[1]);
+    expect(createdKeys.every((k) => !k.startsWith("num:"))).toBe(true);
   });
 });

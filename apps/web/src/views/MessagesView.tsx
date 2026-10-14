@@ -27,6 +27,7 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
+import { businessSubtypeFilterOptionsForDirection } from '@forgeops/shared/business-subtypes'
 import {
   INBOX_ACTIONS_COLUMN_WIDTH_PX,
   MailboxCategoryDot,
@@ -307,6 +308,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
+  /** Exact subtype — Bid Candidate (BID_OPPORTUNITY). Server-side before pagination. */
+  const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [excludeBusinessTypeGroups, setExcludeBusinessTypeGroups] = useState<InboxBusinessTypeGroup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
@@ -425,20 +428,33 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       activeSearch,
       searchIn,
       excludeBusinessTypeGroups,
+      businessTypeKey: businessTypeKey || undefined,
       pinnedOnly,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, searchIn, dateRange, browserTimeZone, excludeBusinessTypeGroups, businessTypeKey, pinnedOnly])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     // Direction composes with the current tab/classification — do not reset them.
     setReadFilter(key)
+    // Drop subtype choices that are irrelevant for the new direction context.
+    const nextDir = key === 'sent' ? 'sent' : 'incoming'
+    const allowed = new Set(
+      businessSubtypeFilterOptionsForDirection(nextDir)
+        .filter((o) => o.key === 'BID_OPPORTUNITY' || o.key === 'ESTIMATE_QUOTE')
+        .map((o) => o.key)
+    )
+    setBusinessTypeKey((prev) => (prev && !allowed.has(prev as never) ? '' : prev))
   }
 
   const selectInboxTab = (tab: InboxTab) => {
     // Tab/classification composes with the current direction (incl. Sent).
     setInboxTab(tab)
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
-    if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') setJobFilter('')
+    // Exact subtype filter is independent of group tabs — clear when leaving Business.
+    if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') {
+      setJobFilter('')
+      setBusinessTypeKey('')
+    }
     if (tab === 'TRASH') setMassDeleteMode(false)
     if (tab !== 'UNCLASSIFIED') {
       setReclassifySelected(new Set())
@@ -615,6 +631,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     setJobFilter('')
+    setBusinessTypeKey('')
     setExcludeBusinessTypeGroups([])
     setMassDeleteMode(false)
 
@@ -682,7 +699,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
-  }, [inboxTab, activeSearch, jobFilter, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, searchIn, dateRange, excludeBusinessTypeGroups, pinnedOnly])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -1662,6 +1679,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 value={jobFilter}
                 onChange={setJobFilter}
               />
+
+              <span style={{ color: '#ddd' }}>|</span>
+
+              <select
+                data-testid="inbox-subtype-filter"
+                aria-label="Subtype filter"
+                value={businessTypeKey}
+                onChange={(e) => setBusinessTypeKey(e.target.value)}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: 12,
+                  borderRadius: 6,
+                  border: businessTypeKey ? '1px solid #1a1a2e' : '1px solid #ddd',
+                  background: businessTypeKey ? '#f0f4ff' : '#fff',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  maxWidth: 160,
+                }}
+              >
+                <option value="">All subtypes</option>
+                {businessSubtypeFilterOptionsForDirection(
+                  isSentView ? 'sent' : 'incoming'
+                )
+                  // Phase 4: surface Bid Candidate (incoming) and Quote (sent) at minimum.
+                  .filter((o) =>
+                    o.key === 'BID_OPPORTUNITY' || o.key === 'ESTIMATE_QUOTE'
+                  )
+                  .map((o) => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                  ))}
+              </select>
 
               <span style={{ color: '#ddd' }}>|</span>
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type SessionResponse, type ConnectionSummary, type JobSummary } from './api'
-import { ComposeEditor } from './components/ComposeEditor'
+import { ComposeEditor, type ComposeSendPayload } from './components/ComposeEditor'
 import { useBreakpoint } from './hooks/useBreakpoint'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
@@ -40,7 +40,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'inbox', label: 'Inbox', icon: '\u2709' },
   { page: 'tasks', label: 'Tasks', icon: '\u2611' },
   { page: 'calendar', label: 'Calendar', icon: '\uD83D\uDCC5' },
-  { page: 'bidding', label: 'Bidding', icon: '\uD83D\uDCCB' },
+  { page: 'bidding', label: 'Bid Candidates', icon: '\uD83D\uDCCB' },
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA', section: 'Manage' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
@@ -59,7 +59,7 @@ const PAGE_TITLES: Record<Page, string> = {
   'email-analysis': 'Email Analysis',
   tasks: 'Tasks',
   calendar: 'Calendar',
-  bidding: 'Bidding',
+  bidding: 'Bid Candidates',
   jobs: 'Jobs',
   'job-detail': 'Job Detail',
   'outlook-folders': 'Email Analysis',
@@ -495,16 +495,7 @@ export default function App() {
       .finally(() => setSendableLoading(false))
   }
 
-  const handleNewComposeSend = async (payload: {
-    inboxConnectionId: string
-    to: string[]
-    cc: string[]
-    bcc: string[]
-    subject: string
-    html: string
-    files: File[]
-    existingAttachmentIds?: string[]
-  }) => {
+  const handleNewComposeSend = async (payload: ComposeSendPayload) => {
     setComposeSending(true)
     setComposeError(null)
     try {
@@ -518,6 +509,7 @@ export default function App() {
         bodyFormat: 'html',
         files: payload.files,
         existingAttachmentIds: payload.existingAttachmentIds,
+        businessTypeKey: payload.businessTypeKey,
       })
       setShowCompose(false)
     } catch (e) {
@@ -930,7 +922,13 @@ export default function App() {
               <BiddingView
                 workspaceId={workspaceId}
                 breakpoint={bp}
-                onOpenBid={(id) => openJob(id, undefined, 'bidding')}
+                onOpenMessage={(messageId, inboxConnectionId) =>
+                  openMessage(messageId, {
+                    connectionId: inboxConnectionId,
+                    backPage: 'bidding',
+                  })
+                }
+                onOpenJob={(jobId) => openJob(jobId, undefined, 'bidding')}
               />
             </div>
           )}

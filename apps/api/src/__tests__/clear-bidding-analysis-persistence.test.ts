@@ -1,16 +1,15 @@
 /**
- * Integration: Clear All must persist — fresh GET after clear returns 0 active Candidates.
- * Models the real bug: legacy BidCandidateEmail-only remnant (no discovery/quotes).
+ * Integration: Clear Analysis must NOT delete permanent Bid Candidates.
+ * Deletes reconstructable discovery/runs/ephemeral quotes only.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { clearBiddingAnalysisStaging } from "../application/services/clear-bidding-analysis.js";
-import { activeBidCandidatesForMailboxWhere } from "../application/services/bid-candidate-mailbox-scope.js";
 
 const p = new PrismaClient();
 const runDb = Boolean(process.env.DATABASE_URL);
 
-describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
+describe.runIf(runDb)("Clear Analysis preserves permanent Candidates (Postgres)", () => {
   const suffix = `persist-${Date.now()}`;
   let workspaceId = "";
   let connectionId = "";
@@ -21,6 +20,8 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
   let attachmentId = "";
   let jobId = "";
   let customerId = "";
+  let ephemeralQuoteId = "";
+  let durableQuoteId = "";
 
   beforeAll(async () => {
     const workspace = await p.workspace.create({
@@ -98,13 +99,14 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
     });
     attachmentId = att.id;
 
-    // Legacy remnant: email link only — no discovery, no quote staging.
     const legacy = await p.bidCandidate.create({
       data: {
         workspaceId,
         identityKey: `leg:${suffix}`,
         status: "READY",
+        lifecycle: "OPEN",
         proposedProjectName: "Legacy Survivor",
+        userEditedFields: ["proposedProjectName"],
       },
     });
     legacyId = legacy.id;
@@ -144,6 +146,7 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
         workspaceId,
         identityKey: `mod:${suffix}`,
         status: "NEEDS_REVIEW",
+        lifecycle: "QUOTED",
         proposedProjectName: "Modern",
       },
     });
@@ -156,21 +159,48 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
         role: "QUOTE",
       },
     });
-    await p.bidQuoteStaging.create({
+    const durableQ = await p.bidQuoteStaging.create({
       data: {
         workspaceId,
         inboxConnectionId: connectionId,
         emailMessageId: quoteMsg.id,
         bidCandidateId: modernId,
         matchStatus: "MATCHED",
+        isDurable: true,
       },
     });
+    durableQuoteId = durableQ.id;
+
+    const ephemeralMsg = await p.emailMessage.create({
+      data: {
+        workspaceId,
+        inboxConnectionId: connectionId,
+        threadId: thread.id,
+        gmailMessageId: `gm-eph-${suffix}`,
+        gmailThreadId: thread.gmailThreadId,
+        subject: "Ephemeral quote extract",
+        senderEmail: "gc@example.com",
+        sentAt: new Date(),
+        receivedAt: new Date(),
+      },
+    });
+    const ephemeral = await p.bidQuoteStaging.create({
+      data: {
+        workspaceId,
+        inboxConnectionId: connectionId,
+        emailMessageId: ephemeralMsg.id,
+        matchStatus: "UNMATCHED",
+        isDurable: false,
+      },
+    });
+    ephemeralQuoteId = ephemeral.id;
 
     const confirmed = await p.bidCandidate.create({
       data: {
         workspaceId,
         identityKey: `conf:${suffix}`,
         status: "CONFIRMED",
+        lifecycle: "CONVERTED",
         proposedProjectName: "Imported",
         canonicalJobId: jobId,
         confirmedAt: new Date(),
@@ -205,43 +235,38 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
     await p.$disconnect();
   });
 
-  it("GET before clear returns active candidates including legacy remnant", async () => {
-    const rows = await p.bidCandidate.findMany({
-      where: activeBidCandidatesForMailboxWhere({
-        workspaceId,
-        connectionId,
-      }),
-    });
-    const ids = rows.map((r) => r.id);
-    expect(ids).toContain(legacyId);
-    expect(ids).toContain(modernId);
-    expect(ids).not.toContain(confirmedId);
-  });
-
-  it("Clear All then fresh GET → 0 active; legacy deleted; confirmed + emails kept", async () => {
+  it("Clear Analysis keeps Candidates, durable quotes, emails, Jobs; drops scan artifacts", async () => {
     const clear1 = await clearBiddingAnalysisStaging({
       prisma: p,
       workspaceId,
       connectionId,
     });
-    expect(clear1.candidatesDeleted).toBeGreaterThanOrEqual(2);
+    expect(clear1.candidatesDeleted).toBe(0);
+    expect(clear1.candidateEmailsUnlinked).toBe(0);
+    expect(clear1.quotesDeleted).toBe(1);
+    expect(clear1.discoveryDeleted).toBeGreaterThanOrEqual(1);
+    expect(clear1.runsDeleted).toBe(1);
 
-    // Fresh request context (not frontend cache).
-    const after = await p.bidCandidate.findMany({
-      where: activeBidCandidatesForMailboxWhere({
-        workspaceId,
-        connectionId,
-      }),
-    });
-    expect(after).toHaveLength(0);
+    expect(await p.bidCandidate.findUnique({ where: { id: legacyId } })).not.toBeNull();
+    expect(await p.bidCandidate.findUnique({ where: { id: modernId } })).not.toBeNull();
+    expect(await p.bidCandidate.findUnique({ where: { id: confirmedId } })).not.toBeNull();
 
-    expect(await p.bidCandidate.findUnique({ where: { id: legacyId } })).toBeNull();
-    expect(await p.bidCandidate.findUnique({ where: { id: modernId } })).toBeNull();
+    const legacy = await p.bidCandidate.findUnique({ where: { id: legacyId } });
+    expect(legacy?.userEditedFields).toEqual(["proposedProjectName"]);
 
-    const confirmed = await p.bidCandidate.findUnique({
-      where: { id: confirmedId },
-    });
-    expect(confirmed?.status).toBe("CONFIRMED");
+    expect(
+      await p.bidCandidateEmail.count({ where: { bidCandidateId: legacyId } })
+    ).toBe(1);
+    expect(
+      await p.bidCandidateEmail.count({ where: { bidCandidateId: modernId } })
+    ).toBe(1);
+
+    expect(
+      await p.bidQuoteStaging.findUnique({ where: { id: durableQuoteId } })
+    ).not.toBeNull();
+    expect(
+      await p.bidQuoteStaging.findUnique({ where: { id: ephemeralQuoteId } })
+    ).toBeNull();
 
     expect(
       await p.emailMessage.findUnique({ where: { id: emailMessageId } })
@@ -251,6 +276,9 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
     });
     expect(att?.extractedText).toBe("KEEP ME");
     expect(await p.job.findUnique({ where: { id: jobId } })).not.toBeNull();
+    expect(await p.job.findUnique({ where: { id: jobId } })).toMatchObject({
+      status: "BIDDING",
+    });
     expect(
       await p.customer.findUnique({ where: { id: customerId } })
     ).not.toBeNull();
@@ -261,30 +289,17 @@ describe.runIf(runDb)("Clear All persistence (real Postgres)", () => {
       })
     ).toBe(0);
     expect(
-      await p.bidQuoteStaging.count({
-        where: { inboxConnectionId: connectionId },
-      })
-    ).toBe(0);
-    expect(
       await p.bidAnalysisRun.count({
         where: { inboxConnectionId: connectionId },
       })
     ).toBe(0);
 
-    // Idempotent second clear
     const clear2 = await clearBiddingAnalysisStaging({
       prisma: p,
       workspaceId,
       connectionId,
     });
     expect(clear2.candidatesDeleted).toBe(0);
-    expect(
-      await p.bidCandidate.findMany({
-        where: activeBidCandidatesForMailboxWhere({
-          workspaceId,
-          connectionId,
-        }),
-      })
-    ).toHaveLength(0);
+    expect(clear2.quotesDeleted).toBe(0);
   });
 });

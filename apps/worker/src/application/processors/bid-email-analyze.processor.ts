@@ -670,6 +670,29 @@ export async function processBidEmailAnalyze(
           // Scan = discovery only. Candidate grouping runs via operation=analyze.
         }
 
+        // Lossless folder ingestion: canonical EmailMessage already imported above.
+        // Deterministic subtypes — no AI classification call. Direction stays provider-authoritative.
+        if (phase === "BID_INVITES" && messageIds.length > 0) {
+          const { applyDeterministicBidInviteSubtype } = await import(
+            "../services/apply-bid-invite-subtype.js"
+          );
+          await applyDeterministicBidInviteSubtype({
+            prisma: deps.prisma,
+            workspaceId: payload.workspaceId,
+            emailMessageIds: messageIds,
+          });
+        }
+        if (phase === "QUOTES" && messageIds.length > 0) {
+          const { applyDeterministicQuoteSubtype } = await import(
+            "../services/apply-quote-subtype.js"
+          );
+          await applyDeterministicQuoteSubtype({
+            prisma: deps.prisma,
+            workspaceId: payload.workspaceId,
+            emailMessageIds: messageIds,
+          });
+        }
+
         await writeProgress(deps.prisma, run.id, progress);
         pageCursor = page.nextPageCursor;
       } while (pageCursor);

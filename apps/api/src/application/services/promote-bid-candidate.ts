@@ -1,23 +1,27 @@
 /**
- * Explicit human confirmation: promote BidCandidate → canonical BIDDING Job.
- * Analysis never calls this.
+ * Legacy promote API surface — delegates to Convert to Job (ACTIVE Job).
+ * Prefer convertBidCandidateToJob / POST .../convert-to-job for new callers.
+ * Analysis never auto-calls this.
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
-import {
-  buildBidCandidateIdentityKey,
-  dedupeProjectAliases,
-  normalizeName,
-  scopeDetailFromUserText,
-} from "@forgeops/shared";
-import {
-  associateBidImportEmails,
-  collectBidCandidateImportEmailIds,
-  type BidImportEmailConflict,
-} from "./associate-bid-import-emails.js";
-import { ACTIVE_BID_STATUS } from "./bidding.js";
+import { scopeDetailFromUserText } from "@forgeops/shared";
+import type { BidImportEmailConflict } from "./associate-bid-import-emails.js";
 import { computeImportBlockedReason } from "./bid-import-eligibility.js";
-import { resolveOrCreateBiddingCustomer } from "./resolve-bidding-customer.js";
+import {
+  convertBidCandidateToJob,
+  ConvertBidCandidateError,
+} from "./convert-bid-candidate-to-job.js";
+import { suggestNextJobNumberForWorkspace } from "./bidding-intake-suggestions.js";
+
+export { findLikelyExistingJobs } from "./convert-bid-candidate-to-job.js";
+export {
+  convertBidCandidateToJob,
+  previewConvertBidCandidateToJob,
+  canConvertBidCandidateToJob,
+  ConvertBidCandidateError,
+  CONVERTED_JOB_STATUS,
+} from "./convert-bid-candidate-to-job.js";
 
 export class PromoteBidCandidateError extends Error {
   readonly code:
@@ -28,7 +32,10 @@ export class PromoteBidCandidateError extends Error {
     | "NAME_REQUIRED"
     | "EXISTING_JOB"
     | "JOB_NUMBER_TAKEN"
-    | "ATTACH_JOB_NOT_FOUND";
+    | "ATTACH_JOB_NOT_FOUND"
+    | "NOT_CONVERTIBLE"
+    | "JOB_NUMBER_REQUIRED"
+    | "CONCURRENT_CONVERSION";
 
   readonly causePayload?: unknown;
 
@@ -44,6 +51,7 @@ export class PromoteBidCandidateError extends Error {
   }
 }
 
+/** @deprecated Prefer canConvertBidCandidateToJob(workspaceRole) for Convert to Job. */
 export function canPromoteBidCandidate(role: string): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
@@ -61,13 +69,16 @@ export type PromoteBidCandidateInput = {
   customerName?: string | null;
   customerId?: string | null;
   bidDueAt?: Date | null;
+  startDate?: Date | null;
+  description?: string | null;
+  notes?: string | null;
   jobNumber?: string | null;
   estimatorUserId?: string | null;
   alternateProjectNames?: string[];
   /** Required when an exact/likely Job exists and mode is create */
   confirmCreateDespiteExisting?: boolean;
   /**
-   * When attaching: only link emails + set Job status BIDDING;
+   * When attaching: only link emails;
    * do not overwrite Job name/customer/due/jobNumber (import RESOLVED_SAME).
    */
   preserveJobFields?: boolean;
@@ -82,296 +93,79 @@ export type PromoteBidCandidateResult = {
   emailConflicts: BidImportEmailConflict[];
 };
 
-export async function findLikelyExistingJobs(
-  prisma: PrismaClient | Prisma.TransactionClient,
-  workspaceId: string,
-  input: {
-    projectName: string;
-    jobNumber?: string | null;
-  }
-): Promise<Array<{ id: string; name: string; jobNumber: string | null; status: string }>> {
-  const normalized = normalizeName(input.projectName);
-  const byName = normalized
-    ? await prisma.job.findMany({
-        where: { workspaceId, normalizedName: normalized, archivedAt: null },
-        select: { id: true, name: true, jobNumber: true, status: true },
-        take: 5,
-      })
-    : [];
-  if (input.jobNumber?.trim()) {
-    const byNum = await prisma.job.findMany({
-      where: {
-        workspaceId,
-        jobNumber: input.jobNumber.trim(),
-        archivedAt: null,
-      },
-      select: { id: true, name: true, jobNumber: true, status: true },
-      take: 5,
-    });
-    const seen = new Set(byName.map((j) => j.id));
-    for (const j of byNum) {
-      if (!seen.has(j.id)) byName.push(j);
-    }
-  }
-  return byName;
+function mapConvertError(e: ConvertBidCandidateError): PromoteBidCandidateError {
+  const codeMap: Record<
+    ConvertBidCandidateError["code"],
+    PromoteBidCandidateError["code"]
+  > = {
+    NOT_FOUND: "NOT_FOUND",
+    ALREADY_CONVERTED: "ALREADY_CONFIRMED",
+    NOT_CONVERTIBLE: "NOT_CONVERTIBLE",
+    FORBIDDEN: "FORBIDDEN",
+    NAME_REQUIRED: "NAME_REQUIRED",
+    JOB_NUMBER_REQUIRED: "JOB_NUMBER_REQUIRED",
+    JOB_NUMBER_TAKEN: "JOB_NUMBER_TAKEN",
+    EXISTING_JOB: "EXISTING_JOB",
+    ATTACH_JOB_NOT_FOUND: "ATTACH_JOB_NOT_FOUND",
+    CONCURRENT_CONVERSION: "CONCURRENT_CONVERSION",
+  };
+  return new PromoteBidCandidateError(
+    codeMap[e.code] ?? "FORBIDDEN",
+    e.message,
+    e.causePayload
+  );
 }
 
 /**
- * Transactional promotion. Idempotent: repeated Create Bid on CONFIRMED returns same Job.
+ * Delegates to convertBidCandidateToJob (ACTIVE Job, not BIDDING).
+ * Create mode auto-suggests a Job number when omitted (legacy Import callers).
  */
 export async function promoteBidCandidate(
   input: PromoteBidCandidateInput
 ): Promise<PromoteBidCandidateResult> {
-  const candidate = await input.prisma.bidCandidate.findFirst({
-    where: { id: input.candidateId, workspaceId: input.workspaceId },
-    include: {
-      emails: {
-        select: { emailMessageId: true, role: true },
-      },
-    },
-  });
-
-  if (!candidate) {
-    throw new PromoteBidCandidateError("NOT_FOUND", "Bid candidate not found");
-  }
-
-  if (candidate.status === "CONFIRMED" && candidate.canonicalJobId) {
-    return {
-      candidateId: candidate.id,
-      jobId: candidate.canonicalJobId,
-      created: false,
-      attachedEmailCount: candidate.emails.length,
-      emailConflicts: [],
-    };
-  }
-
-  if (candidate.status === "REJECTED") {
-    throw new PromoteBidCandidateError(
-      "REJECTED",
-      "Rejected candidates cannot be promoted"
-    );
-  }
-
-  const projectName =
-    input.projectName?.trim() || candidate.proposedProjectName?.trim() || "";
-  if (!projectName) {
-    throw new PromoteBidCandidateError(
-      "NAME_REQUIRED",
-      "Project name is required to create a bid"
-    );
-  }
-
-  const jobNumber =
-    input.jobNumber?.trim() || candidate.proposedJobNumber?.trim() || null;
-  const bidDueAt =
-    input.bidDueAt !== undefined ? input.bidDueAt : candidate.proposedBidDueAt;
-  const customerName =
-    input.customerName !== undefined
-      ? input.customerName
-      : candidate.proposedCustomerName;
-  const estimatorUserId =
-    input.estimatorUserId !== undefined
-      ? input.estimatorUserId
-      : candidate.proposedEstimatorUserId;
-
-  if (input.mode === "attach") {
-    const existingId = input.existingJobId?.trim();
-    if (!existingId) {
-      throw new PromoteBidCandidateError(
-        "ATTACH_JOB_NOT_FOUND",
-        "existingJobId is required to attach"
-      );
-    }
-    const existing = await input.prisma.job.findFirst({
-      where: { id: existingId, workspaceId: input.workspaceId },
-      select: { id: true, status: true },
-    });
-    if (!existing) {
-      throw new PromoteBidCandidateError(
-        "ATTACH_JOB_NOT_FOUND",
-        "Existing Job not found"
+  try {
+    let jobNumber = input.jobNumber?.trim() || null;
+    if (input.mode === "create" && !jobNumber) {
+      jobNumber = await suggestNextJobNumberForWorkspace(
+        input.prisma,
+        input.workspaceId
       );
     }
 
-    return input.prisma.$transaction(async (tx) => {
-      await tx.job.update({
-        where: { id: existing.id },
-        data: {
-          status: ACTIVE_BID_STATUS,
-          ...(input.preserveJobFields
-            ? {}
-            : {
-                ...(bidDueAt ? { bidDueAt } : {}),
-                ...(jobNumber ? { jobNumber } : {}),
-              }),
-        },
-      });
-
-      const emailIds = await collectBidCandidateImportEmailIds(tx, {
-        workspaceId: input.workspaceId,
-        candidateId: candidate.id,
-      });
-      const associated = await associateBidImportEmails({
-        prisma: tx,
-        workspaceId: input.workspaceId,
-        jobId: existing.id,
-        userId: input.userId,
-        emailMessageIds: emailIds,
-      });
-
-      await tx.bidCandidate.update({
-        where: { id: candidate.id },
-        data: {
-          status: "CONFIRMED",
-          canonicalJobId: existing.id,
-          confirmedAt: new Date(),
-          confirmedByUserId: input.userId,
-          proposedProjectName: projectName,
-          proposedCustomerName: customerName,
-          proposedBidDueAt: bidDueAt,
-          proposedJobNumber: jobNumber,
-          proposedEstimatorUserId: estimatorUserId,
-          importBlockedReason: "Already imported",
-        },
-      });
-
-      return {
-        candidateId: candidate.id,
-        jobId: existing.id,
-        created: false,
-        attachedEmailCount:
-          associated.attachedEmailIds.length +
-          associated.skippedUnchanged.length,
-        emailConflicts: associated.conflicts,
-      };
-    });
-  }
-
-  // mode === create
-  const likely = await findLikelyExistingJobs(input.prisma, input.workspaceId, {
-    projectName,
-    jobNumber,
-  });
-  if (likely.length > 0 && !input.confirmCreateDespiteExisting) {
-    throw new PromoteBidCandidateError(
-      "EXISTING_JOB",
-      `Possible existing Job: ${likely
-        .map((j) =>
-          j.jobNumber ? `${j.jobNumber} — ${j.name}` : j.name
-        )
-        .join("; ")}`,
-      { existingJobs: likely }
-    );
-  }
-
-  if (jobNumber) {
-    const taken = await input.prisma.job.findFirst({
-      where: { workspaceId: input.workspaceId, jobNumber },
-      select: { id: true, name: true, jobNumber: true },
-    });
-    if (taken && !input.confirmCreateDespiteExisting) {
-      throw new PromoteBidCandidateError(
-        "JOB_NUMBER_TAKEN",
-        `Job number ${jobNumber} is already in use`,
-        { existingJobs: [taken] }
-      );
-    }
-  }
-
-  const now = new Date();
-  const normalized = normalizeName(projectName);
-
-  return input.prisma.$transaction(async (tx) => {
-    const resolved = await resolveOrCreateBiddingCustomer(tx, {
+    const result = await convertBidCandidateToJob({
+      prisma: input.prisma,
       workspaceId: input.workspaceId,
-      customerId: input.customerId ?? null,
-      customerName: customerName ?? null,
-    });
-
-    const job = await tx.job.create({
-      data: {
-        workspaceId: input.workspaceId,
-        name: projectName,
-        normalizedName: normalized,
-        jobNumber,
-        customerId: resolved.customerId,
-        status: ACTIVE_BID_STATUS,
-        bidDueAt: bidDueAt ?? null,
-        createdByUserId: input.userId,
-      },
-      select: { id: true },
-    });
-
-    const aliases = dedupeProjectAliases(
-      projectName,
-      input.alternateProjectNames ?? []
-    );
-    if (aliases.length > 0) {
-      await tx.entityAlias.createMany({
-        data: aliases.map((alias) => ({
-          workspaceId: input.workspaceId,
-          entityType: "JOB" as const,
-          jobId: job.id,
-          alias,
-          normalizedAlias: normalizeName(alias),
-          source: "REVIEW" as const,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    const emailIds = await collectBidCandidateImportEmailIds(tx, {
-      workspaceId: input.workspaceId,
-      candidateId: candidate.id,
-    });
-    const associated = await associateBidImportEmails({
-      prisma: tx,
-      workspaceId: input.workspaceId,
-      jobId: job.id,
+      candidateId: input.candidateId,
       userId: input.userId,
-      emailMessageIds: emailIds,
-      now,
-    });
-
-    await tx.jobActivityLog.create({
-      data: {
-        jobId: job.id,
-        workspaceId: input.workspaceId,
-        actorUserId: input.userId,
-        action: "JOB_CREATED",
-        newValue: {
-          status: ACTIVE_BID_STATUS,
-          source: "bid_candidate_promote",
-          bidCandidateId: candidate.id,
-        },
-      },
-    });
-
-    await tx.bidCandidate.update({
-      where: { id: candidate.id },
-      data: {
-        status: "CONFIRMED",
-        canonicalJobId: job.id,
-        confirmedAt: now,
-        confirmedByUserId: input.userId,
-        proposedProjectName: projectName,
-        proposedCustomerName: customerName,
-        proposedBidDueAt: bidDueAt,
-        proposedJobNumber: jobNumber,
-        proposedEstimatorUserId: estimatorUserId,
-        importBlockedReason: "Already imported",
-      },
+      mode: input.mode,
+      existingJobId: input.existingJobId,
+      projectName: input.projectName,
+      customerName: input.customerName,
+      customerId: input.customerId,
+      bidDueAt: input.bidDueAt,
+      startDate: input.startDate,
+      description: input.description,
+      notes: input.notes,
+      jobNumber,
+      estimatorUserId: input.estimatorUserId,
+      alternateProjectNames: input.alternateProjectNames,
+      confirmCreateDespiteExisting: input.confirmCreateDespiteExisting,
+      preserveJobFields: input.preserveJobFields,
     });
 
     return {
-      candidateId: candidate.id,
-      jobId: job.id,
-      created: true,
-      attachedEmailCount:
-        associated.attachedEmailIds.length + associated.skippedUnchanged.length,
-      emailConflicts: associated.conflicts,
+      candidateId: result.candidateId,
+      jobId: result.jobId,
+      created: result.created,
+      attachedEmailCount: result.attachedEmailCount,
+      emailConflicts: result.emailConflicts,
     };
-  });
+  } catch (e) {
+    if (e instanceof ConvertBidCandidateError) {
+      throw mapConvertError(e);
+    }
+    throw e;
+  }
 }
 
 export async function rejectBidCandidate(input: {
@@ -398,6 +192,8 @@ export async function rejectBidCandidate(input: {
     where: { id: candidate.id },
     data: {
       status: "REJECTED",
+      // Analysis reject → business lost (still permanent; Clear Analysis won't delete).
+      lifecycle: "LOST",
       rejectedAt: new Date(),
       ...(input.reviewNotes != null ? { reviewNotes: input.reviewNotes } : {}),
     },
@@ -585,60 +381,7 @@ export async function resolveBidCandidateExistingJob(input: {
   return { candidateId: candidate.id, existingJobMatchStatus };
 }
 
-export async function createManualBidCandidate(input: {
-  prisma: PrismaClient;
-  workspaceId: string;
-  projectName: string;
-  customerName?: string | null;
-  bidDueAt?: Date | null;
-  jobNumber?: string | null;
-  notes?: string | null;
-  userId: string;
-}): Promise<{ candidateId: string }> {
-  const projectName = input.projectName.trim();
-  if (!projectName) {
-    throw new PromoteBidCandidateError("NAME_REQUIRED", "Project name is required");
-  }
-  const identityKey =
-    buildBidCandidateIdentityKey({
-      projectNumber: input.jobNumber ?? null,
-      projectName,
-      customerName: input.customerName ?? null,
-      fallbackMessageId: `manual:${input.userId}:${Date.now()}`,
-    }) ?? `manual:${input.userId}:${Date.now()}`;
-
-  const status =
-    projectName && input.bidDueAt
-      ? "READY"
-      : projectName
-        ? "DISCOVERED"
-        : "NEEDS_REVIEW";
-
-  const created = await input.prisma.bidCandidate.create({
-    data: {
-      workspaceId: input.workspaceId,
-      identityKey,
-      proposedProjectName: projectName,
-      proposedCustomerName: input.customerName ?? null,
-      proposedBidDueAt: input.bidDueAt ?? null,
-      proposedJobNumber: input.jobNumber?.trim() || null,
-      proposedNotes: input.notes ?? null,
-      userEditedFields: [
-        "proposedProjectName",
-        ...(input.customerName !== undefined ? ["proposedCustomerName"] : []),
-        ...(input.bidDueAt !== undefined ? ["proposedBidDueAt"] : []),
-        ...(input.jobNumber !== undefined ? ["proposedJobNumber"] : []),
-        ...(input.notes !== undefined ? ["proposedNotes"] : []),
-      ],
-      status,
-      confidence: 1,
-      evidence: { labels: ["manual_create"] },
-      importBlockedReason: computeImportBlockedReason({
-        status,
-        proposedProjectName: projectName,
-        existingJobMatchStatus: "NONE",
-      }),
-    },
-  });
-  return { candidateId: created.id };
-}
+export {
+  createBidCandidate,
+  createManualBidCandidate,
+} from "./create-bid-candidate.js";

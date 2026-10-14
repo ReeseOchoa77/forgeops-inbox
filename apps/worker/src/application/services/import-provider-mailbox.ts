@@ -6,7 +6,10 @@ import type {
   ProviderMailboxSyncResult
 } from "@forgeops/shared";
 import {
+  FORGEOPS_SENT_RECONCILE_WINDOW_MS,
   isBlockedByInboxClearedAt,
+  isForgeOpsLocalSentMessageId,
+  matchesForgeOpsOutboundCandidate,
   mergeEmailDirection,
   shouldInspectAttachments,
   type EmailDirectionValue,
@@ -148,6 +151,45 @@ export const importProviderMailbox = async (input: {
     }
   }
 
+  // Pending ForgeOps compose rows awaiting Graph identity enrichment.
+  // Graph sendMail returns no internetMessageId — reconcile conservatively later.
+  const sentAts = input.mailbox.threads.flatMap((t) =>
+    t.messages.map((m) => m.sentAt?.getTime()).filter((n): n is number => n != null)
+  );
+  const minSent =
+    sentAts.length > 0
+      ? new Date(Math.min(...sentAts) - FORGEOPS_SENT_RECONCILE_WINDOW_MS)
+      : null;
+  const maxSent =
+    sentAts.length > 0
+      ? new Date(Math.max(...sentAts) + FORGEOPS_SENT_RECONCILE_WINDOW_MS)
+      : null;
+  const pendingForgeOpsSent =
+    minSent && maxSent
+      ? await input.prisma.emailMessage.findMany({
+          where: {
+            workspaceId: input.workspaceId,
+            inboxConnectionId: input.inboxConnectionId,
+            composedInForgeOps: true,
+            direction: "SENT",
+            internetMessageId: null,
+            sentAt: { gte: minSent, lte: maxSent },
+            gmailMessageId: { startsWith: "forgeops-sent-" },
+          },
+          select: {
+            id: true,
+            gmailMessageId: true,
+            subject: true,
+            toAddresses: true,
+            sentAt: true,
+            internetMessageId: true,
+          },
+        })
+      : [];
+  const pendingForgeOpsById = new Map(
+    pendingForgeOpsSent.map((m) => [m.id, m])
+  );
+
   let threadsImported = 0;
   let messagesImported = 0;
   const createdMessageIds: string[] = [];
@@ -202,9 +244,41 @@ export const importProviderMailbox = async (input: {
           }
 
           const imid = message.internetMessageId?.trim() || null;
-          const existingMessageId =
+          let existingMessageId =
             existingMessageIdMap.get(message.providerMessageId) ??
             (imid ? existingByInternetMessageId.get(imid) : undefined);
+
+          // Bounded ForgeOps-compose reconciliation (no Graph send identity).
+          // Prefer false duplicate over false merge — subject + To + ±2m only.
+          if (!existingMessageId && pendingForgeOpsById.size > 0) {
+            const incomingDir =
+              message.direction === "SENT" || message.direction === "RECEIVED"
+                ? message.direction
+                : null;
+            if (incomingDir === "SENT" || incomingDir == null) {
+              for (const candidate of pendingForgeOpsById.values()) {
+                if (
+                  !isForgeOpsLocalSentMessageId(candidate.gmailMessageId) ||
+                  candidate.internetMessageId
+                ) {
+                  continue;
+                }
+                if (
+                  matchesForgeOpsOutboundCandidate({
+                    localSubject: candidate.subject,
+                    incomingSubject: message.subject,
+                    localTo: candidate.toAddresses,
+                    incomingTo: message.toAddresses,
+                    localSentAt: candidate.sentAt,
+                    incomingSentAt: message.sentAt,
+                  })
+                ) {
+                  existingMessageId = candidate.id;
+                  break;
+                }
+              }
+            }
+          }
           const providerSaysUnread = message.providerLabels.some(
             (l) => l === "UNREAD" || l === "unread"
           );
@@ -255,15 +329,22 @@ export const importProviderMailbox = async (input: {
             const knownByGraphId =
               existingMessageIdMap.get(message.providerMessageId) ===
               existingMessageId;
+            const forgeOpsPending = pendingForgeOpsById.get(existingMessageId);
+            const canAdoptGraphId =
+              knownByGraphId ||
+              (Boolean(forgeOpsPending) &&
+                !existingMessageIdMap.has(message.providerMessageId));
             await tx.emailMessage.update({
               where: { id: existingMessageId },
               data: {
                 ...messageData,
                 // Avoid unique clashes when rediscovered via internetMessageId
                 // with a different Graph id than the row's current gmailMessageId.
-                ...(knownByGraphId
+                ...(canAdoptGraphId
                   ? { gmailMessageId: message.providerMessageId }
                   : {}),
+                // Preserve ForgeOps compose provenance through Sent Items enrichment.
+                ...(forgeOpsPending ? { composedInForgeOps: true } : {}),
                 ...originWrite,
                 ...(providerSaysUnread ? { isRead: false } : {}),
               }
@@ -275,6 +356,7 @@ export const importProviderMailbox = async (input: {
             if (resolvedDirection) {
               existingDirectionById.set(existingMessageId, resolvedDirection);
             }
+            if (forgeOpsPending) pendingForgeOpsById.delete(existingMessageId);
             if (
               shouldInspectAttachments({
                 hasAttachments: message.hasAttachments,

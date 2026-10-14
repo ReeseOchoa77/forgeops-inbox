@@ -1146,13 +1146,47 @@ export const buildMessagesWhere = (input: {
   }
 
   if (input.businessTypeKey) {
-    andConditions.push({
-      classifications: {
-        some: {
-          businessTypeKey: input.businessTypeKey
-        }
-      }
-    });
+    // Bid Candidate / Quote: subtype OR durable Candidate-email role.
+    // Matching may leave subtype set without Candidate association (and vice versa).
+    if (input.businessTypeKey === "BID_OPPORTUNITY") {
+      andConditions.push({
+        OR: [
+          {
+            classifications: {
+              some: { businessTypeKey: "BID_OPPORTUNITY" },
+            },
+          },
+          {
+            bidCandidateEmails: {
+              some: { role: "BID_INVITE" },
+            },
+          },
+        ],
+      });
+    } else if (input.businessTypeKey === "ESTIMATE_QUOTE") {
+      andConditions.push({
+        OR: [
+          {
+            classifications: {
+              some: { businessTypeKey: "ESTIMATE_QUOTE" },
+            },
+          },
+          {
+            bidCandidateEmails: {
+              some: { role: "QUOTE" },
+            },
+          },
+        ],
+      });
+    } else {
+      andConditions.push({
+        classifications: {
+          some: {
+            businessTypeKey: input.businessTypeKey,
+          },
+        },
+      });
+    }
   } else if (input.businessTypeGroup) {
     const keys = businessTypeKeysByGroup[input.businessTypeGroup];
     if (keys && keys.length > 0) {

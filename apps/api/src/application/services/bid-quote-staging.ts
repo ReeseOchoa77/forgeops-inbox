@@ -296,8 +296,13 @@ export async function updateBidQuoteStaging(input: {
           matchStatus: "MATCHED",
           matchConfidence: 1,
           userConfirmedMatch: true,
+          isDurable: true,
           rejectedAt: null,
-          matchEvidence: { labels: ["user_reassign"] },
+          matchEvidence: {
+            labels: ["user_confirmed", "manual_assign", "user_reassign"],
+            userConfirmed: true,
+            source: "quote_staging_reassign",
+          },
         },
       }),
       input.prisma.bidCandidateEmail.upsert({
@@ -313,14 +318,31 @@ export async function updateBidQuoteStaging(input: {
           emailMessageId: quote.emailMessageId,
           role: "QUOTE",
           matchConfidence: 1,
-          matchEvidence: { labels: ["user_reassign"] },
+          matchEvidence: {
+            labels: ["user_confirmed", "manual_assign", "user_reassign"],
+            userConfirmed: true,
+            source: "quote_staging_reassign",
+          },
         },
         update: {
           matchConfidence: 1,
-          matchEvidence: { labels: ["user_reassign"] },
+          matchEvidence: {
+            labels: ["user_confirmed", "manual_assign", "user_reassign"],
+            userConfirmed: true,
+            source: "quote_staging_reassign",
+          },
         },
       }),
     ]);
+    // OPEN → QUOTED when first durable Quote is linked.
+    await input.prisma.bidCandidate.updateMany({
+      where: {
+        id: candidate.id,
+        workspaceId: input.workspaceId,
+        lifecycle: "OPEN",
+      },
+      data: { lifecycle: "QUOTED" },
+    });
     return { quoteId: quote.id };
   }
 

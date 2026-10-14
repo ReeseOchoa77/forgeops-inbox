@@ -371,6 +371,54 @@ export async function persistNativeClassificationResult(input: {
       },
     });
 
+    // Classification authority: USER_EXPLICIT > SYSTEM_DETERMINISTIC > AI.
+    const {
+      resolveClassificationAuthority,
+      canReplaceClassificationAuthority,
+      withClassificationAuthority,
+    } = await import("@forgeops/shared");
+    const priorClass = await tx.classification.findUnique({
+      where: {
+        workspaceId_messageId: {
+          workspaceId: input.workspaceId,
+          messageId: message.id,
+        },
+      },
+      select: {
+        businessTypeKey: true,
+        businessTypeConfidence: true,
+        routingHints: true,
+        reviewedByUserId: true,
+        reviewedAt: true,
+      },
+    });
+    const priorHints =
+      priorClass?.routingHints &&
+      typeof priorClass.routingHints === "object" &&
+      !Array.isArray(priorClass.routingHints)
+        ? (priorClass.routingHints as Record<string, unknown>)
+        : null;
+    const existingAuthority = resolveClassificationAuthority({
+      routingHints: priorClass?.routingHints,
+      reviewedByUserId: priorClass?.reviewedByUserId,
+    });
+    const aiMayReplaceSubtype = canReplaceClassificationAuthority({
+      existing: existingAuthority,
+      incoming: "AI",
+    });
+    const nextBusinessTypeKey = aiMayReplaceSubtype
+      ? (subtype?.businessType ?? null)
+      : (priorClass?.businessTypeKey ?? subtype?.businessType ?? null);
+    const nextBusinessTypeConfidence = aiMayReplaceSubtype
+      ? subtype?.businessTypeConfidence != null
+        ? toConfidence(subtype.businessTypeConfidence)
+        : null
+      : (priorClass?.businessTypeConfidence ??
+        (subtype?.businessTypeConfidence != null
+          ? toConfidence(subtype.businessTypeConfidence)
+          : null));
+    const preserveStrongerAuthority = !aiMayReplaceSubtype;
+
     const classification = await tx.classification.upsert({
       where: {
         workspaceId_messageId: {
@@ -399,11 +447,8 @@ export async function persistNativeClassificationResult(input: {
         summary: signals.summary,
         deadline: null,
         containsActionRequest: signals.containsActionRequest,
-        businessTypeKey: subtype?.businessType ?? null,
-        businessTypeConfidence:
-          subtype?.businessTypeConfidence != null
-            ? toConfidence(subtype.businessTypeConfidence)
-            : null,
+        businessTypeKey: nextBusinessTypeKey,
+        businessTypeConfidence: nextBusinessTypeConfidence,
         customerId: entities?.selectedCustomerId ?? null,
         vendorId: entities?.selectedVendorId ?? null,
         jobId: null,
@@ -414,10 +459,27 @@ export async function persistNativeClassificationResult(input: {
         matchEvidence: entities?.matchEvidence
           ? toPrismaJson(entities.matchEvidence)
           : Prisma.JsonNull,
-        routingHints: toPrismaJson({
-          source: "native-openai-pipeline",
-          decisionRule: decision.decisionRule,
-        }),
+        routingHints: toPrismaJson(
+          preserveStrongerAuthority
+            ? withClassificationAuthority(
+                priorHints,
+                existingAuthority,
+                typeof priorHints?.source === "string"
+                  ? priorHints.source
+                  : "preserved",
+                {
+                  aiPipeline: "native-openai-pipeline",
+                  decisionRule: decision.decisionRule,
+                  subtypePreserved: true,
+                }
+              )
+            : withClassificationAuthority(
+                null,
+                "AI",
+                "native-openai-pipeline",
+                { decisionRule: decision.decisionRule }
+              )
+        ),
         extractedFields: toPrismaJson({
           sender: normalized.sender,
           recipients: normalized.recipients,
@@ -429,6 +491,12 @@ export async function persistNativeClassificationResult(input: {
         requiresReview,
         reviewQueue,
         reviewStatus,
+        ...(preserveStrongerAuthority && priorClass?.reviewedByUserId
+          ? {
+              reviewedByUserId: priorClass.reviewedByUserId,
+              reviewedAt: priorClass.reviewedAt,
+            }
+          : {}),
         modelName: NATIVE_PIPELINE_MODEL_NAME,
         modelVersion: NATIVE_PIPELINE_MODEL_VERSION,
         processedAt: new Date(),
@@ -451,11 +519,8 @@ export async function persistNativeClassificationResult(input: {
         itemStatus,
         summary: signals.summary,
         containsActionRequest: signals.containsActionRequest,
-        businessTypeKey: subtype?.businessType ?? null,
-        businessTypeConfidence:
-          subtype?.businessTypeConfidence != null
-            ? toConfidence(subtype.businessTypeConfidence)
-            : null,
+        businessTypeKey: nextBusinessTypeKey,
+        businessTypeConfidence: nextBusinessTypeConfidence,
         customerId: entities?.selectedCustomerId ?? null,
         vendorId: entities?.selectedVendorId ?? null,
         entityMatchConfidence:
@@ -465,10 +530,29 @@ export async function persistNativeClassificationResult(input: {
         matchEvidence: entities?.matchEvidence
           ? toPrismaJson(entities.matchEvidence)
           : Prisma.JsonNull,
-        routingHints: toPrismaJson({
-          source: "native-openai-pipeline",
-          decisionRule: decision.decisionRule,
-        }),
+        routingHints: preserveStrongerAuthority
+          ? toPrismaJson(
+              withClassificationAuthority(
+                priorHints,
+                existingAuthority,
+                typeof priorHints?.source === "string"
+                  ? priorHints.source
+                  : "preserved",
+                {
+                  aiPipeline: "native-openai-pipeline",
+                  decisionRule: decision.decisionRule,
+                  subtypePreserved: true,
+                }
+              )
+            )
+          : toPrismaJson(
+              withClassificationAuthority(
+                null,
+                "AI",
+                "native-openai-pipeline",
+                { decisionRule: decision.decisionRule }
+              )
+            ),
         extractedFields: toPrismaJson({
           sender: normalized.sender,
           recipients: normalized.recipients,
@@ -480,8 +564,15 @@ export async function persistNativeClassificationResult(input: {
         requiresReview,
         reviewQueue,
         reviewStatus,
-        reviewedByUserId: null,
-        reviewedAt: null,
+        // Never clear USER_EXPLICIT reviewer when preserving stronger authority.
+        ...(preserveStrongerAuthority && priorClass?.reviewedByUserId
+          ? {
+              reviewedByUserId: priorClass.reviewedByUserId,
+              reviewedAt: priorClass.reviewedAt,
+            }
+          : preserveStrongerAuthority
+            ? {}
+            : { reviewedByUserId: null, reviewedAt: null }),
         modelName: NATIVE_PIPELINE_MODEL_NAME,
         modelVersion: NATIVE_PIPELINE_MODEL_VERSION,
         processedAt: new Date(),

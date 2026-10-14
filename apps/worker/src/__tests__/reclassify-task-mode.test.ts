@@ -33,11 +33,35 @@ function baseMessage() {
     labelIds: [],
     sentAt: new Date("2026-01-01T00:00:00Z"),
     receivedAt: new Date("2026-01-01T00:00:00Z"),
+    direction: "RECEIVED" as const,
     jobId: null,
     jobAssignmentIsManual: false,
     jobAssignmentSource: null,
     attachmentMetadata: null,
     thread: { subject: "Sub" },
+  };
+}
+
+function prismaStub(overrides: Record<string, unknown> = {}) {
+  return {
+    membership: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    emailMessage: {
+      findFirst: vi.fn().mockResolvedValue(baseMessage()),
+    },
+    job: { findFirst: vi.fn().mockResolvedValue(null) },
+    $transaction: vi.fn().mockResolvedValue({
+      classificationId: "cls1",
+      mailboxCategory: "BUSINESS",
+      priority: "MEDIUM",
+    }),
+    task: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      upsert: vi.fn(),
+      findMany: vi.fn(),
+    },
+    ...overrides,
   };
 }
 
@@ -114,22 +138,13 @@ describe("persistNativeClassificationResult taskMode", () => {
   it("REMOVE_ONLY deletes classifier tasks and writes none after core success", async () => {
     const deleteMany = vi.fn().mockResolvedValue({ count: 2 });
     const taskUpsert = vi.fn();
-    const prisma = {
-      emailMessage: {
-        findFirst: vi.fn().mockResolvedValue(baseMessage()),
-      },
-      job: { findFirst: vi.fn().mockResolvedValue(null) },
-      $transaction: vi.fn().mockResolvedValue({
-        classificationId: "cls1",
-        mailboxCategory: "BUSINESS",
-        priority: "MEDIUM",
-      }),
+    const prisma = prismaStub({
       task: {
         deleteMany,
         upsert: taskUpsert,
         findMany: vi.fn(),
       },
-    };
+    });
 
     const result = await persistNativeClassificationResult({
       prisma: prisma as never,
@@ -167,22 +182,13 @@ describe("persistNativeClassificationResult taskMode", () => {
       { id: "ai-old", sourceTaskKey: "native:0:old:abcd1234" },
     ]);
 
-    const prisma = {
-      emailMessage: {
-        findFirst: vi.fn().mockResolvedValue(baseMessage()),
-      },
-      job: { findFirst: vi.fn().mockResolvedValue(null) },
-      $transaction: vi.fn().mockResolvedValue({
-        classificationId: "cls1",
-        mailboxCategory: "BUSINESS",
-        priority: "MEDIUM",
-      }),
+    const prisma = prismaStub({
       task: {
         deleteMany,
         upsert,
         findMany,
       },
-    };
+    });
 
     const result = await persistNativeClassificationResult({
       prisma: prisma as never,
@@ -225,21 +231,15 @@ describe("persistNativeClassificationResult taskMode", () => {
     const findMany = vi.fn().mockResolvedValue([
       { id: "ai-old", sourceTaskKey: "native:0:submit-bid:abcd1234" },
     ]);
-    const prisma = {
+    const prisma = prismaStub({
       emailMessage: {
         findFirst: vi.fn().mockResolvedValue({
           ...baseMessage(),
           subject: "Invitation to Bid — Garden City Elementary",
         }),
       },
-      job: { findFirst: vi.fn().mockResolvedValue(null) },
-      $transaction: vi.fn().mockResolvedValue({
-        classificationId: "cls1",
-        mailboxCategory: "BUSINESS",
-        priority: "MEDIUM",
-      }),
       task: { deleteMany, upsert, findMany },
-    };
+    });
 
     const result = await persistNativeClassificationResult({
       prisma: prisma as never,
@@ -271,21 +271,15 @@ describe("persistNativeClassificationResult taskMode", () => {
     const deleteMany = vi.fn().mockResolvedValue({ count: 0 });
     const upsert = vi.fn().mockResolvedValue({});
     const findMany = vi.fn().mockResolvedValue([]);
-    const prisma = {
+    const prisma = prismaStub({
       emailMessage: {
         findFirst: vi.fn().mockResolvedValue({
           ...baseMessage(),
           subject: "Invitation to Bid — Garden City",
         }),
       },
-      job: { findFirst: vi.fn().mockResolvedValue(null) },
-      $transaction: vi.fn().mockResolvedValue({
-        classificationId: "cls1",
-        mailboxCategory: "BUSINESS",
-        priority: "MEDIUM",
-      }),
       task: { deleteMany, upsert, findMany },
-    };
+    });
 
     const result = await persistNativeClassificationResult({
       prisma: prisma as never,
@@ -320,22 +314,13 @@ describe("persistNativeClassificationResult taskMode", () => {
 
   it("production path without taskMode leaves BUSINESS empty-task set untouched", async () => {
     const deleteMany = vi.fn().mockResolvedValue({ count: 0 });
-    const prisma = {
-      emailMessage: {
-        findFirst: vi.fn().mockResolvedValue(baseMessage()),
-      },
-      job: { findFirst: vi.fn().mockResolvedValue(null) },
-      $transaction: vi.fn().mockResolvedValue({
-        classificationId: "cls1",
-        mailboxCategory: "BUSINESS",
-        priority: "MEDIUM",
-      }),
+    const prisma = prismaStub({
       task: {
         deleteMany,
         upsert: vi.fn(),
         findMany: vi.fn(),
       },
-    };
+    });
 
     await persistNativeClassificationResult({
       prisma: prisma as never,

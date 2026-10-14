@@ -63,7 +63,10 @@ export function activeBidCandidatesForMailboxWhere(input: {
   };
 }
 
-/** Non-imported staging to delete on Clear All (includes REJECTED). */
+/**
+ * @deprecated Clear Analysis no longer deletes BidCandidates.
+ * Retained for tests / callers that only need the historical predicate shape.
+ */
 export function clearableBidCandidatesForMailboxWhere(input: {
   workspaceId: string;
   connectionId: string;

@@ -32,7 +32,12 @@ const sendBodySchema = z.object({
   body: z.string().min(1),
   bodyFormat: z.enum(["text", "html"]).optional().default("text"),
   /** ForgeOps EmailAttachment IDs to include (forward). Reply must leave empty. */
-  existingAttachmentIds: z.array(z.string().min(1)).optional().default([])
+  existingAttachmentIds: z.array(z.string().min(1)).optional().default([]),
+  /**
+   * Compose Email Type — canonical business subtype key (e.g. ESTIMATE_QUOTE, GENERAL).
+   * Persisted as USER_EXPLICIT classification. Defaults to GENERAL.
+   */
+  businessTypeKey: z.string().min(1).max(50).optional().default("GENERAL"),
 });
 
 interface ParsedAttachment {
@@ -769,6 +774,8 @@ export const registerSendRoutes = async (
             originalThreadId: originalMessage?.threadId ?? null,
             originalGmailThreadId: originalMessage?.gmailThreadId ?? null,
             attachments,
+            businessTypeKey: body.businessTypeKey,
+            userId: session.userId,
           });
           persistedMessageId = persisted?.emailMessageId ?? null;
         } catch (persistErr) {

@@ -96,4 +96,16 @@ describe("buildQuoteProjectGroupKey", () => {
     });
     expect(a).not.toBe(b);
   });
+
+  it("does not use weak PR-style digits as sole group identity", () => {
+    const a = buildQuoteProjectGroupKey({
+      projectNumber: "01",
+      projectName: "ESC Swing Space - Added PR-01 Steel Scope",
+    });
+    const b = buildQuoteProjectGroupKey({
+      projectNumber: "01",
+      projectName: "Unrelated Warehouse Quote",
+    });
+    expect(a).not.toBe(b);
+  });
 });

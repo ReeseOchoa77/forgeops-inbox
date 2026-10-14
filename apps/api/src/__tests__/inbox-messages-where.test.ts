@@ -306,6 +306,7 @@ describe("buildMessagesWhere — Sent AND composition", () => {
 
   it("Sent + each businessTypeKey is a distinct AND predicate", () => {
     for (const key of [
+      "GENERAL",
       "BID_OPPORTUNITY",
       "BID_UPDATE",
       "ESTIMATE_QUOTE",
@@ -330,15 +331,22 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       });
       const and = where.AND as Array<Record<string, unknown>>;
       expect(JSON.stringify(where)).toContain('"direction":"SENT"');
-      expect(
-        and.some(
-          (c) =>
-            c &&
-            "classifications" in c &&
-            (c as { classifications: { some?: { businessTypeKey?: string } } })
-              .classifications?.some?.businessTypeKey === key
-        )
-      ).toBe(true);
+      const serialized = JSON.stringify(where);
+      // Bid Candidate / Quote use subtype OR Candidate-email role.
+      if (key === "BID_OPPORTUNITY" || key === "ESTIMATE_QUOTE") {
+        expect(serialized).toContain(`"businessTypeKey":"${key}"`);
+        expect(serialized).toContain("bidCandidateEmails");
+      } else {
+        expect(
+          and.some(
+            (c) =>
+              c &&
+              "classifications" in c &&
+              (c as { classifications: { some?: { businessTypeKey?: string } } })
+                .classifications?.some?.businessTypeKey === key
+          )
+        ).toBe(true);
+      }
     }
   });
 

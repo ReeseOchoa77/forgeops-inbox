@@ -35,7 +35,17 @@ const IMPORTABLE_QUOTE_STATUSES = ["MATCHED"] as const;
  */
 export async function collectBidCandidateImportEmailIds(
   prisma: PrismaClient | Prisma.TransactionClient,
-  input: { workspaceId: string; candidateId: string }
+  input: {
+    workspaceId: string;
+    candidateId: string;
+    /**
+     * Convert to Job: include every durable BidCandidateEmail link
+     * (BID_INVITE / QUOTE / SUPPORTING / ADDENDUM). Quote staging MATCHED
+     * emails are still merged. Staging Import historically gated QUOTE links
+     * on MATCHED only — pass false/omit for that stricter behavior.
+     */
+    includeAllCandidateEmailLinks?: boolean;
+  }
 ): Promise<string[]> {
   const [links, quotes] = await Promise.all([
     prisma.bidCandidateEmail.findMany({
@@ -59,9 +69,13 @@ export async function collectBidCandidateImportEmailIds(
   const matchedQuoteEmailIds = new Set(quotes.map((q) => q.emailMessageId));
   const ids = new Set<string>();
   for (const l of links) {
-    if (l.role === "QUOTE") {
-      // Ambiguous quote links must not become Job evidence.
-      if (!matchedQuoteEmailIds.has(l.emailMessageId)) continue;
+    if (
+      l.role === "QUOTE" &&
+      !input.includeAllCandidateEmailLinks &&
+      !matchedQuoteEmailIds.has(l.emailMessageId)
+    ) {
+      // Ambiguous quote links must not become Job evidence on staging Import.
+      continue;
     }
     ids.add(l.emailMessageId);
   }

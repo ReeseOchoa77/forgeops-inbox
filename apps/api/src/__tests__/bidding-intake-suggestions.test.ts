@@ -412,15 +412,18 @@ describe("bidding intake route / freeze / customer regression", () => {
   it("UI protects dirty project/customer fields; late AI cannot overwrite", () => {
     expect(dialogSrc).toContain("nameDirty");
     expect(dialogSrc).toContain("!nameDirty.current && s.projectName");
-    expect(dialogSrc).toContain("jobNumberDirty");
     expect(dialogSrc).toContain("bidDueDirty");
     expect(dialogSrc).toContain("customerDirty");
     expect(dialogSrc).toContain("getBiddingIntakeSuggestions");
     expect(dialogSrc).toContain("New customer");
     expect(dialogSrc).toContain("proposedCustomerName");
     expect(dialogSrc).toContain("customerName: createCustomerName");
-    expect(dialogSrc).toContain("Create Job");
-    expect(dialogSrc).toContain("+ Create new job");
+    expect(dialogSrc).toContain("Create Bid Candidate");
+    expect(dialogSrc).toContain("+ Create Bid Candidate");
+    expect(dialogSrc).toContain("createBidCandidateFromEmail");
+    expect(dialogSrc).not.toContain("addEmailToBidding");
+    expect(dialogSrc).not.toMatch(/\bCreate Job\b/);
+    expect(dialogSrc).not.toContain("+ Create new job");
   });
 
   it("Inbox unifies Job assignment; removes row-level Add to Bidding", () => {

@@ -46,6 +46,8 @@ export type InboxDateRangeFilter = "" | "TODAY" | "WEEK" | "MONTH";
 export type InboxMessageListFilters = {
   businessCategory?: "BUSINESS" | "NON_BUSINESS";
   businessTypeGroup?: string;
+  /** Exact subtype (e.g. BID_OPPORTUNITY = Bid Candidate). Server-side before pagination. */
+  businessTypeKey?: string;
   /** Hide selected Business type groups (server-side Exclude filter). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
   jobId?: string;
@@ -71,6 +73,8 @@ export function buildInboxMessageListFilters(input: {
   searchIn?: "all" | "sender" | "id";
   /** Applied only on Business tabs (not Personal / Unclassified / Trash). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
+  /** Exact subtype filter — ANDs with tab/group when set (e.g. Bid Candidate). */
+  businessTypeKey?: string;
   pinnedOnly?: boolean;
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
@@ -96,7 +100,10 @@ export function buildInboxMessageListFilters(input: {
     f.unclassifiedOnly = true;
   } else {
     f.businessCategory = "BUSINESS";
-    if (input.inboxTab !== "ALL_BUSINESS") {
+    // Exact subtype takes precedence over group tab filter (AND with Business).
+    if (input.businessTypeKey) {
+      f.businessTypeKey = input.businessTypeKey;
+    } else if (input.inboxTab !== "ALL_BUSINESS") {
       f.businessTypeGroup = input.inboxTab;
     }
     if (input.jobFilter) f.jobId = input.jobFilter;

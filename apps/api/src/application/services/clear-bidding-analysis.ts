@@ -1,14 +1,20 @@
 /**
- * Clear Bidding Folder Analysis staging/discovery for one mailbox.
- * Never deletes EmailMessage, EmailAttachment, Jobs, Customers, Outlook mail,
- * or Project Folder state. Keeps CONFIRMED (imported) BidCandidate history.
+ * Clear Bidding Folder Analysis reconstructable artifacts for one mailbox.
+ *
+ * Never deletes:
+ * - BidCandidate (permanent operational opportunities)
+ * - BidCandidateEmail (durable Candidate ↔ email links)
+ * - durable BidQuoteStaging (isDurable / linked / user-confirmed)
+ * - EmailMessage, EmailAttachment, Jobs, Customers
+ * - user edits on Candidates
+ *
+ * Deletes only:
+ * - BidFolderDiscoveryEmail (scan index)
+ * - BidAnalysisRun
+ * - ephemeral BidQuoteStaging (not durable, not linked to a Candidate)
  */
 
 import type { PrismaClient } from "@prisma/client";
-import {
-  bidCandidateBelongsToMailboxWhere,
-  clearableBidCandidatesForMailboxWhere,
-} from "./bid-candidate-mailbox-scope.js";
 
 export class ClearBiddingAnalysisError extends Error {
   readonly code: "FORBIDDEN" | "CONNECTION_REQUIRED";
@@ -22,23 +28,22 @@ export class ClearBiddingAnalysisError extends Error {
 
 export type ClearBiddingAnalysisResult = {
   discoveryDeleted: number;
+  /** Ephemeral unmatched quote staging only. */
   quotesDeleted: number;
+  /** Always 0 — Candidate email links are durable. */
   candidateEmailsUnlinked: number;
+  /** Always 0 — Candidates are permanent. */
   candidatesDeleted: number;
   runsDeleted: number;
-  /** CONFIRMED candidates retained as import history (not deleted). */
-  confirmedRetained: number;
+  /** Count of permanent Candidates in mailbox provenance (informational). */
+  candidatesRetained: number;
+  /** Durable quotes retained (informational). */
+  durableQuotesRetained: number;
 };
 
 /**
- * Returns active Bidding Folder Analysis to a clean pre-scan state for the mailbox.
- *
- * Deletes: discovery index, quote staging, non-CONFIRMED candidates belonging
- * to this mailbox (same ownership predicate as GET candidates), runs.
- *
- * Ownership includes BidCandidateEmail → EmailMessage.inboxConnectionId so
- * legacy bid-first / remnant staging rows clear even when discovery/quotes
- * were already removed.
+ * Returns analysis scan state to a clean pre-scan index for the mailbox
+ * without destroying permanent Bid Candidate business data.
  */
 export async function clearBiddingAnalysisStaging(input: {
   prisma: PrismaClient;
@@ -52,55 +57,35 @@ export async function clearBiddingAnalysisStaging(input: {
     );
   }
 
-  const mailbox = {
-    workspaceId: input.workspaceId,
-    connectionId: input.connectionId,
-  };
-
   return input.prisma.$transaction(async (tx) => {
-    const openCandidates = await tx.bidCandidate.findMany({
-      where: clearableBidCandidatesForMailboxWhere(mailbox),
-      select: { id: true },
+    const candidatesRetained = await tx.bidCandidate.count({
+      where: { workspaceId: input.workspaceId },
     });
-    const openCandidateIds = openCandidates.map((c) => c.id);
 
-    const confirmedRetained = await tx.bidCandidate.count({
+    const durableQuotesRetained = await tx.bidQuoteStaging.count({
       where: {
-        AND: [
-          bidCandidateBelongsToMailboxWhere(mailbox),
-          { status: "CONFIRMED" },
+        workspaceId: input.workspaceId,
+        inboxConnectionId: input.connectionId,
+        OR: [
+          { isDurable: true },
+          { bidCandidateId: { not: null } },
+          { userConfirmedMatch: true },
         ],
       },
     });
 
+    // Ephemeral quote extracts only — never durable Candidate evidence.
     const quotesDeleted = (
       await tx.bidQuoteStaging.deleteMany({
         where: {
           workspaceId: input.workspaceId,
           inboxConnectionId: input.connectionId,
+          isDurable: false,
+          bidCandidateId: null,
+          userConfirmedMatch: false,
         },
       })
     ).count;
-
-    let candidateEmailsUnlinked = 0;
-    if (openCandidateIds.length > 0) {
-      candidateEmailsUnlinked = (
-        await tx.bidCandidateEmail.deleteMany({
-          where: {
-            workspaceId: input.workspaceId,
-            bidCandidateId: { in: openCandidateIds },
-          },
-        })
-      ).count;
-
-      await tx.bidCandidate.deleteMany({
-        where: {
-          workspaceId: input.workspaceId,
-          id: { in: openCandidateIds },
-          status: { not: "CONFIRMED" },
-        },
-      });
-    }
 
     const discoveryDeleted = (
       await tx.bidFolderDiscoveryEmail.deleteMany({
@@ -123,10 +108,11 @@ export async function clearBiddingAnalysisStaging(input: {
     return {
       discoveryDeleted,
       quotesDeleted,
-      candidateEmailsUnlinked,
-      candidatesDeleted: openCandidateIds.length,
+      candidateEmailsUnlinked: 0,
+      candidatesDeleted: 0,
       runsDeleted,
-      confirmedRetained,
+      candidatesRetained,
+      durableQuotesRetained,
     };
   });
 }
