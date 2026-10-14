@@ -15,6 +15,20 @@ import {
   bidFolderDiscoveryHasMore,
   bidFolderDiscoveryQueryKey,
 } from '../bid-folder-discovery-list'
+import {
+  BID_EMAIL_SEARCH_HELPER,
+  BIDDING_PIPELINE_STAGES,
+  CLEAR_ALL_CONFIRM_MESSAGE,
+  EMPTY_ANALYSIS_MESSAGE,
+  QUOTE_FIRST_WORKFLOW_STEPS,
+  SCAN_QUOTES_HELPER,
+  biddingPhaseUserLabel,
+  biddingPipelineStageState,
+  candidateEmailRoleLabel,
+  discoveryRoleLabel,
+  existingJobMatchLabel,
+  originalBidSourceLabel,
+} from '../bidding-analysis-ui'
 
 const RANGE_OPTIONS = [
   { value: '30d', label: 'Last 30 days' },
@@ -26,18 +40,6 @@ const RANGE_OPTIONS = [
 ] as const
 
 const DEFAULT_RANGE = '90d'
-
-const PIPELINE_STAGES = [
-  { phase: 'SCANNING_QUOTES', label: 'Scan Quotes' },
-  { phase: 'EXTRACTING_QUOTES', label: 'Extract Quotes' },
-  { phase: 'GROUPING_QUOTES', label: 'Group Quote Projects' },
-  { phase: 'SEARCHING_BID_INVITES', label: 'Search Bid Invites' },
-  { phase: 'MATCHING_BID_INVITES', label: 'Match Bid Invites' },
-  { phase: 'SEARCHING_INBOX_FALLBACK', label: 'Inbox Fallback' },
-  { phase: 'BUILDING_CANDIDATES', label: 'Build Candidates' },
-  { phase: 'MATCHING_EXISTING_JOBS', label: 'Match Existing Jobs' },
-  { phase: 'READY_FOR_REVIEW', label: 'Ready for Review' },
-] as const
 
 type ListRole = 'BID_INVITE' | 'QUOTE'
 type SortDir = 'newest' | 'oldest'
@@ -91,32 +93,19 @@ function formatMoney(amount: number | null | undefined, currency?: string | null
   }
 }
 
-function existingJobLabel(status: string | undefined): string {
-  switch (status) {
-    case 'NONE':
-      return 'None'
-    case 'POSSIBLE':
-      return 'Possible'
-    case 'STRONG':
-      return 'Strong'
-    case 'NEEDS_REVIEW':
-      return 'Needs review'
-    case 'RESOLVED_SAME':
-      return 'Same Job'
-    case 'RESOLVED_DIFFERENT':
-      return 'Different'
-    default:
-      return status || '—'
-  }
-}
-
 function scopeListPreview(c: BidCandidateSummary): string {
   const n = c.scopeItemCount
   if (typeof n === 'number' && n > 0) {
-    return `Scope: ${n} item${n === 1 ? '' : 's'}`
+    return `${n} item${n === 1 ? '' : 's'}`
   }
   if (c.proposedScope?.trim()) return c.proposedScope
-  return 'Scope: Needs Review'
+  return 'Needs Review'
+}
+
+function bidEmailTableCell(c: BidCandidateSummary): string {
+  const src = c.originalBidSource
+  if (src === 'NONE' || !src) return 'Not Found'
+  return originalBidSourceLabel(src)
 }
 
 function ScopeDetailBlock({
@@ -238,50 +227,6 @@ function extractionStatusLabel(input: {
   return null
 }
 
-function stageState(
-  currentPhase: string | null | undefined,
-  stagePhase: string,
-  runDone: boolean
-): 'done' | 'active' | 'pending' {
-  if (runDone || currentPhase === 'DONE' || currentPhase === 'READY_FOR_REVIEW') {
-    return 'done'
-  }
-  const order = PIPELINE_STAGES.map((s) => s.phase)
-  // Legacy / intermediate phases map into nearby Quote-first stages
-  const normalized =
-    currentPhase === 'BID_INVITES' || currentPhase === 'SCANNING_BID_INVITES'
-      ? 'SEARCHING_BID_INVITES'
-      : currentPhase === 'QUOTES'
-        ? 'SCANNING_QUOTES'
-        : currentPhase === 'ANALYZE_CANDIDATES' ||
-            currentPhase === 'EXTRACTING_BID_CANDIDATES'
-          ? 'BUILDING_CANDIDATES'
-          : currentPhase === 'MATCHING_QUOTES'
-            ? 'MATCHING_BID_INVITES'
-            : currentPhase === 'RESOLVE_FOLDERS'
-              ? 'SCANNING_QUOTES'
-              : currentPhase
-  const curIdx = normalized ? order.indexOf(normalized as (typeof order)[number]) : -1
-  const stageIdx = order.indexOf(stagePhase as (typeof order)[number])
-  if (curIdx < 0) return 'pending'
-  if (stageIdx < curIdx) return 'done'
-  if (stageIdx === curIdx) return 'active'
-  return 'pending'
-}
-
-function originalBidSourceLabel(source: string | undefined | null): string {
-  switch (source) {
-    case 'BID_INVITES_FOLDER':
-      return 'Bid Invites'
-    case 'INBOX_FALLBACK':
-      return 'Inbox fallback'
-    case 'NONE':
-      return 'Not found'
-    default:
-      return source || '—'
-  }
-}
-
 function isImportEligible(c: BidCandidateSummary): boolean {
   if (['CONFIRMED', 'REJECTED'].includes(c.status)) return false
   if (c.importBlockedReason) return false
@@ -306,7 +251,7 @@ interface Props {
 
 /**
  * Systems → Email Analysis → Bidding Folder Analysis
- * Scan Bids → review staging → Import N Bids.
+ * Scan Quotes → find Bid emails → build Candidates → review → Import.
  * Never auto-creates operational BIDDING Jobs.
  */
 export function BiddingFolderAnalysisView({
@@ -329,7 +274,7 @@ export function BiddingFolderAnalysisView({
   const [progress, setProgress] = useState<BidEmailAnalyzeProgressView | null>(null)
   const [error, setError] = useState('')
   const [mainTab, setMainTab] = useState<MainTab>('candidates')
-  const [listRole, setListRole] = useState<ListRole>('BID_INVITE')
+  const [listRole, setListRole] = useState<ListRole>('QUOTE')
   const [sort, setSort] = useState<SortDir>('newest')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -695,7 +640,7 @@ export function BiddingFolderAnalysisView({
     void loadDetail(selectedCandidateId)
   }, [selectedCandidateId, loadDetail])
 
-  const startScanBids = async () => {
+  const startScanQuotes = async () => {
     if (!selectedConnectionId || !selectedConn) {
       setError('No Outlook mailbox selected')
       return
@@ -728,7 +673,7 @@ export function BiddingFolderAnalysisView({
     } catch (e) {
       setBusy(false)
       setBusyKind(null)
-      setError(e instanceof Error ? e.message : 'Scan Bids failed')
+      setError(e instanceof Error ? e.message : 'Scan Quotes failed')
     }
   }
 
@@ -930,11 +875,7 @@ export function BiddingFolderAnalysisView({
       setError('Select a mailbox first')
       return
     }
-    if (
-      !window.confirm(
-        'This clears the current Bidding Analysis results and review data for this mailbox. It does not delete Outlook emails or existing ForgeOps Jobs. User edits and match decisions will be lost. Imported (confirmed) Bid history is kept but removed from the active review list.'
-      )
-    ) {
+    if (!window.confirm(CLEAR_ALL_CONFIRM_MESSAGE)) {
       return
     }
     const connId = selectedConnectionId
@@ -1044,13 +985,28 @@ export function BiddingFolderAnalysisView({
     )
   }
 
+  const analysisComplete =
+    runDone &&
+    (progress?.currentPhase === 'READY_FOR_REVIEW' ||
+      progress?.currentPhase === 'DONE' ||
+      runStatus === 'COMPLETED')
+
   return (
     <div>
-      <p style={{ fontSize: 13, color: '#666', margin: '0 0 12px', lineHeight: 1.45 }}>
-        Scan Bids reconstructs Bid Candidates from Quotes (quote-first), matches original
-        Bid emails from Bid Invites or Inbox fallback, proposes existing Job matches, then
-        waits for your review. Jobs are created only when you Import. Clear All removes
-        this mailbox&apos;s active staging only — not Outlook mail, Jobs, or imported history.
+      <p style={{ fontSize: 13, color: '#666', margin: '0 0 8px', lineHeight: 1.45 }}>
+        Reconstruct historical bids from Quotes: find the original Bid email (Bid Invites
+        first, Inbox fallback), build Bid Candidates, check existing Jobs, then Import
+        explicitly. Clear All clears this mailbox&apos;s analysis staging only.
+      </p>
+      <p
+        style={{
+          fontSize: 12,
+          color: '#888',
+          margin: '0 0 12px',
+          letterSpacing: 0.2,
+        }}
+      >
+        {QUOTE_FIRST_WORKFLOW_STEPS.join(' → ')}
       </p>
 
       {error && (
@@ -1130,7 +1086,7 @@ export function BiddingFolderAnalysisView({
               minWidth: 160,
             }}
           >
-            Scan range
+            Quote Date Range
             <select
               value={scanRange}
               onChange={(e) => setScanRange(e.target.value)}
@@ -1160,7 +1116,7 @@ export function BiddingFolderAnalysisView({
                 color: '#555',
               }}
             >
-              Since
+              Quotes since
               <input
                 type="date"
                 value={customSince}
@@ -1181,18 +1137,47 @@ export function BiddingFolderAnalysisView({
               type="button"
               className="btn btn-primary"
               disabled={busy || !selectedConnectionId || !mailboxReady}
-              onClick={() => void startScanBids()}
+              onClick={() => void startScanQuotes()}
             >
-              {busy && busyKind === 'scan_bids' ? 'Scanning Bids…' : 'Scan Bids'}
+              {busy && busyKind === 'scan_bids' ? 'Scanning Quotes…' : 'Scan Quotes'}
             </button>
           )}
         </div>
+        <p style={{ margin: '8px 0 0', fontSize: 12, color: '#888', lineHeight: 1.4 }}>
+          {SCAN_QUOTES_HELPER}
+        </p>
+        <p style={{ margin: '4px 0 0', fontSize: 12, color: '#888', lineHeight: 1.4 }}>
+          {BID_EMAIL_SEARCH_HELPER}
+        </p>
 
-        {(busy || progress || runStatus) && (
+        {analysisComplete && !busy && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '8px 10px',
+              background: '#e8f5e9',
+              borderRadius: 6,
+              fontSize: 13,
+              color: '#1b5e20',
+            }}
+          >
+            <strong>Analysis Complete</strong>
+            {' · '}
+            {openCandidates.length} Candidate
+            {openCandidates.length === 1 ? '' : 's'} Ready for Review
+          </div>
+        )}
+
+        {(busy || (progress && !analysisComplete) || (runStatus && busy)) && (
           <div style={{ marginTop: 12, fontSize: 12, color: '#333' }}>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>
-              SCAN BIDS
+              SCAN QUOTES
               {runStatus ? ` · ${runStatus}` : ''}
+              {progress?.currentPhase ? (
+                <span style={{ fontWeight: 400, color: '#1565c0', marginLeft: 8 }}>
+                  {biddingPhaseUserLabel(progress.currentPhase)}
+                </span>
+              ) : null}
               {runId && (
                 <span style={{ fontWeight: 400, color: '#888', marginLeft: 8 }}>
                   run {runId.slice(0, 8)}…
@@ -1203,8 +1188,12 @@ export function BiddingFolderAnalysisView({
               <p style={{ margin: '0 0 6px', color: '#b71c1c' }}>{progress.warning}</p>
             )}
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {PIPELINE_STAGES.map((stage) => {
-                const state = stageState(progress?.currentPhase, stage.phase, runDone)
+              {BIDDING_PIPELINE_STAGES.map((stage) => {
+                const state = biddingPipelineStageState(
+                  progress?.currentPhase,
+                  stage.phase,
+                  runDone
+                )
                 const mark =
                   state === 'done' ? '✓' : state === 'active' ? '●' : '○'
                 const color =
@@ -1246,32 +1235,56 @@ export function BiddingFolderAnalysisView({
                 }}
               >
                 <span>
-                  Quotes scanned {progress.quotesScanned} · projects{' '}
-                  {progress.quoteProjectsIdentified ?? 0}
+                  Quotes Found {progress.quotesFound ?? progress.quotesScanned ?? 0}
                 </span>
                 <span>
-                  Bid emails (Invites) {progress.originalBidFromInvites ?? 0}
+                  Quote Projects {progress.quoteProjectsIdentified ?? 0}
                 </span>
                 <span>
-                  Bid emails (Inbox) {progress.originalBidFromInbox ?? 0}
+                  Bid Emails Found {progress.originalBidFromInvites ?? 0}
+                </span>
+                <span>Inbox Matches {progress.originalBidFromInbox ?? 0}</span>
+                <span>
+                  Missing Bid Emails {progress.originalBidNotFound ?? 0}
                 </span>
                 <span>
-                  Original Bid not found {progress.originalBidNotFound ?? 0}
+                  Candidates{' '}
+                  {(progress.candidatesCreated ?? 0) +
+                    (progress.candidatesUpdated ?? 0)}
                 </span>
                 <span>
-                  Candidates {progress.candidatesCreated}
-                  {(progress.candidatesUpdated ?? 0) > 0
-                    ? ` (+${progress.candidatesUpdated} updated)`
-                    : ''}
-                </span>
-                <span>
-                  Possible Jobs {progress.existingJobsPossible ?? 0}
-                  {(progress.existingJobsStrong ?? 0) > 0
-                    ? ` · strong ${progress.existingJobsStrong}`
-                    : ''}
+                  Possible Existing Jobs{' '}
+                  {(progress.existingJobsPossible ?? 0) +
+                    (progress.existingJobsStrong ?? 0)}
                 </span>
               </div>
             )}
+          </div>
+        )}
+
+        {analysisComplete && progress && (
+          <div
+            style={{
+              marginTop: 8,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 12,
+              fontSize: 12,
+              color: '#666',
+            }}
+          >
+            <span>
+              Quotes Found {progress.quotesFound ?? progress.quotesScanned ?? 0}
+            </span>
+            <span>Quote Projects {progress.quoteProjectsIdentified ?? 0}</span>
+            <span>
+              Bid Emails Found {progress.originalBidFromInvites ?? 0}
+            </span>
+            <span>Inbox Matches {progress.originalBidFromInbox ?? 0}</span>
+            <span>
+              Missing Bid Emails {progress.originalBidNotFound ?? 0}
+            </span>
+            <span>Candidates {openCandidates.length}</span>
           </div>
         )}
       </div>
@@ -1358,9 +1371,11 @@ export function BiddingFolderAnalysisView({
                   >
                     <th style={{ padding: '8px 10px', width: 36 }} />
                     <th style={{ padding: '8px 10px' }}>Project</th>
-                    <th style={{ padding: '8px 10px' }}>Customer</th>
+                    <th style={{ padding: '8px 10px' }}>Customer / GC</th>
+                    <th style={{ padding: '8px 10px' }}>Quote(s)</th>
+                    <th style={{ padding: '8px 10px' }}>Bid Email</th>
                     <th style={{ padding: '8px 10px' }}>Due</th>
-                    <th style={{ padding: '8px 10px' }}>Quote</th>
+                    <th style={{ padding: '8px 10px' }}>Scope</th>
                     <th style={{ padding: '8px 10px' }}>Existing Job</th>
                     <th style={{ padding: '8px 10px' }}>Status</th>
                     <th style={{ padding: '8px 10px' }}>Actions</th>
@@ -1370,10 +1385,13 @@ export function BiddingFolderAnalysisView({
                   {candidates.length === 0 && !loadingCandidates && (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={10}
                         style={{ padding: 16, color: '#888', textAlign: 'center' }}
                       >
-                        No candidates yet — run Scan Bids.
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                          No bidding analysis results
+                        </div>
+                        <div>{EMPTY_ANALYSIS_MESSAGE}</div>
                       </td>
                     </tr>
                   )}
@@ -1403,30 +1421,39 @@ export function BiddingFolderAnalysisView({
                           <div style={{ fontWeight: 600 }}>
                             {c.proposedProjectName || 'Untitled'}
                           </div>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              color: '#888',
-                              maxWidth: 200,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {scopeListPreview(c)}
-                          </div>
+                          {c.proposedJobNumber ? (
+                            <div style={{ fontSize: 11, color: '#888' }}>
+                              #{c.proposedJobNumber}
+                            </div>
+                          ) : null}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
                           {c.proposedCustomerName || '—'}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
+                          {formatMoney(c.quoteAmount, c.quoteCurrency)}
+                          {c.quoteCount > 1 ? (
+                            <div style={{ fontSize: 11, color: '#888' }}>
+                              {c.quoteCount} quotes
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontSize: 12 }}>
+                          {bidEmailTableCell(c)}
+                          {c.originalBidSource === 'NONE' ? (
+                            <div style={{ color: '#b71c1c', fontSize: 11 }}>
+                              Needs Review
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
                           {formatDateOnly(c.proposedBidDueAt)}
                         </td>
-                        <td style={{ padding: '8px 10px' }}>
-                          {formatMoney(c.quoteAmount, c.quoteCurrency)}
+                        <td style={{ padding: '8px 10px', fontSize: 12, color: '#555' }}>
+                          {scopeListPreview(c)}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
-                          {existingJobLabel(c.existingJobMatchStatus)}
+                          {existingJobMatchLabel(c.existingJobMatchStatus)}
                           {c.proposedExistingJob ? (
                             <div style={{ fontSize: 11, color: '#666' }}>
                               {c.proposedExistingJob.jobNumber
@@ -1600,33 +1627,47 @@ export function BiddingFolderAnalysisView({
                         gap: '4px 8px',
                       }}
                     >
-                      <dt style={{ color: '#888' }}>Customer</dt>
+                      <dt style={{ color: '#888' }}>Customer / GC</dt>
                       <dd style={{ margin: 0 }}>
                         {detail.proposedCustomerName || '—'}
                       </dd>
-                      <dt style={{ color: '#888' }}>Due</dt>
-                      <dd style={{ margin: 0 }}>
-                        {formatDateOnly(detail.proposedBidDueAt)}
-                      </dd>
-                      <dt style={{ color: '#888' }}>Job #</dt>
+                      <dt style={{ color: '#888' }}>Project #</dt>
                       <dd style={{ margin: 0 }}>
                         {detail.proposedJobNumber || '—'}
                       </dd>
-                      <dt style={{ color: '#888' }}>Original Bid</dt>
+                      <dt style={{ color: '#888' }}>Bid Due</dt>
+                      <dd style={{ margin: 0 }}>
+                        {formatDateOnly(detail.proposedBidDueAt)}
+                      </dd>
+                      <dt style={{ color: '#888' }}>Original Bid Request</dt>
                       <dd style={{ margin: 0 }}>
                         {(() => {
                           const invite = detail.emails?.find(
-                            (e) =>
-                              e.role === 'BID_INVITE' ||
-                              e.isPrimary
+                            (e) => e.role === 'BID_INVITE' || e.isPrimary
                           )
                           if (!invite?.email?.subject) {
                             return detail.originalBidSource === 'NONE' ||
                               !detail.originalBidSource
-                              ? 'Not found · Needs Review'
+                              ? 'Not Found'
                               : '—'
                           }
-                          return invite.email.subject
+                          return (
+                            <>
+                              <div>{invite.email.subject}</div>
+                              <div style={{ fontSize: 12, color: '#666' }}>
+                                {[
+                                  invite.email.senderName ||
+                                    invite.email.senderEmail,
+                                  formatWhen(
+                                    invite.email.receivedAt ||
+                                      invite.email.sentAt
+                                  ),
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </div>
+                            </>
+                          )
                         })()}
                       </dd>
                       <dt style={{ color: '#888' }}>Source</dt>
@@ -1641,32 +1682,32 @@ export function BiddingFolderAnalysisView({
                       <dt style={{ color: '#888' }}>Quotes</dt>
                       <dd style={{ margin: 0 }}>
                         {detail.quotes && detail.quotes.length > 0
-                          ? detail.quotes
-                              .map(
-                                (q, i) =>
-                                  `Quote ${i + 1} — ${formatMoney(
-                                    q.extractedAmount,
-                                    q.currency
-                                  )}`
-                              )
-                              .join('; ')
-                          : formatMoney(detail.quoteAmount, detail.quoteCurrency)}
+                          ? detail.quotes.map((q, i) => (
+                              <div key={q.id}>
+                                {(q.sourceSubject || `Quote ${i + 1}`).replace(
+                                  /^RE:\s*/i,
+                                  ''
+                                )}{' '}
+                                — {formatMoney(q.extractedAmount, q.currency)}
+                              </div>
+                            ))
+                          : formatMoney(
+                              detail.quoteAmount,
+                              detail.quoteCurrency
+                            )}
                       </dd>
-                      <dt style={{ color: '#888' }}>Notes</dt>
-                      <dd style={{ margin: 0 }}>{detail.proposedNotes || '—'}</dd>
-                      <dt style={{ color: '#888' }}>Extract</dt>
-                      <dd style={{ margin: 0, color: '#666', fontSize: 12 }}>
-                        {extractionStatusLabel({
-                          evidence: detail.evidence,
-                          userEditedFields: detail.userEditedFields,
-                        }) || '—'}
-                      </dd>
+                      {detail.proposedNotes ? (
+                        <>
+                          <dt style={{ color: '#888' }}>Notes</dt>
+                          <dd style={{ margin: 0 }}>{detail.proposedNotes}</dd>
+                        </>
+                      ) : null}
                     </dl>
                   )}
 
                   {!editing ? (
                     <ScopeDetailBlock
-                      title="Bid scope (requested)"
+                      title="Scope Requested"
                       detail={detail.proposedScopeDetail}
                       fallback={detail.proposedScope}
                     />
@@ -1674,14 +1715,35 @@ export function BiddingFolderAnalysisView({
 
                   {!editing && detail.quotes && detail.quotes.length > 0 ? (
                     <div style={{ marginBottom: 12 }}>
-                      {detail.quotes.map((q) => (
+                      {detail.quotes.map((q, i) => (
                         <ScopeDetailBlock
                           key={q.id}
-                          title={`Quote scope · ${q.matchStatus}`}
+                          title={`Quote Scope · ${
+                            q.sourceSubject || `Quote ${i + 1}`
+                          }`}
                           detail={q.extractedScopeDetail}
                           fallback={q.extractedScope}
                         />
                       ))}
+                    </div>
+                  ) : null}
+
+                  {!editing && detail.emails && detail.emails.length > 0 ? (
+                    <div style={{ marginBottom: 12, fontSize: 13 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        Source Emails
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {detail.emails.map((link) => (
+                          <li key={link.id}>
+                            <span style={{ color: '#888' }}>
+                              {candidateEmailRoleLabel(link.role)}
+                            </span>
+                            {' — '}
+                            {link.email.subject || '(no subject)'}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
 
@@ -1695,8 +1757,8 @@ export function BiddingFolderAnalysisView({
                     }}
                   >
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      Existing Job ·{' '}
-                      {existingJobLabel(detail.existingJobMatchStatus)}
+                      Existing ForgeOps Job ·{' '}
+                      {existingJobMatchLabel(detail.existingJobMatchStatus)}
                     </div>
                     {detail.proposedExistingJob && (
                       <div style={{ marginBottom: 8, color: '#444' }}>
@@ -1914,11 +1976,11 @@ export function BiddingFolderAnalysisView({
                     zIndex: 1,
                   }}
                 >
-                  <th style={{ padding: '8px 10px' }}>Name</th>
+                  <th style={{ padding: '8px 10px' }}>Quote / Subject</th>
                   <th style={{ padding: '8px 10px' }}>Scope</th>
-                  <th style={{ padding: '8px 10px' }}>Price</th>
-                  <th style={{ padding: '8px 10px' }}>Bid Match</th>
-                  <th style={{ padding: '8px 10px' }}>Notes</th>
+                  <th style={{ padding: '8px 10px' }}>Amount</th>
+                  <th style={{ padding: '8px 10px' }}>Matched Candidate</th>
+                  <th style={{ padding: '8px 10px' }}>Notes / Revision</th>
                   <th style={{ padding: '8px 10px' }}>Actions</th>
                 </tr>
               </thead>
@@ -1929,7 +1991,7 @@ export function BiddingFolderAnalysisView({
                       colSpan={6}
                       style={{ padding: 16, color: '#888', textAlign: 'center' }}
                     >
-                      No quote staging rows yet — run Scan Bids.
+                      No Quotes yet. {EMPTY_ANALYSIS_MESSAGE}
                     </td>
                   </tr>
                 )}
@@ -2089,8 +2151,8 @@ export function BiddingFolderAnalysisView({
             <div style={{ display: 'flex', gap: 6 }}>
               {(
                 [
-                  ['BID_INVITE', `Bid Invites (${counts.bidInvites})`],
                   ['QUOTE', `Quotes (${counts.quotes})`],
+                  ['BID_INVITE', `Bid Invites (${counts.bidInvites})`],
                 ] as const
               ).map(([role, label]) => (
                 <button
@@ -2130,6 +2192,10 @@ export function BiddingFolderAnalysisView({
               Search
             </button>
           </div>
+          <p style={{ margin: '0 0 8px', fontSize: 12, color: '#888' }}>
+            Discovery emails used in this analysis (Quotes first; Bid Invites for
+            original request matching).
+          </p>
           <div
             ref={listRef}
             onScroll={handleDiscoveryScroll}
@@ -2139,7 +2205,9 @@ export function BiddingFolderAnalysisView({
               <p style={{ color: '#888' }}>Loading…</p>
             )}
             {!loadingList && items.length === 0 && (
-              <p style={{ color: '#888' }}>No source emails in discovery yet.</p>
+              <p style={{ color: '#888' }}>
+                No source emails yet. {EMPTY_ANALYSIS_MESSAGE}
+              </p>
             )}
             {items.map((item) => (
               <div
@@ -2154,6 +2222,16 @@ export function BiddingFolderAnalysisView({
               >
                 <div>
                   <div style={{ fontWeight: 600 }}>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: '#888',
+                        marginRight: 6,
+                      }}
+                    >
+                      {discoveryRoleLabel(item.role)}
+                    </span>
                     {item.email.subject || '(no subject)'}
                   </div>
                   <div style={{ fontSize: 12, color: '#666' }}>
@@ -2227,9 +2305,11 @@ export function BiddingFolderAnalysisView({
             >
               {actionBusy
                 ? 'Importing…'
-                : `Import ${selectedIds.size || ''} Bid${
-                    selectedIds.size === 1 ? '' : 's'
-                  }`.replace('  ', ' ')}
+                : selectedIds.size > 0
+                  ? `Import ${selectedIds.size} Bid${
+                      selectedIds.size === 1 ? '' : 's'
+                    }`
+                  : 'Import Selected Bids'}
             </button>
           )}
         </div>

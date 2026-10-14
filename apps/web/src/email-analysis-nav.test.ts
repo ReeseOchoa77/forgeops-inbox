@@ -92,7 +92,7 @@ describe('Bidding Folder discovery infinite scroll contracts', () => {
     ).toBe(true)
   })
 
-  it('Bidding Folder Analysis view remains the Scan Bids staging surface', () => {
+  it('Bidding Folder Analysis view remains the Scan Quotes staging surface', () => {
     expect(BiddingFolderAnalysisView.name).toBe('BiddingFolderAnalysisView')
   })
 })
