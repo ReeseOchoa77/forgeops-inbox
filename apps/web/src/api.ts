@@ -1230,6 +1230,7 @@ export const api = {
       jobAssociatedCount: number
       nonProjectFolderCount: number
       projectFolderCount: number
+      bidCandidateCount: number
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox-preview`
     ),
@@ -1237,19 +1238,29 @@ export const api = {
   clearInbox: (
     workspaceId: string,
     connectionId: string,
-    mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' | 'HISTORICAL_IMPORT_ONLY' = 'NON_JOB_ONLY'
+    mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' | 'HISTORICAL_IMPORT_ONLY' = 'NON_JOB_ONLY',
+    options?: { includeBidCandidates?: boolean }
   ) =>
     request<{
       status: string
       mode: 'NON_JOB_ONLY' | 'ALL_EMAILS' | 'HISTORICAL_IMPORT_ONLY'
+      includeBidCandidates: boolean
       deletedCount: number
       preservedJobEmailCount: number
       removedJobEmailCount: number
+      bidCandidatesDeleted: number
+      quoteStagingsRemovedWithCandidates: number
       inboxClearedAt: string | null
       listenerEnabled: boolean
     }>(
       `/workspaces/${workspaceId}/inbox-connections/${connectionId}/clear-inbox`,
-      { method: 'POST', body: JSON.stringify({ mode }) }
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode,
+          includeBidCandidates: options?.includeBidCandidates === true,
+        }),
+      }
     ),
 
   getMessages: (

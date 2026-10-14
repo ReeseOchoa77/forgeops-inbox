@@ -59,12 +59,25 @@ describe("clear inbox message scope", () => {
 });
 
 describe("clear inbox deletion", () => {
-  function fakeClient(deletedCount: number) {
+  function fakeClient(
+    deletedCount: number,
+    opts?: { candidateIds?: string[]; quoteDeleteCount?: number }
+  ) {
     const calls: Array<{ model: string; op: string; args: unknown }> = [];
+    const candidateIds = opts?.candidateIds ?? [];
     const record = (model: string, op: string) => async (args: unknown) => {
       calls.push({ model, op, args });
       if (model === "emailMessage" && op === "deleteMany") return { count: deletedCount };
       if (model === "emailMessage" && op === "count") return 50;
+      if (model === "bidCandidate" && op === "findMany") {
+        return candidateIds.map((id) => ({ id }));
+      }
+      if (model === "bidCandidate" && op === "deleteMany") {
+        return { count: candidateIds.length };
+      }
+      if (model === "bidQuoteStaging" && op === "deleteMany") {
+        return { count: opts?.quoteDeleteCount ?? candidateIds.length };
+      }
       return { count: 0 };
     };
     const tx = {
@@ -80,6 +93,11 @@ describe("clear inbox deletion", () => {
       inboxConnection: { update: record("inboxConnection", "update") },
       job: { deleteMany: record("job", "deleteMany") },
       discoveredFolder: { deleteMany: record("discoveredFolder", "deleteMany") },
+      bidCandidate: {
+        findMany: record("bidCandidate", "findMany"),
+        deleteMany: record("bidCandidate", "deleteMany"),
+      },
+      bidQuoteStaging: { deleteMany: record("bidQuoteStaging", "deleteMany") },
     };
     const prisma = {
       $transaction: async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
@@ -143,10 +161,153 @@ describe("clear inbox deletion", () => {
     expect(result.deletedCount).toBe(150);
     expect(result.removedJobEmailCount).toBe(50);
     expect(result.preservedJobEmailCount).toBe(0);
+    expect(result.bidCandidatesDeleted).toBe(0);
     const messageDelete = calls.find((c) => c.model === "emailMessage" && c.op === "deleteMany");
     expect((messageDelete?.args as { where: { jobId?: null } }).where.jobId).toBeUndefined();
     expect(calls.some((c) => c.model === "job")).toBe(false);
+    expect(calls.some((c) => c.model === "bidCandidate")).toBe(false);
     expect(calls.some((c) => c.model === "inboxConnection")).toBe(true);
+  });
+
+  it("NON_JOB_ONLY ignores includeBidCandidates=true", async () => {
+    const { prisma, calls } = fakeClient(10, { candidateIds: ["c1"] });
+    const result = await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "NON_JOB_ONLY",
+      clearedAt,
+      includeBidCandidates: true,
+    });
+    expect(result.bidCandidatesDeleted).toBe(0);
+    expect(calls.some((c) => c.model === "bidCandidate")).toBe(false);
+  });
+
+  it("A/B) includeBidCandidates false/omitted preserves Candidates", async () => {
+    const { prisma, calls } = fakeClient(10, { candidateIds: ["c1", "c2"] });
+    const omitted = await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "ALL_EMAILS",
+      clearedAt,
+    });
+    expect(omitted.bidCandidatesDeleted).toBe(0);
+    expect(calls.some((c) => c.model === "bidCandidate")).toBe(false);
+
+    const { prisma: p2, calls: c2 } = fakeClient(10, { candidateIds: ["c1"] });
+    const explicitFalse = await clearConnectionInbox(p2 as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "ALL_EMAILS",
+      clearedAt,
+      includeBidCandidates: false,
+    });
+    expect(explicitFalse.bidCandidatesDeleted).toBe(0);
+    expect(c2.some((c) => c.model === "bidCandidate")).toBe(false);
+  });
+
+  it("C–I) includeBidCandidates=true deletes all workspace Candidates; Jobs untouched", async () => {
+    const { prisma, calls } = fakeClient(20, {
+      candidateIds: ["cand-open", "cand-quoted", "cand-converted"],
+      quoteDeleteCount: 4,
+    });
+    const result = await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "ALL_EMAILS",
+      clearedAt,
+      includeBidCandidates: true,
+    });
+    expect(result.bidCandidatesDeleted).toBe(3);
+    expect(result.quoteStagingsRemovedWithCandidates).toBe(4);
+    expect(result.deletedCount).toBe(20);
+
+    const candFind = calls.find((c) => c.model === "bidCandidate" && c.op === "findMany");
+    expect(candFind?.args).toEqual({
+      where: { workspaceId },
+      select: { id: true },
+    });
+    const candDelete = calls.find((c) => c.model === "bidCandidate" && c.op === "deleteMany");
+    expect(candDelete?.args).toEqual({
+      where: {
+        workspaceId,
+        id: { in: ["cand-open", "cand-quoted", "cand-converted"] },
+      },
+    });
+    const quoteDelete = calls.find(
+      (c) => c.model === "bidQuoteStaging" && c.op === "deleteMany"
+    );
+    expect(quoteDelete?.args).toEqual({
+      where: {
+        workspaceId,
+        bidCandidateId: {
+          in: ["cand-open", "cand-quoted", "cand-converted"],
+        },
+      },
+    });
+    // Jobs never deleted by this path.
+    expect(calls.some((c) => c.model === "job")).toBe(false);
+  });
+
+  it("M) Candidate deletion is workspace-scoped (predicate uses workspaceId only)", async () => {
+    const { prisma, calls } = fakeClient(5, { candidateIds: ["only-this-ws"] });
+    await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "ALL_EMAILS",
+      clearedAt,
+      includeBidCandidates: true,
+    });
+    const candFind = calls.find((c) => c.model === "bidCandidate" && c.op === "findMany");
+    expect(candFind?.args).toEqual({
+      where: { workspaceId },
+      select: { id: true },
+    });
+    // Must not filter through mailbox / inboxConnectionId.
+    expect(JSON.stringify(candFind?.args)).not.toContain("inboxConnectionId");
+  });
+
+  it("Candidates deleted before emails when includeBidCandidates=true", async () => {
+    const order: string[] = [];
+    const tx = {
+      bidCandidate: {
+        findMany: async () => {
+          order.push("cand-find");
+          return [{ id: "c1" }];
+        },
+        deleteMany: async () => {
+          order.push("cand-delete");
+          return { count: 1 };
+        },
+      },
+      bidQuoteStaging: {
+        deleteMany: async () => {
+          order.push("quote-delete");
+          return { count: 1 };
+        },
+      },
+      emailAttachment: { deleteMany: async () => { order.push("attachment"); return { count: 0 }; } },
+      task: { deleteMany: async () => { order.push("task"); return { count: 0 }; } },
+      classification: { deleteMany: async () => { order.push("classification"); return { count: 0 }; } },
+      normalizedEmail: { deleteMany: async () => { order.push("normalized"); return { count: 0 }; } },
+      emailMessage: {
+        count: async () => 0,
+        deleteMany: async () => { order.push("message"); return { count: 1 }; },
+      },
+      emailThread: { deleteMany: async () => { order.push("thread"); return { count: 0 }; } },
+      inboxConnection: { update: async () => { order.push("watermark"); return {}; } },
+    };
+    const prisma = {
+      $transaction: async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
+    };
+    await clearConnectionInbox(prisma as never, {
+      workspaceId,
+      inboxConnectionId,
+      mode: "ALL_EMAILS",
+      clearedAt,
+      includeBidCandidates: true,
+    });
+    expect(order.indexOf("quote-delete")).toBeLessThan(order.indexOf("cand-delete"));
+    expect(order.indexOf("cand-delete")).toBeLessThan(order.indexOf("message"));
   });
 
   it("removes imported mail and inbox sync, keeps project-folder mail, and sets the watermark", async () => {
@@ -177,6 +338,11 @@ describe("clear inbox deletion", () => {
   it("sets the watermark in the same transaction as the deletes", async () => {
     const order: string[] = [];
     const tx = {
+      bidCandidate: {
+        findMany: async () => [],
+        deleteMany: async () => ({ count: 0 }),
+      },
+      bidQuoteStaging: { deleteMany: async () => ({ count: 0 }) },
       emailAttachment: { deleteMany: async () => { order.push("attachment"); return { count: 0 }; } },
       task: { deleteMany: async () => { order.push("task"); return { count: 0 }; } },
       classification: { deleteMany: async () => { order.push("classification"); return { count: 0 }; } },

@@ -6,6 +6,17 @@ import { join } from "node:path";
 const here = import.meta.dirname;
 
 describe("clearBiddingAnalysisStaging", () => {
+  it("O) Clear Analysis never deletes BidCandidates and is separate from Clear All Emails", () => {
+    const src = readFileSync(
+      join(here, "../application/services/clear-bidding-analysis.ts"),
+      "utf8"
+    );
+    expect(src).toContain("Never deletes:");
+    expect(src).toContain("BidCandidate (permanent operational opportunities)");
+    expect(src).not.toContain("includeBidCandidates");
+    expect(src).not.toMatch(/bidCandidate\.deleteMany/);
+  });
+
   it("source never deletes EmailMessage, Attachment, Job, Customer, or BidCandidate", () => {
     const src = readFileSync(
       join(here, "../application/services/clear-bidding-analysis.ts"),

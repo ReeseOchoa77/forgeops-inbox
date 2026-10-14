@@ -105,15 +105,20 @@ function ClearEmailsDialog({
   email: string
   busy: boolean
   onClose: () => void
-  onConfirm: (mode: ClearInboxChoice) => void
+  onConfirm: (
+    mode: ClearInboxChoice,
+    options: { includeBidCandidates: boolean }
+  ) => void
 }) {
   const [choice, setChoice] = useState<ClearInboxChoice>('NON_JOB_ONLY')
   const [phrase, setPhrase] = useState('')
+  const [includeBidCandidates, setIncludeBidCandidates] = useState(false)
   const [preview, setPreview] = useState<{
     unassignedCount: number
     jobAssociatedCount: number
     nonProjectFolderCount: number
     projectFolderCount: number
+    bidCandidateCount: number
   } | null>(null)
 
   useEffect(() => {
@@ -196,6 +201,9 @@ function ClearEmailsDialog({
                   onChange={() => {
                     setChoice(option.mode)
                     setPhrase('')
+                    if (option.mode !== 'ALL_EMAILS') {
+                      setIncludeBidCandidates(false)
+                    }
                   }}
                   style={{ marginTop: 2 }}
                 />
@@ -224,16 +232,72 @@ function ClearEmailsDialog({
           })}
         </div>
         {choice === 'ALL_EMAILS' && (
-          <label style={{ display: 'block', marginTop: 14, fontSize: 12, color: '#7f1d1d' }}>
-            Type "{CLEAR_ALL_EMAILS_PHRASE}" to continue.
-            <input
-              value={phrase}
-              disabled={busy}
-              onChange={(e) => setPhrase(e.target.value)}
-              autoComplete="off"
-              style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
-            />
-          </label>
+          <>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '16px 1fr',
+                gap: 10,
+                alignItems: 'start',
+                marginTop: 14,
+                padding: 10,
+                borderRadius: 6,
+                border: includeBidCandidates ? '1px solid #9b1c1c' : '1px solid #e5e5e5',
+                cursor: busy ? 'default' : 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={includeBidCandidates}
+                disabled={busy}
+                onChange={(e) => setIncludeBidCandidates(e.target.checked)}
+                style={{ marginTop: 2 }}
+                data-testid="clear-include-bid-candidates"
+              />
+              <span>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#9b1c1c' }}>
+                  Include Bid Candidates
+                </span>
+                <span style={{ display: 'block', fontSize: 12, color: '#555', marginTop: 4, lineHeight: 1.45 }}>
+                  Also permanently remove all Bid Candidates in this workspace, including
+                  candidates with Quotes. Existing Jobs will not be deleted.
+                  {preview != null
+                    ? ` (${preview.bidCandidateCount.toLocaleString()} Bid Candidate${
+                        preview.bidCandidateCount === 1 ? '' : 's'
+                      })`
+                    : ''}
+                </span>
+              </span>
+            </label>
+            {includeBidCandidates && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: 10,
+                  borderRadius: 6,
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  fontSize: 12,
+                  color: '#7f1d1d',
+                  lineHeight: 1.45,
+                }}
+              >
+                Clear all emails and Bid Candidates? This will permanently remove all emails
+                and all Bid Candidates in this workspace. Bid Candidates with Quotes will also
+                be removed. Existing Jobs will not be deleted.
+              </div>
+            )}
+            <label style={{ display: 'block', marginTop: 14, fontSize: 12, color: '#7f1d1d' }}>
+              Type "{CLEAR_ALL_EMAILS_PHRASE}" to continue.
+              <input
+                value={phrase}
+                disabled={busy}
+                onChange={(e) => setPhrase(e.target.value)}
+                autoComplete="off"
+                style={{ display: 'block', marginTop: 6, width: '100%', padding: '6px 8px' }}
+              />
+            </label>
+          </>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button type="button" className="btn btn-sm" disabled={busy} onClick={onClose}>
@@ -242,7 +306,12 @@ function ClearEmailsDialog({
           <button
             type="button"
             disabled={busy || !phraseOk}
-            onClick={() => onConfirm(choice)}
+            onClick={() =>
+              onConfirm(choice, {
+                includeBidCandidates:
+                  choice === 'ALL_EMAILS' && includeBidCandidates,
+              })
+            }
             style={{
               background: selected?.danger ? '#9b1c1c' : '#1a1a2e',
               color: '#fff',
@@ -255,7 +324,11 @@ function ClearEmailsDialog({
               opacity: busy || !phraseOk ? 0.6 : 1,
             }}
           >
-            {busy ? 'Clearing...' : selected?.title ?? 'Clear emails'}
+            {busy
+              ? 'Clearing...'
+              : choice === 'ALL_EMAILS' && includeBidCandidates
+                ? 'Clear emails and Bid Candidates'
+                : selected?.title ?? 'Clear emails'}
           </button>
         </div>
       </div>
@@ -281,7 +354,11 @@ type Props = {
     | { type: 'loading'; connectionId: string }
     | { type: 'error'; connectionId: string; message: string }
   clearing: string
-  onClearEmails: (id: string, mode: ClearInboxChoice) => void
+  onClearEmails: (
+    id: string,
+    mode: ClearInboxChoice,
+    options?: { includeBidCandidates?: boolean }
+  ) => void
   isOwner: boolean
   canManage: boolean
   onAddMailbox?: () => void
@@ -1146,10 +1223,10 @@ export function MonitoredMailboxesPanel({
             if (clearing === clearFor.id) return
             setClearFor(null)
           }}
-          onConfirm={(mode) => {
+          onConfirm={(mode, options) => {
             const id = clearFor.id
             setClearFor(null)
-            onClearEmails(id, mode)
+            onClearEmails(id, mode, options)
           }}
         />
       )}

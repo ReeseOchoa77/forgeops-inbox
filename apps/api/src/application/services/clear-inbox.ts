@@ -59,19 +59,71 @@ export async function previewClearInbox(
   jobAssociatedCount: number;
   nonProjectFolderCount: number;
   projectFolderCount: number;
+  bidCandidateCount: number;
 }> {
   const base = {
     workspaceId: input.workspaceId,
     inboxConnectionId: input.inboxConnectionId,
   };
-  const [unassignedCount, jobAssociatedCount, nonProjectFolderCount, projectFolderCount] =
-    await Promise.all([
-      prisma.emailMessage.count({ where: { ...base, jobId: null } }),
-      prisma.emailMessage.count({ where: { ...base, jobId: { not: null } } }),
-      prisma.emailMessage.count({ where: { ...base, fromProjectFolder: false } }),
-      prisma.emailMessage.count({ where: { ...base, fromProjectFolder: true } }),
-    ]);
-  return { unassignedCount, jobAssociatedCount, nonProjectFolderCount, projectFolderCount };
+  const [
+    unassignedCount,
+    jobAssociatedCount,
+    nonProjectFolderCount,
+    projectFolderCount,
+    bidCandidateCount,
+  ] = await Promise.all([
+    prisma.emailMessage.count({ where: { ...base, jobId: null } }),
+    prisma.emailMessage.count({ where: { ...base, jobId: { not: null } } }),
+    prisma.emailMessage.count({ where: { ...base, fromProjectFolder: false } }),
+    prisma.emailMessage.count({ where: { ...base, fromProjectFolder: true } }),
+    prisma.bidCandidate.count({ where: { workspaceId: input.workspaceId } }),
+  ]);
+  return {
+    unassignedCount,
+    jobAssociatedCount,
+    nonProjectFolderCount,
+    projectFolderCount,
+    bidCandidateCount,
+  };
+}
+
+/**
+ * Delete every BidCandidate in the workspace.
+ * Quote staging linked to those Candidates is removed; Jobs/Customers are not.
+ * BidCandidateEmail cascades from Candidate delete.
+ * canonicalJobId is SetNull on Job side — Jobs survive.
+ */
+export async function deleteWorkspaceBidCandidates(
+  tx: Prisma.TransactionClient,
+  workspaceId: string
+): Promise<{ bidCandidatesDeleted: number; quoteStagingsUnlinked: number }> {
+  const candidates = await tx.bidCandidate.findMany({
+    where: { workspaceId },
+    select: { id: true },
+  });
+  if (candidates.length === 0) {
+    return { bidCandidatesDeleted: 0, quoteStagingsUnlinked: 0 };
+  }
+  const candidateIds = candidates.map((c) => c.id);
+
+  // Remove Candidate-specific Quote staging before Candidate delete.
+  // (Schema would SetNull bidCandidateId; explicit delete avoids orphan durable rows.)
+  const quotes = await tx.bidQuoteStaging.deleteMany({
+    where: {
+      workspaceId,
+      bidCandidateId: { in: candidateIds },
+    },
+  });
+
+  // BidCandidateEmail cascades via BidCandidate.onDelete=Cascade.
+  const deleted = await tx.bidCandidate.deleteMany({
+    where: { workspaceId, id: { in: candidateIds } },
+  });
+
+  return {
+    bidCandidatesDeleted: deleted.count,
+    quoteStagingsUnlinked: quotes.count,
+  };
 }
 
 export async function clearConnectionInbox(
@@ -81,14 +133,33 @@ export async function clearConnectionInbox(
     inboxConnectionId: string;
     mode: ClearInboxMode;
     clearedAt: Date;
+    /**
+     * When true, permanently delete ALL BidCandidates in the workspace
+     * (including quoted / converted Candidate rows). Jobs are preserved.
+     * Default false — omitted/false preserves Candidates.
+     */
+    includeBidCandidates?: boolean;
   }
 ): Promise<{
   deletedCount: number;
   preservedJobEmailCount: number;
   removedJobEmailCount: number;
+  bidCandidatesDeleted: number;
+  quoteStagingsRemovedWithCandidates: number;
 }> {
   const messageWhere = clearInboxMessageWhere(input);
+  // Only Clear All Emails may opt into Candidate deletion. Other modes ignore the flag.
+  const includeBidCandidates =
+    input.mode === "ALL_EMAILS" && input.includeBidCandidates === true;
   return prisma.$transaction(async (tx) => {
+    let bidCandidatesDeleted = 0;
+    let quoteStagingsRemovedWithCandidates = 0;
+    if (includeBidCandidates) {
+      const cand = await deleteWorkspaceBidCandidates(tx, input.workspaceId);
+      bidCandidatesDeleted = cand.bidCandidatesDeleted;
+      quoteStagingsRemovedWithCandidates = cand.quoteStagingsUnlinked;
+    }
+
     const jobAssociatedCount = await tx.emailMessage.count({
       where: {
         workspaceId: input.workspaceId,
@@ -118,6 +189,8 @@ export async function clearConnectionInbox(
       deletedCount,
       preservedJobEmailCount: input.mode === "NON_JOB_ONLY" ? jobAssociatedCount : 0,
       removedJobEmailCount: input.mode === "ALL_EMAILS" ? jobAssociatedCount : 0,
+      bidCandidatesDeleted,
+      quoteStagingsRemovedWithCandidates,
     };
   });
 }

@@ -664,6 +664,8 @@ export const registerMailboxControlRoutes = async (
 
   const clearInboxModeSchema = z.object({
     mode: z.enum(["NON_JOB_ONLY", "ALL_EMAILS", "HISTORICAL_IMPORT_ONLY"]).default("NON_JOB_ONLY"),
+    /** Explicit opt-in. Default/omitted = false (Candidates preserved). */
+    includeBidCandidates: z.boolean().optional().default(false),
   });
 
   async function loadOwnedConnection(
@@ -740,6 +742,9 @@ export const registerMailboxControlRoutes = async (
       if (!loaded) return;
       const { access, connection } = loaded;
       const mode: ClearInboxMode = body.mode;
+      // Candidate deletion is Clear All Emails only; other modes never honor the flag.
+      const includeBidCandidates =
+        mode === "ALL_EMAILS" && body.includeBidCandidates === true;
       const clearedAt = new Date();
 
       const result = await clearConnectionInbox(app.services.prisma, {
@@ -747,6 +752,7 @@ export const registerMailboxControlRoutes = async (
         inboxConnectionId: connection.id,
         mode,
         clearedAt,
+        includeBidCandidates,
       });
 
       await app.services.auditEventLogger.log({
@@ -762,9 +768,13 @@ export const registerMailboxControlRoutes = async (
               : "inbox_connection.cleared",
         metadata: {
           mode,
+          includeBidCandidates,
           deletedCount: result.deletedCount,
           preservedJobEmailCount: result.preservedJobEmailCount,
           removedJobEmailCount: result.removedJobEmailCount,
+          bidCandidatesDeleted: result.bidCandidatesDeleted,
+          quoteStagingsRemovedWithCandidates:
+            result.quoteStagingsRemovedWithCandidates,
           inboxClearedAt: clearedAt.toISOString(),
           listenerRemainsEnabled: connection.nativeListeningEnabled,
           ingestionSource: connection.ingestionSource,
@@ -775,9 +785,13 @@ export const registerMailboxControlRoutes = async (
       return reply.send({
         status: "cleared",
         mode,
+        includeBidCandidates,
         deletedCount: result.deletedCount,
         preservedJobEmailCount: result.preservedJobEmailCount,
         removedJobEmailCount: result.removedJobEmailCount,
+        bidCandidatesDeleted: result.bidCandidatesDeleted,
+        quoteStagingsRemovedWithCandidates:
+          result.quoteStagingsRemovedWithCandidates,
         inboxClearedAt: clearedAt.toISOString(),
         listenerEnabled: connection.nativeListeningEnabled,
       });

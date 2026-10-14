@@ -111,10 +111,14 @@ export function WorkspaceView({
     return () => { cancelled = true }
   }, [workspaceId])
 
-  const handleClearEmails = async (connId: string, mode: ClearInboxChoice) => {
+  const handleClearEmails = async (
+    connId: string,
+    mode: ClearInboxChoice,
+    options?: { includeBidCandidates?: boolean }
+  ) => {
     setClearing(connId)
     try {
-      await api.clearInbox(workspaceId, connId, mode)
+      await api.clearInbox(workspaceId, connId, mode, options)
       window.location.reload()
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to clear emails')
@@ -268,7 +272,9 @@ export function WorkspaceView({
               onRefresh={refreshConnections}
               onAuthorize={(c) => void handleAuthorize(c)}
               onReconnect={(c) => void handleReconnect(c)}
-              onClearEmails={(id, mode) => void handleClearEmails(id, mode)}
+              onClearEmails={(id, mode, options) =>
+                void handleClearEmails(id, mode, options)
+              }
               onAddMailbox={canManageMailboxes ? () => setAddMailboxOpen(true) : undefined}
               onRemove={canManageMailboxes ? (c) => void handleRemoveMailbox(c) : undefined}
             />
