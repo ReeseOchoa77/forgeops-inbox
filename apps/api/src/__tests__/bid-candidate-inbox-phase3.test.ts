@@ -1,5 +1,5 @@
 /**
- * Phase 3: Inbox Bid Candidate + lossless Bid Invites ingestion.
+ * Phase 3: Bid Opportunity subtype + Bid Invites Inbox filter + lossless ingestion.
  */
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -20,15 +20,16 @@ function readSrc(rel: string) {
   return readFileSync(join(here, rel), "utf8");
 }
 
-describe("Phase 3 — Bid Candidate subtype + Inbox", () => {
-  it("reuses BID_OPPORTUNITY with Bid Candidate label (no new subtype key)", () => {
-    expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe("Bid Candidate");
+describe("Phase 3 — Bid Opportunity subtype + Bid Invites Inbox filter", () => {
+  it("reuses BID_OPPORTUNITY with Bid Opportunity label (no new subtype key)", () => {
+    expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe("Bid Opportunity");
     const subtypes = readSrc("../../../../packages/shared/src/business-subtypes.ts");
     expect(subtypes).toContain('"BID_OPPORTUNITY"');
     expect(subtypes).not.toContain("BID_CANDIDATE");
+    expect(subtypes).toContain('INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Bid Invites"');
   });
 
-  it("E) Bid Candidate Inbox filter = durable Bid Invites provenance only", () => {
+  it("E) Bid Invites Inbox filter = durable Bid Invites provenance only", () => {
     const src = readSrc("../interfaces/http/routes/inbox-read.route.ts");
     expect(src).toContain('businessTypeKey === "BID_OPPORTUNITY"');
     expect(src).toContain("discoveredInBidInvitesFolder: true");

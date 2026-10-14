@@ -806,7 +806,7 @@ model EmailMessage {
   /// Durable Projects/Bid Invites folder discovery provenance.
   /// Set when ForgeOps imported/discovered this EmailMessage in that Outlook folder.
   /// Survives Clear Analysis, AI/manual subtype changes, and Candidate reassignment.
-  /// Inbox "Bid Candidate" filter uses this — not BID_OPPORTUNITY alone.
+  /// Inbox "Bid Invites" source filter uses this — not BID_OPPORTUNITY alone.
   discoveredInBidInvitesFolder Boolean @default(false)
   isArchived       Boolean       @default(false)
   archivedAt       DateTime?

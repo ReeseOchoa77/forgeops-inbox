@@ -1,10 +1,10 @@
 /**
- * Deterministic Bid Candidate subtype for Projects/Bid Invites provenance.
+ * Deterministic Bid Opportunity subtype (BID_OPPORTUNITY) for Projects/Bid Invites provenance.
  * No AI — folder placement is authoritative.
  *
  * When recordFolderProvenance is true (default), also sets durable
  * EmailMessage.discoveredInBidInvitesFolder. Manual Candidate assignment must
- * pass false so ordinary Inbox emails do not enter the Bid Candidate filter.
+ * pass false so ordinary Inbox emails do not enter the Bid Invites source filter.
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";

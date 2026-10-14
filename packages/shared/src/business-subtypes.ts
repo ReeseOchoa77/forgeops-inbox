@@ -30,8 +30,12 @@ export type BusinessSubtypeKey = (typeof BUSINESS_SUBTYPE_KEYS)[number];
 export const BUSINESS_SUBTYPE_LABELS: Record<BusinessSubtypeKey, string> = {
   /** Explicit General — USER_EXPLICIT custom; AI must not overwrite. */
   GENERAL: "General",
-  /** User-facing: Bid Candidate (canonical key remains BID_OPPORTUNITY). */
-  BID_OPPORTUNITY: "Bid Candidate",
+  /**
+   * Email subtype label (canonical key remains BID_OPPORTUNITY).
+   * Distinct from BidCandidate entity ("Bid Candidate") and from the Inbox
+   * Bid Invites provenance filter (INBOX_BID_INVITES_SOURCE_FILTER_LABEL).
+   */
+  BID_OPPORTUNITY: "Bid Opportunity",
   BID_UPDATE: "Bid Update / Addendum",
   /** User-facing: Quote (canonical key remains ESTIMATE_QUOTE). */
   ESTIMATE_QUOTE: "Quote",
@@ -79,6 +83,22 @@ export const BUSINESS_SUBTYPE_DIRECTION_HINTS: Record<
   INTERNAL_ADMIN: "BOTH",
   OTHER_BUSINESS: "BOTH",
 };
+
+/**
+ * Inbox source-filter label when `businessTypeKey=BID_OPPORTUNITY` is selected.
+ * Server semantics are Projects/Bid Invites provenance
+ * (`discoveredInBidInvitesFolder`), NOT subtype membership and NOT BidCandidate
+ * entity membership. Subtype badges still use BUSINESS_SUBTYPE_LABELS.
+ */
+export const INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Bid Invites";
+
+/** Label for an Inbox filter option (provenance-aware for BID_OPPORTUNITY). */
+export function inboxBusinessTypeFilterOptionLabel(
+  key: BusinessSubtypeKey
+): string {
+  if (key === "BID_OPPORTUNITY") return INBOX_BID_INVITES_SOURCE_FILTER_LABEL;
+  return BUSINESS_SUBTYPE_LABELS[key];
+}
 
 /** Filter / dropdown options in stable display order. */
 export const BUSINESS_SUBTYPE_FILTER_OPTIONS: Array<{

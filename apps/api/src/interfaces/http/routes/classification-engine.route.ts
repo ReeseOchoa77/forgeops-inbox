@@ -13,7 +13,7 @@ import { legacyBusinessCategoryFromMailbox } from "../../../application/services
 
 const SYSTEM_BUSINESS_TYPES = [
   { systemKey: "GENERAL", displayLabel: "General", description: "Explicit general / no specialized type", displayGroup: "OTHER", displayOrder: 0 },
-  { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Candidate", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
+  { systemKey: "BID_OPPORTUNITY", displayLabel: "Bid Opportunity", description: "Invitation or opportunity to bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 1 },
   { systemKey: "BID_UPDATE", displayLabel: "Bid Update / Addendum", description: "Update or addendum to existing bid", displayGroup: "BIDS_ESTIMATING", displayOrder: 2 },
   { systemKey: "ESTIMATE_QUOTE", displayLabel: "Quote", description: "Estimate or quote for work or materials", displayGroup: "BIDS_ESTIMATING", displayOrder: 3 },
   { systemKey: "PURCHASE_ORDER_CONTRACT", displayLabel: "Purchase Order / Contract", description: "Purchase order or contract", displayGroup: "PURCHASING", displayOrder: 1 },

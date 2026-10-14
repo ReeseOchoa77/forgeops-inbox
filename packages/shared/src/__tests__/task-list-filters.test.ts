@@ -17,7 +17,7 @@ import {
 
 describe("task list filters", () => {
   it("exposes canonical subtype labels (single source)", () => {
-    expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe("Bid Candidate");
+    expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe("Bid Opportunity");
     expect(businessSubtypeLabel("RFI_CLARIFICATION")).toBe("RFI / Clarification");
   });
 

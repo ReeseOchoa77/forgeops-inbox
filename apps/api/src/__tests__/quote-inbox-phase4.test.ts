@@ -31,7 +31,7 @@ describe("Phase 4 — Quote / Sent mail", () => {
     expect(subtypes).not.toMatch(/"QUOTE"/);
   });
 
-  it("direction-aware subtype options: Bid Candidate incoming, Quote sent", () => {
+  it("direction-aware subtype options: Bid Opportunity incoming, Quote sent", () => {
     const incoming = businessSubtypeFilterOptionsForDirection("incoming").map(
       (o) => o.key
     );
@@ -50,7 +50,7 @@ describe("Phase 4 — Quote / Sent mail", () => {
     expect(src).toContain('role: "QUOTE"');
     expect(src).toMatch(/andConditions\.push/);
     // Regression: Quote still uses subtype OR BidCandidateEmail.role=QUOTE.
-    // Bid Candidate narrowed to discoveredInBidInvitesFolder; Quote must not.
+    // Bid Invites filter narrowed to discoveredInBidInvitesFolder; Quote must not.
     const quoteBlock = src.slice(
       src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'),
       src.indexOf("} else {", src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'))
