@@ -19,6 +19,9 @@
     "paths": {
       "@forgeops/shared/business-subtypes": [
         "../../packages/shared/src/business-subtypes.ts"
+      ],
+      "@forgeops/shared/bidding/scope-detail": [
+        "../../packages/shared/src/bidding/scope-detail.ts"
       ]
     },
 

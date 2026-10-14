@@ -16,7 +16,7 @@ import {
   isScopeReviewPlaceholder,
   parseDetailedScope,
   type DetailedScope,
-} from '@forgeops/shared'
+} from '@forgeops/shared/bidding/scope-detail'
 
 type Props = {
   workspaceId: string

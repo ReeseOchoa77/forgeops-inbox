@@ -14,6 +14,11 @@
       "types": "./src/business-subtypes.ts",
       "import": "./src/business-subtypes.ts",
       "default": "./src/business-subtypes.ts"
+    },
+    "./bidding/scope-detail": {
+      "types": "./src/bidding/scope-detail.ts",
+      "import": "./src/bidding/scope-detail.ts",
+      "default": "./src/bidding/scope-detail.ts"
     }
   },
   "scripts": {

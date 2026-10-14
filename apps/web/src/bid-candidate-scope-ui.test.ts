@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isScopeReviewPlaceholder,
   parseDetailedScope,
-} from '@forgeops/shared'
+} from '@forgeops/shared/bidding/scope-detail'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
