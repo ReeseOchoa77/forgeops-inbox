@@ -1533,7 +1533,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </div>
       )}
 
-      <div className="inbox-filter-toolbar" data-testid="inbox-filter-toolbar">
+      <div className="inbox-filters" data-testid="inbox-filter-toolbar">
         {/* Row 1 — Business | Sent | Jobs | Dates | Personal | Trash */}
         <div
           data-testid="inbox-filter-row-primary"
@@ -1559,7 +1559,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </button>
           {showBusinessChrome && (
             <>
-              <span className="inbox-filter-sep" aria-hidden="true" />
+              <span className="inbox-filter-sep" aria-hidden="true">·</span>
               <JobFilterSelect
                 workspaceId={workspaceId}
                 value={jobFilter}
@@ -1582,7 +1582,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               </select>
             </>
           )}
-          <span className="inbox-filter-sep" aria-hidden="true" />
+          <span className="inbox-filter-sep" aria-hidden="true">·</span>
           {!(isAllMailboxes && !canSeeAllPersonal) &&
             !(!isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) && (
               <button
@@ -1665,7 +1665,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   value={priorityFilter}
                   onChange={setPriorityFilter}
                 />
-                <span className="inbox-filter-sep" aria-hidden="true" />
+                <span className="inbox-filter-sep" aria-hidden="true">·</span>
                 {!isSentView && (
                   <button
                     type="button"
