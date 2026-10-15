@@ -5,10 +5,10 @@ import { join } from 'node:path'
 const appSrc = readFileSync(join(import.meta.dirname, 'App.tsx'), 'utf8')
 const viewSrc = readFileSync(join(import.meta.dirname, 'views/BiddingView.tsx'), 'utf8')
 
-describe('Bid Candidates nav / page', () => {
-  it('nav label is Bid Candidates (not Job BIDDING bidding)', () => {
-    expect(appSrc).toContain("label: 'Bid Candidates'")
-    expect(appSrc).toContain("bidding: 'Bid Candidates'")
+describe('Active Bids nav / page', () => {
+  it('nav label is Active Bids (not Job BIDDING bidding)', () => {
+    expect(appSrc).toContain("label: 'Active Bids'")
+    expect(appSrc).toContain("bidding: 'Active Bids'")
   })
 
   it('BiddingView lists operational Bid Candidates API', () => {

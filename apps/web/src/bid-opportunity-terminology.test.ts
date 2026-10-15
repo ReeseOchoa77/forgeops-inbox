@@ -17,22 +17,22 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     expect(businessTypeLabels.BID_OPPORTUNITY).toBe('Bid Opportunity')
   })
 
-  it('C) Inbox source-filter option = Active Bid (not Bid Opportunity / Bid Candidate)', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+  it('C) Inbox source-filter option = Bidding (not Bid Opportunity / Bid Candidate)', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
     expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe(
-      'Active Bid'
+      'Bidding'
     )
     expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).not.toBe(
       BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY
     )
   })
 
-  it('F/G/H/I) Bid Candidate entity page / actions retained', () => {
+  it('F/G/H/I) Active Bids tab + Bid Candidate entity actions retained', () => {
     const app = readFileSync(join(here, 'App.tsx'), 'utf8')
-    expect(app).toContain("label: 'Bid Candidates'")
+    expect(app).toContain("label: 'Active Bids'")
     const bidding = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
     expect(bidding).toContain('Create Bid Candidate')
-    expect(bidding).toContain('Bid Candidates')
+    expect(bidding).toContain('Active Bids')
     const dialog = readFileSync(
       join(here, 'components/EmailJobAssignmentDialog.tsx'),
       'utf8'
@@ -61,10 +61,10 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     expect(BUSINESS_SUBTYPE_LABELS.ESTIMATE_QUOTE).toBe('Quote')
   })
 
-  it('MessagesView uses Active Bid dedicated provenance control', () => {
+  it('MessagesView uses Bidding dedicated provenance control', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
     expect(src).toContain('inbox-active-bid-filter')
-    expect(src).toContain('Active Bid')
+    expect(src).toContain('Bidding')
   })
 
   it('manual subtype pickers use Bid Opportunity (shared labels), not Bid Candidate', () => {

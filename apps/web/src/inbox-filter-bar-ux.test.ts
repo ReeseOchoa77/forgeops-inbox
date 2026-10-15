@@ -46,26 +46,28 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('excludeBusinessTypeGroups')
   })
 
-  it('D) secondary row: Pinned, Priority, Active Bid, Subtype', () => {
+  it('D) secondary row: Pinned, Priority, Bidding, Subtype', () => {
     const src = view()
     expect(src).toContain('data-testid="inbox-filter-row-secondary"')
     expect(src).toContain('data-testid="inbox-pinned-filter"')
     expect(src).toContain('data-testid="inbox-priority-filter"')
     expect(src).toContain('data-testid="inbox-active-bid-filter"')
     expect(src).toContain('data-testid="inbox-subtype-filter"')
-    expect(src).toContain('Active Bid')
+    expect(src).toContain('Bidding')
   })
 
   it('E) subtypes not all rendered inline as chips', () => {
     const src = view()
     expect(src).toContain('inbox-subtype-filter')
-    expect(src).toContain('<option value="">Subtype</option>')
-    // No per-subtype chip map for every BUSINESS_SUBTYPE_KEYS entry.
+    expect(src).toContain('InboxSubtypeSelect')
+    expect(src).toContain('inbox-filter-menu')
+    // No native <select> subtype list / per-subtype chip map.
+    expect(src).not.toContain('<option value="">Subtype</option>')
     expect(src).not.toMatch(/BUSINESS_SUBTYPE_KEYS\.map/)
   })
 
-  it('F) Active Bid uses Bid Invites provenance key BID_OPPORTUNITY', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+  it('F) Bidding uses Bid Invites provenance key BID_OPPORTUNITY', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
     const src = view()
     expect(src).toContain("prev === 'BID_OPPORTUNITY' ? '' : 'BID_OPPORTUNITY'")
     const f = buildInboxMessageListFilters({
@@ -101,15 +103,15 @@ describe('Inbox filter bar compaction', () => {
     expect(src).toContain("enteringSent && prev === 'BID_OPPORTUNITY'")
   })
 
-  it('N) Quote + Active Bid keys hidden from Subtype dropdown (dedicated controls)', () => {
+  it('N) Quote + Bidding keys hidden from Subtype dropdown (dedicated controls)', () => {
     const src = view()
     expect(src).toContain("o.key !== 'ESTIMATE_QUOTE'")
     expect(src).toContain("o.key !== 'BID_OPPORTUNITY'")
   })
 
-  it('I) Bid Opportunity remains distinct subtype label from Active Bid', () => {
+  it('I) Bid Opportunity remains distinct subtype label from Bidding', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).not.toBe(
       INBOX_BID_INVITES_SOURCE_FILTER_LABEL
     )
@@ -137,7 +139,7 @@ describe('Inbox filter bar compaction', () => {
     expect(f.sentOnly).toBeUndefined()
   })
 
-  it('X) query keys distinguish Active Bid vs Quote vs Sent', () => {
+  it('X) query keys distinguish Bidding vs Quote vs Sent', () => {
     const base = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: '',

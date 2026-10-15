@@ -23,7 +23,7 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
     expect(messagesSrc).not.toContain("All Jobs");
   });
 
-  it("secondary row: Pinned, Priority, Active Bid / Quote, Subtype", () => {
+  it("secondary row: Pinned, Priority, Bidding / Quote, Subtype", () => {
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-secondary"');
     expect(messagesSrc).toContain('data-testid="inbox-pinned-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-priority-filter"');
@@ -31,6 +31,8 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
     expect(messagesSrc).toContain('data-testid="inbox-quote-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-subtype-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-unread-filter"');
+    expect(messagesSrc).toContain('data-testid="inbox-read-filter"');
+    expect(messagesSrc).not.toContain('<option value="">All mail</option>');
   });
 
   it("Exclude control removed from MessagesView", () => {

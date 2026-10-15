@@ -218,10 +218,13 @@ export function JobFilterSelect({
   workspaceId,
   value,
   onChange,
+  className,
 }: {
   workspaceId: string
   value: string
   onChange: (value: string) => void
+  /** Optional class for toolbar styling (e.g. inbox filter bar). */
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -300,25 +303,43 @@ export function JobFilterSelect({
     setQuery('')
   }
 
+  const active = Boolean(open || value)
+  const chipClass = className
+    ? [
+        className,
+        'inbox-chip',
+        'inbox-chip-jobs',
+        'has-caret',
+        active ? 'is-active' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : undefined
+
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={selectedJob ? formatJobTooltip(selectedJob) : buttonLabel}
-        style={{
-          padding: '3px 8px',
-          fontSize: 11,
-          borderRadius: 6,
-          border: open || value ? '1px solid #1a1a2e' : '1px solid #ddd',
-          background: open || value ? '#1a1a2e' : '#fff',
-          color: open || value ? '#fff' : '#444',
-          cursor: 'pointer',
-          maxWidth: 180,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
+        className={chipClass}
+        style={
+          chipClass
+            ? undefined
+            : {
+                padding: '3px 8px',
+                fontSize: 11,
+                borderRadius: 6,
+                border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+                background: active ? '#1a1a2e' : '#fff',
+                color: active ? '#fff' : '#444',
+                cursor: 'pointer',
+                maxWidth: 180,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }
+        }
       >
         {buttonLabel}
       </button>

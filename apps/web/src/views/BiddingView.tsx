@@ -70,7 +70,7 @@ export function BiddingView({
         setError(null)
       })
       .catch((e) =>
-        setError(e instanceof Error ? e.message : 'Could not load Bid Candidates')
+        setError(e instanceof Error ? e.message : 'Could not load Active Bids')
       )
       .finally(() => setLoading(false))
   }
@@ -136,7 +136,7 @@ export function BiddingView({
             }}
             style={linkBtn}
           >
-            ← Bid Candidates
+            ← Active Bids
           </button>
           <div
             style={{
@@ -181,7 +181,7 @@ export function BiddingView({
       <div style={{ padding: isPhone ? '14px 14px 8px' : '18px 22px 10px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 680, color: '#111827' }}>Bid Candidates</div>
+            <div style={{ fontSize: 20, fontWeight: 680, color: '#111827' }}>Active Bids</div>
             <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
               Permanent opportunities before they become Jobs. No Job number until Convert to Job.
             </div>
@@ -254,10 +254,10 @@ export function BiddingView({
           </div>
         )}
         {loading && rows.length === 0 ? (
-          <div style={{ color: '#6b7280', fontSize: 13 }}>Loading Bid Candidates…</div>
+          <div style={{ color: '#6b7280', fontSize: 13 }}>Loading Active Bids…</div>
         ) : rows.length === 0 ? (
           <div style={{ color: '#6b7280', fontSize: 13, padding: '24px 0' }}>
-            No Bid Candidates yet. Create one manually or run Bidding Analysis under Email Analysis.
+            No Active Bids yet. Create one manually or run Bidding Analysis under Email Analysis.
           </div>
         ) : (
           <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>

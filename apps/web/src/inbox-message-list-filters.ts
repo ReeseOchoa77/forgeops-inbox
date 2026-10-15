@@ -47,7 +47,7 @@ export type InboxMessageListFilters = {
   businessCategory?: "BUSINESS" | "NON_BUSINESS";
   businessTypeGroup?: string;
   /**
-   * Exact filter key (e.g. BID_OPPORTUNITY = Active Bid provenance filter).
+   * Exact filter key (e.g. BID_OPPORTUNITY = Bidding provenance filter).
    * Server-side before pagination.
    */
   businessTypeKey?: string;
@@ -80,7 +80,7 @@ export function buildInboxMessageListFilters(input: {
   activeSearch?: string;
   /** Applied only on Business tabs (not Personal / Unclassified / Trash). */
   excludeBusinessTypeGroups?: InboxBusinessTypeGroup[];
-  /** Filter key — ANDs with tab/group when set (e.g. Active Bid provenance). */
+  /** Filter key — ANDs with tab/group when set (e.g. Bidding provenance). */
   businessTypeKey?: string;
   pinnedOnly?: boolean;
 }): InboxMessageListFilters {
