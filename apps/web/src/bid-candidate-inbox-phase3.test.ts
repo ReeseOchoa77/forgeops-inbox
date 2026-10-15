@@ -17,13 +17,13 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
   })
 
-  it('Inbox source-filter option for BID_OPPORTUNITY is Bid Invites', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bid Invites')
-    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Bid Invites')
+  it('Inbox source-filter option for BID_OPPORTUNITY is Active Bid', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Active Bid')
     expect(inboxBusinessTypeFilterOptionLabel('ESTIMATE_QUOTE')).toBe('Quote')
   })
 
-  it('F) Bid Invites filter composes with Incoming (no sentOnly)', () => {
+  it('F) Active Bid filter composes with Incoming (no sentOnly)', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: '',
@@ -34,7 +34,7 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(f.sentOnly).toBeUndefined()
   })
 
-  it('G/H) Bid Invites filter + unified search', () => {
+  it('G/H) Active Bid filter + unified search', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: '',
@@ -48,7 +48,7 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(f.searchIn).toBeUndefined()
   })
 
-  it('I) Bid Invites filter + pinned + unread + date', () => {
+  it('I) Active Bid filter + pinned + unread + date', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: 'unread',
@@ -65,7 +65,7 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     })
   })
 
-  it('Incoming direction is default (not sent) with Bid Invites filter', () => {
+  it('Incoming direction is default (not sent) with Active Bid filter', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'BIDS_ESTIMATING',
       readFilter: '',
@@ -87,10 +87,9 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(a).toContain('BID_OPPORTUNITY')
   })
 
-  it('MessagesView wires Bid Invites source filter server-side', () => {
+  it('MessagesView wires Active Bid provenance filter server-side', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
-    expect(src).toContain('data-testid="inbox-subtype-filter"')
-    expect(src).toContain('inboxBusinessTypeFilterOptionLabel')
+    expect(src).toContain('data-testid="inbox-active-bid-filter"')
     expect(src).toContain('BID_OPPORTUNITY')
     expect(src).toContain('businessTypeKey')
   })

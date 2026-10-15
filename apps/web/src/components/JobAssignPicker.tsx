@@ -284,7 +284,7 @@ export function JobFilterSelect({
 
   const buttonLabel =
     value === ''
-      ? 'All Jobs'
+      ? 'Jobs'
       : value === 'assigned'
         ? 'Any job'
         : value === 'unassigned'
@@ -368,7 +368,7 @@ export function JobFilterSelect({
             {!query.trim() && (
               <>
                 <JobFilterRow
-                  label="All Jobs"
+                  label="Jobs (all)"
                   active={value === ''}
                   onClick={() => pick('')}
                 />

@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from 'react'
 import { api, type MessageSummary, type ConnectionSummary, type StoredAttachment } from '../api'
-import { buildInboxMessageListFilters, type InboxBusinessTypeGroup } from '../inbox-message-list-filters'
+import { buildInboxMessageListFilters } from '../inbox-message-list-filters'
 import {
   getCachedInboxList,
   setCachedInboxList,
@@ -11,7 +11,6 @@ import {
 } from '../inbox-list-cache'
 import { inboxListQueryKey, isSameInboxListQuery } from '../inbox-list-query'
 import { PriorityBadge, TypeBadge } from '../components/Badges'
-import { InboxExcludeFilter } from '../components/InboxExcludeFilter'
 import { AttachmentActionMenu } from '../components/AttachmentActionMenu'
 import { FilePreviewModal } from '../components/FilePreviewModal'
 import {
@@ -27,10 +26,7 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
-import {
-  businessSubtypeFilterOptionsForDirection,
-  inboxBusinessTypeFilterOptionLabel,
-} from '@forgeops/shared/business-subtypes'
+import { businessSubtypeFilterOptionsForDirection } from '@forgeops/shared/business-subtypes'
 import {
   INBOX_ACTIONS_COLUMN_WIDTH_PX,
   MailboxCategoryDot,
@@ -312,11 +308,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
   /**
-   * Inbox source/subtype filter key. BID_OPPORTUNITY = Bid Invites provenance
-   * (not subtype membership). Server-side before pagination.
+   * Inbox source/subtype filter key. BID_OPPORTUNITY = Active Bid provenance
+   * (Projects/Bid Invites; not subtype membership). Server-side before pagination.
    */
   const [businessTypeKey, setBusinessTypeKey] = useState('')
-  const [excludeBusinessTypeGroups, setExcludeBusinessTypeGroups] = useState<InboxBusinessTypeGroup[]>([])
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
   const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
@@ -428,23 +423,30 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       timezone: browserTimeZone,
       jobFilter,
       activeSearch,
-      excludeBusinessTypeGroups,
       businessTypeKey: businessTypeKey || undefined,
       pinnedOnly,
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, dateRange, browserTimeZone, excludeBusinessTypeGroups, businessTypeKey, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, dateRange, browserTimeZone, businessTypeKey, pinnedOnly])
 
   const selectDirectionFilter = (key: ReadFilter) => {
-    // Direction composes with the current tab/classification — do not reset them.
+    const leavingSent = readFilter === 'sent' && key !== 'sent'
+    const enteringSent = key === 'sent' && readFilter !== 'sent'
     setReadFilter(key)
-    // Drop subtype choices that are irrelevant for the new direction context.
-    const nextDir = key === 'sent' ? 'sent' : 'incoming'
-    const allowed = new Set(
-      businessSubtypeFilterOptionsForDirection(nextDir)
-        .filter((o) => o.key === 'BID_OPPORTUNITY' || o.key === 'ESTIMATE_QUOTE')
-        .map((o) => o.key)
-    )
-    setBusinessTypeKey((prev) => (prev && !allowed.has(prev as never) ? '' : prev))
+    setBusinessTypeKey((prev) => {
+      // Quote is Sent-only in the UI — clear when leaving Sent (no invisible Quote).
+      if (leavingSent && prev === 'ESTIMATE_QUOTE') return ''
+      // Active Bid is incoming-only in the UI — clear when entering Sent.
+      if (enteringSent && prev === 'BID_OPPORTUNITY') return ''
+      return prev
+    })
+  }
+
+  const toggleActiveBid = () => {
+    setBusinessTypeKey((prev) => (prev === 'BID_OPPORTUNITY' ? '' : 'BID_OPPORTUNITY'))
+  }
+
+  const toggleQuoteFilter = () => {
+    setBusinessTypeKey((prev) => (prev === 'ESTIMATE_QUOTE' ? '' : 'ESTIMATE_QUOTE'))
   }
 
   const selectInboxTab = (tab: InboxTab) => {
@@ -550,7 +552,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           !filters.category &&
           !filters.dateRange &&
           !filters.businessTypeGroup &&
-          !(filters.excludeBusinessTypeGroups?.length)
+          !filters.businessTypeKey
         if (isDefaultBusiness) {
           setCachedInboxList(workspaceId, connectionId, INBOX_DEFAULT_LIST_FILTER_KEY, {
             messages: r.messages,
@@ -632,7 +634,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     setJobFilter('')
     setBusinessTypeKey('')
-    setExcludeBusinessTypeGroups([])
     setMassDeleteMode(false)
 
     const defaultFilters = { businessCategory: 'BUSINESS' as const }
@@ -699,7 +700,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
-  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, dateRange, excludeBusinessTypeGroups, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, dateRange, pinnedOnly])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -1532,177 +1533,204 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         </div>
       )}
 
-      {/* Tab bar */}
-      <div style={{
-        display: 'flex', gap: 0, marginBottom: 4, borderBottom: '2px solid #e5e5e5', flexShrink: 0,
-        overflowX: 'auto',
-        ...(isPhone ? { WebkitOverflowScrolling: 'touch' } as React.CSSProperties : {})
-      }}>
-        {INBOX_TABS.filter(tab => {
-          // All Mailboxes is BUSINESS-oriented; Personal only for ADMIN/OWNER (ACL still applies server-side).
-          if (tab.key === 'PERSONAL' && isAllMailboxes && !canSeeAllPersonal) return false
-          if (tab.key === 'PERSONAL' && !isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) return false
-          return true
-        }).map(tab => {
-          const tabActive = inboxTab === tab.key
-          return (
-          <button key={tab.key} onClick={() => selectInboxTab(tab.key)}
-            style={{
-              padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap',
-              fontWeight: tabActive ? 600 : 400,
-              color: tabActive ? '#1a1a2e' : '#888',
-              background: 'none', border: 'none',
-              borderBottom: tabActive ? '2px solid #1a1a2e' : '2px solid transparent',
-              marginBottom: -2, cursor: 'pointer'
-            }}>{tab.label}</button>
-          )
-        })}
+      {/* Row 1 — primary filters: Business | Sent | Jobs | Dates | Personal | Trash */}
+      <div
+        data-testid="inbox-filter-row-primary"
+        style={{
+          display: 'flex',
+          gap: 6,
+          marginBottom: 4,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <button
+          type="button"
+          data-testid="inbox-primary-business"
+          aria-pressed={inboxTab === 'ALL_BUSINESS'}
+          onClick={() => selectInboxTab('ALL_BUSINESS')}
+          style={primaryChipStyle(inboxTab === 'ALL_BUSINESS')}
+        >
+          Business
+        </button>
+        <button
+          type="button"
+          data-testid="inbox-primary-sent"
+          aria-pressed={isSentView}
+          onClick={() => selectDirectionFilter(isSentView ? '' : 'sent')}
+          style={primaryChipStyle(isSentView)}
+        >
+          Sent
+        </button>
+        {showBusinessChrome && (
+          <>
+            <JobFilterSelect
+              workspaceId={workspaceId}
+              value={jobFilter}
+              onChange={setJobFilter}
+            />
+            <select
+              data-testid="inbox-date-filter"
+              aria-label="Dates"
+              value={dateRange}
+              onChange={(e) =>
+                setDateRange(e.target.value as '' | 'TODAY' | 'WEEK' | 'MONTH')
+              }
+              style={{
+                ...compactSelectStyle(Boolean(dateRange)),
+                maxWidth: 120,
+              }}
+            >
+              <option value="">Dates</option>
+              <option value="TODAY">Today</option>
+              <option value="WEEK">This week</option>
+              <option value="MONTH">This month</option>
+            </select>
+          </>
+        )}
+        {!(isAllMailboxes && !canSeeAllPersonal) &&
+          !(!isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) && (
+            <button
+              type="button"
+              data-testid="inbox-primary-personal"
+              aria-pressed={inboxTab === 'PERSONAL'}
+              onClick={() => selectInboxTab('PERSONAL')}
+              style={primaryChipStyle(inboxTab === 'PERSONAL')}
+            >
+              Personal
+            </button>
+          )}
+        <button
+          type="button"
+          data-testid="inbox-primary-unclassified"
+          aria-pressed={inboxTab === 'UNCLASSIFIED'}
+          onClick={() => selectInboxTab('UNCLASSIFIED')}
+          style={primaryChipStyle(inboxTab === 'UNCLASSIFIED')}
+        >
+          Unclassified
+        </button>
+        <button
+          type="button"
+          data-testid="inbox-primary-trash"
+          aria-pressed={inboxTab === 'TRASH'}
+          onClick={() => selectInboxTab('TRASH')}
+          style={primaryChipStyle(inboxTab === 'TRASH')}
+        >
+          Trash
+        </button>
       </div>
 
-      {/* Compact mail + date filters (same readFilter / dateRange semantics as former pills). */}
+      {/* Row 2 — secondary filters */}
       {inboxTab !== 'TRASH' && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div
+          data-testid="inbox-filter-row-secondary"
+          style={{
+            display: 'flex',
+            gap: 6,
+            marginBottom: 8,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <button
+            type="button"
+            data-testid="inbox-pinned-filter"
+            aria-pressed={pinnedOnly}
+            title="Show only pinned emails"
+            onClick={() => setPinnedOnly((prev) => !prev)}
+            style={secondaryChipStyle(pinnedOnly, pinnedOnly ? '#e09400' : undefined)}
+          >
+            Pinned
+          </button>
           <select
-            data-testid="inbox-mail-filter"
-            aria-label="Mail filter"
-            value={readFilter}
-            onChange={(e) => selectDirectionFilter(e.target.value as ReadFilter)}
+            data-testid="inbox-unread-filter"
+            aria-label="Read filter"
+            value={readFilter === 'sent' ? '' : readFilter}
+            onChange={(e) => {
+              // Leaving Sent (if active) clears Quote via selectDirectionFilter.
+              selectDirectionFilter(e.target.value as '' | 'unread' | 'read')
+            }}
             style={{
-              padding: '4px 8px',
-              fontSize: 12,
-              fontWeight: 500,
-              borderRadius: 6,
-              border: '1px solid #ddd',
-              background: '#fff',
-              color: '#374151',
-              cursor: 'pointer',
-              outline: 'none',
-              maxWidth: 140,
+              ...compactSelectStyle(readFilter === 'unread' || readFilter === 'read'),
+              maxWidth: 110,
             }}
           >
             <option value="">All mail</option>
             <option value="unread">Unread</option>
             <option value="read">Read</option>
-            <option value="sent">Sent</option>
           </select>
-
-          <button
-            type="button"
-            data-testid="inbox-pinned-filter"
-            aria-pressed={pinnedOnly}
-            title="Show only pinned emails (composes with current tab/filters)"
-            onClick={() => setPinnedOnly((prev) => !prev)}
-            style={{
-              padding: '4px 10px',
-              fontSize: 12,
-              fontWeight: pinnedOnly ? 600 : 500,
-              borderRadius: 6,
-              border: pinnedOnly ? '1px solid #e09400' : '1px solid #ddd',
-              background: pinnedOnly ? '#fff8e1' : '#fff',
-              color: pinnedOnly ? '#e09400' : '#374151',
-              cursor: 'pointer',
-            }}
-          >
-            Pinned
-          </button>
-
-          <select
-            data-testid="inbox-date-filter"
-            aria-label="Date filter"
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as '' | 'TODAY' | 'WEEK' | 'MONTH')}
-            style={{
-              padding: '4px 8px',
-              fontSize: 12,
-              fontWeight: 500,
-              borderRadius: 6,
-              border: '1px solid #ddd',
-              background: '#fff',
-              color: '#374151',
-              cursor: 'pointer',
-              outline: 'none',
-              maxWidth: 150,
-            }}
-          >
-            <option value="">All dates</option>
-            <option value="TODAY">Today</option>
-            <option value="WEEK">This week</option>
-            <option value="MONTH">This month</option>
-          </select>
-
           {showBusinessChrome && (
             <>
-              <span style={{ color: '#ddd' }}>|</span>
-
-              {/* Priority multi-select */}
-              <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                {([['LOW', 'Low'], ['NORMAL', 'Normal'], ['HIGH', 'High']] as const).map(([key, label]) => {
-                  const active = priorityFilter.has(key)
-                  return (
-                    <button key={key} onClick={() => setPriorityFilter(prev => {
-                      const next = new Set(prev)
-                      if (next.has(key)) next.delete(key)
-                      else next.add(key)
-                      return next
-                    })} style={{
-                      padding: '3px 10px', fontSize: 11, fontWeight: 500, borderRadius: 12,
-                      border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
-                      background: active ? '#1a1a2e' : '#fff',
-                      color: active ? '#fff' : '#666', cursor: 'pointer'
-                    }}>{label}</button>
-                  )
-                })}
-              </div>
-
-              <span style={{ color: '#ddd' }}>|</span>
-
-              {/* Job filter — type-to-search; includes No job (jobId=unassigned) */}
-              <JobFilterSelect
-                workspaceId={workspaceId}
-                value={jobFilter}
-                onChange={setJobFilter}
+              <InboxPrioritySelect
+                value={priorityFilter}
+                onChange={setPriorityFilter}
               />
-
-              <span style={{ color: '#ddd' }}>|</span>
-
+              {!isSentView && (
+                <button
+                  type="button"
+                  data-testid="inbox-active-bid-filter"
+                  aria-pressed={businessTypeKey === 'BID_OPPORTUNITY'}
+                  title="Emails discovered in Projects/Bid Invites"
+                  onClick={toggleActiveBid}
+                  style={secondaryChipStyle(businessTypeKey === 'BID_OPPORTUNITY')}
+                >
+                  Active Bid
+                </button>
+              )}
+              {isSentView && (
+                <button
+                  type="button"
+                  data-testid="inbox-quote-filter"
+                  aria-pressed={businessTypeKey === 'ESTIMATE_QUOTE'}
+                  title="Sent Quote emails"
+                  onClick={toggleQuoteFilter}
+                  style={secondaryChipStyle(businessTypeKey === 'ESTIMATE_QUOTE')}
+                >
+                  Quote
+                </button>
+              )}
               <select
                 data-testid="inbox-subtype-filter"
-                aria-label="Subtype filter"
-                value={businessTypeKey}
+                aria-label="Subtype"
+                value={
+                  businessTypeKey === 'ESTIMATE_QUOTE' ||
+                  businessTypeKey === 'BID_OPPORTUNITY'
+                    ? ''
+                    : businessTypeKey
+                }
                 onChange={(e) => setBusinessTypeKey(e.target.value)}
                 style={{
-                  padding: '4px 8px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: businessTypeKey ? '1px solid #1a1a2e' : '1px solid #ddd',
-                  background: businessTypeKey ? '#f0f4ff' : '#fff',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  outline: 'none',
+                  ...compactSelectStyle(
+                    Boolean(
+                      businessTypeKey &&
+                        businessTypeKey !== 'ESTIMATE_QUOTE' &&
+                        businessTypeKey !== 'BID_OPPORTUNITY'
+                    )
+                  ),
                   maxWidth: 160,
                 }}
               >
-                <option value="">All subtypes</option>
+                <option value="">Subtype</option>
                 {businessSubtypeFilterOptionsForDirection(
                   isSentView ? 'sent' : 'incoming'
                 )
-                  // Bid Invites (provenance) + Quote (subtype/role). Labels differ from keys.
-                  .filter((o) =>
-                    o.key === 'BID_OPPORTUNITY' || o.key === 'ESTIMATE_QUOTE'
+                  // Dedicated Active Bid / Quote controls own these API keys —
+                  // omit from Subtype to avoid duplicate misleading options.
+                  // BID_OPPORTUNITY key maps to provenance on the server, not subtype.
+                  .filter(
+                    (o) =>
+                      o.key !== 'ESTIMATE_QUOTE' &&
+                      o.key !== 'BID_OPPORTUNITY' &&
+                      o.key !== 'GENERAL'
                   )
                   .map((o) => (
                     <option key={o.key} value={o.key}>
-                      {inboxBusinessTypeFilterOptionLabel(o.key)}
+                      {o.label}
                     </option>
                   ))}
               </select>
-
-              <span style={{ color: '#ddd' }}>|</span>
-
-              <InboxExcludeFilter
-                value={excludeBusinessTypeGroups}
-                onChange={setExcludeBusinessTypeGroups}
-              />
             </>
           )}
         </div>
@@ -1796,6 +1824,131 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           }}
         />
       )}
+    </div>
+  )
+}
+
+function primaryChipStyle(active: boolean): CSSProperties {
+  return {
+    padding: '5px 10px',
+    fontSize: 12,
+    fontWeight: active ? 650 : 500,
+    borderRadius: 6,
+    border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+    background: active ? '#1a1a2e' : '#fff',
+    color: active ? '#fff' : '#374151',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
+}
+
+function secondaryChipStyle(
+  active: boolean,
+  accent?: string
+): CSSProperties {
+  const color = accent ?? '#1a1a2e'
+  return {
+    padding: '4px 9px',
+    fontSize: 11,
+    fontWeight: active ? 650 : 500,
+    borderRadius: 6,
+    border: active ? `1px solid ${color}` : '1px solid #ddd',
+    background: active ? (accent ? '#fff8e1' : '#f0f4ff') : '#fff',
+    color: active ? color : '#374151',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
+}
+
+function compactSelectStyle(active: boolean): CSSProperties {
+  return {
+    padding: '4px 8px',
+    fontSize: 11,
+    fontWeight: active ? 600 : 500,
+    borderRadius: 6,
+    border: active ? '1px solid #1a1a2e' : '1px solid #ddd',
+    background: active ? '#f0f4ff' : '#fff',
+    color: '#374151',
+    cursor: 'pointer',
+    outline: 'none',
+  }
+}
+
+function InboxPrioritySelect({
+  value,
+  onChange,
+}: {
+  value: Set<PriorityKey>
+  onChange: (next: Set<PriorityKey>) => void
+}) {
+  const allOn = value.size === 3
+  const label = allOn
+    ? 'Priority'
+    : value.size === 0
+      ? 'Priority'
+      : [...value]
+          .map((k) => (k === 'HIGH' ? 'High' : k === 'NORMAL' ? 'Normal' : 'Low'))
+          .join(', ')
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <details data-testid="inbox-priority-filter">
+        <summary
+          aria-label={`Priority filter: ${label}`}
+          style={{
+            ...compactSelectStyle(!allOn && value.size > 0),
+            listStyle: 'none',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          {label} ▾
+        </summary>
+        <div
+          role="group"
+          aria-label="Priority options"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            zIndex: 30,
+            marginTop: 4,
+            background: '#fff',
+            border: '1px solid #ddd',
+            borderRadius: 6,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+            padding: 8,
+            minWidth: 140,
+          }}
+        >
+          {([['HIGH', 'High'], ['NORMAL', 'Normal'], ['LOW', 'Low']] as const).map(
+            ([key, text]) => (
+              <label
+                key={key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                  padding: '4px 2px',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={value.has(key)}
+                  onChange={() => {
+                    const next = new Set(value)
+                    if (next.has(key)) next.delete(key)
+                    else next.add(key)
+                    onChange(next)
+                  }}
+                />
+                {text}
+              </label>
+            )
+          )}
+        </div>
+      </details>
     </div>
   )
 }

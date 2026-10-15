@@ -26,7 +26,7 @@ describe("Phase 3 — Bid Opportunity subtype + Bid Invites Inbox filter", () =>
     const subtypes = readSrc("../../../../packages/shared/src/business-subtypes.ts");
     expect(subtypes).toContain('"BID_OPPORTUNITY"');
     expect(subtypes).not.toContain("BID_CANDIDATE");
-    expect(subtypes).toContain('INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Bid Invites"');
+    expect(subtypes).toContain('INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Active Bid"');
   });
 
   it("E) Bid Invites Inbox filter = durable Bid Invites provenance only", () => {

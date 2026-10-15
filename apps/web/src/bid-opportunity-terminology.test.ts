@@ -17,10 +17,10 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     expect(businessTypeLabels.BID_OPPORTUNITY).toBe('Bid Opportunity')
   })
 
-  it('C) Inbox source-filter option = Bid Invites (not Bid Opportunity / Bid Candidate)', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bid Invites')
+  it('C) Inbox source-filter option = Active Bid (not Bid Opportunity / Bid Candidate)', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
     expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe(
-      'Bid Invites'
+      'Active Bid'
     )
     expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).not.toBe(
       BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY
@@ -61,9 +61,10 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     expect(BUSINESS_SUBTYPE_LABELS.ESTIMATE_QUOTE).toBe('Quote')
   })
 
-  it('MessagesView uses Bid Invites filter label helper', () => {
+  it('MessagesView uses Active Bid dedicated provenance control', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
-    expect(src).toContain('inboxBusinessTypeFilterOptionLabel')
+    expect(src).toContain('inbox-active-bid-filter')
+    expect(src).toContain('Active Bid')
   })
 
   it('manual subtype pickers use Bid Opportunity (shared labels), not Bid Candidate', () => {
