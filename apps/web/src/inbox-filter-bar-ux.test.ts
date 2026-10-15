@@ -46,7 +46,7 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('excludeBusinessTypeGroups')
   })
 
-  it('D) secondary row: Pinned, Priority, Bidding, Subtype', () => {
+  it('D) secondary row: Pinned, Priority, Bidding, inline subtypes', () => {
     const src = view()
     expect(src).toContain('data-testid="inbox-filter-row-secondary"')
     expect(src).toContain('data-testid="inbox-pinned-filter"')
@@ -56,14 +56,13 @@ describe('Inbox filter bar compaction', () => {
     expect(src).toContain('Bidding')
   })
 
-  it('E) subtypes not all rendered inline as chips', () => {
+  it('E) subtypes rendered inline as text filters', () => {
     const src = view()
     expect(src).toContain('inbox-subtype-filter')
-    expect(src).toContain('InboxSubtypeSelect')
-    expect(src).toContain('inbox-filter-menu')
-    // No native <select> subtype list / per-subtype chip map.
+    expect(src).toContain('businessSubtypeFilterOptionsForDirection')
+    expect(src).toContain('inbox-subtype-')
+    expect(src).not.toContain('InboxSubtypeSelect')
     expect(src).not.toContain('<option value="">Subtype</option>')
-    expect(src).not.toMatch(/BUSINESS_SUBTYPE_KEYS\.map/)
   })
 
   it('F) Bidding uses Bid Invites provenance key BID_OPPORTUNITY', () => {
@@ -103,7 +102,7 @@ describe('Inbox filter bar compaction', () => {
     expect(src).toContain("enteringSent && prev === 'BID_OPPORTUNITY'")
   })
 
-  it('N) Quote + Bidding keys hidden from Subtype dropdown (dedicated controls)', () => {
+  it('N) Quote + Bidding keys hidden from inline subtypes (dedicated controls)', () => {
     const src = view()
     expect(src).toContain("o.key !== 'ESTIMATE_QUOTE'")
     expect(src).toContain("o.key !== 'BID_OPPORTUNITY'")

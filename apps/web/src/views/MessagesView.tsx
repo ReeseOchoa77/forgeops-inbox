@@ -1694,16 +1694,39 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                     Quote
                   </button>
                 )}
-                <InboxSubtypeSelect
-                  direction={isSentView ? 'sent' : 'incoming'}
-                  value={
-                    businessTypeKey === 'ESTIMATE_QUOTE' ||
-                    businessTypeKey === 'BID_OPPORTUNITY'
-                      ? ''
-                      : businessTypeKey
-                  }
-                  onChange={setBusinessTypeKey}
-                />
+                <span className="inbox-filter-sep" aria-hidden="true">·</span>
+                <span data-testid="inbox-subtype-filter" style={{ display: 'contents' }}>
+                  {businessSubtypeFilterOptionsForDirection(
+                    isSentView ? 'sent' : 'incoming'
+                  )
+                    // Dedicated Bidding / Quote controls own these API keys.
+                    .filter(
+                      (o) =>
+                        o.key !== 'ESTIMATE_QUOTE' &&
+                        o.key !== 'BID_OPPORTUNITY' &&
+                        o.key !== 'GENERAL'
+                    )
+                    .map((o) => {
+                      const active = businessTypeKey === o.key
+                      return (
+                        <button
+                          key={o.key}
+                          type="button"
+                          data-testid={`inbox-subtype-${o.key}`}
+                          aria-pressed={active}
+                          title={o.label}
+                          onClick={() =>
+                            setBusinessTypeKey((prev) =>
+                              prev === o.key ? '' : o.key
+                            )
+                          }
+                          className={`inbox-chip${active ? ' is-soft-active' : ''}`}
+                        >
+                          {o.label}
+                        </button>
+                      )
+                    })}
+                </span>
               </>
             )}
           </div>
@@ -1797,112 +1820,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             setAssignmentTarget(null)
           }}
         />
-      )}
-    </div>
-  )
-}
-
-function InboxSubtypeSelect({
-  direction,
-  value,
-  onChange,
-}: {
-  direction: 'incoming' | 'sent'
-  value: string
-  onChange: (next: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const options = businessSubtypeFilterOptionsForDirection(direction).filter(
-    (o) =>
-      // Dedicated Bidding / Quote controls own these API keys —
-      // omit from Subtype to avoid duplicate misleading options.
-      // BID_OPPORTUNITY key maps to provenance on the server, not subtype.
-      o.key !== 'ESTIMATE_QUOTE' &&
-      o.key !== 'BID_OPPORTUNITY' &&
-      o.key !== 'GENERAL'
-  )
-  const selected = options.find((o) => o.key === value)
-  const active = Boolean(value)
-  const label = selected?.label ?? 'Subtype'
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  const pick = (next: string) => {
-    onChange(next)
-    setOpen(false)
-  }
-
-  return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        data-testid="inbox-subtype-filter"
-        aria-label="Subtype"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={label}
-        onClick={() => setOpen((o) => !o)}
-        className={`inbox-chip has-caret inbox-chip-jobs${
-          active ? ' is-soft-active' : ''
-        }`}
-      >
-        {label}
-      </button>
-      {open && (
-        <div
-          className="inbox-filter-menu"
-          role="listbox"
-          aria-label="Subtype options"
-        >
-          <button
-            type="button"
-            role="option"
-            aria-selected={!value}
-            className={`inbox-filter-menu-item${!value ? ' is-selected' : ''}`}
-            onClick={() => pick('')}
-          >
-            <span className="inbox-filter-check" aria-hidden="true">
-              {!value ? '✓' : ''}
-            </span>
-            Subtype
-          </button>
-          <div className="inbox-filter-menu-divider" aria-hidden="true" />
-          {options.map((o) => {
-            const selectedOpt = o.key === value
-            return (
-              <button
-                key={o.key}
-                type="button"
-                role="option"
-                aria-selected={selectedOpt}
-                className={`inbox-filter-menu-item${
-                  selectedOpt ? ' is-selected' : ''
-                }`}
-                onClick={() => pick(o.key)}
-              >
-                <span className="inbox-filter-check" aria-hidden="true">
-                  {selectedOpt ? '✓' : ''}
-                </span>
-                {o.label}
-              </button>
-            )
-          })}
-        </div>
       )}
     </div>
   )
