@@ -7,11 +7,11 @@ import {
 } from "../business-subtypes.js";
 
 describe("Bid Opportunity terminology (shared)", () => {
-  it("subtype label Bid Opportunity; Inbox filter Bidding; key unchanged", () => {
+  it("subtype label Bid Opportunity; Inbox filter Active Bid; key unchanged", () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe("Bid Opportunity");
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe("Bidding");
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe("Active Bid");
     expect(inboxBusinessTypeFilterOptionLabel("BID_OPPORTUNITY")).toBe(
-      "Bidding"
+      "Active Bid"
     );
     const incoming = businessSubtypeFilterOptionsForDirection("incoming");
     expect(incoming.some((o) => o.key === "BID_OPPORTUNITY")).toBe(true);

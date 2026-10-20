@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BUSINESS_SUBTYPE_LABELS,
   INBOX_BID_INVITES_SOURCE_FILTER_LABEL,
+  businessSubtypeFilterOptionsForDirection,
 } from '@forgeops/shared/business-subtypes'
 import { buildInboxMessageListFilters } from './inbox-message-list-filters'
 import { inboxListQueryKey } from './inbox-list-query'
@@ -14,15 +15,17 @@ const view = () =>
   readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
 
 describe('Inbox filter bar compaction', () => {
-  it('A) primary row: Business, Sent, Jobs, Dates, Personal, Trash', () => {
+  it('A) primary row: Business, Sent, Jobs, Dates, Personal, Unclassified, Trash', () => {
     const src = view()
     expect(src).toContain('data-testid="inbox-filter-row-primary"')
     expect(src).toContain('data-testid="inbox-primary-business"')
     expect(src).toContain('data-testid="inbox-primary-sent"')
     expect(src).toContain('data-testid="inbox-primary-personal"')
+    expect(src).toContain('data-testid="inbox-primary-unclassified"')
     expect(src).toContain('data-testid="inbox-primary-trash"')
-    expect(src).toContain('inbox-date-filter')
+    expect(src).toContain('testId="inbox-date-filter"')
     expect(src).toContain('JobFilterSelect')
+    expect(src).toContain('InboxDateSelect')
     expect(src).toMatch(/>\s*Business\s*</)
     expect(src).toMatch(/>\s*Sent\s*</)
   })
@@ -32,7 +35,6 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('All Jobs')
     expect(src).not.toContain('All dates')
     expect(src).not.toContain('All Dates')
-    expect(src).toContain('<option value="">Dates</option>')
     const jobPicker = readFileSync(
       join(here, 'components/JobAssignPicker.tsx'),
       'utf8'
@@ -46,27 +48,31 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('excludeBusinessTypeGroups')
   })
 
-  it('D) secondary row: Pinned, Priority, Bidding, inline subtypes', () => {
+  it('D) secondary row: Pinned, Unread, Priority, Active Bid, Subtype dropdown', () => {
     const src = view()
     expect(src).toContain('data-testid="inbox-filter-row-secondary"')
     expect(src).toContain('data-testid="inbox-pinned-filter"')
-    expect(src).toContain('data-testid="inbox-priority-filter"')
+    expect(src).toContain('data-testid="inbox-unread-filter"')
+    expect(src).toContain('testId="inbox-priority-filter"')
     expect(src).toContain('data-testid="inbox-active-bid-filter"')
-    expect(src).toContain('data-testid="inbox-subtype-filter"')
-    expect(src).toContain('Bidding')
+    expect(src).toContain('testId="inbox-subtype-filter"')
+    expect(src).toContain('InboxSubtypeSelect')
+    expect(src).toContain('Active Bid')
+    expect(src).not.toContain('data-testid="inbox-read-filter"')
   })
 
-  it('E) subtypes rendered inline as text filters', () => {
+  it('E) subtypes are not all rendered inline', () => {
     const src = view()
-    expect(src).toContain('inbox-subtype-filter')
+    expect(src).toContain('InboxSubtypeSelect')
     expect(src).toContain('businessSubtypeFilterOptionsForDirection')
-    expect(src).toContain('inbox-subtype-')
-    expect(src).not.toContain('InboxSubtypeSelect')
+    expect(src).not.toContain('data-testid={`inbox-subtype-${o.key}`}')
     expect(src).not.toContain('<option value="">Subtype</option>')
+    expect(src).not.toMatch(/BUSINESS_SUBTYPE_KEYS\.map/)
+    expect(src).not.toContain('inbox-filter-sep')
   })
 
-  it('F) Bidding uses Bid Invites provenance key BID_OPPORTUNITY', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
+  it('F) Active Bid uses Bid Invites provenance key BID_OPPORTUNITY', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
     const src = view()
     expect(src).toContain("prev === 'BID_OPPORTUNITY' ? '' : 'BID_OPPORTUNITY'")
     const f = buildInboxMessageListFilters({
@@ -82,7 +88,7 @@ describe('Inbox filter bar compaction', () => {
     const src = view()
     expect(src).toContain('data-testid="inbox-quote-filter"')
     expect(src).toContain('isSentView && (')
-    expect(src).toContain("!isSentView && (")
+    expect(src).toContain('!isSentView && (')
     expect(src).toContain('inbox-active-bid-filter')
   })
 
@@ -102,21 +108,27 @@ describe('Inbox filter bar compaction', () => {
     expect(src).toContain("enteringSent && prev === 'BID_OPPORTUNITY'")
   })
 
-  it('N) Quote + Bidding keys hidden from inline subtypes (dedicated controls)', () => {
+  it('N) Quote hidden from Subtype dropdown; Bid Opportunity remains', () => {
     const src = view()
     expect(src).toContain("o.key !== 'ESTIMATE_QUOTE'")
-    expect(src).toContain("o.key !== 'BID_OPPORTUNITY'")
+    expect(src).not.toContain("o.key !== 'BID_OPPORTUNITY'")
+    const incoming = businessSubtypeFilterOptionsForDirection('incoming')
+    expect(incoming.some((o) => o.key === 'BID_OPPORTUNITY')).toBe(true)
+    expect(incoming.find((o) => o.key === 'BID_OPPORTUNITY')?.label).toBe(
+      'Bid Opportunity'
+    )
+    expect(incoming.some((o) => o.key === 'ESTIMATE_QUOTE')).toBe(false)
   })
 
-  it('I) Bid Opportunity remains distinct subtype label from Bidding', () => {
+  it('I) Bid Opportunity remains distinct subtype label from Active Bid', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).not.toBe(
       INBOX_BID_INVITES_SOURCE_FILTER_LABEL
     )
   })
 
-  it('O–T) Jobs / Dates / Pinned / search still compose in filter builder', () => {
+  it('O–T) Jobs / Dates / Pinned / Unread / search still compose in filter builder', () => {
     const f = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: 'unread',
@@ -138,7 +150,15 @@ describe('Inbox filter bar compaction', () => {
     expect(f.sentOnly).toBeUndefined()
   })
 
-  it('X) query keys distinguish Bidding vs Quote vs Sent', () => {
+  it('unified search remains a single OR search bar', () => {
+    const src = view()
+    expect(src).toContain('data-testid="inbox-unified-search"')
+    expect(src).toContain('placeholder="Search emails…"')
+    expect(src).not.toContain('Search sender')
+    expect(src).not.toContain('Search email content')
+  })
+
+  it('X) query keys distinguish Active Bid vs Quote vs Sent vs subtype', () => {
     const base = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: '',
@@ -148,6 +168,11 @@ describe('Inbox filter bar compaction', () => {
       readFilter: '',
       businessTypeKey: 'BID_OPPORTUNITY',
     })
+    const rfi = buildInboxMessageListFilters({
+      inboxTab: 'ALL_BUSINESS',
+      readFilter: '',
+      businessTypeKey: 'RFI_CLARIFICATION',
+    })
     const quoteSent = buildInboxMessageListFilters({
       inboxTab: 'ALL_BUSINESS',
       readFilter: 'sent',
@@ -156,8 +181,9 @@ describe('Inbox filter bar compaction', () => {
     const keys = [
       inboxListQueryKey(base),
       inboxListQueryKey(bid),
+      inboxListQueryKey(rfi),
       inboxListQueryKey(quoteSent),
     ]
-    expect(new Set(keys).size).toBe(3)
+    expect(new Set(keys).size).toBe(4)
   })
 })

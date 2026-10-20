@@ -17,9 +17,9 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
   })
 
-  it('Inbox source-filter option for BID_OPPORTUNITY is Bidding', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Bidding')
-    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Bidding')
+  it('Inbox source-filter option for BID_OPPORTUNITY is Active Bid', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Active Bid')
     expect(inboxBusinessTypeFilterOptionLabel('ESTIMATE_QUOTE')).toBe('Quote')
   })
 
@@ -87,7 +87,7 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(a).toContain('BID_OPPORTUNITY')
   })
 
-  it('MessagesView wires Bidding provenance filter server-side', () => {
+  it('MessagesView wires Active Bid provenance filter server-side', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
     expect(src).toContain('data-testid="inbox-active-bid-filter"')
     expect(src).toContain('BID_OPPORTUNITY')

@@ -16,22 +16,23 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
     expect(messagesSrc).toContain('data-testid="inbox-primary-sent"');
     expect(messagesSrc).toContain('data-testid="inbox-primary-personal"');
     expect(messagesSrc).toContain('data-testid="inbox-primary-trash"');
-    expect(messagesSrc).toContain('data-testid="inbox-date-filter"');
+    expect(messagesSrc).toContain('testId="inbox-date-filter"');
     expect(messagesSrc).toContain("JobFilterSelect");
-    expect(messagesSrc).toContain('<option value="">Dates</option>');
+    expect(messagesSrc).toContain("InboxDateSelect");
     expect(messagesSrc).not.toContain('<option value="">All dates</option>');
     expect(messagesSrc).not.toContain("All Jobs");
   });
 
-  it("secondary row: Pinned, Priority, Bidding / Quote, Subtype", () => {
+  it("secondary row: Pinned, Unread, Priority, Active Bid / Quote, Subtype", () => {
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-secondary"');
     expect(messagesSrc).toContain('data-testid="inbox-pinned-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-priority-filter"');
+    expect(messagesSrc).toContain('testId="inbox-priority-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-active-bid-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-quote-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-subtype-filter"');
+    expect(messagesSrc).toContain('testId="inbox-subtype-filter"');
     expect(messagesSrc).toContain('data-testid="inbox-unread-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-read-filter"');
+    expect(messagesSrc).toContain("InboxSubtypeSelect");
+    expect(messagesSrc).not.toContain('data-testid="inbox-read-filter"');
     expect(messagesSrc).not.toContain('<option value="">All mail</option>');
   });
 
@@ -43,7 +44,7 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
   it("keeps selectDirectionFilter + setDateRange wiring", () => {
     expect(messagesSrc).toContain("selectDirectionFilter");
     expect(messagesSrc).toContain("setDateRange");
-    expect(messagesSrc).toContain("setDateRange(e.target.value as '' | 'TODAY' | 'WEEK' | 'MONTH')");
+    expect(messagesSrc).toContain("InboxDateSelect");
   });
 
   it("Sent composes with tabs — Quote cleared when leaving Sent", () => {

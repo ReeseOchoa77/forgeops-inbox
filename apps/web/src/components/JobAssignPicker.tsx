@@ -310,7 +310,7 @@ export function JobFilterSelect({
         'inbox-chip',
         'inbox-chip-jobs',
         'has-caret',
-        active ? 'is-active' : '',
+        value ? 'is-soft-active' : '',
       ]
         .filter(Boolean)
         .join(' ')
