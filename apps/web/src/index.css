@@ -318,11 +318,27 @@ textarea:focus-visible {
   row-gap: 6px;
 }
 
+.inbox-filter-row.is-primary {
+  column-gap: 18px;
+}
+
+.inbox-filter-row.is-secondary {
+  column-gap: 10px;
+}
+
 .inbox-filter-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.inbox-filter-group-quick {
+  margin-inline-start: 4px;
+}
+
+.inbox-filter-group-trash {
+  margin-inline-start: 2px;
 }
 
 .inbox-filters .inbox-chip {

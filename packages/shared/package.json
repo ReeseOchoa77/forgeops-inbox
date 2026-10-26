@@ -15,6 +15,11 @@
       "import": "./src/business-subtypes.ts",
       "default": "./src/business-subtypes.ts"
     },
+    "./inbox-participant-match": {
+      "types": "./src/inbox-participant-match.ts",
+      "import": "./src/inbox-participant-match.ts",
+      "default": "./src/inbox-participant-match.ts"
+    },
     "./bidding/scope-detail": {
       "types": "./src/bidding/scope-detail.ts",
       "import": "./src/bidding/scope-detail.ts",

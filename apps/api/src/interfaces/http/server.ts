@@ -64,6 +64,7 @@ import { registerImportRoutes } from "./routes/import.route.js";
 import { registerAiImportRoutes } from "./routes/ai-import.route.js";
 import { registerSendRoutes } from "./routes/send.route.js";
 import { registerEmailContactRoutes } from "./routes/email-contacts.route.js";
+import { registerEmailParticipantRoutes } from "./routes/email-participants.route.js";
 import { registerAttachmentRoutes } from "./routes/attachment.route.js";
 import { registerWebhookRoutes } from "./routes/webhook.route.js";
 import { registerN8nIngestRoutes } from "./routes/n8n-ingest.route.js";
@@ -439,6 +440,7 @@ export const buildServer = async () => {
   await registerAiImportRoutes(app);
   await registerSendRoutes(app);
   await registerEmailContactRoutes(app);
+  await registerEmailParticipantRoutes(app);
   await registerAttachmentRoutes(app);
   await registerWebhookRoutes(app);
   await registerN8nIngestRoutes(app);

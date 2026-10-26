@@ -9,29 +9,56 @@ const messagesSrc = readFileSync(
   "utf8"
 );
 
+function toolbarRows(src: string): { primary: string; secondary: string } {
+  const primaryStart = src.indexOf('data-testid="inbox-filter-row-primary"');
+  const secondaryStart = src.indexOf('data-testid="inbox-filter-row-secondary"');
+  const toolbarEnd = src.indexOf("{/* Message list */}");
+  return {
+    primary: src.slice(primaryStart, secondaryStart),
+    secondary: src.slice(
+      secondaryStart,
+      toolbarEnd > secondaryStart ? toolbarEnd : src.length
+    ),
+  };
+}
+
 describe("Inbox filter toolbar — two-row compact layout", () => {
-  it("primary row: Business, Sent, Jobs, Dates, Personal, Trash", () => {
+  it("primary row: Business, Sent, Personal, Pinned, Unread, Active Bid/Quote, Trash", () => {
+    const { primary } = toolbarRows(messagesSrc);
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-primary"');
-    expect(messagesSrc).toContain('data-testid="inbox-primary-business"');
-    expect(messagesSrc).toContain('data-testid="inbox-primary-sent"');
-    expect(messagesSrc).toContain('data-testid="inbox-primary-personal"');
-    expect(messagesSrc).toContain('data-testid="inbox-primary-trash"');
-    expect(messagesSrc).toContain('testId="inbox-date-filter"');
-    expect(messagesSrc).toContain("JobFilterSelect");
-    expect(messagesSrc).toContain("InboxDateSelect");
+    expect(primary).toContain('data-testid="inbox-primary-business"');
+    expect(primary).toContain('data-testid="inbox-primary-sent"');
+    expect(primary).toContain('data-testid="inbox-primary-personal"');
+    expect(primary).toContain('data-testid="inbox-pinned-filter"');
+    expect(primary).toContain('data-testid="inbox-unread-filter"');
+    expect(primary).toContain('data-testid="inbox-active-bid-filter"');
+    expect(primary).toContain('data-testid="inbox-quote-filter"');
+    expect(primary).toContain('data-testid="inbox-primary-trash"');
+    expect(primary).not.toContain('data-testid="inbox-primary-unclassified"');
+    expect(primary).not.toContain("JobFilterSelect");
+    expect(primary).not.toContain("InboxDateSelect");
+    expect(primary).not.toContain("InboxPrioritySelect");
+    expect(primary).not.toContain("InboxSubtypeSelect");
     expect(messagesSrc).not.toContain('<option value="">All dates</option>');
     expect(messagesSrc).not.toContain("All Jobs");
   });
 
-  it("secondary row: Pinned, Unread, Priority, Active Bid / Quote, Subtype", () => {
+  it("secondary row: Jobs, Dates, Priority, Subtype dropdowns only", () => {
+    const { primary, secondary } = toolbarRows(messagesSrc);
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-secondary"');
-    expect(messagesSrc).toContain('data-testid="inbox-pinned-filter"');
+    expect(secondary).toContain("JobFilterSelect");
+    expect(secondary).toContain("InboxDateSelect");
+    expect(secondary).toContain("InboxPrioritySelect");
+    expect(secondary).toContain("InboxSubtypeSelect");
+    expect(primary).not.toContain("JobFilterSelect");
+    expect(primary).not.toContain("InboxDateSelect");
+    expect(secondary).not.toContain('data-testid="inbox-pinned-filter"');
+    expect(secondary).not.toContain('data-testid="inbox-unread-filter"');
+    expect(secondary.split("<JobFilterSelect").length - 1).toBe(1);
+    expect(secondary.split("<InboxDateSelect").length - 1).toBe(1);
+    expect(messagesSrc).toContain('testId="inbox-date-filter"');
     expect(messagesSrc).toContain('testId="inbox-priority-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-active-bid-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-quote-filter"');
     expect(messagesSrc).toContain('testId="inbox-subtype-filter"');
-    expect(messagesSrc).toContain('data-testid="inbox-unread-filter"');
-    expect(messagesSrc).toContain("InboxSubtypeSelect");
     expect(messagesSrc).not.toContain('data-testid="inbox-read-filter"');
     expect(messagesSrc).not.toContain('<option value="">All mail</option>');
   });

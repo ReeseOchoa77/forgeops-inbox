@@ -1,4 +1,5 @@
 export * from "./business-subtypes.js";
+export * from "./inbox-participant-match.js";
 export * from "./classification-authority.js";
 export * from "./outbound-send-reconcile.js";
 export * from "./outlook/graph-mailbox-root.js";

@@ -317,7 +317,11 @@ export function JobFilterSelect({
     : undefined
 
   return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
+    <div
+      ref={rootRef}
+      className={className ? 'inbox-chip-wrap' : undefined}
+      style={className ? undefined : { position: 'relative' }}
+    >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -341,7 +345,7 @@ export function JobFilterSelect({
               }
         }
       >
-        {buttonLabel}
+        {chipClass ? <span className="inbox-chip-label">{buttonLabel}</span> : buttonLabel}
       </button>
       {open && (
         <div

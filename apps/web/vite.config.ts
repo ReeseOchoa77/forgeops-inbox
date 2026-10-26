@@ -14,6 +14,10 @@ export default defineConfig({
         rootDir,
         '../../packages/shared/src/business-subtypes.ts',
       ),
+      '@forgeops/shared/inbox-participant-match': path.resolve(
+        rootDir,
+        '../../packages/shared/src/inbox-participant-match.ts',
+      ),
     },
   },
   server: {

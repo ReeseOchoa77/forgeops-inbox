@@ -10,6 +10,10 @@ import { buildAuthorizationFields } from "../../../application/services/inbox-au
 import { mailboxCategoryFromLegacyBusinessFilter } from "../../../application/services/mailbox-category.js";
 import { trashEmailMessagesWithOptionalProviderDelete } from "../../../application/services/trash-email-with-provider-delete.js";
 import { buildUnifiedInboxSearchOr } from "../../../application/services/inbox-unified-search.js";
+import {
+  buildRecipientEmailsWhere,
+  buildSenderEmailsWhere,
+} from "../../../application/services/inbox-participant-where.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
   mapStoredPriorityToN8n,
@@ -153,6 +157,27 @@ const excludeBusinessTypeGroupsQuerySchema = z
     return out.length > 0 ? out : undefined;
   });
 
+/** CSV or repeated query values → unique normalized emails (max 25). */
+const participantEmailsQuerySchema = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((raw): string[] | undefined => {
+    if (raw == null) return undefined;
+    const parts = (Array.isArray(raw) ? raw : [raw])
+      .flatMap((s) => s.split(","))
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.includes("@"));
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const p of parts) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      out.push(p);
+      if (out.length >= 25) break;
+    }
+    return out.length > 0 ? out : undefined;
+  });
+
 const messagesListQuerySchema = paginationQuerySchema.extend({
   businessCategory: z.enum(businessCategoryValues).optional(),
   classificationType: z.enum(emailTypeValues).optional(),
@@ -186,7 +211,11 @@ const messagesListQuerySchema = paginationQuerySchema.extend({
   includeTotal: booleanQueryWithDefaultFalseSchema,
   search: z.string().min(1).optional(),
   /** Restrict free-text search: all fields, sender only, or exact EmailMessage / provider id. */
-  searchIn: z.enum(["all", "sender", "id"]).optional().default("all")
+  searchIn: z.enum(["all", "sender", "id"]).optional().default("all"),
+  /** Explicit sender tokens (OR). Incoming Inbox. */
+  fromEmails: participantEmailsQuerySchema,
+  /** Explicit recipient tokens (OR). Sent Inbox. */
+  toEmails: participantEmailsQuerySchema,
 });
 
 const jobSummarySchema = z.object({
@@ -1022,6 +1051,10 @@ export const buildMessagesWhere = (input: {
    * Only "id" remains special-cased for exact message/provider id lookup.
    */
   searchIn?: "all" | "sender" | "id";
+  /** Explicit sender-address tokens (OR together, AND with search). */
+  fromEmails?: string[];
+  /** Explicit recipient-address tokens (OR together, AND with search). */
+  toEmails?: string[];
   classificationThreshold: Prisma.Decimal;
   taskThreshold: Prisma.Decimal;
 }): Prisma.EmailMessageWhereInput => {
@@ -1106,6 +1139,11 @@ export const buildMessagesWhere = (input: {
     // searchIn=id is handled above with an early return.
     andConditions.push(buildUnifiedInboxSearchOr(term));
   }
+
+  const fromWhere = buildSenderEmailsWhere(input.fromEmails ?? []);
+  if (fromWhere) andConditions.push(fromWhere);
+  const toWhere = buildRecipientEmailsWhere(input.toEmails ?? []);
+  if (toWhere) andConditions.push(toWhere);
 
   if (input.reclassifiedOnly) {
     andConditions.push({ previousCategory: { not: null } });
@@ -1829,6 +1867,8 @@ export const registerInboxReadRoutes = async (
           : {}),
         ...(query.search ? { search: query.search } : {}),
         searchIn: query.searchIn,
+        ...(query.fromEmails?.length ? { fromEmails: query.fromEmails } : {}),
+        ...(query.toEmails?.length ? { toEmails: query.toEmails } : {}),
         reclassifiedOnly: query.reclassifiedOnly,
         sentOnly: query.sentOnly,
         unreadOnly: query.unreadOnly,

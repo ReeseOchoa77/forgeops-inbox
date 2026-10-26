@@ -450,20 +450,26 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   }
 
   const selectInboxTab = (tab: InboxTab) => {
+    // Unclassified is hidden from the filter bar — never leave that filter active.
+    const next: InboxTab = tab === 'UNCLASSIFIED' ? 'ALL_BUSINESS' : tab
     // Tab/classification composes with the current direction (incl. Sent).
-    setInboxTab(tab)
+    setInboxTab(next)
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
     // Exact subtype filter is independent of group tabs — clear when leaving Business.
-    if (tab === 'PERSONAL' || tab === 'TRASH' || tab === 'UNCLASSIFIED') {
+    if (next === 'PERSONAL' || next === 'TRASH') {
       setJobFilter('')
       setBusinessTypeKey('')
     }
-    if (tab === 'TRASH') setMassDeleteMode(false)
-    if (tab !== 'UNCLASSIFIED') {
-      setReclassifySelected(new Set())
-      setReclassifyNotice(null)
-    }
+    if (next === 'TRASH') setMassDeleteMode(false)
+    setReclassifySelected(new Set())
+    setReclassifyNotice(null)
   }
+
+  useEffect(() => {
+    // Inbox has no URL tab param today; still normalize so a hidden
+    // Unclassified filter cannot stay active.
+    if (inboxTab === 'UNCLASSIFIED') selectInboxTab('ALL_BUSINESS')
+  }, [inboxTab])
 
   const loadPage = useCallback(async (
     pageNum: number,
@@ -1534,10 +1540,10 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       )}
 
       <div className="inbox-filters" data-testid="inbox-filter-toolbar">
-        {/* Row 1 — Business | Sent | Jobs | Dates | Personal | Unclassified | Trash */}
+        {/* Row 1 — mailbox/category + quick filters. Unclassified is intentionally hidden. */}
         <div
           data-testid="inbox-filter-row-primary"
-          className="inbox-filter-row"
+          className="inbox-filter-row is-primary"
         >
           <div className="inbox-filter-group">
             <button
@@ -1558,22 +1564,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             >
               Sent
             </button>
-          </div>
-          {showBusinessChrome && (
-            <div className="inbox-filter-group">
-              <JobFilterSelect
-                workspaceId={workspaceId}
-                value={jobFilter}
-                onChange={setJobFilter}
-                className="inbox-toolbar"
-              />
-              <InboxDateSelect
-                value={dateRange}
-                onChange={setDateRange}
-              />
-            </div>
-          )}
-          <div className="inbox-filter-group">
             {!(isAllMailboxes && !canSeeAllPersonal) &&
               !(!isAllMailboxes && !canSeeAllPersonal && !isOwnInbox) && (
                 <button
@@ -1586,15 +1576,62 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   Personal
                 </button>
               )}
+          </div>
+          <div className="inbox-filter-group inbox-filter-group-quick">
             <button
               type="button"
-              data-testid="inbox-primary-unclassified"
-              aria-pressed={inboxTab === 'UNCLASSIFIED'}
-              onClick={() => selectInboxTab('UNCLASSIFIED')}
-              className={`inbox-chip${inboxTab === 'UNCLASSIFIED' ? ' is-active' : ''}`}
+              data-testid="inbox-pinned-filter"
+              aria-pressed={pinnedOnly}
+              title="Show only pinned emails"
+              onClick={() => setPinnedOnly((prev) => !prev)}
+              className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
             >
-              Unclassified
+              Pinned
             </button>
+            <button
+              type="button"
+              data-testid="inbox-unread-filter"
+              aria-pressed={readFilter === 'unread'}
+              title="Show unread emails"
+              onClick={() =>
+                selectDirectionFilter(readFilter === 'unread' ? '' : 'unread')
+              }
+              className={`inbox-chip${
+                readFilter === 'unread' ? ' is-soft-active' : ''
+              }`}
+            >
+              Unread
+            </button>
+            {showBusinessChrome && !isSentView && (
+              <button
+                type="button"
+                data-testid="inbox-active-bid-filter"
+                aria-pressed={businessTypeKey === 'BID_OPPORTUNITY'}
+                title="Emails discovered in Projects/Bid Invites"
+                onClick={toggleActiveBid}
+                className={`inbox-chip${
+                  businessTypeKey === 'BID_OPPORTUNITY' ? ' is-soft-active' : ''
+                }`}
+              >
+                Active Bid
+              </button>
+            )}
+            {showBusinessChrome && isSentView && (
+              <button
+                type="button"
+                data-testid="inbox-quote-filter"
+                aria-pressed={businessTypeKey === 'ESTIMATE_QUOTE'}
+                title="Sent Quote emails"
+                onClick={toggleQuoteFilter}
+                className={`inbox-chip${
+                  businessTypeKey === 'ESTIMATE_QUOTE' ? ' is-soft-active' : ''
+                }`}
+              >
+                Quote
+              </button>
+            )}
+          </div>
+          <div className="inbox-filter-group inbox-filter-group-trash">
             <button
               type="button"
               data-testid="inbox-primary-trash"
@@ -1607,88 +1644,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         </div>
 
-        {/* Row 2 — Pinned | Unread | Priority | Active Bid/Quote | Subtype */}
-        {inboxTab !== 'TRASH' && (
+        {/* Row 2 — dropdown refinements */}
+        {showBusinessChrome && (
           <div
             data-testid="inbox-filter-row-secondary"
-            className="inbox-filter-row"
+            className="inbox-filter-row is-secondary"
           >
             <div className="inbox-filter-group">
-              <button
-                type="button"
-                data-testid="inbox-pinned-filter"
-                aria-pressed={pinnedOnly}
-                title="Show only pinned emails"
-                onClick={() => setPinnedOnly((prev) => !prev)}
-                className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
-              >
-                Pinned
-              </button>
-              <button
-                type="button"
-                data-testid="inbox-unread-filter"
-                aria-pressed={readFilter === 'unread'}
-                title="Show unread emails"
-                onClick={() =>
-                  selectDirectionFilter(readFilter === 'unread' ? '' : 'unread')
+              <JobFilterSelect
+                workspaceId={workspaceId}
+                value={jobFilter}
+                onChange={setJobFilter}
+                className="inbox-toolbar"
+              />
+              <InboxDateSelect
+                value={dateRange}
+                onChange={setDateRange}
+              />
+              <InboxPrioritySelect
+                value={priorityFilter}
+                onChange={setPriorityFilter}
+              />
+              <InboxSubtypeSelect
+                direction={isSentView ? 'sent' : 'incoming'}
+                value={
+                  businessTypeKey === 'ESTIMATE_QUOTE' ||
+                  businessTypeKey === 'BID_OPPORTUNITY'
+                    ? ''
+                    : businessTypeKey
                 }
-                className={`inbox-chip${
-                  readFilter === 'unread' ? ' is-soft-active' : ''
-                }`}
-              >
-                Unread
-              </button>
+                onChange={setBusinessTypeKey}
+              />
             </div>
-            {showBusinessChrome && (
-              <>
-                <div className="inbox-filter-group">
-                  <InboxPrioritySelect
-                    value={priorityFilter}
-                    onChange={setPriorityFilter}
-                  />
-                </div>
-                <div className="inbox-filter-group">
-                  {!isSentView && (
-                    <button
-                      type="button"
-                      data-testid="inbox-active-bid-filter"
-                      aria-pressed={businessTypeKey === 'BID_OPPORTUNITY'}
-                      title="Emails discovered in Projects/Bid Invites"
-                      onClick={toggleActiveBid}
-                      className={`inbox-chip${
-                        businessTypeKey === 'BID_OPPORTUNITY' ? ' is-soft-active' : ''
-                      }`}
-                    >
-                      Active Bid
-                    </button>
-                  )}
-                  {isSentView && (
-                    <button
-                      type="button"
-                      data-testid="inbox-quote-filter"
-                      aria-pressed={businessTypeKey === 'ESTIMATE_QUOTE'}
-                      title="Sent Quote emails"
-                      onClick={toggleQuoteFilter}
-                      className={`inbox-chip${
-                        businessTypeKey === 'ESTIMATE_QUOTE' ? ' is-soft-active' : ''
-                      }`}
-                    >
-                      Quote
-                    </button>
-                  )}
-                  <InboxSubtypeSelect
-                    direction={isSentView ? 'sent' : 'incoming'}
-                    value={
-                      businessTypeKey === 'ESTIMATE_QUOTE' ||
-                      businessTypeKey === 'BID_OPPORTUNITY'
-                        ? ''
-                        : businessTypeKey
-                    }
-                    onChange={setBusinessTypeKey}
-                  />
-                </div>
-              </>
-            )}
           </div>
         )}
       </div>

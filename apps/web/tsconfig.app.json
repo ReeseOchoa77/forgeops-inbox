@@ -20,6 +20,9 @@
       "@forgeops/shared/business-subtypes": [
         "../../packages/shared/src/business-subtypes.ts"
       ],
+      "@forgeops/shared/inbox-participant-match": [
+        "../../packages/shared/src/inbox-participant-match.ts"
+      ],
       "@forgeops/shared/bidding/scope-detail": [
         "../../packages/shared/src/bidding/scope-detail.ts"
       ]
