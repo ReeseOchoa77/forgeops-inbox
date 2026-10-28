@@ -23,18 +23,18 @@ function toolbarRows(src: string): { primary: string; secondary: string } {
 }
 
 describe("Inbox filter toolbar — two-row compact layout", () => {
-  it("primary row: Business, Sent, Personal, Pinned, Unread, Active Bid/Quote, Trash", () => {
+  it("primary row: Business, Sent, Personal, Active Bid/Quote, Trash", () => {
     const { primary } = toolbarRows(messagesSrc);
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-primary"');
     expect(primary).toContain('data-testid="inbox-primary-business"');
     expect(primary).toContain('data-testid="inbox-primary-sent"');
     expect(primary).toContain('data-testid="inbox-primary-personal"');
-    expect(primary).toContain('data-testid="inbox-pinned-filter"');
-    expect(primary).toContain('data-testid="inbox-unread-filter"');
     expect(primary).toContain('data-testid="inbox-active-bid-filter"');
     expect(primary).toContain('data-testid="inbox-quote-filter"');
     expect(primary).toContain('data-testid="inbox-primary-trash"');
     expect(primary).not.toContain('data-testid="inbox-primary-unclassified"');
+    expect(primary).not.toContain('data-testid="inbox-pinned-filter"');
+    expect(primary).not.toContain('data-testid="inbox-unread-filter"');
     expect(primary).not.toContain("JobFilterSelect");
     expect(primary).not.toContain("InboxDateSelect");
     expect(primary).not.toContain("InboxPrioritySelect");
@@ -43,17 +43,18 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
     expect(messagesSrc).not.toContain("All Jobs");
   });
 
-  it("secondary row: Jobs, Dates, Priority, Subtype dropdowns only", () => {
+  it("secondary row: Pinned, Unread, Jobs, Dates, Priority, Subtype", () => {
     const { primary, secondary } = toolbarRows(messagesSrc);
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-secondary"');
+    expect(secondary).toContain('data-testid="inbox-pinned-filter"');
+    expect(secondary).toContain('data-testid="inbox-unread-filter"');
     expect(secondary).toContain("JobFilterSelect");
     expect(secondary).toContain("InboxDateSelect");
     expect(secondary).toContain("InboxPrioritySelect");
     expect(secondary).toContain("InboxSubtypeSelect");
     expect(primary).not.toContain("JobFilterSelect");
     expect(primary).not.toContain("InboxDateSelect");
-    expect(secondary).not.toContain('data-testid="inbox-pinned-filter"');
-    expect(secondary).not.toContain('data-testid="inbox-unread-filter"');
+    expect(primary).not.toContain('data-testid="inbox-pinned-filter"');
     expect(secondary.split("<JobFilterSelect").length - 1).toBe(1);
     expect(secondary.split("<InboxDateSelect").length - 1).toBe(1);
     expect(messagesSrc).toContain('testId="inbox-date-filter"');

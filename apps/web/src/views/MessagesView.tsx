@@ -1543,7 +1543,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       )}
 
       <div className="inbox-filters" data-testid="inbox-filter-toolbar">
-        {/* Row 1 — mailbox/category + quick filters. Unclassified is intentionally hidden. */}
+        {/* Row 1 — mailbox/category + Active Bid/Quote. Unclassified stays hidden. */}
         <div
           data-testid="inbox-filter-row-primary"
           className="inbox-filter-row is-primary"
@@ -1579,32 +1579,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   Personal
                 </button>
               )}
-          </div>
-          <div className="inbox-filter-group inbox-filter-group-quick">
-            <button
-              type="button"
-              data-testid="inbox-pinned-filter"
-              aria-pressed={pinnedOnly}
-              title="Show only pinned emails"
-              onClick={() => setPinnedOnly((prev) => !prev)}
-              className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
-            >
-              Pinned
-            </button>
-            <button
-              type="button"
-              data-testid="inbox-unread-filter"
-              aria-pressed={readFilter === 'unread'}
-              title="Show unread emails"
-              onClick={() =>
-                selectDirectionFilter(readFilter === 'unread' ? '' : 'unread')
-              }
-              className={`inbox-chip${
-                readFilter === 'unread' ? ' is-soft-active' : ''
-              }`}
-            >
-              Unread
-            </button>
             {showBusinessChrome && !isSentView && (
               <button
                 type="button"
@@ -1647,12 +1621,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         </div>
 
-        {/* Row 2 — dropdown refinements */}
-        {showBusinessChrome && (
-          <div
-            data-testid="inbox-filter-row-secondary"
-            className="inbox-filter-row is-secondary"
-          >
+        {/* Row 2 — Pinned / Unread + dropdown refinements */}
+        <div
+          data-testid="inbox-filter-row-secondary"
+          className="inbox-filter-row is-secondary"
+        >
+          <div className="inbox-filter-group">
+            <button
+              type="button"
+              data-testid="inbox-pinned-filter"
+              aria-pressed={pinnedOnly}
+              title="Show only pinned emails"
+              onClick={() => setPinnedOnly((prev) => !prev)}
+              className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
+            >
+              Pinned
+            </button>
+            <button
+              type="button"
+              data-testid="inbox-unread-filter"
+              aria-pressed={readFilter === 'unread'}
+              title="Show unread emails"
+              onClick={() =>
+                selectDirectionFilter(readFilter === 'unread' ? '' : 'unread')
+              }
+              className={`inbox-chip${
+                readFilter === 'unread' ? ' is-soft-active' : ''
+              }`}
+            >
+              Unread
+            </button>
+          </div>
+          {showBusinessChrome && (
             <div className="inbox-filter-group">
               <JobFilterSelect
                 workspaceId={workspaceId}
@@ -1679,8 +1679,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                 onChange={setBusinessTypeKey}
               />
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Message list */}

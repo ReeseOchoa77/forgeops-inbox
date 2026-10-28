@@ -25,15 +25,13 @@ function toolbarRows(src: string): { primary: string; secondary: string } {
 }
 
 describe('Inbox filter bar compaction', () => {
-  it('A) primary row: Business, Sent, Personal, Pinned, Unread, Active Bid/Quote, Trash — Unclassified hidden', () => {
+  it('A) primary row: Business, Sent, Personal, Active Bid/Quote, Trash — Unclassified hidden', () => {
     const src = view()
     const { primary, secondary } = toolbarRows(src)
     expect(src).toContain('data-testid="inbox-filter-row-primary"')
     expect(primary).toContain('data-testid="inbox-primary-business"')
     expect(primary).toContain('data-testid="inbox-primary-sent"')
     expect(primary).toContain('data-testid="inbox-primary-personal"')
-    expect(primary).toContain('data-testid="inbox-pinned-filter"')
-    expect(primary).toContain('data-testid="inbox-unread-filter"')
     expect(primary).toContain('data-testid="inbox-active-bid-filter"')
     expect(primary).toContain('data-testid="inbox-quote-filter"')
     expect(primary).toContain('data-testid="inbox-primary-trash"')
@@ -43,6 +41,8 @@ describe('Inbox filter bar compaction', () => {
     expect(primary).not.toMatch(/>\s*Unclassified\s*</)
     expect(src).not.toContain("onClick={() => selectInboxTab('UNCLASSIFIED')}")
     expect(src).toContain("tab === 'UNCLASSIFIED' ? 'ALL_BUSINESS' : tab")
+    expect(primary).not.toContain('data-testid="inbox-pinned-filter"')
+    expect(primary).not.toContain('data-testid="inbox-unread-filter"')
     expect(primary).not.toContain('JobFilterSelect')
     expect(primary).not.toContain('InboxDateSelect')
     expect(primary).not.toContain('InboxPrioritySelect')
@@ -53,14 +53,12 @@ describe('Inbox filter bar compaction', () => {
       'inbox-primary-business',
       'inbox-primary-sent',
       'inbox-primary-personal',
-      'inbox-pinned-filter',
-      'inbox-unread-filter',
       'inbox-active-bid-filter',
       'inbox-quote-filter',
       'inbox-primary-trash',
     ])
-    expect(secondary).not.toContain('data-testid="inbox-pinned-filter"')
-    expect(secondary).not.toContain('data-testid="inbox-unread-filter"')
+    expect(secondary).toContain('data-testid="inbox-pinned-filter"')
+    expect(secondary).toContain('data-testid="inbox-unread-filter"')
     expect(secondary).not.toContain('data-testid="inbox-primary-trash"')
   })
 
@@ -82,10 +80,12 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('excludeBusinessTypeGroups')
   })
 
-  it('D) secondary row: Jobs, Dates, Priority, Subtype dropdowns only', () => {
+  it('D) secondary row: Pinned, Unread, Jobs, Dates, Priority, Subtype', () => {
     const src = view()
     const { primary, secondary } = toolbarRows(src)
     expect(src).toContain('data-testid="inbox-filter-row-secondary"')
+    expect(secondary).toContain('data-testid="inbox-pinned-filter"')
+    expect(secondary).toContain('data-testid="inbox-unread-filter"')
     expect(secondary).toContain('JobFilterSelect')
     expect(secondary).toContain('InboxDateSelect')
     expect(secondary).toContain('InboxPrioritySelect')
@@ -95,15 +95,19 @@ describe('Inbox filter bar compaction', () => {
     expect(src).toContain('testId="inbox-subtype-filter"')
     expect(primary).not.toContain('JobFilterSelect')
     expect(primary).not.toContain('InboxDateSelect')
-    expect(secondary).not.toContain('data-testid="inbox-pinned-filter"')
-    expect(secondary).not.toContain('data-testid="inbox-unread-filter"')
+    expect(primary).not.toContain('data-testid="inbox-pinned-filter"')
+    expect(primary).not.toContain('data-testid="inbox-unread-filter"')
     expect(secondary).not.toContain('data-testid="inbox-active-bid-filter"')
     expect(secondary).not.toContain('data-testid="inbox-quote-filter"')
+    expect(secondary.split('data-testid="inbox-pinned-filter"').length - 1).toBe(1)
+    expect(secondary.split('data-testid="inbox-unread-filter"').length - 1).toBe(1)
     expect(secondary.split('<JobFilterSelect').length - 1).toBe(1)
     expect(secondary.split('<InboxDateSelect').length - 1).toBe(1)
     expect(secondary.split('<InboxPrioritySelect').length - 1).toBe(1)
     expect(secondary.split('<InboxSubtypeSelect').length - 1).toBe(1)
     const order = [
+      secondary.indexOf('inbox-pinned-filter'),
+      secondary.indexOf('inbox-unread-filter'),
       secondary.indexOf('<JobFilterSelect'),
       secondary.indexOf('<InboxDateSelect'),
       secondary.indexOf('<InboxPrioritySelect'),
