@@ -26,6 +26,12 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
+import { InboxSmartSearch } from '../components/InboxSmartSearch'
+import type { InboxParticipant } from '@forgeops/shared/inbox-participant-match'
+import {
+  participantEmailsCacheKey,
+  participantRoleForInbox,
+} from '../inbox-smart-search'
 import {
   businessSubtypeFilterOptionsForDirection,
   INBOX_BID_INVITES_SOURCE_FILTER_LABEL,
@@ -317,6 +323,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [search, setSearch] = useState('')
   const [activeSearch, setActiveSearch] = useState('')
+  const [participantTokens, setParticipantTokens] = useState<InboxParticipant[]>([])
   const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
   const browserTimeZone =
     typeof Intl !== 'undefined'
@@ -418,6 +425,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
 
   const filteredMessages = applyRoleFilter(applyClientFilter(messages))
 
+  const participantKey = participantEmailsCacheKey(participantTokens.map((t) => t.email))
+
   const buildFilters = useCallback(() => {
     return buildInboxMessageListFilters({
       inboxTab,
@@ -428,8 +437,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
       activeSearch,
       businessTypeKey: businessTypeKey || undefined,
       pinnedOnly,
+      participantEmails: participantTokens.map((t) => t.email),
     })
-  }, [inboxTab, activeSearch, jobFilter, readFilter, dateRange, browserTimeZone, businessTypeKey, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, readFilter, dateRange, browserTimeZone, businessTypeKey, pinnedOnly, participantKey])
 
   const selectDirectionFilter = (key: ReadFilter) => {
     const leavingSent = readFilter === 'sent' && key !== 'sent'
@@ -557,6 +567,8 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           !filters.unreadOnly &&
           !filters.unclassifiedOnly &&
           !filters.search &&
+          !filters.fromEmails?.length &&
+          !filters.toEmails?.length &&
           !filters.jobId &&
           !filters.category &&
           !filters.dateRange &&
@@ -638,6 +650,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     setSearch('')
     setActiveSearch('')
+    setParticipantTokens([])
     setInboxTab('ALL_BUSINESS')
     setReadFilter('')
     setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
@@ -709,7 +722,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setRefreshing(false)
     void loadPage(1, filters, false, { soft: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load when query dimensions change
-  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, dateRange, pinnedOnly])
+  }, [inboxTab, activeSearch, jobFilter, businessTypeKey, sentOnly, unreadOnly, dateRange, pinnedOnly, participantKey])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -1387,7 +1400,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   : `${filteredMessages.length} loaded`}
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
           {inboxTab === 'PERSONAL' && !isViewer && filteredMessages.length > 0 && (
             <button
               onClick={handleDeleteAllPersonal}
@@ -1451,22 +1464,17 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               {'\uD83D\uDDD1'}
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden', background: '#fff', flex: isPhone ? '1 1 180px' : '0 1 auto', minWidth: isPhone ? 0 : undefined }}>
-            <input
-              type="search"
-              data-testid="inbox-unified-search"
-              aria-label="Search emails"
-              placeholder="Search emails…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{
-                padding: '6px 12px', border: 'none', fontSize: 13, outline: 'none',
-                width: isPhone ? '100%' : 320,
-                minWidth: isPhone ? 120 : undefined,
-                background: 'transparent',
-              }}
-            />
-          </div>
+          <InboxSmartSearch
+            workspaceId={workspaceId}
+            role={participantRoleForInbox(isSentView)}
+            text={search}
+            tokens={participantTokens}
+            onTextChange={(value, opts) => {
+              setSearch(value)
+              if (opts?.immediate) setActiveSearch(value)
+            }}
+            onTokensChange={setParticipantTokens}
+          />
           {onCompose && !isViewer && (
             <button
               type="button"

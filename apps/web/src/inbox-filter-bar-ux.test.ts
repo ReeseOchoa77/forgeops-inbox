@@ -209,8 +209,10 @@ describe('Inbox filter bar compaction', () => {
 
   it('unified search remains a single OR search bar', () => {
     const src = view()
-    expect(src).toContain('data-testid="inbox-unified-search"')
-    expect(src).toContain('placeholder="Search emails…"')
+    const search = readFileSync(join(here, 'components/InboxSmartSearch.tsx'), 'utf8')
+    expect(src).toContain('InboxSmartSearch')
+    expect(search).toContain('data-testid="inbox-unified-search"')
+    expect(search).toContain('Search emails…')
     expect(src).not.toContain('Search sender')
     expect(src).not.toContain('Search email content')
   })

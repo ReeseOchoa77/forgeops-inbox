@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compactParticipantTokenLabel,
   extractAddressRecords,
+  findKnownParticipantToCommit,
   isCompleteEmailAddress,
   rankInboxParticipants,
   scoreInboxParticipantMatch,
@@ -43,7 +44,18 @@ describe("inbox participant match", () => {
   it("isCompleteEmailAddress rejects normal words", () => {
     expect(isCompleteEmailAddress("stairway")).toBe(false);
     expect(isCompleteEmailAddress("conn")).toBe(false);
+    expect(isCompleteEmailAddress("Connor")).toBe(false);
     expect(isCompleteEmailAddress("connorochoa@tekstl.net")).toBe(true);
+  });
+
+  it("commits typed text only when it is a complete known email", () => {
+    const known = { email: "connorochoa@tekstl.net", name: "Connor Ochoa" };
+    expect(findKnownParticipantToCommit("stairway", [known])).toBeNull();
+    expect(findKnownParticipantToCommit("Connor", [known])).toBeNull();
+    expect(findKnownParticipantToCommit("connorochoa@tekstl.net", [known])).toEqual(
+      known
+    );
+    expect(findKnownParticipantToCommit("nobody@tekstl.net", [known])).toBeNull();
   });
 
   it("extracts address records from JSON objects and strings", () => {

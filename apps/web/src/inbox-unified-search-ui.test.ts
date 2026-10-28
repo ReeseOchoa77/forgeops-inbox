@@ -10,8 +10,10 @@ const here = dirname(fileURLToPath(import.meta.url))
 describe('Inbox unified search UI', () => {
   it('removes sender/content/id selector; one Search emails input', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
-    expect(src).toContain('data-testid="inbox-unified-search"')
-    expect(src).toContain('Search emails…')
+    const search = readFileSync(join(here, 'components/InboxSmartSearch.tsx'), 'utf8')
+    expect(src).toContain('InboxSmartSearch')
+    expect(search).toContain('data-testid="inbox-unified-search"')
+    expect(search).toContain('Search emails…')
     expect(src).not.toContain("option value=\"sender\"")
     expect(src).not.toContain("option value=\"all\"")
     expect(src).not.toContain("Filter by sender name or email")

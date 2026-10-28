@@ -1,4 +1,5 @@
 import type { InboxMessageListFilters } from "./inbox-message-list-filters.js";
+import { participantEmailsCacheKey } from "./inbox-smart-search.js";
 
 /**
  * Canonical identity for an Inbox list query.
@@ -22,6 +23,8 @@ export function inboxListQueryKey(filters: InboxMessageListFilters): string {
     filters.timezone ?? "",
     filters.search ?? "",
     filters.searchIn ?? "",
+    participantEmailsCacheKey(filters.fromEmails),
+    participantEmailsCacheKey(filters.toEmails),
     exclude,
   ].join("|");
 }

@@ -1,3 +1,5 @@
+import { sortedNormalizedEmails } from "./inbox-smart-search";
+
 /**
  * Builds query params for GET .../messages.
  * SENT is a direction predicate (sentOnly) that ANDs with every other active
@@ -69,6 +71,10 @@ export type InboxMessageListFilters = {
   search?: string;
   /** @deprecated Prefer omit — unified search is default. Only "id" remains meaningful. */
   searchIn?: "all" | "sender" | "id";
+  /** Explicit sender tokens (OR). Incoming Inbox. */
+  fromEmails?: string[];
+  /** Explicit recipient tokens (OR). Sent Inbox. */
+  toEmails?: string[];
 };
 
 export function buildInboxMessageListFilters(input: {
@@ -83,6 +89,8 @@ export function buildInboxMessageListFilters(input: {
   /** Filter key — ANDs with tab/group when set (e.g. Active Bid provenance). */
   businessTypeKey?: string;
   pinnedOnly?: boolean;
+  /** Confirmed email-address tokens — never ordinary search text. */
+  participantEmails?: string[];
 }): InboxMessageListFilters {
   const f: InboxMessageListFilters = {};
 
@@ -128,6 +136,12 @@ export function buildInboxMessageListFilters(input: {
 
   if (input.pinnedOnly) {
     f.pinnedOnly = true;
+  }
+
+  const participantEmails = sortedNormalizedEmails(input.participantEmails);
+  if (participantEmails.length > 0) {
+    if (input.readFilter === "sent") f.toEmails = participantEmails;
+    else f.fromEmails = participantEmails;
   }
 
   return f;

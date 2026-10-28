@@ -1287,6 +1287,8 @@ export const api = {
       dateRange?: 'TODAY' | 'WEEK' | 'MONTH';
       timezone?: string;
       includeTotal?: boolean;
+      fromEmails?: string[];
+      toEmails?: string[];
     },
     opts?: { signal?: AbortSignal }
   ) => {
@@ -1312,6 +1314,8 @@ export const api = {
     if (filters?.dateRange) params.set('dateRange', filters.dateRange);
     if (filters?.timezone) params.set('timezone', filters.timezone);
     if (filters?.includeTotal) params.set('includeTotal', 'true');
+    if (filters?.fromEmails?.length) params.set('fromEmails', filters.fromEmails.join(','));
+    if (filters?.toEmails?.length) params.set('toEmails', filters.toEmails.join(','));
     return request<{
       messages: MessageSummary[];
       pagination: {
@@ -1833,6 +1837,22 @@ export const api = {
     }>(
       `/workspaces/${workspaceId}/email-contacts?q=${encodeURIComponent(q)}&limit=${limit}`
     ),
+
+  searchEmailParticipants: (
+    workspaceId: string,
+    q: string,
+    opts?: { role?: 'sender' | 'recipient'; limit?: number; signal?: AbortSignal }
+  ) => {
+    const params = new URLSearchParams({ q })
+    params.set('role', opts?.role ?? 'sender')
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    return request<{
+      participants: Array<{ email: string; name: string | null }>
+    }>(
+      `/workspaces/${workspaceId}/email-participants/search?${params.toString()}`,
+      opts?.signal ? { signal: opts.signal } : undefined
+    )
+  },
 
   /**
    * Calendar feed. `calendarFor`: ME | ALL | UNASSIGNED | userId

@@ -1,5 +1,8 @@
 import type { InboxParticipant } from "@forgeops/shared/inbox-participant-match";
-import { findKnownParticipantToCommit } from "@forgeops/shared/inbox-participant-match";
+import {
+  findKnownParticipantToCommit,
+  isCompleteEmailAddress,
+} from "@forgeops/shared/inbox-participant-match";
 
 export type InboxParticipantRole = "sender" | "recipient";
 
@@ -32,11 +35,43 @@ export function applyParticipantToken(
   next: InboxParticipant
 ): InboxParticipant[] {
   const email = next.email.trim();
-  if (!email.includes("@")) return tokens;
+  if (!isCompleteEmailAddress(email)) return tokens;
   const key = email.toLowerCase();
   if (tokens.some((t) => t.email.toLowerCase() === key)) return tokens;
   if (tokens.length >= MAX_INBOX_PARTICIPANT_TOKENS) return tokens;
   return [...tokens, { email, name: (next.name ?? "").trim() || null }];
+}
+
+export type InboxSearchEnterResult =
+  | { action: "commit-token"; participant: InboxParticipant }
+  | { action: "keep-text" };
+
+/**
+ * Enter / comma commit rules:
+ * highlighted suggestion → email chip
+ * complete known email → email chip
+ * anything else (stairway, Connor, …) stays plain search text
+ */
+export function resolveInboxSearchEnter(input: {
+  draft: string;
+  suggestions: InboxParticipant[];
+  suggestionsOpen: boolean;
+  activeIndex: number;
+}): InboxSearchEnterResult {
+  const i = input.activeIndex;
+  if (
+    input.suggestionsOpen &&
+    i >= 0 &&
+    i < input.suggestions.length
+  ) {
+    const pick = input.suggestions[i];
+    if (pick && isCompleteEmailAddress(pick.email)) {
+      return { action: "commit-token", participant: pick };
+    }
+  }
+  const known = findKnownParticipantToCommit(input.draft, input.suggestions);
+  if (known) return { action: "commit-token", participant: known };
+  return { action: "keep-text" };
 }
 
 export function removeParticipantToken(
