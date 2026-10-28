@@ -6,6 +6,8 @@ import {
   removeParticipantToken,
   resolveInboxSearchEnter,
   handleEmptyBackspace,
+  INBOX_PARTICIPANT_SEARCH_DEBOUNCE_MS,
+  INBOX_PARTICIPANT_SUGGESTION_LIMIT,
   type InboxParticipantRole,
 } from '../inbox-smart-search'
 
@@ -76,7 +78,7 @@ export function InboxSmartSearch({
       api
         .searchEmailParticipants(workspaceId, q, {
           role,
-          limit: 8,
+          limit: INBOX_PARTICIPANT_SUGGESTION_LIMIT,
           signal: ac.signal,
         })
         .then((r) => {
@@ -92,7 +94,7 @@ export function InboxSmartSearch({
           setSuggestions([])
           setOpen(false)
         })
-    }, 350)
+    }, INBOX_PARTICIPANT_SEARCH_DEBOUNCE_MS)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
@@ -215,6 +217,7 @@ export function InboxSmartSearch({
           id={listboxId}
           role="listbox"
           aria-label="Email participants"
+          data-testid="inbox-participant-suggestions"
           className="inbox-smart-search-menu"
         >
           {suggestions.map((s, i) => (
@@ -235,9 +238,7 @@ export function InboxSmartSearch({
                 <span className="inbox-smart-search-option-name">
                   {s.name || s.email}
                 </span>
-                {s.name ? (
-                  <span className="inbox-smart-search-option-email">{s.email}</span>
-                ) : null}
+                <span className="inbox-smart-search-option-email">{s.email}</span>
               </button>
             </li>
           ))}

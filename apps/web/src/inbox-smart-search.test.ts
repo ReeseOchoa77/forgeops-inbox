@@ -8,6 +8,8 @@ import {
   resolveInboxSearchEnter,
   participantEmailsCacheKey,
   participantRoleForInbox,
+  INBOX_PARTICIPANT_SEARCH_DEBOUNCE_MS,
+  INBOX_PARTICIPANT_SUGGESTION_LIMIT,
 } from "./inbox-smart-search";
 import { buildInboxMessageListFilters } from "./inbox-message-list-filters";
 import { inboxListQueryKey } from "./inbox-list-query";
@@ -187,5 +189,113 @@ describe("Inbox smart search tokenization", () => {
     expect(searchSrc).not.toContain("compactParticipantTokenLabel");
     expect(searchSrc).toContain("resolveInboxSearchEnter");
     expect(searchSrc).not.toContain('type="search"');
+  });
+});
+
+describe("Inbox smart search width + autocomplete", () => {
+  const searchSrc = readFileSync(join(here, "components/InboxSmartSearch.tsx"), "utf8");
+  const css = readFileSync(join(here, "index.css"), "utf8");
+  const apiSrc = readFileSync(join(here, "api.ts"), "utf8");
+
+  it("A. desktop search bar is capped, not full-width", () => {
+    expect(css).toContain("max-width: 700px");
+    expect(css).toContain("min-width: 420px");
+    expect(css).toMatch(/flex:\s*0 1 640px/);
+    expect(css).not.toMatch(/\.inbox-smart-search \{[^}]*flex:\s*1;\s*min-width:\s*0;/);
+  });
+
+  it("B. stairway stays plain text with no chip/X", () => {
+    expect(applyParticipantToken([], { email: "stairway", name: null })).toEqual([]);
+  });
+
+  it("C–E. typing known name/domain fragments opens the suggestion listbox", () => {
+    expect(searchSrc).toContain("searchEmailParticipants");
+    expect(searchSrc).toContain("data-testid=\"inbox-participant-suggestions\"");
+    expect(searchSrc).toContain("data-testid=\"inbox-participant-suggestion\"");
+    expect(searchSrc).toContain("setOpen(next.length > 0)");
+    expect(searchSrc).toContain("inbox-smart-search-option-email");
+  });
+
+  it("F. no participant matches → no dropdown", () => {
+    expect(searchSrc).toContain("setOpen(next.length > 0)");
+    expect(searchSrc).toContain("{open && suggestions.length > 0 && (");
+  });
+
+  it("G. click suggestion commits an email token", () => {
+    expect(searchSrc).toContain("onMouseDown");
+    expect(searchSrc).toContain("commitToken(s)");
+    expect(applyParticipantToken([], reese)).toEqual([reese]);
+  });
+
+  it("H. keyboard highlight + Enter commits a token", () => {
+    expect(searchSrc).toContain("ArrowDown");
+    expect(searchSrc).toContain("ArrowUp");
+    expect(
+      resolveInboxSearchEnter({
+        draft: "ree",
+        suggestions: [reese, connor],
+        suggestionsOpen: true,
+        activeIndex: 0,
+      })
+    ).toEqual({ action: "commit-token", participant: reese });
+  });
+
+  it("I. Enter with no highlighted suggestion does not tokenize", () => {
+    expect(
+      resolveInboxSearchEnter({
+        draft: "reese project",
+        suggestions: [reese],
+        suggestionsOpen: true,
+        activeIndex: -1,
+      })
+    ).toEqual({ action: "keep-text" });
+  });
+
+  it("J–K. multiple participant tokens AND remaining content text", () => {
+    const f = buildInboxMessageListFilters({
+      inboxTab: "ALL_BUSINESS",
+      readFilter: "",
+      activeSearch: "stairway",
+      participantEmails: [connor.email, reese.email],
+    });
+    expect(f.fromEmails).toEqual([connor.email, reese.email]);
+    expect(f.search).toBe("stairway");
+  });
+
+  it("L–O. autocomplete reuses workspace-scoped direction-aware API", () => {
+    expect(apiSrc).toContain("/workspaces/${workspaceId}/email-participants/search");
+    expect(searchSrc).toContain("role");
+    expect(INBOX_PARTICIPANT_SUGGESTION_LIMIT).toBe(8);
+    expect(INBOX_PARTICIPANT_SEARCH_DEBOUNCE_MS).toBe(350);
+    expect(participantRoleForInbox(false)).toBe("sender");
+    expect(participantRoleForInbox(true)).toBe("recipient");
+  });
+
+  it("P. dropdown closes on Escape and outside click", () => {
+    expect(searchSrc).toContain("Escape");
+    expect(searchSrc).toContain("setOpen(false)");
+    expect(searchSrc).toContain("mousedown");
+  });
+
+  it("Q. participant search still composes with Inbox filters", () => {
+    const f = buildInboxMessageListFilters({
+      inboxTab: "ALL_BUSINESS",
+      readFilter: "unread",
+      businessTypeKey: "BID_OPPORTUNITY",
+      jobFilter: "job-1042",
+      dateRange: "MONTH",
+      pinnedOnly: true,
+      activeSearch: "stairway",
+      participantEmails: [reese.email],
+    });
+    expect(f).toMatchObject({
+      unreadOnly: true,
+      businessTypeKey: "BID_OPPORTUNITY",
+      jobId: "job-1042",
+      dateRange: "MONTH",
+      pinnedOnly: true,
+      search: "stairway",
+      fromEmails: [reese.email],
+    });
   });
 });

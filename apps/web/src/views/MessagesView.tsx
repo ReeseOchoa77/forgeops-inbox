@@ -1629,22 +1629,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           </div>
         </div>
 
-        {/* Row 2 — Pinned / Unread + dropdown refinements */}
+        {/* Row 2 — Unread / Pinned + dropdown refinements */}
         <div
           data-testid="inbox-filter-row-secondary"
           className="inbox-filter-row is-secondary"
         >
           <div className="inbox-filter-group">
-            <button
-              type="button"
-              data-testid="inbox-pinned-filter"
-              aria-pressed={pinnedOnly}
-              title="Show only pinned emails"
-              onClick={() => setPinnedOnly((prev) => !prev)}
-              className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
-            >
-              Pinned
-            </button>
             <button
               type="button"
               data-testid="inbox-unread-filter"
@@ -1658,6 +1648,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               }`}
             >
               Unread
+            </button>
+            <button
+              type="button"
+              data-testid="inbox-pinned-filter"
+              aria-pressed={pinnedOnly}
+              title="Show only pinned emails"
+              onClick={() => setPinnedOnly((prev) => !prev)}
+              className={`inbox-chip${pinnedOnly ? ' is-accent' : ''}`}
+            >
+              Pinned
             </button>
           </div>
           {showBusinessChrome && (

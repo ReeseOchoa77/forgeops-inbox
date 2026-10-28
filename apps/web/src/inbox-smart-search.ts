@@ -7,6 +7,8 @@ import {
 export type InboxParticipantRole = "sender" | "recipient";
 
 export const MAX_INBOX_PARTICIPANT_TOKENS = 25;
+export const INBOX_PARTICIPANT_SUGGESTION_LIMIT = 8;
+export const INBOX_PARTICIPANT_SEARCH_DEBOUNCE_MS = 350;
 
 export function participantRoleForInbox(sentOnly: boolean): InboxParticipantRole {
   return sentOnly ? "recipient" : "sender";

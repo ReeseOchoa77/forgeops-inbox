@@ -30,6 +30,10 @@ export function scoreInboxParticipantMatch(
 
   if (em === q) return 1000;
   if (em.startsWith(q)) return 900;
+  if (q.endsWith("@")) {
+    const local = q.slice(0, -1);
+    if (local && user.startsWith(local)) return 900;
+  }
   if (nm && nm.startsWith(q)) return 800;
   if (user.includes(q)) return 700;
   if (domain.includes(q)) return 600;

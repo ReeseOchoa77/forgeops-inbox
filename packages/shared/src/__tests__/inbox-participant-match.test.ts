@@ -39,6 +39,44 @@ describe("inbox participant match", () => {
 
   it("does not match unrelated strings", () => {
     expect(scoreInboxParticipantMatch("zzz", "a@b.com", "Alice")).toBe(0);
+    expect(scoreInboxParticipantMatch("stairway", "reese.ochoa@neruanet.ai", "Reese Ochoa")).toBe(
+      0
+    );
+  });
+
+  it("matches domain fragments, usernames, and display names", () => {
+    expect(
+      scoreInboxParticipantMatch("neruanet", "reese.ochoa@neruanet.ai", "Reese Ochoa")
+    ).toBe(600);
+    expect(
+      scoreInboxParticipantMatch("reese", "reese.ochoa@neruanet.ai", "Reese Ochoa")
+    ).toBeGreaterThanOrEqual(700);
+    expect(
+      scoreInboxParticipantMatch("ochoa", "reese.ochoa@neruanet.ai", "Reese Ochoa")
+    ).toBe(700);
+    expect(
+      scoreInboxParticipantMatch("reese@", "reese@tekstl.net", "Reese Ochoa")
+    ).toBe(900);
+    expect(
+      scoreInboxParticipantMatch("reese@", "reese.ochoa@neruanet.ai", "Reese Ochoa")
+    ).toBe(900);
+  });
+
+  it("bounds ranked suggestions and skips non-matches", () => {
+    const ranked = rankInboxParticipants(
+      "reese",
+      [
+        { email: "reese.ochoa@neruanet.ai", name: "Reese Ochoa" },
+        { email: "reese@tekstl.net", name: "Reese Ochoa" },
+        { email: "other@company.com", name: "Accounting" },
+      ],
+      8
+    );
+    expect(ranked.map((p) => p.email)).toEqual([
+      "reese.ochoa@neruanet.ai",
+      "reese@tekstl.net",
+    ]);
+    expect(rankInboxParticipants("stairway", ranked, 8)).toEqual([]);
   });
 
   it("isCompleteEmailAddress rejects normal words", () => {

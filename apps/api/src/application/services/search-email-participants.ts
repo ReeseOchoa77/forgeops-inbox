@@ -3,7 +3,7 @@ import {
   extractAddressRecords,
   rankInboxParticipants,
   type InboxParticipant,
-} from "@forgeops/shared";
+} from "@forgeops/shared/inbox-participant-match";
 
 export type InboxParticipantRole = "sender" | "recipient";
 

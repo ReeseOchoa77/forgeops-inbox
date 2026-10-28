@@ -512,9 +512,20 @@ textarea:focus-visible {
 
 .inbox-smart-search {
   position: relative;
+  z-index: 60;
   display: flex;
-  flex: 1;
+  flex: 1 1 220px;
+  width: 100%;
   min-width: 0;
+  max-width: 700px;
+}
+
+@media (min-width: 900px) {
+  .inbox-smart-search {
+    flex: 0 1 640px;
+    min-width: 420px;
+    margin-left: auto;
+  }
 }
 
 .inbox-smart-search-box {
@@ -583,7 +594,7 @@ textarea:focus-visible {
   left: 0;
   right: 0;
   top: 100%;
-  z-index: 40;
+  z-index: 61;
   margin: 4px 0 0;
   padding: 4px;
   list-style: none;

@@ -80,7 +80,7 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('excludeBusinessTypeGroups')
   })
 
-  it('D) secondary row: Pinned, Unread, Jobs, Dates, Priority, Subtype', () => {
+  it('D) secondary row: Unread, Pinned, Jobs, Dates, Priority, Subtype', () => {
     const src = view()
     const { primary, secondary } = toolbarRows(src)
     expect(src).toContain('data-testid="inbox-filter-row-secondary"')
@@ -106,8 +106,8 @@ describe('Inbox filter bar compaction', () => {
     expect(secondary.split('<InboxPrioritySelect').length - 1).toBe(1)
     expect(secondary.split('<InboxSubtypeSelect').length - 1).toBe(1)
     const order = [
-      secondary.indexOf('inbox-pinned-filter'),
       secondary.indexOf('inbox-unread-filter'),
+      secondary.indexOf('inbox-pinned-filter'),
       secondary.indexOf('<JobFilterSelect'),
       secondary.indexOf('<InboxDateSelect'),
       secondary.indexOf('<InboxPrioritySelect'),

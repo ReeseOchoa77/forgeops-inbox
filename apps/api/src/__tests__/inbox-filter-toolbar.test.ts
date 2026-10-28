@@ -43,11 +43,14 @@ describe("Inbox filter toolbar — two-row compact layout", () => {
     expect(messagesSrc).not.toContain("All Jobs");
   });
 
-  it("secondary row: Pinned, Unread, Jobs, Dates, Priority, Subtype", () => {
+  it("secondary row: Unread, Pinned, Jobs, Dates, Priority, Subtype", () => {
     const { primary, secondary } = toolbarRows(messagesSrc);
     expect(messagesSrc).toContain('data-testid="inbox-filter-row-secondary"');
     expect(secondary).toContain('data-testid="inbox-pinned-filter"');
     expect(secondary).toContain('data-testid="inbox-unread-filter"');
+    expect(secondary.indexOf("inbox-unread-filter")).toBeLessThan(
+      secondary.indexOf("inbox-pinned-filter")
+    );
     expect(secondary).toContain("JobFilterSelect");
     expect(secondary).toContain("InboxDateSelect");
     expect(secondary).toContain("InboxPrioritySelect");

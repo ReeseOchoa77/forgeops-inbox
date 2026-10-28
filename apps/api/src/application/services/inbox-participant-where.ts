@@ -23,8 +23,9 @@ export function buildSenderEmailsWhere(
 ): Prisma.EmailMessageWhereInput | null {
   const list = normalizeParticipantEmails(emails);
   if (list.length === 0) return null;
-  if (list.length === 1) {
-    return { senderEmail: { equals: list[0], mode: "insensitive" } };
+  const only = list[0];
+  if (list.length === 1 && only) {
+    return { senderEmail: { equals: only, mode: "insensitive" } };
   }
   return {
     OR: list.map((email) => ({
