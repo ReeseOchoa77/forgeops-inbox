@@ -92,6 +92,72 @@ describe("override-safe extract", () => {
     const data = prisma.bidCandidate.update.mock.calls[0]![0].data;
     expect(data.proposedProjectName).toBe("User Locked Name");
   });
+
+  it("does not overwrite user-edited Candidate scope", async () => {
+    const progress = emptyBidEmailAnalyzeProgress();
+    const lockedDetail = {
+      items: [{ name: "Beams", kind: "ITEM", source: "USER_EDITED" }],
+      work: [{ name: "Install", kind: "WORK", source: "USER_EDITED" }],
+      extractionMethod: "USER_EDITED",
+    };
+    const prisma = {
+      bidAnalysisRun: { update: vi.fn(async () => ({})) },
+      bidFolderDiscoveryEmail: {
+        findMany: vi.fn(async () => [{ emailMessageId: "em1" }]),
+      },
+      emailMessage: {
+        findFirst: vi.fn(async () => ({
+          id: "em1",
+          subject: "25104 Project Falcon Bid Invite",
+          bodyText: "Please bid Project Falcon steel stairs",
+          senderName: "Mortenson",
+          senderEmail: "a@b.com",
+          attachmentMetadata: [],
+          threadId: "thread-1",
+        })),
+      },
+      bidCandidate: {
+        findUnique: vi.fn(async () => ({
+          id: "c1",
+          status: "READY",
+          userEditedFields: ["proposedScope", "proposedScopeDetail"],
+          proposedProjectName: "Falcon",
+          proposedCustomerName: null,
+          proposedBidDueAt: null,
+          proposedJobNumber: null,
+          proposedScope: "User locked scope",
+          proposedScopeDetail: lockedDetail,
+          proposedNotes: null,
+          existingJobMatchStatus: "NONE",
+          evidence: null,
+          confidence: 0.75,
+        })),
+        findFirst: vi.fn(async () => null),
+        update: vi.fn(async () => ({})),
+        create: vi.fn(),
+      },
+      bidCandidateEmail: {
+        findFirst: vi.fn(async () => null),
+        upsert: vi.fn(async () => ({})),
+      },
+    };
+
+    await extractBidCandidatesFromDiscovery({
+      prisma: prisma as never,
+      workspaceId: "ws",
+      inboxConnectionId: "conn",
+      runId: "run-1",
+      progress,
+    });
+
+    expect(prisma.bidCandidate.update).toHaveBeenCalled();
+    const data = prisma.bidCandidate.update.mock.calls[0]![0].data as {
+      proposedScope: string;
+      proposedScopeDetail: unknown;
+    };
+    expect(data.proposedScope).toBe("User locked scope");
+    expect(data.proposedScopeDetail).toEqual(lockedDetail);
+  });
 });
 
 describe("computeImportBlockedReason (worker)", () => {

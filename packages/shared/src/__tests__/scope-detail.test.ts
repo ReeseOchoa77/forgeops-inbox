@@ -7,6 +7,7 @@ import {
   isGenericScopeLabel,
   isScopeReviewPlaceholder,
   mergeAiScopeDetail,
+  detailedScopeFromUserLists,
   scopeDetailFromUserText,
   scopeSummaryString,
 } from "../bidding/scope-detail.js";
@@ -171,5 +172,24 @@ describe("scopeDetailFromUserText", () => {
       "Handrails",
     ]);
     expect(isDetailedScopeComplete(d)).toBe(true);
+  });
+});
+
+describe("detailedScopeFromUserLists", () => {
+  it("keeps items and work as structured USER_EDITED rows", () => {
+    const d = detailedScopeFromUserLists({
+      items: ["Beams", "Columns", "Stairs"],
+      work: ["Furnish", "Fabricate", "Install"],
+      exclusions: ["Painting"],
+    });
+    expect(d.extractionMethod).toBe("USER_EDITED");
+    expect(d.items.map((i) => i.name)).toEqual(["Beams", "Columns", "Stairs"]);
+    expect(d.work.map((w) => w.name)).toEqual([
+      "Furnish",
+      "Fabricate",
+      "Install",
+    ]);
+    expect(d.exclusions.map((e) => e.name)).toEqual(["Painting"]);
+    expect(d.detailedComplete).toBe(true);
   });
 });

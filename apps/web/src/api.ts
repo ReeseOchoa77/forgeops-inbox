@@ -3441,14 +3441,33 @@ export const api = {
       bidDueAt?: string | null;
       anticipatedStartAt?: string | null;
       scope?: string | null;
+      scopeDetail?: {
+        tradeCategory?: string | null;
+        summary?: string | null;
+        items?: string[];
+        work?: string[];
+        exclusions?: string[];
+        qualifications?: string[];
+      };
       notes?: string | null;
-      lifecycle?: 'OPEN' | 'QUOTED' | 'CONVERTED' | 'LOST' | 'ARCHIVED';
+      lifecycle?: 'OPEN' | 'QUOTED' | 'LOST' | 'ARCHIVED';
+      estimatorUserId?: string | null;
       externalProjectNumber?: string | null;
     }
   ) =>
     request<{ candidateId: string }>(
       `/workspaces/${workspaceId}/bid-candidates/${candidateId}`,
       { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  unlinkEmailFromBidCandidate: (
+    workspaceId: string,
+    candidateId: string,
+    emailMessageId: string
+  ) =>
+    request<{ candidateId: string; emailMessageId: string; unlinked: boolean }>(
+      `/workspaces/${workspaceId}/bid-candidates/${candidateId}/emails/${emailMessageId}`,
+      { method: 'DELETE' }
     ),
 
   resolveBidCandidateExistingJob: (
@@ -3963,6 +3982,7 @@ export interface OperationalBidCandidateDetail {
   } | null
   createdAt: string
   updatedAt: string
+  userEditedFields?: unknown
   emails: Array<{
     id: string
     role: string

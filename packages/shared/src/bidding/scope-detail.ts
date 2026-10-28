@@ -542,6 +542,55 @@ export function mergeAiScopeDetail(
   });
 }
 
+function namesToScopeItems(
+  rows: Array<string | { name: string; details?: string | null }> | undefined,
+  kind: ScopeItemKind
+): ScopeItem[] {
+  if (!rows?.length) return [];
+  const seen = new Set<string>();
+  const items: ScopeItem[] = [];
+  for (const row of rows.slice(0, 40)) {
+    const name = (typeof row === "string" ? row : row.name).trim();
+    if (!name) continue;
+    const details =
+      typeof row === "object" && typeof row.details === "string"
+        ? row.details
+        : null;
+    pushUnique(
+      items,
+      { name: name.slice(0, 120), details, kind, source: "USER_EDITED" },
+      seen
+    );
+  }
+  return items;
+}
+
+/** Structured user edit — items/work lists, not raw JSON. */
+export function detailedScopeFromUserLists(input: {
+  tradeCategory?: string | null;
+  summary?: string | null;
+  items?: Array<string | { name: string; details?: string | null }>;
+  work?: Array<string | { name: string; details?: string | null }>;
+  exclusions?: Array<string | { name: string; details?: string | null }>;
+  qualifications?: Array<string | { name: string; details?: string | null }>;
+}): DetailedScope {
+  const finalized = finalizeDetailedScope({
+    tradeCategory: input.tradeCategory?.trim() || null,
+    items: namesToScopeItems(input.items, "ITEM"),
+    work: namesToScopeItems(input.work, "WORK"),
+    exclusions: namesToScopeItems(input.exclusions, "EXCLUSION"),
+    qualifications: namesToScopeItems(input.qualifications, "QUALIFICATION"),
+    summary: input.summary?.trim() || null,
+    detailedComplete: false,
+    extractionMethod: "USER_EDITED",
+  });
+  const userSummary = input.summary?.trim() || "";
+  if (userSummary && !isScopeReviewPlaceholder(userSummary)) {
+    return { ...finalized, summary: userSummary };
+  }
+  return finalized;
+}
+
 /** Parse user-edited free text into structured scope (line/bullet oriented). */
 export function scopeDetailFromUserText(text: string | null | undefined): DetailedScope {
   const raw = (text ?? "").trim();

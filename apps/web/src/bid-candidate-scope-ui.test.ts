@@ -11,11 +11,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 describe('Bid Candidate scope UI', () => {
   it('presents structured scope (not raw JSON primary)', () => {
-    const src = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
+    const src = readFileSync(join(here, 'components/BidCandidateDetail.tsx'), 'utf8')
     expect(src).toContain('CandidateScopePanel')
+    expect(src).toContain('CandidateScopeEditor')
+    expect(src).toContain('ChipList')
     expect(src).toContain('Needs review')
     expect(src).toContain('Work identified')
     expect(src).not.toMatch(/JSON\.stringify\(detail\.scopeDetail/)
+    expect(src).not.toContain('textarea value={JSON')
   })
 
   it('incomplete work-only detail parses as not complete', () => {

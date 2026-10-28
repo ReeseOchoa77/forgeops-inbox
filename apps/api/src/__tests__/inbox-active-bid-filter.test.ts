@@ -87,6 +87,7 @@ describe("Inbox Active Bid filter = BidCandidateEmail membership", () => {
     );
     expect(route).toContain("assign-email");
     expect(route).toContain("linkEmailToBidCandidate");
+    expect(route).toContain("unlinkEmailFromBidCandidate");
   });
 
   it("5. Create Bid links the source email via BidCandidateEmail", () => {

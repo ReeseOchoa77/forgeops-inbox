@@ -3,15 +3,18 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { scopeDetailFromUserText } from "@forgeops/shared";
 import {
   createBidCandidate,
   type CreateBidCandidateInput,
 } from "../../../application/services/create-bid-candidate.js";
 import { createBidCandidateFromEmail } from "../../../application/services/create-bid-candidate-from-email.js";
 import { linkEmailToBidCandidate } from "../../../application/services/link-email-to-bid-candidate.js";
+import { unlinkEmailFromBidCandidate } from "../../../application/services/unlink-email-from-bid-candidate.js";
+import {
+  OperationalBidCandidateError,
+  updateOperationalBidCandidate,
+} from "../../../application/services/update-operational-bid-candidate.js";
 import {
   listBidCandidates,
   type BidCandidateListFilter,
@@ -339,6 +342,12 @@ export async function registerBidCandidatesRoutes(
         return reply.code(403).send({ message: "Permission denied" });
       }
 
+      const operationalLifecycleEdit = z.enum([
+        "OPEN",
+        "QUOTED",
+        "LOST",
+        "ARCHIVED",
+      ]);
       const body = z
         .object({
           projectName: z.string().min(1).max(300).optional(),
@@ -347,94 +356,69 @@ export async function registerBidCandidatesRoutes(
           bidDueAt: z.string().datetime().nullable().optional(),
           anticipatedStartAt: z.string().datetime().nullable().optional(),
           scope: z.string().max(5000).nullable().optional(),
+          scopeDetail: z
+            .object({
+              tradeCategory: z.string().max(200).nullable().optional(),
+              summary: z.string().max(5000).nullable().optional(),
+              items: z.array(z.string().max(200)).max(40).optional(),
+              work: z.array(z.string().max(200)).max(40).optional(),
+              exclusions: z.array(z.string().max(200)).max(40).optional(),
+              qualifications: z.array(z.string().max(200)).max(40).optional(),
+            })
+            .optional(),
           notes: z.string().max(5000).nullable().optional(),
-          lifecycle: lifecycleEnum.optional(),
+          lifecycle: operationalLifecycleEdit.optional(),
           estimatorUserId: z.string().min(1).nullable().optional(),
           externalProjectNumber: z.string().max(100).nullable().optional(),
         })
         .parse(request.body);
 
-      const existing = await app.services.prisma.bidCandidate.findFirst({
-        where: { id: params.candidateId, workspaceId: params.workspaceId },
-        select: { id: true, userEditedFields: true, lifecycle: true },
-      });
-      if (!existing) {
-        return reply.code(404).send({ message: "Bid Candidate not found" });
-      }
-
-      const locked = new Set(
-        Array.isArray(existing.userEditedFields)
-          ? existing.userEditedFields.filter(
-              (k): k is string => typeof k === "string"
-            )
-          : []
-      );
-
-      if (body.projectName !== undefined) locked.add("proposedProjectName");
-      if (body.customerName !== undefined) locked.add("proposedCustomerName");
-      if (body.customerId !== undefined) locked.add("customerId");
-      if (body.bidDueAt !== undefined) locked.add("proposedBidDueAt");
-      if (body.anticipatedStartAt !== undefined) locked.add("anticipatedStartAt");
-      if (body.scope !== undefined) {
-        locked.add("proposedScope");
-        locked.add("proposedScopeDetail");
-      }
-      if (body.notes !== undefined) locked.add("proposedNotes");
-      if (body.lifecycle !== undefined) locked.add("lifecycle");
-      if (body.estimatorUserId !== undefined) locked.add("proposedEstimatorUserId");
-      if (body.externalProjectNumber !== undefined) {
-        locked.add("proposedJobNumber");
-      }
-
-      if (body.customerId) {
-        const cust = await app.services.prisma.customer.findFirst({
-          where: { id: body.customerId, workspaceId: params.workspaceId },
-          select: { id: true },
+      try {
+        const result = await updateOperationalBidCandidate({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          candidateId: params.candidateId,
+          ...(body.projectName !== undefined
+            ? { projectName: body.projectName }
+            : {}),
+          ...(body.customerName !== undefined
+            ? { customerName: body.customerName }
+            : {}),
+          ...(body.customerId !== undefined
+            ? { customerId: body.customerId }
+            : {}),
+          ...(body.bidDueAt !== undefined
+            ? { bidDueAt: body.bidDueAt ? new Date(body.bidDueAt) : null }
+            : {}),
+          ...(body.anticipatedStartAt !== undefined
+            ? {
+                anticipatedStartAt: body.anticipatedStartAt
+                  ? new Date(body.anticipatedStartAt)
+                  : null,
+              }
+            : {}),
+          ...(body.scope !== undefined ? { scope: body.scope } : {}),
+          ...(body.scopeDetail !== undefined
+            ? { scopeDetail: body.scopeDetail }
+            : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          ...(body.lifecycle !== undefined ? { lifecycle: body.lifecycle } : {}),
+          ...(body.estimatorUserId !== undefined
+            ? { estimatorUserId: body.estimatorUserId }
+            : {}),
+          ...(body.externalProjectNumber !== undefined
+            ? { externalProjectNumber: body.externalProjectNumber }
+            : {}),
         });
-        if (!cust) {
-          return reply.code(400).send({ message: "Customer not found" });
+        return reply.send(result);
+      } catch (e) {
+        if (e instanceof OperationalBidCandidateError) {
+          const code =
+            e.code === "NOT_FOUND" ? 404 : e.code === "FORBIDDEN" ? 403 : 400;
+          return reply.code(code).send({ message: e.message, code: e.code });
         }
+        throw e;
       }
-
-      const data: Prisma.BidCandidateUncheckedUpdateInput = {
-        userEditedFields: [...locked],
-      };
-      if (body.projectName !== undefined) {
-        data.proposedProjectName = body.projectName;
-      }
-      if (body.customerName !== undefined) {
-        data.proposedCustomerName = body.customerName;
-      }
-      if (body.customerId !== undefined) data.customerId = body.customerId;
-      if (body.bidDueAt !== undefined) {
-        data.proposedBidDueAt = body.bidDueAt ? new Date(body.bidDueAt) : null;
-      }
-      if (body.anticipatedStartAt !== undefined) {
-        data.anticipatedStartAt = body.anticipatedStartAt
-          ? new Date(body.anticipatedStartAt)
-          : null;
-      }
-      if (body.scope !== undefined) {
-        data.proposedScope = body.scope;
-        data.proposedScopeDetail = body.scope
-          ? (scopeDetailFromUserText(body.scope) as Prisma.InputJsonValue)
-          : Prisma.DbNull;
-      }
-      if (body.notes !== undefined) data.proposedNotes = body.notes;
-      if (body.lifecycle !== undefined) data.lifecycle = body.lifecycle;
-      if (body.estimatorUserId !== undefined) {
-        data.proposedEstimatorUserId = body.estimatorUserId;
-      }
-      if (body.externalProjectNumber !== undefined) {
-        data.proposedJobNumber = body.externalProjectNumber;
-      }
-
-      await app.services.prisma.bidCandidate.update({
-        where: { id: existing.id },
-        data,
-      });
-
-      return reply.send({ candidateId: existing.id });
     }
   );
 
@@ -554,6 +538,42 @@ export async function registerBidCandidatesRoutes(
         return reply.send(result);
       } catch (e) {
         if (e instanceof PromoteBidCandidateError) {
+          const code =
+            e.code === "NOT_FOUND" ? 404 : e.code === "FORBIDDEN" ? 403 : 400;
+          return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  /** Remove BidCandidateEmail only — never deletes EmailMessage. */
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/bid-candidates/:candidateId/emails/:emailMessageId",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          candidateId: z.string().min(1),
+          emailMessageId: z.string().min(1),
+        })
+        .parse(request.params);
+      const auth = await requireAuth(app, request, reply, params.workspaceId);
+      if (!auth) return;
+      if (!["OWNER", "ADMIN", "MANAGER"].includes(auth.role)) {
+        return reply.code(403).send({ message: "Permission denied" });
+      }
+
+      try {
+        const result = await unlinkEmailFromBidCandidate({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          candidateId: params.candidateId,
+          emailMessageId: params.emailMessageId,
+        });
+        return reply.send(result);
+      } catch (e) {
+        if (e instanceof OperationalBidCandidateError) {
           const code =
             e.code === "NOT_FOUND" ? 404 : e.code === "FORBIDDEN" ? 403 : 400;
           return reply.code(code).send({ message: e.message, code: e.code });
