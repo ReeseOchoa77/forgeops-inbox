@@ -17,9 +17,9 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
   })
 
-  it('Inbox source-filter option for BID_OPPORTUNITY is Active Bid', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
-    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Active Bid')
+  it('Inbox source-filter option for BID_OPPORTUNITY is Active Bids', () => {
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bids')
+    expect(inboxBusinessTypeFilterOptionLabel('BID_OPPORTUNITY')).toBe('Active Bids')
     expect(inboxBusinessTypeFilterOptionLabel('ESTIMATE_QUOTE')).toBe('Quote')
   })
 

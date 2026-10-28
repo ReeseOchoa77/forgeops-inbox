@@ -91,9 +91,9 @@ export const BUSINESS_SUBTYPE_DIRECTION_HINTS: Record<
  * entity membership. Subtype badges still use BUSINESS_SUBTYPE_LABELS
  * ("Bid Opportunity").
  */
-export const INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Active Bid";
+export const INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Active Bids";
 
-/** Label for an Inbox provenance filter option (BID_OPPORTUNITY key → Active Bid). */
+/** Label for an Inbox provenance filter option (BID_OPPORTUNITY key → Active Bids). */
 export function inboxBusinessTypeFilterOptionLabel(
   key: BusinessSubtypeKey
 ): string {

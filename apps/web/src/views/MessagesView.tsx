@@ -26,7 +26,10 @@ import {
   formatJobTooltip,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
-import { businessSubtypeFilterOptionsForDirection } from '@forgeops/shared/business-subtypes'
+import {
+  businessSubtypeFilterOptionsForDirection,
+  INBOX_BID_INVITES_SOURCE_FILTER_LABEL,
+} from '@forgeops/shared/business-subtypes'
 import {
   INBOX_ACTIONS_COLUMN_WIDTH_PX,
   MailboxCategoryDot,
@@ -1613,7 +1616,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   businessTypeKey === 'BID_OPPORTUNITY' ? ' is-soft-active' : ''
                 }`}
               >
-                Active Bid
+                {INBOX_BID_INVITES_SOURCE_FILTER_LABEL}
               </button>
             )}
             {showBusinessChrome && isSentView && (

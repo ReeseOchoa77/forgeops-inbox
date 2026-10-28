@@ -125,7 +125,7 @@ describe('Inbox filter bar compaction', () => {
   })
 
   it('F) Active Bid uses Bid Invites provenance key BID_OPPORTUNITY', () => {
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bids')
     const src = view()
     expect(src).toContain("prev === 'BID_OPPORTUNITY' ? '' : 'BID_OPPORTUNITY'")
     const f = buildInboxMessageListFilters({
@@ -175,7 +175,7 @@ describe('Inbox filter bar compaction', () => {
 
   it('I) Bid Opportunity remains distinct subtype label from Active Bid', () => {
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).toBe('Bid Opportunity')
-    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bid')
+    expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bids')
     expect(BUSINESS_SUBTYPE_LABELS.BID_OPPORTUNITY).not.toBe(
       INBOX_BID_INVITES_SOURCE_FILTER_LABEL
     )
