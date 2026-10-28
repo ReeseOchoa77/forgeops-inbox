@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   api,
   type OperationalBidCandidate,
@@ -49,6 +49,7 @@ export function BiddingView({
   const [createName, setCreateName] = useState('')
   const [createCustomer, setCreateCustomer] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const reload = () => {
     setLoading(true)
@@ -99,9 +100,24 @@ export function BiddingView({
       .finally(() => setDetailLoading(false))
   }, [workspaceId, selectedId])
 
+  const openCreate = () => {
+    setCreateName('')
+    setCreateCustomer('')
+    setCreateError(null)
+    setCreateBusy(false)
+    setShowCreate(true)
+  }
+
+  const closeCreate = () => {
+    if (createBusy) return
+    setShowCreate(false)
+    setCreateError(null)
+  }
+
   const createCandidate = async () => {
-    if (!createName.trim()) return
+    if (!createName.trim() || createBusy) return
     setCreateBusy(true)
+    setCreateError(null)
     try {
       const res = await api.createOperationalBidCandidate(workspaceId, {
         projectName: createName.trim(),
@@ -110,10 +126,11 @@ export function BiddingView({
       setShowCreate(false)
       setCreateName('')
       setCreateCustomer('')
+      setCreateError(null)
       setSelectedId(res.candidateId)
       reload()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed')
+      setCreateError(e instanceof Error ? e.message : 'Create failed')
     } finally {
       setCreateBusy(false)
     }
@@ -181,8 +198,8 @@ export function BiddingView({
               Permanent opportunities before they become Jobs. No Job number until Convert to Job.
             </div>
           </div>
-          <button type="button" onClick={() => setShowCreate(true)} style={primaryBtn}>
-            New Candidate
+          <button type="button" onClick={openCreate} style={primaryBtn}>
+            New Bid
           </button>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
@@ -221,33 +238,20 @@ export function BiddingView({
           </label>
         </div>
       </div>
+      {showCreate && (
+        <CreateBidModal
+          name={createName}
+          customer={createCustomer}
+          busy={createBusy}
+          error={createError}
+          onName={setCreateName}
+          onCustomer={setCreateCustomer}
+          onClose={closeCreate}
+          onSubmit={() => void createCandidate()}
+        />
+      )}
       <div style={{ flex: 1, overflow: 'auto', padding: isPhone ? '0 14px 16px' : '0 22px 18px' }}>
         {error && <div style={{ color: '#b42318', fontSize: 13, marginBottom: 8 }}>{error}</div>}
-        {showCreate && (
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 14, marginBottom: 12, background: '#fff' }}>
-            <div style={{ fontWeight: 650, marginBottom: 8 }}>Create Bid Candidate</div>
-            <input
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-              placeholder="Project name"
-              style={{ ...selectStyle, width: '100%', marginBottom: 8 }}
-            />
-            <input
-              value={createCustomer}
-              onChange={(e) => setCreateCustomer(e.target.value)}
-              placeholder="Customer / GC (optional)"
-              style={{ ...selectStyle, width: '100%', marginBottom: 8 }}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" disabled={createBusy || !createName.trim()} onClick={createCandidate} style={primaryBtn}>
-                Create
-              </button>
-              <button type="button" onClick={() => setShowCreate(false)} style={linkBtn}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
         {loading && rows.length === 0 ? (
           <div style={{ color: '#6b7280', fontSize: 13 }}>Loading Active Bids…</div>
         ) : rows.length === 0 ? (
@@ -380,6 +384,145 @@ export function BiddingView({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function CreateBidModal({
+  name,
+  customer,
+  busy,
+  error,
+  onName,
+  onCustomer,
+  onClose,
+  onSubmit,
+}: {
+  name: string
+  customer: string
+  busy: boolean
+  error: string | null
+  onName: (v: string) => void
+  onCustomer: (v: string) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    nameRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 40,
+        padding: 16,
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create Bid"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault()
+          onSubmit()
+        }}
+        style={{
+          width: 'min(400px, 100%)',
+          background: '#fff',
+          borderRadius: 10,
+          border: '1px solid #e5e7eb',
+          padding: 18,
+          boxShadow: '0 16px 40px rgba(15,23,42,0.12)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 650, color: '#111827' }}>Create Bid</div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={busy}
+            style={{
+              border: 'none',
+              background: 'none',
+              cursor: busy ? 'not-allowed' : 'pointer',
+              color: '#6b7280',
+              fontSize: 18,
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <label style={{ display: 'block', fontSize: 12, color: '#374151', marginBottom: 10 }}>
+          Project name
+          <input
+            ref={nameRef}
+            autoFocus
+            value={name}
+            onChange={(e) => onName(e.target.value)}
+            placeholder="Project name"
+            disabled={busy}
+            style={{ ...selectStyle, width: '100%', marginTop: 4, boxSizing: 'border-box' }}
+          />
+        </label>
+        <label style={{ display: 'block', fontSize: 12, color: '#374151', marginBottom: 14 }}>
+          Customer / GC (optional)
+          <input
+            value={customer}
+            onChange={(e) => onCustomer(e.target.value)}
+            placeholder="Customer / GC (optional)"
+            disabled={busy}
+            style={{ ...selectStyle, width: '100%', marginTop: 4, boxSizing: 'border-box' }}
+          />
+        </label>
+        {error && (
+          <div role="alert" style={{ color: '#b42318', fontSize: 13, marginBottom: 10 }}>
+            {error}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, alignItems: 'center' }}>
+          <button type="button" style={linkBtn} disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            style={{
+              ...primaryBtn,
+              opacity: busy || !name.trim() ? 0.65 : 1,
+              cursor: busy || !name.trim() ? 'not-allowed' : 'pointer',
+            }}
+            disabled={busy || !name.trim()}
+          >
+            {busy ? 'Creating…' : 'Create Bid'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

@@ -31,7 +31,11 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     const app = readFileSync(join(here, 'App.tsx'), 'utf8')
     expect(app).toContain("label: 'Active Bids'")
     const bidding = readFileSync(join(here, 'views/BiddingView.tsx'), 'utf8')
-    expect(bidding).toContain('Create Bid Candidate')
+    expect(bidding).toContain('Create Bid')
+    expect(bidding).toContain('New Bid')
+    expect(bidding).toContain('CreateBidModal')
+    expect(bidding).not.toContain('New Candidate')
+    expect(bidding).not.toContain('Create Bid Candidate')
     expect(bidding).toContain('Active Bids')
     const dialog = readFileSync(
       join(here, 'components/EmailJobAssignmentDialog.tsx'),
