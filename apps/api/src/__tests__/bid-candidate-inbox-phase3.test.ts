@@ -29,16 +29,16 @@ describe("Phase 3 — Bid Opportunity subtype + Bid Invites Inbox filter", () =>
     expect(subtypes).toContain('INBOX_BID_INVITES_SOURCE_FILTER_LABEL = "Active Bids"');
   });
 
-  it("E) Bid Invites Inbox filter = durable Bid Invites provenance only", () => {
+  it("E) Active Bid Inbox filter = BidCandidateEmail on OPEN/QUOTED candidates", () => {
     const src = readSrc("../interfaces/http/routes/inbox-read.route.ts");
     expect(src).toContain('businessTypeKey === "BID_OPPORTUNITY"');
-    expect(src).toContain("discoveredInBidInvitesFolder: true");
-    // Must NOT use subtype OR BidCandidateEmail.role as filter predicates.
+    expect(src).toContain("emailLinkedToActiveBidCandidateWhere");
     const bidBlock = src.slice(
       src.indexOf('businessTypeKey === "BID_OPPORTUNITY"'),
       src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"')
     );
-    expect(bidBlock).toContain("discoveredInBidInvitesFolder");
+    expect(bidBlock).toContain("emailLinkedToActiveBidCandidateWhere");
+    expect(bidBlock).not.toContain("discoveredInBidInvitesFolder");
     expect(bidBlock).not.toContain('businessTypeKey: "BID_OPPORTUNITY"');
     expect(bidBlock).not.toContain('role: "BID_INVITE"');
     expect(src).toMatch(/andConditions\.push/);

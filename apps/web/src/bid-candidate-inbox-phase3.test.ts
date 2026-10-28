@@ -87,7 +87,7 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
     expect(a).toContain('BID_OPPORTUNITY')
   })
 
-  it('MessagesView wires Active Bid provenance filter server-side', () => {
+  it('MessagesView wires Active Bid membership filter server-side', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
     expect(src).toContain('data-testid="inbox-active-bid-filter"')
     expect(src).toContain('BID_OPPORTUNITY')

@@ -168,7 +168,7 @@ export async function linkEmailToBidCandidate(input: {
     }
   } else if (input.applyBidInviteSubtype !== false && role === "BID_INVITE") {
     // Manual Assign must NOT stamp Projects/Bid Invites folder provenance.
-    // Bid Invites source filter uses discoveredInBidInvitesFolder only.
+    // Inbox Active Bid uses BidCandidateEmail membership, not that flag.
     await applyDeterministicBidInviteSubtype({
       prisma: input.prisma,
       workspaceId: input.workspaceId,

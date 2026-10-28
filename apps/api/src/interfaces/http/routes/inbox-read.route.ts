@@ -14,6 +14,7 @@ import {
   buildRecipientEmailsWhere,
   buildSenderEmailsWhere,
 } from "../../../application/services/inbox-participant-where.js";
+import { emailLinkedToActiveBidCandidateWhere } from "../../../application/services/active-bid-candidate-membership.js";
 import { getSessionFromRequest } from "../authentication.js";
 import {
   mapStoredPriorityToN8n,
@@ -1174,14 +1175,14 @@ export const buildMessagesWhere = (input: {
   }
 
   if (input.businessTypeKey) {
-    // Inbox "Bid Invites" source filter (key BID_OPPORTUNITY for API compat) =
-    // durable Projects/Bid Invites folder provenance ONLY.
-    // Not BID_OPPORTUNITY subtype membership, not BidCandidateEmail.role=BID_INVITE,
-    // not BidCandidate entity association. Quote filter unchanged.
+    // Inbox "Active Bid" (key BID_OPPORTUNITY for API compat) =
+    // BidCandidateEmail linked to an Active Bids-list candidate (OPEN|QUOTED).
+    // Not Projects/Bid Invites folder provenance, not BID_OPPORTUNITY subtype.
+    // Quote filter unchanged.
     if (input.businessTypeKey === "BID_OPPORTUNITY") {
-      andConditions.push({
-        discoveredInBidInvitesFolder: true,
-      });
+      andConditions.push(
+        emailLinkedToActiveBidCandidateWhere(input.workspaceId)
+      );
     } else if (input.businessTypeKey === "ESTIMATE_QUOTE") {
       andConditions.push({
         OR: [

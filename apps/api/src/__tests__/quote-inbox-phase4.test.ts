@@ -50,7 +50,7 @@ describe("Phase 4 — Quote / Sent mail", () => {
     expect(src).toContain('role: "QUOTE"');
     expect(src).toMatch(/andConditions\.push/);
     // Regression: Quote still uses subtype OR BidCandidateEmail.role=QUOTE.
-    // Bid Invites filter narrowed to discoveredInBidInvitesFolder; Quote must not.
+    // Active Bid uses candidate membership; Quote must not.
     const quoteBlock = src.slice(
       src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'),
       src.indexOf("} else {", src.indexOf('businessTypeKey === "ESTIMATE_QUOTE"'))

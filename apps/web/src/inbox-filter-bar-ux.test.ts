@@ -128,7 +128,7 @@ describe('Inbox filter bar compaction', () => {
     expect(src).not.toContain('inbox-filter-sep')
   })
 
-  it('F) Active Bid uses Bid Invites provenance key BID_OPPORTUNITY', () => {
+  it('F) Active Bid filter still sends BID_OPPORTUNITY key', () => {
     expect(INBOX_BID_INVITES_SOURCE_FILTER_LABEL).toBe('Active Bids')
     const src = view()
     expect(src).toContain("prev === 'BID_OPPORTUNITY' ? '' : 'BID_OPPORTUNITY'")

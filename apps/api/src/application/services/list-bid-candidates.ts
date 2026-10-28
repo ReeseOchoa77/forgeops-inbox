@@ -3,6 +3,7 @@
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { activeBidListLifecycleWhere } from "./active-bid-candidate-membership.js";
 
 export type BidCandidateListFilter = {
   quote?: "all" | "with" | "without";
@@ -25,7 +26,7 @@ export function bidCandidatesWorkspaceWhere(input: {
     and.push({ lifecycle: { in: lifecycles } });
   } else {
     // Default operational list: exclude archived/lost/converted unless asked.
-    and.push({ lifecycle: { in: ["OPEN", "QUOTED"] } });
+    and.push(activeBidListLifecycleWhere());
   }
 
   // Durable Quote evidence only — ephemeral unmatched staging must not flip these.

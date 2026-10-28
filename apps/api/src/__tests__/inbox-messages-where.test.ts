@@ -333,17 +333,10 @@ describe("buildMessagesWhere — Sent AND composition", () => {
       expect(JSON.stringify(where)).toContain('"direction":"SENT"');
       const serialized = JSON.stringify(where);
       if (key === "BID_OPPORTUNITY") {
-        // Bid Invites source filter = durable Projects/Bid Invites provenance only.
-        expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
+        expect(serialized).toContain("bidCandidateEmails");
+        expect(serialized).toContain('"lifecycle":{"in":["OPEN","QUOTED"]}');
+        expect(serialized).not.toContain("discoveredInBidInvitesFolder");
         expect(serialized).not.toContain('"role":"BID_INVITE"');
-        expect(
-          and.some(
-            (c) =>
-              c &&
-              "discoveredInBidInvitesFolder" in c &&
-              c.discoveredInBidInvitesFolder === true
-          )
-        ).toBe(true);
       } else if (key === "ESTIMATE_QUOTE") {
         // Quote filter unchanged: subtype OR Candidate-email role.
         expect(serialized).toContain(`"businessTypeKey":"${key}"`);
@@ -363,23 +356,16 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     }
   });
 
-  it("Bid Invites source filter = discoveredInBidInvitesFolder only (not subtype/role)", () => {
+  it("Active Bid filter = BidCandidateEmail on OPEN/QUOTED candidates", () => {
     const where = baseWhere({
       businessCategory: "BUSINESS",
       businessTypeKey: "BID_OPPORTUNITY",
     });
-    const and = where.AND as Array<Record<string, unknown>>;
     const serialized = JSON.stringify(where);
-    expect(
-      and.some(
-        (c) =>
-          c &&
-          "discoveredInBidInvitesFolder" in c &&
-          c.discoveredInBidInvitesFolder === true
-      )
-    ).toBe(true);
+    expect(serialized).toContain("bidCandidateEmails");
+    expect(serialized).toContain('"lifecycle":{"in":["OPEN","QUOTED"]}');
+    expect(serialized).not.toContain("discoveredInBidInvitesFolder");
     expect(serialized).not.toContain('"role":"BID_INVITE"');
-    // Must not match via subtype alone.
     expect(serialized).not.toMatch(
       /"classifications":\{"some":\{"businessTypeKey":"BID_OPPORTUNITY"\}\}/
     );
@@ -399,7 +385,8 @@ describe("buildMessagesWhere — Sent AND composition", () => {
     });
     const and = where.AND as Array<Record<string, unknown>>;
     const serialized = JSON.stringify(where);
-    expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
+    expect(serialized).toContain("bidCandidateEmails");
+    expect(serialized).not.toContain("discoveredInBidInvitesFolder");
     expect(serialized).not.toContain('"direction":"SENT"');
     expect(and.some((c) => c && "isPinned" in c && c.isPinned === true)).toBe(
       true

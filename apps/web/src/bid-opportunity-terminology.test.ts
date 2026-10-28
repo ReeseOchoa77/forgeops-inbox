@@ -61,7 +61,7 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
     expect(BUSINESS_SUBTYPE_LABELS.ESTIMATE_QUOTE).toBe('Quote')
   })
 
-  it('MessagesView uses Active Bids dedicated provenance control', () => {
+  it('MessagesView uses Active Bids dedicated membership control', () => {
     const src = readFileSync(join(here, 'views/MessagesView.tsx'), 'utf8')
     expect(src).toContain('inbox-active-bid-filter')
     expect(src).toContain('INBOX_BID_INVITES_SOURCE_FILTER_LABEL')

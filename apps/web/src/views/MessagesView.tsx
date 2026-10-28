@@ -317,8 +317,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
   const [jobFilter, setJobFilter] = useState('')
   /**
-   * Inbox source/subtype filter key. BID_OPPORTUNITY = Active Bid provenance
-   * (Projects/Bid Invites; not subtype membership). Server-side before pagination.
+   * Inbox source/subtype filter key. BID_OPPORTUNITY = Active Bid membership
+   * (BidCandidateEmail on OPEN/QUOTED candidates; not folder provenance).
+   * Server-side before pagination.
    */
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [search, setSearch] = useState('')
@@ -448,7 +449,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setBusinessTypeKey((prev) => {
       // Quote is Sent-only in the UI — clear when leaving Sent (no invisible Quote).
       if (leavingSent && prev === 'ESTIMATE_QUOTE') return ''
-      // Active Bid provenance filter is incoming-only in the UI — clear when entering Sent.
+      // Active Bid membership filter is incoming-only in the UI — clear when entering Sent.
       if (enteringSent && prev === 'BID_OPPORTUNITY') return ''
       return prev
     })
@@ -1921,7 +1922,7 @@ function InboxSubtypeSelect({
   const options = businessSubtypeFilterOptionsForDirection(direction).filter(
     (o) =>
       // Dedicated Quote control in Sent — hide ESTIMATE_QUOTE here.
-      // Bid Opportunity remains (subtype label); Active Bid owns provenance UX.
+      // Bid Opportunity remains (subtype label); Active Bid owns membership UX.
       o.key !== 'ESTIMATE_QUOTE' && o.key !== 'GENERAL'
   )
   const selected = options.find((o) => o.key === value)

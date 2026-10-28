@@ -95,14 +95,15 @@ describe("unified Inbox search", () => {
     expect(searchOr).toBeDefined();
   });
 
-  it("Bid Invites + search compose with AND", () => {
+  it("Active Bid + search compose with AND", () => {
     const where = baseWhere({
       businessCategory: "BUSINESS",
       businessTypeKey: "BID_OPPORTUNITY",
       search: "stairs",
     });
     const serialized = JSON.stringify(where);
-    expect(serialized).toContain('"discoveredInBidInvitesFolder":true');
+    expect(serialized).toContain("bidCandidateEmails");
+    expect(serialized).not.toContain("discoveredInBidInvitesFolder");
     expect(serialized).toContain("stairs");
     expect(searchOrFromWhere(where)).toBeDefined();
   });
