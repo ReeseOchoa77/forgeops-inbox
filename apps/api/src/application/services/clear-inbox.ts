@@ -7,6 +7,14 @@ import type { Prisma, PrismaClient } from "@prisma/client";
  */
 export type ClearInboxMode = "NON_JOB_ONLY" | "ALL_EMAILS" | "HISTORICAL_IMPORT_ONLY";
 
+/**
+ * Clear Inbox is a mailbox-wide bulk delete. Prisma's default interactive
+ * timeout (5000ms) is too short for production mailboxes. 60s matches other
+ * ForgeOps bulk txs (document import, mailbox import) without changing the
+ * global Prisma timeout.
+ */
+export const CLEAR_INBOX_TRANSACTION_TIMEOUT_MS = 60_000;
+
 export function clearInboxMessageWhere(input: {
   workspaceId: string;
   inboxConnectionId: string;
@@ -26,6 +34,12 @@ export function clearInboxMessageWhere(input: {
  * Does not delete Jobs, Customers, or DiscoveredFolder rows.
  * Does not call the mail provider — Clear Inbox / Clear All Emails must NEVER
  * honor `deleteFromProviderOnDelete` (that setting is Inbox UI trash only).
+ *
+ * Classification and Task FKs are SetNull on EmailMessage delete, so they are
+ * deleted explicitly (Clear Inbox must not leave orphaned rows).
+ * EmailAttachment, NormalizedEmail, BidCandidateEmail, BidQuoteStaging, and
+ * BidFolderDiscoveryEmail cascade from EmailMessage — do not pre-delete them
+ * (avoids extra nested mailbox scans inside the interactive transaction).
  */
 export async function deleteScopedEmailMessages(
   tx: Prisma.TransactionClient,
@@ -34,16 +48,10 @@ export async function deleteScopedEmailMessages(
     emptyThreadWhere: Prisma.EmailThreadWhereInput;
   }
 ): Promise<number> {
-  await tx.emailAttachment.deleteMany({
-    where: { emailMessage: input.where },
-  });
   await tx.task.deleteMany({
     where: { sourceMessage: input.where },
   });
   await tx.classification.deleteMany({
-    where: { message: input.where },
-  });
-  await tx.normalizedEmail.deleteMany({
     where: { message: input.where },
   });
   const deleted = await tx.emailMessage.deleteMany({ where: input.where });
@@ -151,46 +159,49 @@ export async function clearConnectionInbox(
   // Only Clear All Emails may opt into Candidate deletion. Other modes ignore the flag.
   const includeBidCandidates =
     input.mode === "ALL_EMAILS" && input.includeBidCandidates === true;
-  return prisma.$transaction(async (tx) => {
-    let bidCandidatesDeleted = 0;
-    let quoteStagingsRemovedWithCandidates = 0;
-    if (includeBidCandidates) {
-      const cand = await deleteWorkspaceBidCandidates(tx, input.workspaceId);
-      bidCandidatesDeleted = cand.bidCandidatesDeleted;
-      quoteStagingsRemovedWithCandidates = cand.quoteStagingsUnlinked;
-    }
+  return prisma.$transaction(
+    async (tx) => {
+      let bidCandidatesDeleted = 0;
+      let quoteStagingsRemovedWithCandidates = 0;
+      if (includeBidCandidates) {
+        const cand = await deleteWorkspaceBidCandidates(tx, input.workspaceId);
+        bidCandidatesDeleted = cand.bidCandidatesDeleted;
+        quoteStagingsRemovedWithCandidates = cand.quoteStagingsUnlinked;
+      }
 
-    const jobAssociatedCount = await tx.emailMessage.count({
-      where: {
-        workspaceId: input.workspaceId,
-        inboxConnectionId: input.inboxConnectionId,
-        jobId: { not: null },
-      },
-    });
-    const deletedCount = await deleteScopedEmailMessages(tx, {
-      where: messageWhere,
-      emptyThreadWhere: {
-        workspaceId: input.workspaceId,
-        inboxConnectionId: input.inboxConnectionId,
-        messages: { none: {} },
-      },
-    });
-    // Every mode deletes live inbox mail, so the watermark has to move or
-    // the next sync brings those messages back. Project-folder analysis
-    // bypasses the watermark and is kept by HISTORICAL_IMPORT_ONLY.
-    await tx.inboxConnection.update({
-      where: { id: input.inboxConnectionId },
-      data: {
-        inboxClearedAt: input.clearedAt,
-        syncCursor: null,
-      },
-    });
-    return {
-      deletedCount,
-      preservedJobEmailCount: input.mode === "NON_JOB_ONLY" ? jobAssociatedCount : 0,
-      removedJobEmailCount: input.mode === "ALL_EMAILS" ? jobAssociatedCount : 0,
-      bidCandidatesDeleted,
-      quoteStagingsRemovedWithCandidates,
-    };
-  });
+      const jobAssociatedCount = await tx.emailMessage.count({
+        where: {
+          workspaceId: input.workspaceId,
+          inboxConnectionId: input.inboxConnectionId,
+          jobId: { not: null },
+        },
+      });
+      const deletedCount = await deleteScopedEmailMessages(tx, {
+        where: messageWhere,
+        emptyThreadWhere: {
+          workspaceId: input.workspaceId,
+          inboxConnectionId: input.inboxConnectionId,
+          messages: { none: {} },
+        },
+      });
+      // Every mode deletes live inbox mail, so the watermark has to move or
+      // the next sync brings those messages back. Project-folder analysis
+      // bypasses the watermark and is kept by HISTORICAL_IMPORT_ONLY.
+      await tx.inboxConnection.update({
+        where: { id: input.inboxConnectionId },
+        data: {
+          inboxClearedAt: input.clearedAt,
+          syncCursor: null,
+        },
+      });
+      return {
+        deletedCount,
+        preservedJobEmailCount: input.mode === "NON_JOB_ONLY" ? jobAssociatedCount : 0,
+        removedJobEmailCount: input.mode === "ALL_EMAILS" ? jobAssociatedCount : 0,
+        bidCandidatesDeleted,
+        quoteStagingsRemovedWithCandidates,
+      };
+    },
+    { timeout: CLEAR_INBOX_TRANSACTION_TIMEOUT_MS }
+  );
 }
