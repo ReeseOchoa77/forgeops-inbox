@@ -1,4 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const learnJobContactsFromEmails = vi.hoisted(() =>
+  vi.fn(async () => ({ learned: 0, skipped: 0 }))
+);
+
+vi.mock("@forgeops/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@forgeops/shared")>();
+  return {
+    ...actual,
+    learnJobContactsFromEmails,
+  };
+});
+
 import {
   associateBidImportEmails,
   collectBidCandidateImportEmailIds,
@@ -57,6 +70,10 @@ describe("collectBidCandidateImportEmailIds", () => {
 });
 
 describe("associateBidImportEmails", () => {
+  beforeEach(() => {
+    learnJobContactsFromEmails.mockClear();
+  });
+
   it("assigns unassigned emails and skips same-job idempotently", async () => {
     const prisma = {
       emailMessage: {
@@ -96,6 +113,13 @@ describe("associateBidImportEmails", () => {
         }),
       })
     );
+    expect(learnJobContactsFromEmails).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        workspaceId: "ws",
+        emailMessageIds: ["em-new"],
+      })
+    );
   });
 
   it("does not overwrite protected assignment on a different Job", async () => {
@@ -128,6 +152,7 @@ describe("associateBidImportEmails", () => {
     expect(result.attachedEmailIds).toEqual([]);
     expect(result.conflicts).toHaveLength(2);
     expect(prisma.emailMessage.updateMany).not.toHaveBeenCalled();
+    expect(learnJobContactsFromEmails).not.toHaveBeenCalled();
   });
 
   it("may overwrite weak AI assignment on a different Job", async () => {

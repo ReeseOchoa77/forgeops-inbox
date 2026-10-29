@@ -188,6 +188,12 @@ enum JobAssignmentSource {
   VERIFIED_PROJECT_FOLDER
 }
 
+/// Provenance for Job ↔ EntityContact learned from confirmed email assignment.
+enum JobEmailContactSource {
+  LEARNED_FROM_EMAIL
+  MANUAL
+}
+
 enum JobActivityAction {
   JOB_CREATED
   JOB_UPDATED
@@ -534,6 +540,7 @@ model Workspace {
   jobFiles             JobFile[]
   calendarEvents       CalendarEvent[]
   jobParticipants      JobParticipant[]
+  jobEmailContacts     JobEmailContact[]
   jobWorkPackages      JobWorkPackage[]
   jobRfqs              JobRfq[]
   jobMilestones        JobMilestone[]
@@ -848,6 +855,7 @@ model EmailMessage {
   bidCandidateEmails BidCandidateEmail[]
   bidFolderDiscoveries BidFolderDiscoveryEmail[]
   bidQuoteStagings BidQuoteStaging[]
+  jobEmailContactFirsts JobEmailContact[] @relation("JobEmailContactFirstEmail")
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -1219,6 +1227,7 @@ model Job {
   rfqs                  JobRfq[]
   confirmedBidCandidates BidCandidate[] @relation("BidCandidateCanonicalJob")
   proposedBidCandidates  BidCandidate[] @relation("BidCandidateProposedExistingJob")
+  emailContacts          JobEmailContact[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -2128,11 +2137,35 @@ model EntityContact {
   customer        Customer? @relation(fields: [workspaceId, customerId], references: [workspaceId, id], onDelete: SetNull)
   vendor          Vendor?   @relation(fields: [workspaceId, vendorId], references: [workspaceId, id], onDelete: SetNull)
   jobParticipations JobParticipant[] @relation("JobParticipantContact")
+  jobEmailContacts  JobEmailContact[]
 
   @@index([workspaceId, normalizedEmail])
   @@index([workspaceId, domain])
   @@index([customerId])
   @@index([vendorId])
+}
+
+/// Durable Job ↔ person link learned from confirmed email assignment.
+/// Distinct from JobParticipant (role-based project parties). Does not imply Customer.
+model JobEmailContact {
+  id                  String                 @id @default(cuid())
+  workspaceId         String
+  jobId               String
+  contactId           String
+  source              JobEmailContactSource  @default(LEARNED_FROM_EMAIL)
+  firstEmailMessageId String?
+  lastSeenAt          DateTime               @default(now())
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  workspace           Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                 Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  contact             EntityContact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  firstEmailMessage   EmailMessage?          @relation("JobEmailContactFirstEmail", fields: [firstEmailMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([jobId, contactId])
+  @@index([workspaceId, jobId])
+  @@index([contactId])
+  @@index([firstEmailMessageId])
 }
 
 model KnowledgeDocument {

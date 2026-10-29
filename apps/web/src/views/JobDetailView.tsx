@@ -63,6 +63,7 @@ import {
   InlineImageRelevanceDetails,
 } from '../components/InlineImageRelevanceMark'
 import { JobProjectParties } from '../components/JobProjectParties'
+import { JobEmailContacts } from '../components/JobEmailContacts'
 import {
   imageCardBackground,
   imageCardBorder,
@@ -1357,6 +1358,10 @@ export function JobDetailView({
             }}
           />
           )}
+          <JobEmailContacts
+            contacts={job.emailContacts ?? []}
+            isPhone={isPhone}
+          />
         </div>
       )}
 

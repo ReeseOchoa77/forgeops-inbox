@@ -6,13 +6,19 @@ export type JobMatchEvidenceType =
   | "SUBJECT_JOB_NUMBER"
   | "SUBJECT_JOB_NAME"
   | "SUBJECT_JOB_ALIAS"
+  | "SUBJECT_JOB_SITE"
+  | "SUBJECT_JOB_EXTERNAL_REF"
   | "SUBJECT_JOB_DESCRIPTION"
   | "CONTENT_JOB_NUMBER"
   | "CONTENT_JOB_NAME"
   | "CONTENT_JOB_ALIAS"
+  | "CONTENT_JOB_SITE"
+  | "CONTENT_JOB_EXTERNAL_REF"
   | "CONTENT_JOB_DESCRIPTION"
   | "SENDER_CUSTOMER_LINK"
+  | "SENDER_JOB_CONTACT"
   | "THREAD_JOB_HINT"
+  | "THREAD_JOB_AUTHORITATIVE"
   | "N8N_COMPAT_HINT";
 
 export type JobMatchEvidence = {
@@ -29,6 +35,7 @@ export type JobMatchAssignmentSource =
 export type JobMatchInput = {
   workspaceId: string;
   emailMessageId?: string;
+  inboxConnectionId?: string | null;
   subject: string | null | undefined;
   normalizedSubject?: string | null;
   bodyText?: string | null;
@@ -37,6 +44,8 @@ export type JobMatchInput = {
   senderDomain?: string | null;
   recipients?: string[];
   threadId?: string | null;
+  /** Outlook/Gmail conversation id. Not globally unique — scope with inboxConnectionId. */
+  providerThreadId?: string | null;
   /** Weak compatibility hint from n8n — never authoritative. */
   n8nSelectedJobIdHint?: string | null;
 };
@@ -48,8 +57,12 @@ export type JobRecordForMatch = {
   normalizedName: string;
   customerId: string | null;
   externalRef: string | null;
+  /** Site / campus name. Canonical identity, not a Job.description alias. */
+  siteName?: string | null;
   /** Free text. Short lines and "Also known as:" lists are alternate names. */
   description?: string | null;
+  /** Used by Marker 1 to restrict the eligible pool. Omitted = eligible. */
+  status?: string | null;
 };
 
 export type JobAliasForMatch = {
@@ -67,11 +80,33 @@ export type JobMatchCandidateScore = {
   evidence: JobMatchEvidence[];
 };
 
+export type JobMatchDecision =
+  | "MATCH"
+  | "AMBIGUOUS"
+  | "NO_MATCH"
+  | "CONFLICT";
+
+export type JobMatchMarkerId = "NAME" | "CONTACT" | "THREAD";
+
+export type JobMatchMarkerTrace = {
+  marker: JobMatchMarkerId;
+  status: JobMatchDecision;
+  selectedJobId: string | null;
+  candidateJobIds: string[];
+};
+
 export type JobMatchResult = {
   selectedJobId: string | null;
   confidence: number;
   evidence: JobMatchEvidence[];
   ambiguousCandidateIds: string[];
+  /**
+   * Plausible Jobs after the last executed marker.
+   * MATCH: the unique Job. AMBIGUOUS/CONFLICT: the remaining set. NO_MATCH: [].
+   */
+  candidateJobIds?: string[];
+  decision?: JobMatchDecision;
+  markerTrace?: JobMatchMarkerTrace[];
   requiresReview: boolean;
   assignmentSource: JobMatchAssignmentSource | null;
   candidateCount: number;
@@ -171,7 +206,7 @@ export function extractJobDescriptionNames(
   });
 }
 
-function stripQuotedHistory(body: string): string {
+export function stripQuotedHistory(body: string): string {
   // Prefer current content: drop common quoted reply blocks for matching
   const lines = body.split(/\r?\n/);
   const kept: string[] = [];

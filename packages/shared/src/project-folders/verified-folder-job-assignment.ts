@@ -44,6 +44,23 @@ export function isAuthoritativeEmailJobAssignment(existing: {
   return isProtectedJobAssignment(existing);
 }
 
+/**
+ * Prisma `OR` for authoritative EmailMessage.jobId rows.
+ * Mirrors isAuthoritativeEmailJobAssignment. IMPORT / AI_* / JOB_NUMBER_MATCH
+ * are intentionally excluded.
+ */
+export function authoritativeEmailAssignmentOr(): Array<
+  | { jobAssignmentIsManual: true }
+  | { jobAssignmentSource: "USER_ASSIGNED" }
+  | { jobAssignmentSource: "VERIFIED_PROJECT_FOLDER" }
+> {
+  return [
+    { jobAssignmentIsManual: true },
+    { jobAssignmentSource: "USER_ASSIGNED" },
+    { jobAssignmentSource: VERIFIED_PROJECT_FOLDER_SOURCE },
+  ];
+}
+
 export type VerifiedFolderJobAssignOutcome =
   | "assigned"
   | "unchanged"

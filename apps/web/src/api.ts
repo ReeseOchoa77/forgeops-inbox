@@ -4589,6 +4589,7 @@ export interface JobDetail extends JobSummary {
   fabricationItems: JobFabricationItem[];
   projectManager?: JobParticipant | null;
   participants?: JobParticipant[];
+  emailContacts?: JobEmailContact[];
   workPackageSummary?: JobWorkPackageSummary | null;
   scheduleSummary?: JobScheduleSummary | null;
   changesSummary?: JobChangesSummary | null;
@@ -4621,6 +4622,16 @@ export type JobParticipantRole =
   | 'OTHER'
 
 export type JobParticipantPartyType = 'USER' | 'CUSTOMER' | 'VENDOR' | 'CONTACT'
+
+export interface JobEmailContact {
+  id: string
+  contactId: string
+  name: string | null
+  email: string | null
+  source: 'LEARNED_FROM_EMAIL' | 'MANUAL'
+  firstEmailMessageId: string | null
+  lastSeenAt: string
+}
 
 export interface JobParticipant {
   id: string

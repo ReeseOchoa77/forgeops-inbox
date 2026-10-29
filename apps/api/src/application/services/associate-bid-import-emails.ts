@@ -4,7 +4,10 @@
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { isProtectedJobAssignment } from "@forgeops/shared";
+import {
+  isProtectedJobAssignment,
+  learnJobContactsFromEmails,
+} from "@forgeops/shared";
 import { USER_BID_ASSIGNMENT } from "./bidding.js";
 
 export type BidImportEmailConflict = {
@@ -158,6 +161,11 @@ export async function associateBidImportEmails(input: {
       },
     });
     result.attachedEmailIds = assignable;
+    await learnJobContactsFromEmails(input.prisma, {
+      workspaceId: input.workspaceId,
+      emailMessageIds: assignable,
+      now,
+    });
   }
 
   return result;

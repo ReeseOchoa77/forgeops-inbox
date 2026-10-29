@@ -826,6 +826,8 @@ async function handleN8nIngest(
             jobAssignmentIsManual: true,
             jobAssignmentSource: true,
             threadId: true,
+            inboxConnectionId: true,
+            providerThreadId: true,
           },
         });
 
@@ -833,6 +835,7 @@ async function handleN8nIngest(
         const match = await matcher.match({
           workspaceId,
           emailMessageId: result.messageId,
+          inboxConnectionId: existingAssignment?.inboxConnectionId ?? connectionId,
           subject: body.email.subject,
           normalizedSubject: body.email.normalizedSubject,
           bodyText: body.email.bodyText,
@@ -841,6 +844,7 @@ async function handleN8nIngest(
           senderDomain: body.email.senderDomain,
           recipients: [...body.email.to, ...body.email.cc],
           threadId: existingAssignment?.threadId ?? result.threadId,
+          providerThreadId: existingAssignment?.providerThreadId ?? null,
           n8nSelectedJobIdHint: body.analysis.selectedJobId ?? null,
         });
 

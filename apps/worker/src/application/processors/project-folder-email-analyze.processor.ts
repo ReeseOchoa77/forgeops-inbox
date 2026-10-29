@@ -7,6 +7,7 @@ import {
   resolveVerifiedFolderJobAssignment,
   VERIFIED_PROJECT_FOLDER_SOURCE,
   tasksForEmailJobLink,
+  learnJobContactsFromEmails,
   type AttachmentIngestJobPayload,
   type AttachmentIngestResult,
   type MailboxClassifyJobPayload,
@@ -460,6 +461,10 @@ export async function processProjectFolderEmailAnalyze(
                 jobId: folder.matchedJobId,
               });
               if (taskLink) await deps.prisma.task.updateMany(taskLink);
+              await learnJobContactsFromEmails(deps.prisma, {
+                workspaceId: payload.workspaceId,
+                emailMessageIds: [existing.id],
+              });
               progress.assigned += 1;
 
               if (existing.classifications.length > 0) {

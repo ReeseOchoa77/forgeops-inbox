@@ -8,6 +8,7 @@ import {
   fileExtension,
   canPreviewFile,
   tasksForEmailJobLink,
+  learnJobContactsFromEmails,
   JOB_FILE_TYPE_FILTERS,
   normalizeName,
   workspaceCurrentJobNumberCollisionWhere,
@@ -30,6 +31,7 @@ import {
   listJobParticipants,
   pickPrimaryProjectManager,
 } from "../../../application/services/job-participants.js";
+import { listJobEmailContacts } from "../../../application/services/job-email-contacts.js";
 import {
   buildWorkPackageDtos,
   buildWorkPackageSummary,
@@ -667,6 +669,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       rfqSummary,
       nextDueTask,
       jobFileCount,
+      emailContacts,
     ] = await Promise.all([
       memberUserIds.length
         ? app.services.prisma.user.findMany({
@@ -730,6 +733,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       app.services.prisma.jobFile.count({
         where: { jobId, workspaceId, uploadStatus: "UPLOADED" },
       }),
+      listJobEmailContacts(app.services.prisma, { workspaceId, jobId }),
     ]);
     const billingSnapshot =
       !isBidding && financialSnapshot
@@ -797,6 +801,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         attachmentCount: jobFileCount,
         projectManager,
         participants,
+        emailContacts,
         workPackageSummary,
         scheduleSummary,
         changesSummary,
@@ -1249,6 +1254,11 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
             newValue: { threadId, messageCount: messages.length } as Prisma.InputJsonValue,
           },
         });
+        await learnJobContactsFromEmails(tx, {
+          workspaceId,
+          emailMessageIds: messages.map((row) => row.id),
+          now,
+        });
       });
 
       return reply.code(201).send({ assigned: messages.length, threadId });
@@ -1290,6 +1300,11 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           entityType: "EMAIL_MESSAGE",
           entityId: message.id,
         },
+      });
+      await learnJobContactsFromEmails(tx, {
+        workspaceId,
+        emailMessageIds: [message.id],
+        now,
       });
     });
 
@@ -1490,6 +1505,11 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
           previousValue: { jobId },
           newValue: { jobId: body.targetJobId },
         },
+      });
+      await learnJobContactsFromEmails(tx, {
+        workspaceId,
+        emailMessageIds: [body.messageId],
+        now,
       });
     });
 

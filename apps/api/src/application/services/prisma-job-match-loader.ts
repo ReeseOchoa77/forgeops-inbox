@@ -1,7 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
-import { normalizeEmail, extractDomain } from "@forgeops/shared";
 import {
+  authoritativeEmailAssignmentOr,
+  extractDomain,
   JobMatcherService,
+  normalizeEmail,
+  selectActiveContactHits,
+  selectAuthoritativeThreadHits,
   type JobMatchDataLoader,
 } from "@forgeops/shared";
 
@@ -29,7 +33,9 @@ export function createPrismaJobMatchLoader(
           normalizedName: true,
           customerId: true,
           externalRef: true,
+          siteName: true,
           description: true,
+          status: true,
         },
       });
       return jobs;
@@ -110,6 +116,97 @@ export function createPrismaJobMatchLoader(
         select: { jobId: true },
       });
       return prior?.jobId ?? null;
+    },
+
+    async loadActiveExactContactJobs(input) {
+      const sender = input.senderEmail?.trim()
+        ? normalizeEmail(input.senderEmail)
+        : "";
+      if (!sender) return [];
+      const [manuals, emails] = await Promise.all([
+        prisma.jobEmailContact.findMany({
+          where: {
+            workspaceId: input.workspaceId,
+            source: "MANUAL",
+            contact: {
+              OR: [
+                { normalizedEmail: sender },
+                { email: { equals: sender, mode: "insensitive" } },
+              ],
+            },
+          },
+          select: {
+            jobId: true,
+            source: true,
+            contact: { select: { email: true, normalizedEmail: true } },
+          },
+        }),
+        prisma.emailMessage.findMany({
+          where: {
+            workspaceId: input.workspaceId,
+            jobId: { not: null },
+            senderEmail: { equals: sender, mode: "insensitive" },
+            ...(input.excludeEmailMessageId
+              ? { id: { not: input.excludeEmailMessageId } }
+              : {}),
+            OR: authoritativeEmailAssignmentOr(),
+          },
+          select: {
+            id: true,
+            jobId: true,
+            senderEmail: true,
+            jobAssignmentIsManual: true,
+            jobAssignmentSource: true,
+          },
+          take: 500,
+        }),
+      ]);
+      return selectActiveContactHits({
+        senderEmail: sender,
+        excludeEmailMessageId: input.excludeEmailMessageId ?? null,
+        eligibleJobs: input.eligibleJobs,
+        manualContacts: manuals.map((row) => ({
+          jobId: row.jobId,
+          source: row.source,
+          email: row.contact.email,
+          normalizedEmail: row.contact.normalizedEmail,
+        })),
+        authoritativeEmails: emails,
+      });
+    },
+
+    async loadAuthoritativeThreadJobs(input) {
+      const connectionId = input.inboxConnectionId?.trim() || "";
+      const providerThreadId = input.providerThreadId?.trim() || "";
+      if (!connectionId || !providerThreadId) return [];
+      const messages = await prisma.emailMessage.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          inboxConnectionId: connectionId,
+          providerThreadId,
+          jobId: { not: null },
+          ...(input.excludeEmailMessageId
+            ? { id: { not: input.excludeEmailMessageId } }
+            : {}),
+          OR: authoritativeEmailAssignmentOr(),
+        },
+        select: {
+          id: true,
+          jobId: true,
+          inboxConnectionId: true,
+          providerThreadId: true,
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: true,
+        },
+        take: 500,
+      });
+      return selectAuthoritativeThreadHits({
+        inboxConnectionId: connectionId,
+        providerThreadId,
+        excludeEmailMessageId: input.excludeEmailMessageId ?? null,
+        eligibleJobs: input.eligibleJobs,
+        messages,
+      });
     },
   };
 }

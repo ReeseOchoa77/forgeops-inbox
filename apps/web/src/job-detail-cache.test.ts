@@ -41,6 +41,7 @@ describe('job detail cache', () => {
     expect(shell.name).toBe('Demo Job')
     expect(shell.members).toHaveLength(1)
     expect(shell.aliases).toEqual([])
+    expect(shell.emailContacts).toEqual([])
     expect(shell.attachmentCount).toBe(0)
   })
 

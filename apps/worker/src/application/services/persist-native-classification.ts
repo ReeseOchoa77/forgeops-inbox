@@ -91,6 +91,8 @@ export async function persistNativeClassificationResult(input: {
     select: {
       id: true,
       threadId: true,
+      inboxConnectionId: true,
+      providerThreadId: true,
       subject: true,
       senderName: true,
       senderEmail: true,
@@ -223,6 +225,7 @@ export async function persistNativeClassificationResult(input: {
       jobMatch = await jobMatcher.match({
         workspaceId: input.workspaceId,
         emailMessageId: message.id,
+        inboxConnectionId: message.inboxConnectionId,
         subject: message.subject,
         normalizedSubject: normalized.normalizedSubject,
         bodyText: message.bodyText,
@@ -230,6 +233,7 @@ export async function persistNativeClassificationResult(input: {
         senderEmail: message.senderEmail,
         senderDomain: normalized.senderDomain,
         threadId: message.threadId,
+        providerThreadId: message.providerThreadId,
         n8nSelectedJobIdHint: entities?.selectedJobId ?? null,
       });
       if (jobMatch.requiresReview) requiresReview = true;

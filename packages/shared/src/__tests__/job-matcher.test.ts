@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   JOB_MATCHER_VERSION,
+  JOB_MATCH_PIPELINE_VERSION,
   JobMatcherService,
   extractJobDescriptionNames,
   matchJobsDeterministic,
@@ -258,6 +259,8 @@ describe("JobMatcherService", () => {
       loadJobAliases: async () => [],
       loadSenderCustomerJobIds: async () => new Set(),
       loadThreadJobHint: async () => null,
+      loadActiveExactContactJobs: async () => [],
+      loadAuthoritativeThreadJobs: async () => [],
     };
     const service = new JobMatcherService(loader, null);
     const result = await service.match({
@@ -269,14 +272,17 @@ describe("JobMatcherService", () => {
       n8nSelectedJobIdHint: "job-b", // weak hint — subject wins
     });
     expect(result.selectedJobId).toBe("job-a");
+    expect(result.matcherVersion).toBe(JOB_MATCH_PIPELINE_VERSION);
   });
 
-  it("AI resolver failure still returns deterministic result", async () => {
+  it("AI resolver is unused; Marker 1 ambiguity does not pick a Job", async () => {
     const loader: JobMatchDataLoader = {
       loadActiveJobs: async () => [jobB, jobC],
       loadJobAliases: async () => [],
       loadSenderCustomerJobIds: async () => new Set(),
       loadThreadJobHint: async () => null,
+      loadActiveExactContactJobs: async () => [],
+      loadAuthoritativeThreadJobs: async () => [],
     };
     const service = new JobMatcherService(loader, async () => {
       throw new Error("OpenAI unavailable");
@@ -286,6 +292,7 @@ describe("JobMatcherService", () => {
       subject: "Horizon",
       cleanBody: "update",
     });
-    expect(result.matcherVersion).toBe(JOB_MATCHER_VERSION);
+    expect(result.matcherVersion).toBe(JOB_MATCH_PIPELINE_VERSION);
+    expect(result.selectedJobId).toBeNull();
   });
 });

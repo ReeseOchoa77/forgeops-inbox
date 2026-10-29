@@ -123,6 +123,7 @@ export const analyzeInboxConnection = async (input: {
           jobId: true,
           jobAssignmentIsManual: true,
           jobAssignmentSource: true,
+          providerThreadId: true,
           thread: {
             select: {
               subject: true
@@ -238,6 +239,7 @@ export const analyzeInboxConnection = async (input: {
         const match = await jobMatcher.match({
           workspaceId: input.workspaceId,
           emailMessageId: message.id,
+          inboxConnectionId: message.inboxConnectionId,
           subject: message.subject,
           normalizedSubject: normalizedForMatch.normalizedSubject,
           bodyText: message.bodyText,
@@ -248,6 +250,7 @@ export const analyzeInboxConnection = async (input: {
             extractDomain(message.senderEmail ?? "") ??
             null,
           threadId: message.threadId,
+          providerThreadId: message.providerThreadId,
         });
         batchJobMatches.set(message.id, match);
       } catch (e) {

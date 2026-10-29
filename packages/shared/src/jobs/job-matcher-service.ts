@@ -1,13 +1,15 @@
 import {
   JOB_MATCHER_VERSION,
-  rankJobMatchCandidates,
-  selectJobMatchFromCandidates,
   type JobAliasForMatch,
   type JobMatchCandidateScore,
   type JobMatchInput,
   type JobMatchResult,
   type JobRecordForMatch,
 } from "./job-matcher.js";
+import type { JobContactHit } from "./job-contact-marker.js";
+import { jobMatchPipelineFromEmailInput } from "./job-match-pipeline.js";
+import { runJobNameMarker } from "./job-name-marker.js";
+import type { JobThreadHit } from "./job-thread-marker.js";
 
 export type JobMatchAiResolver = (input: {
   subject: string;
@@ -31,11 +33,25 @@ export type JobMatchDataLoader = {
     workspaceId: string,
     threadId: string | null | undefined
   ) => Promise<string | null>;
+  loadActiveExactContactJobs: (input: {
+    workspaceId: string;
+    senderEmail: string | null | undefined;
+    excludeEmailMessageId?: string | null;
+    eligibleJobs: JobRecordForMatch[];
+  }) => Promise<JobContactHit[]>;
+  loadAuthoritativeThreadJobs: (input: {
+    workspaceId: string;
+    inboxConnectionId?: string | null | undefined;
+    providerThreadId?: string | null | undefined;
+    excludeEmailMessageId?: string | null | undefined;
+    eligibleJobs: JobRecordForMatch[];
+  }) => Promise<JobThreadHit[]>;
 };
 
 /**
- * Canonical ForgeOps job matcher. Deterministic first; optional AI resolver for ambiguity.
- * Same service contract for n8n and native ingestion.
+ * Canonical ForgeOps job matcher.
+ * Marker 1 unique MATCH stops. Otherwise Marker 2 then Marker 3 narrow.
+ * Persistence remains gated by JOB_MATCHER_AUTO_ASSIGN_ENABLED.
  */
 export class JobMatcherService {
   constructor(
@@ -44,102 +60,57 @@ export class JobMatcherService {
   ) {}
 
   async match(input: JobMatchInput): Promise<JobMatchResult> {
-    const [jobs, aliases, senderCustomerJobIds, threadJobId] =
-      await Promise.all([
-        this.loader.loadActiveJobs(input.workspaceId),
-        this.loader.loadJobAliases(input.workspaceId),
-        this.loader.loadSenderCustomerJobIds(
-          input.workspaceId,
-          input.senderEmail
-        ),
-        this.loader.loadThreadJobHint(input.workspaceId, input.threadId),
-      ]);
+    const [jobs, aliases] = await Promise.all([
+      this.loader.loadActiveJobs(input.workspaceId),
+      this.loader.loadJobAliases(input.workspaceId),
+    ]);
 
-    const ranked = rankJobMatchCandidates({
+    const namePreview = runJobNameMarker({
       subject: input.subject,
-      bodyText: input.bodyText ?? null,
-      cleanBody: input.cleanBody ?? null,
-      senderDomain: input.senderDomain ?? null,
+      bodyText: input.bodyText,
+      cleanBody: input.cleanBody,
       jobs,
       aliases,
-      threadJobId,
-      senderCustomerJobIds,
-      limit: 10,
     });
 
-    let result = selectJobMatchFromCandidates(ranked, {
-      n8nHintJobId: input.n8nSelectedJobIdHint ?? null,
-    });
-
-    // AI only resolves ambiguous / reviewable top candidates — never searches all jobs.
-    if (
-      this.aiResolver &&
-      result.requiresReview &&
-      result.ambiguousCandidateIds.length > 0
-    ) {
-      try {
-        const body = (input.cleanBody ?? input.bodyText ?? "").slice(0, 1500);
-        const allowedIds = new Set(result.ambiguousCandidateIds);
-        const candidatesForAi = ranked
-          .filter((c) => allowedIds.has(c.jobId))
-          .slice(0, 10);
-
-        const resolved = await this.aiResolver({
-          subject: input.subject ?? "",
-          bodyExcerpt: body,
-          senderEmail: input.senderEmail ?? null,
-          senderDomain: input.senderDomain ?? null,
-          candidates: candidatesForAi,
-        });
-
-        if (resolved?.selectedJobId) {
-          if (allowedIds.has(resolved.selectedJobId)) {
-            const base =
-              candidatesForAi.find((c) => c.jobId === resolved.selectedJobId) ??
-              ranked.find((c) => c.jobId === resolved.selectedJobId);
-            const confidence = Math.min(
-              1,
-              Math.max(
-                resolved.confidence ?? result.confidence,
-                base?.score ?? result.confidence
-              )
-            );
-            result = selectJobMatchFromCandidates(
-              [
-                {
-                  jobId: resolved.selectedJobId,
-                  score: confidence,
-                  subjectScore: base?.subjectScore ?? 0,
-                  contentScore: base?.contentScore ?? 0,
-                  senderScore: base?.senderScore ?? 0,
-                  evidence: base?.evidence ?? result.evidence,
-                },
-              ],
-              {}
-            );
-          }
-        } else if (resolved && resolved.selectedJobId === null) {
-          result = {
-            ...result,
-            selectedJobId: null,
-            assignmentSource: null,
-            requiresReview: true,
-          };
-        }
-      } catch {
-        // Deterministic result stands when AI fails.
-      }
+    let contactHits: JobContactHit[] | undefined;
+    let threadHits: JobThreadHit[] | undefined;
+    if (!(namePreview.status === "MATCH" && namePreview.selectedJobId)) {
+      const [contacts, threads] = await Promise.all([
+        this.loader.loadActiveExactContactJobs({
+          workspaceId: input.workspaceId,
+          senderEmail: input.senderEmail,
+          excludeEmailMessageId: input.emailMessageId ?? null,
+          eligibleJobs: jobs,
+        }),
+        this.loader.loadAuthoritativeThreadJobs({
+          workspaceId: input.workspaceId,
+          inboxConnectionId: input.inboxConnectionId ?? null,
+          providerThreadId: input.providerThreadId ?? null,
+          excludeEmailMessageId: input.emailMessageId ?? null,
+          eligibleJobs: jobs,
+        }),
+      ]);
+      contactHits = contacts;
+      threadHits = threads;
     }
+
+    const result = jobMatchPipelineFromEmailInput(input, jobs, aliases, {
+      contactHits,
+      threadHits,
+    });
 
     console.info("job-match-completed", {
       workspaceId: input.workspaceId,
       emailMessageId: input.emailMessageId ?? null,
       candidateCount: result.candidateCount,
       selectedJobId: result.selectedJobId,
+      decision: result.decision ?? null,
       confidence: Number(result.confidence.toFixed(4)),
       evidenceTypes: result.evidence.map((e) => e.type),
       requiresReview: result.requiresReview,
       matcherVersion: result.matcherVersion || JOB_MATCHER_VERSION,
+      aiResolverConfigured: Boolean(this.aiResolver),
     });
 
     return result;

@@ -124,6 +124,7 @@ function harness(
         };
       },
       update: async () => ({}),
+      findMany: async () => [],
     },
     classification: { updateMany: async () => ({ count: 0 }) },
   };

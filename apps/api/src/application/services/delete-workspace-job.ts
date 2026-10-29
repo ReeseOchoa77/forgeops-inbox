@@ -22,7 +22,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
  * - Customer, Vendor, EntityContact, User
  *
  * Cascades with Job (schema onDelete: Cascade):
- * - participants, work packages, milestones, documents/files/folders,
+ * - participants, email contacts (JobEmailContact), work packages, milestones, documents/files/folders,
  *   fabrication, RFIs/directives/changes/COs, procurement/POs,
  *   shipments/installations, invoices, members, activity log
  *

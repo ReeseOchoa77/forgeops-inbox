@@ -156,6 +156,7 @@ export function jobDetailShellFromSummary(summary: JobSummary): JobDetail {
     fabricationItems: [],
     projectManager: null,
     participants: [],
+    emailContacts: [],
     members: (summary.assignedMembers ?? []).map((m, i) => ({
       id: `shell-${m.userId}-${i}`,
       userId: m.userId,
