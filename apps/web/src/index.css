@@ -1,4 +1,28 @@
 *, *::before, *::after { box-sizing: border-box; }
+
+/*
+ * Desktop UI scale: laptop/MacBook stays at 1.
+ * Larger CSS viewports grow modestly; width and height both gate the scale
+ * so a short ultrawide window does not overscale. Capped at 1.12.
+ * Applied to px lengths via var(--fo-ui-scale). Not zoom/transform.
+ */
+:root {
+  --fo-ui-scale: clamp(
+    1,
+    min(
+      calc(1 + (100vw - 1760px) / 3200px),
+      calc(1 + (100vh - 980px) / 2200px)
+    ),
+    1.12
+  );
+}
+
+@media (max-width: 1200px), (max-height: 700px) {
+  :root {
+    --fo-ui-scale: 1;
+  }
+}
+
 body { margin: 0; font-family: system-ui, -apple-system, sans-serif; color: #222; background: #f5f5f6; font-size: 14px; }
 button { font-family: inherit; cursor: pointer; }
 a { color: #06c; text-decoration: none; }

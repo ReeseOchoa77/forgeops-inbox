@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { uiPx } from '../ui-scale'
 
 /** Existing BUSINESS / PERSONAL color language from Inbox reclassify pills. */
 export const MAILBOX_CATEGORY_DOT_COLORS = {
@@ -47,10 +48,10 @@ export function MailboxCategoryDot({
       disabled={disabled}
       onClick={onClick}
       style={{
-        width: hitSize,
-        height: hitSize,
-        minWidth: hitSize,
-        minHeight: hitSize,
+        width: uiPx(hitSize),
+        height: uiPx(hitSize),
+        minWidth: uiPx(hitSize),
+        minHeight: uiPx(hitSize),
         padding: 0,
         margin: 0,
         border: 'none',

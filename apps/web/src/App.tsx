@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type SessionResponse, type ConnectionSummary, type JobSummary } from './api'
 import { ComposeEditor, type ComposeSendPayload } from './components/ComposeEditor'
 import { useBreakpoint } from './hooks/useBreakpoint'
+import { uiPx } from './ui-scale'
 
 const API_ORIGIN = import.meta.env.VITE_API_URL ?? ''
 const googleSignInUrl = `${API_ORIGIN}/api/v1/auth/google/start?redirect=true`
@@ -677,7 +678,7 @@ export default function App() {
       {!isPhone && (
         <aside
           className="sidebar"
-          style={{ width: sidebarWidth, transition: 'width 0.2s ease' }}
+          style={{ width: uiPx(sidebarWidth), transition: 'width 0.2s ease' }}
         >
           {sidebarContent(false)}
         </aside>

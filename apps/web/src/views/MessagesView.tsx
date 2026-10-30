@@ -42,6 +42,7 @@ import {
   inboxDateCellStyle,
 } from '../components/MailboxCategoryDot'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import { uiPx } from '../ui-scale'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 
 function EmailOriginTag({ origin }: { origin: MessageSummary['emailOrigin'] }) {
@@ -1328,7 +1329,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         style={{
           padding: '7px 4px',
           textAlign: 'right',
-          width: showUnclassifiedChrome ? undefined : INBOX_ACTIONS_COLUMN_WIDTH_PX,
+          width: showUnclassifiedChrome ? undefined : uiPx(INBOX_ACTIONS_COLUMN_WIDTH_PX),
           whiteSpace: 'nowrap',
         }}
         onClick={e => e.stopPropagation()}
@@ -1739,7 +1740,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   <th style={{ padding: '8px 14px 8px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>Date</th>
                   <th style={{
                     padding: '8px 4px',
-                    width: showUnclassifiedChrome ? undefined : INBOX_ACTIONS_COLUMN_WIDTH_PX,
+                    width: showUnclassifiedChrome ? undefined : uiPx(INBOX_ACTIONS_COLUMN_WIDTH_PX),
                   }}></th>
                 </tr>
               </thead>

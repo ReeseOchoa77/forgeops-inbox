@@ -2,11 +2,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { forgeopsUiScalePlugin } from './vite-plugin-fo-ui-scale'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [forgeopsUiScalePlugin(), react()],
   resolve: {
     alias: {
       // Browser-safe shared export — avoid compiling Prisma-bearing shared modules on Vercel.
