@@ -56,7 +56,8 @@ export type JobMatchDataLoader = {
 export class JobMatcherService {
   constructor(
     private readonly loader: JobMatchDataLoader,
-    private readonly aiResolver?: JobMatchAiResolver | null
+    private readonly aiResolver?: JobMatchAiResolver | null,
+    private readonly options?: { logCompletions?: boolean }
   ) {}
 
   async match(input: JobMatchInput): Promise<JobMatchResult> {
@@ -71,6 +72,7 @@ export class JobMatcherService {
       cleanBody: input.cleanBody,
       jobs,
       aliases,
+      eligibilityMode: input.eligibilityMode ?? "production",
     });
 
     let contactHits: JobContactHit[] | undefined;
@@ -100,18 +102,20 @@ export class JobMatcherService {
       threadHits,
     });
 
-    console.info("job-match-completed", {
-      workspaceId: input.workspaceId,
-      emailMessageId: input.emailMessageId ?? null,
-      candidateCount: result.candidateCount,
-      selectedJobId: result.selectedJobId,
-      decision: result.decision ?? null,
-      confidence: Number(result.confidence.toFixed(4)),
-      evidenceTypes: result.evidence.map((e) => e.type),
-      requiresReview: result.requiresReview,
-      matcherVersion: result.matcherVersion || JOB_MATCHER_VERSION,
-      aiResolverConfigured: Boolean(this.aiResolver),
-    });
+    if (this.options?.logCompletions !== false) {
+      console.info("job-match-completed", {
+        workspaceId: input.workspaceId,
+        emailMessageId: input.emailMessageId ?? null,
+        candidateCount: result.candidateCount,
+        selectedJobId: result.selectedJobId,
+        decision: result.decision ?? null,
+        confidence: Number(result.confidence.toFixed(4)),
+        evidenceTypes: result.evidence.map((e) => e.type),
+        requiresReview: result.requiresReview,
+        matcherVersion: result.matcherVersion || JOB_MATCHER_VERSION,
+        aiResolverConfigured: Boolean(this.aiResolver),
+      });
+    }
 
     return result;
   }

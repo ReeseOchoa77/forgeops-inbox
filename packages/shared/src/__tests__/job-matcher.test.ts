@@ -42,21 +42,31 @@ const aliases: JobAliasForMatch[] = [
 ];
 
 describe("matchJobsDeterministic", () => {
-  it("1. exact job number in subject → auto-link", () => {
+  it("1. exact internal job number in subject is not matching evidence", () => {
     const result = matchJobsDeterministic({
-      subject: "RE: Integer #2198",
+      subject: "RE: #2198",
+      cleanBody: "Please review.",
+      jobs: [jobA, jobB],
+      aliases: [],
+    });
+    expect(result.selectedJobId).toBeNull();
+    expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
+    expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_NUMBER")).toBe(
+      false
+    );
+    expect(result.matcherVersion).toBe(JOB_MATCHER_VERSION);
+  });
+
+  it("1b. job name in subject still matches without using Job.jobNumber", () => {
+    const result = matchJobsDeterministic({
+      subject: "RE: Integer drawings",
       cleanBody: "Please review.",
       jobs: [jobA, jobB],
       aliases: [],
     });
     expect(result.selectedJobId).toBe("job-a");
-    expect(result.confidence).toBeGreaterThanOrEqual(0.9);
-    expect(result.requiresReview).toBe(false);
-    expect(result.assignmentSource).toBe("JOB_NUMBER_MATCH");
-    expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_NUMBER")).toBe(
-      true
-    );
-    expect(result.matcherVersion).toBe(JOB_MATCHER_VERSION);
+    expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
+    expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_NAME")).toBe(true);
   });
 
   it("2. unique job name in subject → strong match", () => {
@@ -86,7 +96,7 @@ describe("matchJobsDeterministic", () => {
     );
   });
 
-  it("4. job number only in body → content match, may suggest", () => {
+  it("4. job number only in body is not matching evidence", () => {
     const result = matchJobsDeterministic({
       subject: "Quick question",
       cleanBody: "Can you check job #2198 status?",
@@ -94,13 +104,9 @@ describe("matchJobsDeterministic", () => {
       aliases: [],
     });
     expect(result.evidence.some((e) => e.type === "CONTENT_JOB_NUMBER")).toBe(
-      true
+      false
     );
-    // Content-only score is weighted; should not silently exceed subject strength.
-    if (result.selectedJobId) {
-      expect(result.selectedJobId).toBe("job-a");
-      expect(result.confidence).toBeLessThan(0.96);
-    }
+    expect(result.selectedJobId).toBeNull();
   });
 
   it("5. sender-only association does not overmatch", () => {
@@ -170,9 +176,9 @@ describe("matchJobsDeterministic", () => {
     expect(result.selectedJobId).toBeNull();
   });
 
-  it("10. subject Job A vs quoted body Job B → Job A preferred", () => {
+  it("10. subject Job A name vs quoted body Job B number → Job A preferred", () => {
     const result = matchJobsDeterministic({
-      subject: "RE: Integer #2198",
+      subject: "RE: Integer drawings",
       cleanBody: [
         "Latest update for this job.",
         "",
@@ -186,7 +192,7 @@ describe("matchJobsDeterministic", () => {
     });
     expect(result.selectedJobId).toBe("job-a");
     expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_NUMBER")).toBe(
-      true
+      false
     );
   });
 
@@ -202,13 +208,13 @@ describe("matchJobsDeterministic", () => {
 
   it("16. deterministic matcher works without AI (OpenAI unavailable)", () => {
     const result = matchJobsDeterministic({
-      subject: "Job #2198",
+      subject: "Integer drawings",
       cleanBody: "Confirm",
       jobs: [jobA],
       aliases: [],
     });
     expect(result.selectedJobId).toBe("job-a");
-    expect(result.assignmentSource).toBe("JOB_NUMBER_MATCH");
+    expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
   });
 
   it("matches an alternate name from the job description in the subject", () => {
@@ -266,12 +272,13 @@ describe("JobMatcherService", () => {
     const result = await service.match({
       workspaceId: "ws-1",
       emailMessageId: "msg-1",
-      subject: "RE: Integer #2198",
+      subject: "RE: Integer drawings",
       cleanBody: "Please review",
       senderEmail: "a@b.com",
       n8nSelectedJobIdHint: "job-b", // weak hint — subject wins
     });
     expect(result.selectedJobId).toBe("job-a");
+    expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
     expect(result.matcherVersion).toBe(JOB_MATCH_PIPELINE_VERSION);
   });
 

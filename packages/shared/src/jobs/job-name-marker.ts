@@ -1,5 +1,4 @@
 import {
-  extractJobNumberCandidates,
   stripQuotedHistory,
   type JobAliasForMatch,
   type JobMatchEvidence,
@@ -17,7 +16,7 @@ import {
   stripSubjectPrefixes,
 } from "./job-name-normalize.js";
 
-export const JOB_NAME_MARKER_VERSION = "job-name-marker-v2";
+export const JOB_NAME_MARKER_VERSION = "job-name-marker-v3";
 
 /** Marker 1 pool: live operational jobs. COMPLETE/BIDDING/LEAD are excluded. */
 export const JOB_NAME_MARKER_ELIGIBLE_STATUSES = [
@@ -25,6 +24,13 @@ export const JOB_NAME_MARKER_ELIGIBLE_STATUSES = [
   "ON_HOLD",
   "AWARDED",
 ] as const;
+
+/**
+ * production: live matcher (ACTIVE / ON_HOLD / AWARDED).
+ * evaluation: historical holdout eval may include COMPLETE / ARCHIVED / etc.
+ * Evaluation mode must never be used by the production matcher path.
+ */
+export type JobMatchEligibilityMode = "production" | "evaluation";
 
 export type JobNameMarkerStatus = "MATCH" | "AMBIGUOUS" | "NO_MATCH";
 
@@ -34,8 +40,7 @@ export type JobNameIdentitySource =
   | "NAME"
   | "ALIAS"
   | "SITE"
-  | "EXTERNAL_REF"
-  | "JOB_NUMBER";
+  | "EXTERNAL_REF";
 
 export type JobNameMatchTier =
   | "EXACT_SUBJECT"
@@ -113,16 +118,21 @@ type JobHit = {
 };
 
 export function isJobMatcherEligibleStatus(
-  status: string | null | undefined
+  status: string | null | undefined,
+  mode: JobMatchEligibilityMode = "production"
 ): boolean {
   if (status == null || status === "") return true;
+  if (mode === "evaluation") return true;
   return (JOB_NAME_MARKER_ELIGIBLE_STATUSES as readonly string[]).includes(
     status
   );
 }
 
-function isEligibleJob(job: JobRecordForMatch): boolean {
-  return isJobMatcherEligibleStatus(job.status);
+function isEligibleJob(
+  job: JobRecordForMatch,
+  mode: JobMatchEligibilityMode = "production"
+): boolean {
+  return isJobMatcherEligibleStatus(job.status, mode);
 }
 
 function sameTokenSequence(a: string[], b: string[]): boolean {
@@ -138,7 +148,8 @@ function pushUniquePhrase(phrases: PreparedPhrase[], next: PreparedPhrase): void
 
 function prepareJobs(
   jobs: JobRecordForMatch[],
-  aliases: JobAliasForMatch[]
+  aliases: JobAliasForMatch[],
+  mode: JobMatchEligibilityMode = "production"
 ): PreparedJob[] {
   const aliasesByJob = new Map<string, JobAliasForMatch[]>();
   for (const alias of aliases) {
@@ -149,7 +160,7 @@ function prepareJobs(
 
   const prepared: PreparedJob[] = [];
   for (const job of jobs) {
-    if (!isEligibleJob(job)) continue;
+    if (!isEligibleJob(job, mode)) continue;
     const phrases: PreparedPhrase[] = [];
     pushUniquePhrase(phrases, {
       label: job.name,
@@ -175,13 +186,6 @@ function prepareJobs(
         label: job.externalRef,
         tokens: canonicalizeJobNameTokens(job.externalRef),
         source: "EXTERNAL_REF",
-      });
-    }
-    if (job.jobNumber?.trim()) {
-      pushUniquePhrase(phrases, {
-        label: job.jobNumber,
-        tokens: canonicalizeJobNameTokens(job.jobNumber),
-        source: "JOB_NUMBER",
       });
     }
     if (phrases.length === 0) continue;
@@ -215,8 +219,6 @@ function evidenceType(
       return `${prefix}_JOB_SITE`;
     case "EXTERNAL_REF":
       return `${prefix}_JOB_EXTERNAL_REF`;
-    case "JOB_NUMBER":
-      return `${prefix}_JOB_NUMBER`;
     default:
       return `${prefix}_JOB_NAME`;
   }
@@ -255,32 +257,6 @@ function collectPhraseHits(
   return hits;
 }
 
-function jobNumberHits(
-  job: PreparedJob,
-  subject: string,
-  body: string
-): PhraseHit[] {
-  const number = job.job.jobNumber?.trim();
-  if (!number) return [];
-  const phrase =
-    job.phrases.find((p) => p.source === "JOB_NUMBER") ??
-    ({
-      label: number,
-      tokens: canonicalizeJobNameTokens(number),
-      source: "JOB_NUMBER" as const,
-    } satisfies PreparedPhrase);
-  const hits: PhraseHit[] = [];
-  const subjectNums = extractJobNumberCandidates(subject);
-  if (subjectNums.includes(number)) {
-    hits.push({ kind: "EXACT", field: "subject", phrase });
-  }
-  const bodyNums = extractJobNumberCandidates(body);
-  if (bodyNums.includes(number)) {
-    hits.push({ kind: "EXACT", field: "body", phrase });
-  }
-  return hits;
-}
-
 function bestKind(hits: PhraseHit[]): PhraseHit | null {
   let best: PhraseHit | null = null;
   for (const hit of hits) {
@@ -315,7 +291,7 @@ function strongPhraseHits(hit: JobHit): PhraseHit[] {
 function hasExclusiveIdentifierHit(loser: JobHit, winner: JobHit): boolean {
   const winnerHits = strongPhraseHits(winner);
   for (const hit of strongPhraseHits(loser)) {
-    if (hit.phrase.source !== "JOB_NUMBER" && hit.phrase.source !== "EXTERNAL_REF") {
+    if (hit.phrase.source !== "EXTERNAL_REF") {
       continue;
     }
     const shared = winnerHits.some(
@@ -331,7 +307,7 @@ function hasExclusiveIdentifierHit(loser: JobHit, winner: JobHit): boolean {
 /**
  * A more specific identity (Building 2) dominates a shared shorter identity
  * (campus site name) when its matched tokens are a proper superset.
- * Job number / externalRef hits on a different Job are conflicts, not subsets.
+ * externalRef hits on a different Job are conflicts, not subsets.
  */
 function isDominatedBy(loser: JobHit, winner: JobHit): boolean {
   if (hasExclusiveIdentifierHit(loser, winner)) return false;
@@ -366,15 +342,12 @@ function distinguishingHitsFor(
 
 function scoreJob(input: {
   job: PreparedJob;
-  subject: string;
-  body: string;
   subjectTokens: string[];
   bodyTokens: string[];
 }): JobHit {
   const phraseHits = [
     ...collectPhraseHits(input.job.phrases, "subject", input.subjectTokens),
     ...collectPhraseHits(input.job.phrases, "body", input.bodyTokens),
-    ...jobNumberHits(input.job, input.subject, input.body),
   ];
   const evidence: JobMatchEvidence[] = [];
   const seen = new Set<string>();
@@ -527,8 +500,13 @@ export function runJobNameMarker(input: {
   cleanBody?: string | null | undefined;
   jobs: JobRecordForMatch[];
   aliases?: JobAliasForMatch[];
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobNameMarkerResult {
-  const prepared = prepareJobs(input.jobs, input.aliases ?? []);
+  const prepared = prepareJobs(
+    input.jobs,
+    input.aliases ?? [],
+    input.eligibilityMode ?? "production"
+  );
   const empty = (status: JobNameMarkerStatus): JobNameMarkerResult => ({
     status,
     selectedJobId: null,
@@ -552,8 +530,6 @@ export function runJobNameMarker(input: {
   const hits = prepared.map((job) =>
     scoreJob({
       job,
-      subject,
-      body,
       subjectTokens,
       bodyTokens,
     })

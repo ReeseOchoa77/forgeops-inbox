@@ -215,6 +215,40 @@ describe("Marker 2 active exact contact", () => {
     expect(hits.map((h) => h.jobId)).toEqual(["job-sm-2"]);
   });
 
+  it("evaluation eligibility includes COMPLETE Jobs for Marker 2; production does not", () => {
+    const production = selectActiveContactHits({
+      senderEmail: "connor@gc.com",
+      eligibleJobs: [completeJob],
+      manualContacts: [],
+      authoritativeEmails: [
+        {
+          id: "msg-complete",
+          jobId: completeJob.id,
+          senderEmail: "connor@gc.com",
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: "USER_ASSIGNED",
+        },
+      ],
+    });
+    expect(production).toEqual([]);
+    const evaluation = selectActiveContactHits({
+      senderEmail: "connor@gc.com",
+      eligibleJobs: [completeJob],
+      eligibilityMode: "evaluation",
+      manualContacts: [],
+      authoritativeEmails: [
+        {
+          id: "msg-complete",
+          jobId: completeJob.id,
+          senderEmail: "connor@gc.com",
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: "USER_ASSIGNED",
+        },
+      ],
+    });
+    expect(evaluation.map((h) => h.jobId)).toEqual([completeJob.id]);
+  });
+
   it("11. held-out email cannot prove itself", () => {
     const hits = selectActiveContactHits({
       senderEmail: "connor@gc.com",
@@ -400,6 +434,42 @@ describe("Marker 3 authoritative thread", () => {
       false
     );
     expect(result.decision).toBe("NO_MATCH");
+  });
+
+  it("evaluation eligibility includes COMPLETE Jobs for Marker 3; production does not", () => {
+    const production = selectAuthoritativeThreadHits({
+      inboxConnectionId: conn,
+      providerThreadId: thread,
+      eligibleJobs: [completeJob],
+      messages: [
+        {
+          id: "msg-complete-thread",
+          jobId: completeJob.id,
+          inboxConnectionId: conn,
+          providerThreadId: thread,
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: "USER_ASSIGNED",
+        },
+      ],
+    });
+    expect(production).toEqual([]);
+    const evaluation = selectAuthoritativeThreadHits({
+      inboxConnectionId: conn,
+      providerThreadId: thread,
+      eligibleJobs: [completeJob],
+      eligibilityMode: "evaluation",
+      messages: [
+        {
+          id: "msg-complete-thread",
+          jobId: completeJob.id,
+          inboxConnectionId: conn,
+          providerThreadId: thread,
+          jobAssignmentIsManual: true,
+          jobAssignmentSource: "USER_ASSIGNED",
+        },
+      ],
+    });
+    expect(evaluation.map((h) => h.jobId)).toEqual([completeJob.id]);
   });
 
   it("20. held-out email excluded", () => {

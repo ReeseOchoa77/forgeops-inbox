@@ -30,6 +30,7 @@ export type JobMatchEvidence = {
 export type JobMatchAssignmentSource =
   | "AI_AUTO_ASSIGNED"
   | "AI_SUGGESTED"
+  /** Historical provenance only. The live matcher never emits this. */
   | "JOB_NUMBER_MATCH";
 
 export type JobMatchInput = {
@@ -48,6 +49,12 @@ export type JobMatchInput = {
   providerThreadId?: string | null;
   /** Weak compatibility hint from n8n — never authoritative. */
   n8nSelectedJobIdHint?: string | null;
+  /**
+   * production (default): ACTIVE / ON_HOLD / AWARDED only.
+   * evaluation: historical eval may include completed/archived Jobs.
+   * Must not be set by the live matcher path.
+   */
+  eligibilityMode?: "production" | "evaluation";
 };
 
 export type JobRecordForMatch = {
@@ -123,40 +130,6 @@ const AMBIGUITY_GAP = 0.12;
 
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Prefer #2198 / Job 2198 / Project 2198 style tokens. */
-export function extractJobNumberCandidates(text: string): string[] {
-  if (!text) return [];
-  const found = new Set<string>();
-  const patterns = [
-    /#\s*(\d{2,8})\b/g,
-    /\b(?:job|project|po|p\.?o\.?)\s*[#:-]?\s*(\d{2,8})\b/gi,
-  ];
-  for (const re of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(text)) !== null) {
-      if (match[1]) found.add(match[1]);
-    }
-  }
-  return [...found];
-}
-
-function textHasJobNumber(text: string, jobNumber: string): boolean {
-  const n = jobNumber.trim();
-  if (!n || !text) return false;
-  const lower = text.toLowerCase();
-  const num = n.toLowerCase();
-  if (lower.includes(`#${num}`)) return true;
-  const labeled = new RegExp(
-    `\\b(?:job|project|po|p\\.?o\\.?)\\s*[#:-]?\\s*${escapeRegExp(num)}\\b`,
-    "i"
-  );
-  if (labeled.test(text)) return true;
-  // bare number token (subject-friendly; still exact job number)
-  return new RegExp(`(?:^|[^0-9])${escapeRegExp(num)}(?:[^0-9]|$)`, "i").test(
-    text
-  );
 }
 
 function textHasNameToken(text: string, normalizedName: string): boolean {
@@ -246,10 +219,6 @@ export function scoreJobAgainstEmail(input: {
   const { job, subject, body } = input;
   const jobAliases = input.aliases.filter((a) => a.jobId === job.id);
 
-  if (job.jobNumber && textHasJobNumber(subject, job.jobNumber)) {
-    subjectScore = Math.max(subjectScore, 1);
-    pushEvidence(evidence, "SUBJECT_JOB_NUMBER", job.jobNumber, 1);
-  }
   if (textHasNameToken(subject, job.normalizedName)) {
     subjectScore = Math.max(subjectScore, 0.88);
     pushEvidence(evidence, "SUBJECT_JOB_NAME", job.name, 0.88);
@@ -267,10 +236,6 @@ export function scoreJobAgainstEmail(input: {
     }
   }
 
-  if (job.jobNumber && textHasJobNumber(body, job.jobNumber)) {
-    contentScore = Math.max(contentScore, 0.82);
-    pushEvidence(evidence, "CONTENT_JOB_NUMBER", job.jobNumber, 0.82);
-  }
   if (textHasNameToken(body, job.normalizedName)) {
     contentScore = Math.max(contentScore, 0.7);
     pushEvidence(evidence, "CONTENT_JOB_NAME", job.name, 0.7);
@@ -308,8 +273,7 @@ export function scoreJobAgainstEmail(input: {
     CONTENT_WEIGHT * contentScore +
     SENDER_WEIGHT * senderScore;
 
-  // Exact unique-style subject job number should dominate
-  // Unique subject name/alias is also strong (conservative boost, still ≤ job#)
+  // Unique subject name/alias is strong. Internal Job.jobNumber is never evidence.
   const boosted =
     subjectScore >= 1
       ? Math.max(score, 0.96)
@@ -376,15 +340,13 @@ export function selectJobMatchFromCandidates(
     Boolean(second) && gap < AMBIGUITY_GAP && second!.score >= SUGGEST_THRESHOLD;
 
   if (top.score >= AUTO_LINK_THRESHOLD && !ambiguous) {
-    const source: JobMatchAssignmentSource =
-      top.subjectScore >= 1 ? "JOB_NUMBER_MATCH" : "AI_AUTO_ASSIGNED";
     return {
       selectedJobId: top.jobId,
       confidence: top.score,
       evidence: top.evidence,
       ambiguousCandidateIds: [],
       requiresReview: false,
-      assignmentSource: source,
+      assignmentSource: "AI_AUTO_ASSIGNED",
       candidateCount,
       matcherVersion: JOB_MATCHER_VERSION,
     };

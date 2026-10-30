@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { isJobMatcherAutoAssignEnabled } from "../ai-automation-gates.js";
 import { JobMatcherService, type JobMatchDataLoader } from "../jobs/job-matcher-service.js";
 import { evaluateJobMatchCases } from "../jobs/job-match-eval.js";
 import {
@@ -6,13 +9,18 @@ import {
   narrowJobMatchCandidates,
   runJobMatchPipeline,
 } from "../jobs/job-match-pipeline.js";
-import { runJobNameMarker } from "../jobs/job-name-marker.js";
+import { JOB_NAME_MARKER_VERSION, runJobNameMarker } from "../jobs/job-name-marker.js";
 import {
   canonicalizeJobNameTokens,
   canonicalJobNamePhrase,
   isDistinguishingJobNameToken,
 } from "../jobs/job-name-normalize.js";
-import type { JobRecordForMatch } from "../jobs/job-matcher.js";
+import type {
+  JobMatchAssignmentSource,
+  JobRecordForMatch,
+} from "../jobs/job-matcher.js";
+
+const here = import.meta.dirname;
 
 const alleghany: JobRecordForMatch = {
   id: "job-2191",
@@ -241,6 +249,23 @@ describe("runJobNameMarker", () => {
     expect(result.selectedJobId).toBeNull();
   });
 
+  it("evaluation eligibility includes COMPLETE historical Jobs without changing production", () => {
+    const production = runJobNameMarker({
+      subject: "Alleghany Apartments RFI",
+      cleanBody: "",
+      jobs: [{ ...alleghany, status: "COMPLETE" }],
+    });
+    expect(production.status).toBe("NO_MATCH");
+    const evaluation = runJobNameMarker({
+      subject: "Alleghany Apartments RFI",
+      cleanBody: "",
+      jobs: [{ ...alleghany, status: "COMPLETE" }],
+      eligibilityMode: "evaluation",
+    });
+    expect(evaluation.status).toBe("MATCH");
+    expect(evaluation.selectedJobId).toBe(alleghany.id);
+  });
+
   it("workspace isolation: only supplied Jobs are considered", () => {
     const otherWorkspaceJob: JobRecordForMatch = {
       ...alleghany,
@@ -405,25 +430,24 @@ describe("runJobNameMarker", () => {
     expect(result.selectedJobId).toBe("job-sm-2");
   });
 
-  it("labeled job number uniquely identifies a Job", () => {
+  it("internal Job number in a PO does not identify a Job", () => {
     const result = runJobNameMarker({
       subject: "PO 2192 drawings",
       cleanBody: "",
       jobs: stMichaelPool,
     });
-    expect(result.status).toBe("MATCH");
-    expect(result.selectedJobId).toBe("job-sm-2");
+    expect(result.status).toBe("NO_MATCH");
+    expect(result.selectedJobId).toBeNull();
   });
 
-  it("Building 2 name plus a different Job number is AMBIGUOUS not a silent override", () => {
+  it("Building 2 name is not overridden by a coincidental internal Job number", () => {
     const result = runJobNameMarker({
       subject: "St Michael Apartments Building 2 PO 2191",
       cleanBody: "",
       jobs: stMichaelPool,
     });
-    expect(result.status).toBe("AMBIGUOUS");
-    expect(result.selectedJobId).toBeNull();
-    expect(result.candidateJobIds.sort()).toEqual(["job-sm-1", "job-sm-2"]);
+    expect(result.status).toBe("MATCH");
+    expect(result.selectedJobId).toBe("job-sm-2");
   });
 
   it("North vs South remains a unique strong identity when the rest of the name is shared", () => {
@@ -516,16 +540,16 @@ describe("runJobMatchPipeline", () => {
     expect(result.requiresReview).toBe(false);
   });
 
-  it("labeled job number is unique strong identity", () => {
+  it("internal Job number is not unique identity and never emits JOB_NUMBER_MATCH", () => {
     const result = runJobMatchPipeline({
       subject: "PO 2191",
       cleanBody: "",
       jobs: pool,
     });
-    expect(result.selectedJobId).toBe("job-2191");
-    expect(result.decision).toBe("MATCH");
-    expect(result.assignmentSource).toBe("JOB_NUMBER_MATCH");
-    expect(result.candidateJobIds).toEqual(["job-2191"]);
+    expect(result.selectedJobId).toBeNull();
+    expect(result.decision).toBe("NO_MATCH");
+    expect(result.assignmentSource).toBeNull();
+    expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
   });
 
   it("unique strong Marker 1 MATCH stops the pipeline (Marker 2/3 are not consulted)", () => {
@@ -911,3 +935,269 @@ describe("job match evaluation harness", () => {
     });
   });
 });
+
+describe("internal Job.jobNumber is never matching evidence", () => {
+  const stMichael: JobRecordForMatch = {
+    id: "job-2417",
+    jobNumber: "2417",
+    name: "St Michael Apartments Building 2",
+    normalizedName: "st michael apartments building 2",
+    customerId: null,
+    externalRef: null,
+    status: "ACTIVE",
+  };
+  const riverside: JobRecordForMatch = {
+    id: "job-2418",
+    jobNumber: "2418",
+    name: "Riverside Medical Center",
+    normalizedName: "riverside medical center",
+    customerId: null,
+    externalRef: "GC-8801",
+    status: "ACTIVE",
+  };
+  const numberedJobs = [stMichael, riverside];
+
+  it("1. Job.jobNumber exact text alone does not match", () => {
+    const result = runJobNameMarker({
+      subject: "2417",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+    expect(result.selectedJobId).toBeNull();
+  });
+
+  it("2. #<jobNumber> does not match", () => {
+    const result = runJobNameMarker({
+      subject: "#2417 revised stair detail",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("3. Job <jobNumber> does not match", () => {
+    const result = runJobNameMarker({
+      subject: "Job 2417 drawings",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("4. Job #<jobNumber> does not match", () => {
+    const result = runJobNameMarker({
+      subject: "Job #2417 drawings",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("5. Job number in subject does not match", () => {
+    const result = runJobNameMarker({
+      subject: "RFI 2417 - revised stair detail",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+    expect(result.selectedJobId).not.toBe("job-2417");
+  });
+
+  it("6. Job number in body does not match", () => {
+    const result = runJobNameMarker({
+      subject: "Updated drawings",
+      cleanBody: "Please review job 2417 and send comments.",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("7. unrelated RFI number equal to Job.jobNumber does not match", () => {
+    const result = runJobMatchPipeline({
+      subject: "RFI 2417 - Riverside steel revisions",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.selectedJobId).toBe("job-2418");
+    expect(result.decision).toBe("MATCH");
+    expect(result.evidence.some((e) => e.type.includes("JOB_NUMBER"))).toBe(false);
+  });
+
+  it("8. unrelated PO number equal to Job.jobNumber does not match", () => {
+    const result = runJobNameMarker({
+      subject: "PO 2417 for millwork",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("9. arbitrary numeric text equal to Job.jobNumber does not match", () => {
+    const result = runJobNameMarker({
+      subject: "Sheet 2417 / spec 2417 / invoice 2417",
+      cleanBody: "Address 2417 Main St",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("NO_MATCH");
+  });
+
+  it("10. externalRef exact match can still produce identity evidence", () => {
+    const result = runJobNameMarker({
+      subject: "GC-8801 steel package",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("MATCH");
+    expect(result.selectedJobId).toBe("job-2418");
+    expect(result.evidence.some((e) => e.type === "SUBJECT_JOB_EXTERNAL_REF")).toBe(
+      true
+    );
+  });
+
+  it("11. explicit project alias containing a meaningful number still works", () => {
+    const result = runJobNameMarker({
+      subject: "St Michael Building 2 RFI",
+      cleanBody: "",
+      jobs: numberedJobs,
+      aliases: [
+        {
+          jobId: "job-2417",
+          alias: "St Michael Building 2",
+          normalizedAlias: "st michael building 2",
+        },
+      ],
+    });
+    expect(result.status).toBe("MATCH");
+    expect(result.selectedJobId).toBe("job-2417");
+  });
+
+  it("12. Building 1 vs Building 2 remains distinguishable", () => {
+    const b1: JobRecordForMatch = {
+      ...stMichael,
+      id: "job-b1",
+      jobNumber: "1001",
+      name: "St Michael Apartments Building 1",
+      normalizedName: "st michael apartments building 1",
+    };
+    const unique = runJobNameMarker({
+      subject: "St Michael Apartments Building 2 stair RFI",
+      cleanBody: "",
+      jobs: [b1, stMichael],
+    });
+    expect(unique.status).toBe("MATCH");
+    expect(unique.selectedJobId).toBe("job-2417");
+  });
+
+  it("13. Phase 1 vs Phase 2 remains distinguishable", () => {
+    const p1: JobRecordForMatch = {
+      id: "job-p1",
+      jobNumber: "5001",
+      name: "Harbor Phase 1",
+      normalizedName: "harbor phase 1",
+      customerId: null,
+      externalRef: null,
+      status: "ACTIVE",
+    };
+    const p2: JobRecordForMatch = {
+      id: "job-p2",
+      jobNumber: "5002",
+      name: "Harbor Phase 2",
+      normalizedName: "harbor phase 2",
+      customerId: null,
+      externalRef: null,
+      status: "ACTIVE",
+    };
+    const unique = runJobNameMarker({
+      subject: "Harbor Phase 2 roof RFI",
+      cleanBody: "",
+      jobs: [p1, p2],
+    });
+    expect(unique.status).toBe("MATCH");
+    expect(unique.selectedJobId).toBe("job-p2");
+  });
+
+  it("14. Job.name containing a legitimate number still works as a NAME", () => {
+    const result = runJobNameMarker({
+      subject: "St Michael Apartments Building 2 stair revisions",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("MATCH");
+    expect(result.selectedJobId).toBe("job-2417");
+  });
+
+  it("15. internal Job number is not silently generated as an alias", () => {
+    const result = runJobNameMarker({
+      subject: "2417",
+      cleanBody: "",
+      jobs: numberedJobs,
+      aliases: [],
+    });
+    expect(result.status).toBe("NO_MATCH");
+    expect(result.evidence).toEqual([]);
+    const src = readFileSync(resolve(here, "../jobs/job-name-marker.ts"), "utf8");
+    expect(src).not.toMatch(/source:\s*"JOB_NUMBER"/);
+    expect(src).not.toMatch(/jobNumberHits/);
+  });
+
+  it("16. legacy JOB_NUMBER_MATCH historical provenance remains readable", () => {
+    const historical: JobMatchAssignmentSource = "JOB_NUMBER_MATCH";
+    expect(historical).toBe("JOB_NUMBER_MATCH");
+  });
+
+  it("17. new matcher never emits JOB_NUMBER_MATCH", () => {
+    const nameMatch = runJobMatchPipeline({
+      subject: "Riverside Medical Center RFI",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(nameMatch.selectedJobId).toBe("job-2418");
+    expect(nameMatch.assignmentSource).toBe("AI_AUTO_ASSIGNED");
+    expect(nameMatch.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
+
+    const numberOnly = runJobMatchPipeline({
+      subject: "Job #2417",
+      cleanBody: "PO 2418",
+      jobs: numberedJobs,
+    });
+    expect(numberOnly.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
+  });
+
+  it("name vs disjoint externalRef remains AMBIGUOUS", () => {
+    const result = runJobNameMarker({
+      subject: "St Michael Apartments Building 2 GC-8801",
+      cleanBody: "",
+      jobs: numberedJobs,
+    });
+    expect(result.status).toBe("AMBIGUOUS");
+    expect(result.selectedJobId).toBeNull();
+    expect(result.candidateJobIds.sort()).toEqual(["job-2417", "job-2418"]);
+  });
+
+  it("19. evaluation harness does not treat internal Job number as identity", () => {
+    const report = evaluateJobMatchCases([
+      {
+        id: "number-is-not-identity",
+        subject: "RFI 2417 - revised stair detail",
+        jobs: numberedJobs,
+        expectedDecision: "NO_MATCH",
+      },
+      {
+        id: "riverside-name-wins-over-st-michael-number",
+        subject: "RFI 2417 - Riverside steel revisions",
+        jobs: numberedJobs,
+        expectedDecision: "MATCH",
+        expectedJobId: "job-2418",
+      },
+    ]);
+    expect(report.correct).toBe(2);
+    expect(report.failures).toEqual([]);
+  });
+
+  it("20. auto-assignment remains OFF", () => {
+    expect(isJobMatcherAutoAssignEnabled()).toBe(false);
+    expect(JOB_NAME_MARKER_VERSION).toBe("job-name-marker-v3");
+  });
+});
+

@@ -1,7 +1,10 @@
 import { isAuthoritativeEmailJobAssignment } from "../project-folders/verified-folder-job-assignment.js";
 import { normalizeEmail } from "../reference/normalize.js";
 import type { JobMatchEvidence, JobRecordForMatch } from "./job-matcher.js";
-import { isJobMatcherEligibleStatus } from "./job-name-marker.js";
+import {
+  isJobMatcherEligibleStatus,
+  type JobMatchEligibilityMode,
+} from "./job-name-marker.js";
 
 export const JOB_CONTACT_MARKER_VERSION = "job-contact-marker-v1";
 
@@ -47,10 +50,13 @@ function emailsMatch(
   return false;
 }
 
-function eligibleJobIdSet(jobs: JobRecordForMatch[]): Set<string> {
+function eligibleJobIdSet(
+  jobs: JobRecordForMatch[],
+  mode: JobMatchEligibilityMode = "production"
+): Set<string> {
   const ids = new Set<string>();
   for (const job of jobs) {
-    if (isJobMatcherEligibleStatus(job.status)) ids.add(job.id);
+    if (isJobMatcherEligibleStatus(job.status, mode)) ids.add(job.id);
   }
   return ids;
 }
@@ -66,12 +72,16 @@ export function selectActiveContactHits(input: {
   eligibleJobs: JobRecordForMatch[];
   manualContacts: ManualContactRow[];
   authoritativeEmails: AuthoritativeSenderEmailRow[];
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobContactHit[] {
   const sender = input.senderEmail?.trim()
     ? normalizeEmail(input.senderEmail)
     : "";
   if (!sender) return [];
-  const eligible = eligibleJobIdSet(input.eligibleJobs);
+  const eligible = eligibleJobIdSet(
+    input.eligibleJobs,
+    input.eligibilityMode ?? "production"
+  );
   const byJob = new Map<string, JobContactHit>();
 
   for (const row of input.manualContacts) {
@@ -117,11 +127,15 @@ export function runJobContactMarker(input: {
   senderEmail: string | null | undefined;
   hits?: JobContactHit[];
   eligibleJobs: JobRecordForMatch[];
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobContactMarkerResult {
   const sender = input.senderEmail?.trim()
     ? normalizeEmail(input.senderEmail)
     : "";
-  const eligible = eligibleJobIdSet(input.eligibleJobs);
+  const eligible = eligibleJobIdSet(
+    input.eligibleJobs,
+    input.eligibilityMode ?? "production"
+  );
   const hits = (input.hits ?? []).filter((hit) => eligible.has(hit.jobId));
   const candidateJobIds = [...new Set(hits.map((h) => h.jobId))];
   const evidence: JobMatchEvidence[] = [];

@@ -9,7 +9,10 @@ import {
   type JobMatchResult,
   type JobRecordForMatch,
 } from "./job-matcher.js";
-import { runJobNameMarker } from "./job-name-marker.js";
+import {
+  runJobNameMarker,
+  type JobMatchEligibilityMode,
+} from "./job-name-marker.js";
 
 import { runJobContactMarker, type JobContactHit } from "./job-contact-marker.js";
 import { runJobThreadMarker, type JobThreadHit } from "./job-thread-marker.js";
@@ -165,16 +168,10 @@ export function narrowJobMatchCandidates(
 }
 
 function assignmentSourceForNameMatch(
-  evidence: JobMatchEvidence[]
+  _evidence: JobMatchEvidence[]
 ): JobMatchAssignmentSource {
-  if (
-    evidence.some(
-      (e) =>
-        e.type === "SUBJECT_JOB_NUMBER" || e.type === "CONTENT_JOB_NUMBER"
-    )
-  ) {
-    return "JOB_NUMBER_MATCH";
-  }
+  // Internal Job.jobNumber is never matching evidence. JOB_NUMBER_MATCH is
+  // historical provenance only — the live pipeline must not emit it.
   return "AI_AUTO_ASSIGNED";
 }
 
@@ -238,13 +235,16 @@ export function runJobMatchPipeline(input: {
   providerThreadId?: string | null | undefined;
   contactHits?: JobContactHit[] | undefined;
   threadHits?: JobThreadHit[] | undefined;
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobMatchResult {
+  const eligibilityMode = input.eligibilityMode ?? "production";
   const marker1 = runJobNameMarker({
     subject: input.subject,
     bodyText: input.bodyText,
     cleanBody: input.cleanBody,
     jobs: input.jobs,
     aliases: input.aliases ?? [],
+    eligibilityMode,
   });
 
   const markerTrace: JobMatchMarkerTrace[] = [
@@ -281,6 +281,7 @@ export function runJobMatchPipeline(input: {
     senderEmail: input.senderEmail,
     hits: input.contactHits ?? [],
     eligibleJobs: input.jobs,
+    eligibilityMode,
   });
   const afterContact = narrowJobMatchCandidates({
     priorStatus: current.status,
@@ -330,6 +331,7 @@ export function runJobMatchPipeline(input: {
     providerThreadId: input.providerThreadId,
     hits: input.threadHits ?? [],
     eligibleJobs: input.jobs,
+    eligibilityMode,
   });
   const afterThread = narrowJobMatchCandidates({
     priorStatus: current.status,
@@ -390,5 +392,6 @@ export function jobMatchPipelineFromEmailInput(
     providerThreadId: input.providerThreadId,
     contactHits: extras?.contactHits,
     threadHits: extras?.threadHits,
+    eligibilityMode: input.eligibilityMode ?? "production",
   });
 }

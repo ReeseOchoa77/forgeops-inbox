@@ -1,6 +1,9 @@
 import { isAuthoritativeEmailJobAssignment } from "../project-folders/verified-folder-job-assignment.js";
 import type { JobMatchEvidence, JobRecordForMatch } from "./job-matcher.js";
-import { isJobMatcherEligibleStatus } from "./job-name-marker.js";
+import {
+  isJobMatcherEligibleStatus,
+  type JobMatchEligibilityMode,
+} from "./job-name-marker.js";
 
 export const JOB_THREAD_MARKER_VERSION = "job-thread-marker-v1";
 
@@ -27,10 +30,13 @@ export type ThreadEmailRow = {
   jobAssignmentSource?: string | null;
 };
 
-function eligibleJobIdSet(jobs: JobRecordForMatch[]): Set<string> {
+function eligibleJobIdSet(
+  jobs: JobRecordForMatch[],
+  mode: JobMatchEligibilityMode = "production"
+): Set<string> {
   const ids = new Set<string>();
   for (const job of jobs) {
-    if (isJobMatcherEligibleStatus(job.status)) ids.add(job.id);
+    if (isJobMatcherEligibleStatus(job.status, mode)) ids.add(job.id);
   }
   return ids;
 }
@@ -46,11 +52,15 @@ export function selectAuthoritativeThreadHits(input: {
   excludeEmailMessageId?: string | null | undefined;
   eligibleJobs: JobRecordForMatch[];
   messages: ThreadEmailRow[];
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobThreadHit[] {
   const connectionId = input.inboxConnectionId?.trim() || "";
   const threadId = input.providerThreadId?.trim() || "";
   if (!connectionId || !threadId) return [];
-  const eligible = eligibleJobIdSet(input.eligibleJobs);
+  const eligible = eligibleJobIdSet(
+    input.eligibleJobs,
+    input.eligibilityMode ?? "production"
+  );
   const emailsByJob = new Map<string, string[]>();
 
   for (const row of input.messages) {
@@ -77,6 +87,7 @@ export function runJobThreadMarker(input: {
   providerThreadId?: string | null | undefined;
   hits?: JobThreadHit[] | undefined;
   eligibleJobs: JobRecordForMatch[];
+  eligibilityMode?: JobMatchEligibilityMode;
 }): JobThreadMarkerResult {
   const connectionId = input.inboxConnectionId?.trim() || "";
   const threadId = input.providerThreadId?.trim() || "";
@@ -88,7 +99,10 @@ export function runJobThreadMarker(input: {
       markerVersion: JOB_THREAD_MARKER_VERSION,
     };
   }
-  const eligible = eligibleJobIdSet(input.eligibleJobs);
+  const eligible = eligibleJobIdSet(
+    input.eligibleJobs,
+    input.eligibilityMode ?? "production"
+  );
   const hits = (input.hits ?? []).filter((hit) => eligible.has(hit.jobId));
   const candidateJobIds = [...new Set(hits.map((h) => h.jobId))];
   const evidence: JobMatchEvidence[] = [];
