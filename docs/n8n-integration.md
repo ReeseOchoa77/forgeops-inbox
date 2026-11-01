@@ -1,5 +1,15 @@
 # n8n Integration — Architecture & Endpoint Contract
 
+**Status: OPTIONAL ALTERNATE INGEST PATH.**
+
+Native Microsoft Graph (OAuth + `inbox-sync` / Historical Import / project-folder and Bid folder analyze) is the **recommended** in-repo intake. Keep `N8N_INTEGRATION_ENABLED=false` locally.
+
+n8n remains implemented: mailboxes with `ingestionSource: N8N` reject native sync/analyze (409). The endpoint contract below is still valid.
+
+Inbox UI tabs in the diagram (`All / Business / Non-Business`) are **legacy labels**. Current Inbox filters: [`product/inbox.md`](product/inbox.md). Job auto-assign stays **OFF** even if n8n sends a job hint.
+
+Canonical ingest: [`architecture/email-ingestion.md`](architecture/email-ingestion.md).
+
 ## Overview
 
 ForgeOps Inbox accepts pre-processed Outlook emails from n8n as an alternate ingestion path. n8n handles the Outlook API polling and OpenAI analysis, then pushes normalized results into ForgeOps via a secure API endpoint. ForgeOps remains the system of record.

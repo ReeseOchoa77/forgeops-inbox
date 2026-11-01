@@ -1,43 +1,13 @@
-# Product
-Unified Inbox + Task Extraction Platform
+# Product spec (redirect)
 
-## Core idea
-A multi-tenant web app where each client has a workspace.
-Each workspace can connect multiple Gmail inboxes.
-The app ingests email, classifies it, extracts tasks/action requests, and shows everything in a dashboard.
+This filename is kept so old links do not 404.
 
-## V1 features
-- Sign in
-- Create workspace
-- Add Gmail inbox
-- Sync recent messages
-- Classify email type
-- Extract summary, company, project, deadline
-- Detect tasks/action requests
-- Push inbox items and tasks to dashboard
-- Open source thread in Gmail
+The V1 list here (Gmail-only, RFQ/Vendor Quote/Recruiting categories, “open thread in Gmail”) is **obsolete**.
 
-## Email categories
-- RFQ / Bid Invite
-- Vendor Quote
-- Shipping / Delivery
-- Recruiting / Applicant
-- Internal Project Communication
-- Admin / Finance
-- Misc / Needs Review
+**Canonical product docs:**
 
-## Extracted fields
-- subject
-- sender_name
-- sender_email
-- company_name
-- project_name
-- deadline
-- priority
-- recommended_owner
-- summary
-- contains_action_request
-- task_title
-- task_description
-- task_due_date
-- confidence
+- [Inbox](product/inbox.md)
+- [Jobs](product/jobs.md)
+- [Active Bids](product/active-bids.md)
+
+Architecture: [`architecture/overview.md`](architecture/overview.md).

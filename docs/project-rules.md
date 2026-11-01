@@ -1,106 +1,80 @@
 # Project Rules
 
-These rules are non-negotiable for the ForgeOps Inbox backend. If a proposed change conflicts with one of these rules, the change should be redesigned rather than merged around the rule.
+These rules are non-negotiable for ForgeOps. If a proposed change conflicts with one of these rules, redesign rather than merge around the rule.
+
+Canonical architecture: [`README.md`](README.md) (this folder) and [`architecture/overview.md`](architecture/overview.md).
 
 ## Deployment safety
 
-- **Implementation complete ≠ production deployed.** See `docs/DEPLOYMENT.md`.
+- **Implementation complete ≠ production deployed.** See [`DEPLOYMENT.md`](DEPLOYMENT.md).
 - Do not push, merge to `main`, deploy, or run production migrations unless the user explicitly requests production deployment.
 - Local development uses `APP_ENV=development` and localhost infra; production uses `APP_ENV=production` and separate DB/Redis/S3.
+- Never put production `DATABASE_URL` in Cursor or local `.env`.
 
-## Core Invariants
+## Core invariants
 
-### 1. Preserve strict multi-tenant workspace isolation
+### 1. Strict multi-tenant workspace isolation
 
-- `Workspace` is the operational tenant boundary for inbox data.
-- Inbox data from one workspace must never be readable, writable, queryable, or routable from another workspace.
-- Authorization, queries, jobs, cache keys, and event processing must all enforce workspace scoping.
-- If a record belongs to inbox operations, it must carry `workspaceId` and be filtered by `workspaceId`.
+`Workspace` is the operational tenant boundary. Queries, jobs, cache keys, and events must filter by `workspaceId`.
 
-### 2. Backend is the source of truth for inbox data
+### 2. Backend is the source of truth
 
-- The backend owns canonical state for inbox connections, threads, messages, classifications, tasks, routing decisions, and audit history.
-- Frontend code may render or request data, but it must not invent inbox state, infer tenant access, or persist integration state on its own.
-- External providers such as Gmail are upstream systems, not the application source of truth. Normalize provider data into backend-owned records.
+Canonical state for connections, threads, messages, classifications, Jobs, BidCandidates, tasks, and audit lives in Postgres. The frontend must not invent tenant access or persist provider tokens. Gmail and Microsoft Graph are upstream, not the database.
 
-### 3. Never put Gmail logic in frontend code
+### 3. Never put provider logic in frontend code
 
-- Gmail OAuth exchange, token handling, refresh logic, message sync, thread normalization, and provider-specific parsing must live in backend services only.
-- Frontend code may initiate backend actions and display backend results, but must not call Gmail APIs directly.
-- Gmail access tokens, refresh tokens, scopes, cursors, and sync metadata must never be exposed to the client.
+Gmail and Microsoft Graph OAuth, tokens, refresh, sync, and parsing stay in API/worker. Tokens, scopes, and cursors must never be exposed to the client.
 
-## Data Modeling Rules
+## Data modeling
 
-### 4. All inbox-related records must be scoped by `workspaceId`
+### 4. Inbox-domain records carry `workspaceId`
 
-This applies to all current and future inbox-domain records, including:
+Includes connections, threads, messages, classifications, tasks, Jobs, BidCandidates, routing rules, settings, audit events.
 
-- inbox connections
-- email threads
-- email messages
-- classifications
-- tasks
-- routing rules
-- workspace settings
-- audit events
+### 5. Tasks preserve source lineage
 
-If a new inbox-domain model does not include `workspaceId`, it is almost certainly wrong.
+Email-created tasks link back to the source thread/message when they exist. Manual tasks use `TaskSource.MANUAL` and a requester user.
 
-### 5. Tasks must preserve source lineage
+### 6. Do not silently auto-process low-confidence Job assignment
 
-- Every task must link back to the source email thread.
-- When available, tasks should also link to the source email message and classification record that caused the task to exist.
-- Downstream task workflows must not break traceability to the originating inbox item.
+Email → Job matcher is **deterministic** and **auto-assign is OFF** (`JOB_MATCHER_AUTO_ASSIGN_ENABLED`). Do not persist matcher MATCH to `EmailMessage.jobId` without an explicit product decision. Classification still stores confidence; review remains first-class.
 
-### 6. Review queues and confidence are first-class
+Authoritative Job assignment is only `USER_ASSIGNED` / `jobAssignmentIsManual` / `VERIFIED_PROJECT_FOLDER`. See [`architecture/job-matching.md`](architecture/job-matching.md).
 
-- Classification and task generation must store confidence scores.
-- Low-confidence outcomes must be eligible for review queues instead of silent auto-processing.
-- Review state must be persisted, not inferred transiently in memory.
+## Application boundaries
 
-## Application Boundary Rules
+### 7. Validate external structured objects
 
-### 7. All model outputs must validate against a schema
-
-- Every LLM output, provider payload, webhook body, queue job payload, and externally sourced structured object must be validated before it is trusted.
-- Use explicit schemas with strong typing. Prefer `zod` at service boundaries and typed persistence shapes at database boundaries.
-- Never persist raw model output as if it were trusted application state.
+LLM output, provider payloads, webhooks, and queue payloads must be schema-validated (prefer Zod) before persist.
 
 ### 8. Prefer small typed modules
 
-- Keep modules focused on one responsibility.
-- Favor small typed interfaces over large utility files or highly stateful service classes.
-- Shared contracts should live in package boundaries designed for reuse, not in ad hoc cross-imports.
+Shared contracts live in `@forgeops/shared`.
 
-### 9. Do not build auto-reply or email sending yet
+### 9. Outbound email is explicit and user-initiated
 
-- Outbound email generation, auto-replies, and send workflows are out of scope for this stage.
-- Do not add code paths that send email, draft replies, or automate customer-facing communication.
-- Current scope is ingestion, normalization, classification, routing, and task extraction only.
+**Updated (was: “do not build sending yet”).** ForgeOps compose/send **is implemented**. Auto-reply and unsolicited customer-facing automation remain out of scope. Do not add code paths that send mail without an explicit user send action.
 
-## Auditability and Operations
+Bulk Clear Inbox / Clear All Emails must **never** delete provider mailbox messages. See [`operations/email-clearing.md`](operations/email-clearing.md).
 
-### 10. All critical processing should be auditable and logged
+## Auditability
 
-- Critical actions must leave a durable trace. Examples: inbox connection changes, sync starts/completions, classification writes, routing decisions, task creation, review actions, and permission-sensitive mutations.
-- Logs must include enough context to trace a request or job through the system without leaking secrets.
-- Important state transitions should be representable through `AuditEvent` records or equivalent durable history.
+### 10. Critical processing is auditable
+
+Connection changes, sync, classification, Job assignment, review actions, and permission-sensitive mutations must leave a durable trace **without** storing Graph delta links, bodies, or secrets in `AuditEvent`. See [`../packages/db/scripts/AUDIT_EVENT_CLEANUP.md`](../packages/db/scripts/AUDIT_EVENT_CLEANUP.md).
 
 ### 11. Fail closed on tenant or validation ambiguity
 
-- If workspace identity, authorization, schema validity, or source lineage is uncertain, stop processing and surface an error.
-- Do not guess the tenant, workspace, assignee, or classification target from partial context.
+Do not guess workspace, assignee, or Job from partial context. Matcher AMBIGUOUS/CONFLICT is not an assignment.
 
-## Implementation Checklist
+## Implementation checklist
 
-Before merging backend work, verify:
+Before merging backend work:
 
 - every inbox-domain query is filtered by `workspaceId`
-- every write path carries the correct `workspaceId`
-- Gmail code remains backend-only
+- provider code remains backend-only
 - model and provider outputs are schema-validated
-- tasks preserve source thread and message lineage
-- confidence and review metadata are persisted where applicable
-- critical actions emit logs and auditable records
-- no outbound email or auto-reply behavior has been introduced
-
+- email-created tasks preserve source lineage
+- Job matcher auto-assign remains gated off unless explicitly requested
+- bulk clear does not call Graph/Gmail delete
+- no unsolicited auto-reply behavior

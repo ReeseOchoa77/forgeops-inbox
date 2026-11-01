@@ -94,7 +94,18 @@ In the Railway API service shell:
 npx tsx packages/db/prisma/seed-approved-access.ts
 ```
 
-Edit the seed file first to set your admin email if different from `24rochoa@gmail.com`.
+Edit the seed file first so the allowlist email matches the intended OWNER. Do not commit extra personal emails.
+
+### 2h. Job matcher historical evaluation (read-only)
+
+Operator-only CLI inside the **Railway API** service after deploy. Railway injects `DATABASE_URL` — do not paste it into Cursor.
+
+```bash
+NODE=$(command -v node || readlink -f /proc/1/exe)
+"$NODE" apps/api/dist/scripts/evaluate-job-matcher-production.js --workspace <WORKSPACE_ID>
+```
+
+Details: [`operations/matcher-evaluation.md`](operations/matcher-evaluation.md). Auto-assign must stay off.
 
 ---
 
@@ -148,11 +159,14 @@ TOKEN_ENCRYPTION_SECRET=<generate: openssl rand -hex 32>
 DEV_ENABLE_BOOTSTRAP_ROUTES=false
 DEV_AUTO_CREATE_WORKSPACE_ON_LOGIN=false
 
-# Optional Outlook
+# Outlook mailbox OAuth (primary live provider)
 OUTLOOK_CLIENT_ID=<from Azure AD>
 OUTLOOK_CLIENT_SECRET=<from Azure AD>
 OUTLOOK_REDIRECT_URI=https://api.forgeops-inbox.com/api/v1/inbox-connections/outlook/callback
 OUTLOOK_TENANT_ID=common
+
+# Email → Job auto-assign (must remain unset/false in production)
+# JOB_MATCHER_AUTO_ASSIGN_ENABLED=false
 ```
 
 Notes:

@@ -13,9 +13,13 @@ message ID arrays, and attachment ingest candidates (including `bodyHtml`) in
 - Operational actions have a **30-day** retention policy in code (`@forgeops/shared`).
 - Cleanup is **manual only** — never runs on deploy.
 
+Preferred from repo root: `npm run db:cleanup-audit` (same script; dry-run unless `--commit`).
+
 ## Dry-run (safe)
 
 ```bash
+npm run db:cleanup-audit
+# equivalent:
 npx tsx packages/db/scripts/cleanup-audit-events.ts
 ```
 

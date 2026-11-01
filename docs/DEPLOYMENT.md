@@ -17,7 +17,7 @@ code change
 
 Cursor (and any agent) must **STOP before the production deployment step** unless the user explicitly asks to deploy.
 
-Related runbooks: `docs/deploy-vercel-railway.md`, `docs/deployment-checklist.md`.
+Related runbooks: [`docs/README.md`](README.md), [`deploy-vercel-railway.md`](deploy-vercel-railway.md), [`deployment-checklist.md`](deployment-checklist.md), [`operations/email-clearing.md`](operations/email-clearing.md), [`operations/matcher-evaluation.md`](operations/matcher-evaluation.md).
 
 ---
 
@@ -187,8 +187,12 @@ VITE_API_URL=https://api.forgeops-inbox.com
 | `ALLOW_LOCAL_PROD_INFRA` | `true` only for deliberate local production-mode smoke tests |
 | `ALLOW_PRODUCTION_MIGRATE` | Escape hatch for `npm run db:migrate:deploy` outside `APP_ENV=production` |
 | `ALLOW_DEV_GRAPH_WEBHOOKS` | Development-only; leave `false` unless using an intentional public tunnel for Graph push |
+| `JOB_MATCHER_AUTO_ASSIGN_ENABLED` | Email → Job auto-assign. Default **OFF**. Do not enable in production. See [job-matching.md](architecture/job-matching.md) |
+| `INLINE_IMAGE_AI_ANALYZE_ENABLED` | Inline-image vision enqueue. Default **OFF** |
 
-OAuth redirects, S3, OpenAI, n8n, Microsoft Graph — see `docs/deploy-vercel-railway.md`. **Never commit real secrets.**
+OAuth redirects, S3, OpenAI, n8n, Microsoft Graph — see [`deploy-vercel-railway.md`](deploy-vercel-railway.md). **Never commit real secrets.**
+
+Matcher evaluation (Railway API shell, read-only): [`operations/matcher-evaluation.md`](operations/matcher-evaluation.md). Never put production `DATABASE_URL` in Cursor.
 
 ### Fail-closed boot guards
 

@@ -21,17 +21,24 @@
   - `https://YOUR_FRONTEND_DOMAIN`
 - [ ] App published or test users added (if still in Testing mode)
 
-### Outlook OAuth (optional)
+### Outlook / Microsoft OAuth (primary live mailbox)
 
-- [ ] Azure AD app registered with redirect URI:
-  - `https://YOUR_API_DOMAIN/api/v1/inbox-connections/google/callback` (shared callback)
+Mailbox connect is **not** the same callback as Google, and not the same as Microsoft *app login*.
+
+- [ ] Azure AD app registered with mailbox redirect URI:
+  - `https://YOUR_API_DOMAIN/api/v1/inbox-connections/outlook/callback`
+- [ ] Optional Microsoft **app login** redirect (if used):
+  - `https://YOUR_API_DOMAIN/api/v1/auth/microsoft/callback`
 - [ ] Client ID and secret available
+
+See [`architecture/auth.md`](architecture/auth.md) and [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ### Environment Variables
 
 **API (.env or host config):**
 
 ```
+APP_ENV=production
 NODE_ENV=production
 HOST=0.0.0.0
 API_PORT=3000
