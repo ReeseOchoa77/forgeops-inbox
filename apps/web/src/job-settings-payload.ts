@@ -79,11 +79,45 @@ function parseNonNegativeMoney(value: string): number | null {
   return amount
 }
 
-function calendarDateToIso(value: string): string | null {
+/** Calendar date (`YYYY-MM-DD`) → UTC midnight ISO. Empty → null (clear). */
+export function calendarDateToIso(value: string): string | null {
   if (!value) return null
   // Date-only inputs are calendar dates — keep as UTC midnight via YYYY-MM-DD parse path.
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00:00.000Z`
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return null
   return parsed.toISOString()
+}
+
+/** Persisted Job date → `<input type="date">` value without local-timezone shift. */
+export function isoToCalendarDate(value: string | null | undefined): string {
+  if (!value) return ''
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value)
+  return match?.[1] ?? ''
+}
+
+/**
+ * Compact Jobs-list quick edit → canonical PUT /jobs/:id body.
+ * Edits the same Job record as Settings; does not touch aliases/emails/matcher.
+ */
+export function jobQuickEditUpdateBody(input: {
+  name: string
+  jobNumber: string
+  status: string
+  customerId: string
+  startDate: string
+}): {
+  name: string
+  jobNumber: string
+  status: string
+  customerId: string | null
+  startDate: string | null
+} {
+  return {
+    name: input.name.trim(),
+    jobNumber: input.jobNumber.trim(),
+    status: input.status,
+    customerId: input.customerId.trim() ? input.customerId.trim() : null,
+    startDate: calendarDateToIso(input.startDate),
+  }
 }

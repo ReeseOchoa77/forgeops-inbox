@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { jobSettingsUpdateBody } from './job-settings-payload'
+import {
+  calendarDateToIso,
+  isoToCalendarDate,
+  jobQuickEditUpdateBody,
+  jobSettingsUpdateBody,
+} from './job-settings-payload'
 
 describe('jobSettingsUpdateBody', () => {
   it('sends the description and converts calendar dates to ISO', () => {
@@ -102,6 +107,24 @@ describe('jobSettingsUpdateBody', () => {
       siteCity: 'Denver',
       siteState: 'CO',
       sitePostalCode: '80202',
+    })
+  })
+
+  it('exports calendar date helpers used by Jobs list quick edit', () => {
+    expect(calendarDateToIso('2026-09-24')).toBe('2026-09-24T00:00:00.000Z')
+    expect(isoToCalendarDate('2026-09-24T12:34:56.000Z')).toBe('2026-09-24')
+    expect(jobQuickEditUpdateBody({
+      name: 'Site A',
+      jobNumber: '1001',
+      status: 'ACTIVE',
+      customerId: '',
+      startDate: '2026-09-24',
+    })).toEqual({
+      name: 'Site A',
+      jobNumber: '1001',
+      status: 'ACTIVE',
+      customerId: null,
+      startDate: '2026-09-24T00:00:00.000Z',
     })
   })
 

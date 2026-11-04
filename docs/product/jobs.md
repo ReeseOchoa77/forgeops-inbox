@@ -17,6 +17,20 @@ JobsView filters: ALL, BIDDING, ACTIVE, ON_HOLD, COMPLETE, ARCHIVED. Converted B
 
 Live matcher pool: `ACTIVE` / `ON_HOLD` / `AWARDED` only.
 
+## Quick edit from the Jobs list
+
+Users with Job edit permission (`OWNER` / `ADMIN` / `MEMBER`) can click **Edit** on a Jobs list row or phone card to open a compact **Edit Job** modal without leaving the list.
+
+Editable from the list modal (same `PUT /jobs/:jobId` as Job Settings):
+
+- Job number
+- Job / project name
+- Status
+- Customer (`Job.customerId` — the list Customer column)
+- Start date
+
+Deeper Job management (site, financials, aliases, members, documents, CRM tabs) remains on the Job detail page. Clicking the row/name still opens Job detail; Edit uses `stopPropagation` so it does not navigate.
+
 ## Job numbering (verified)
 
 Canonical helper: `packages/shared/src/bidding/suggest-next-job-number.ts`.
