@@ -17,19 +17,21 @@ JobsView filters: ALL, BIDDING, ACTIVE, ON_HOLD, COMPLETE, ARCHIVED. Converted B
 
 Live matcher pool: `ACTIVE` / `ON_HOLD` / `AWARDED` only.
 
-## Quick edit from the Jobs list
+## Jobs list Edit mode
 
-Users with Job edit permission (`OWNER` / `ADMIN` / `MEMBER`) can click **Edit** on a Jobs list row or phone card to open a compact **Edit Job** modal without leaving the list.
+The Jobs page is **read-only by default**. Clicking a row/name opens Job detail.
 
-Editable from the list modal (same `PUT /jobs/:jobId` as Job Settings):
+Users with Job edit permission (`OWNER` / `ADMIN` / `MEMBER`) can enable page-level **Edit** from the Jobs header controls (`Edit` ↔ `Done Editing`). Edit mode is local UI state only (not persisted).
 
-- Job number
-- Job / project name
-- Status
-- Customer (`Job.customerId` — the list Customer column)
-- Start date
+When Edit mode is ON:
 
-Deeper Job management (site, financials, aliases, members, documents, CRM tabs) remains on the Job detail page. Clicking the row/name still opens Job detail; Edit uses `stopPropagation` so it does not navigate.
+- Primary visible fields become inline-editable (click a field to open its control)
+- Job number, Job/project name, Customer (`Job.customerId`), Start date
+- Each field saves independently through the canonical `PUT /jobs/:jobId`
+- Row navigation into Job detail is paused to avoid accidental page changes
+- Turning **Done Editing** saves any active field (if valid) before exiting; it does not silently discard
+
+Deeper Job management (status beyond list ops, site, financials, aliases, members, documents, CRM tabs) remains on the Job detail page.
 
 ## Job numbering (verified)
 
@@ -55,7 +57,7 @@ Gaps below max are **not** filled (`3000, 3002, 3003` → `3004`). Empty workspa
 | Bid convert | Requires user `jobNumber`; does not auto-pick next on collision |
 | `BidCandidate.proposedJobNumber` | Ignored for numbering (becomes `externalRef` on convert) |
 
-Applies to manual create, convert, intake, edits, restore — all current-collision checks use the same uniqueness helper.
+Applies to manual create, convert, intake, edits (including Jobs-list inline edit), restore — all current-collision checks use the same uniqueness helper.
 
 ## Email ↔ Job
 

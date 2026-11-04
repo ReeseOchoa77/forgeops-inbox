@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, ApiRequestError, type JobSummary, type CustomerSummary } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { JobImportView } from './JobImportView'
-import { JobCrmField, JobCrmModal } from '../components/JobCrmModal'
+import { JobsInlineFieldCell } from '../components/JobsInlineField'
 import {
   getCachedJobsList,
   invalidateJobsListCache,
@@ -19,9 +19,16 @@ import {
   type JobListSortDir,
 } from '../job-list-sort'
 import {
-  isoToCalendarDate,
-  jobQuickEditUpdateBody,
-} from '../job-settings-payload'
+  applyJobInlineUpdateToSummary,
+  buildJobInlineFieldUpdate,
+  isJobsInlineCell,
+  jobInlineFieldChanged,
+  jobInlineFieldDisplay,
+  jobInlineFieldDraft,
+  jobsInlineCellKey,
+  type JobsInlineActiveCell,
+  type JobsInlineField,
+} from '../jobs-inline-edit'
 
 interface Props {
   workspaceId: string
@@ -88,26 +95,6 @@ const EMPTY_FORM: CreateJobFormState = {
   description: '', startDate: '', targetCompletionDate: '', aliases: ''
 }
 
-const QUICK_EDIT_STATUSES = ['BIDDING', 'ACTIVE', 'ON_HOLD', 'COMPLETE'] as const
-
-interface QuickEditFormState {
-  jobNumber: string
-  name: string
-  status: string
-  customerId: string
-  startDate: string
-}
-
-function jobToQuickEditForm(job: JobSummary): QuickEditFormState {
-  return {
-    jobNumber: job.jobNumber ?? '',
-    name: job.name,
-    status: job.status,
-    customerId: job.customerId ?? '',
-    startDate: isoToCalendarDate(job.startDate),
-  }
-}
-
 export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -134,10 +121,12 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
-  const [editingJob, setEditingJob] = useState<JobSummary | null>(null)
-  const [editForm, setEditForm] = useState<QuickEditFormState | null>(null)
-  const [savingEdit, setSavingEdit] = useState(false)
-  const [editError, setEditError] = useState('')
+  /** Page-level Edit mode. Default OFF — Jobs list stays read-only. */
+  const [editMode, setEditMode] = useState(false)
+  const [activeCell, setActiveCell] = useState<JobsInlineActiveCell | null>(null)
+  const [activeDraft, setActiveDraft] = useState('')
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null)
+  const [fieldError, setFieldError] = useState<{ jobId: string; field: JobsInlineField; message: string } | null>(null)
 
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [filtersExpanded, setFiltersExpanded] = useState(false)
@@ -147,6 +136,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const requestSeqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   const workspaceRef = useRef(workspaceId)
+  const suppressBlurSaveRef = useRef(false)
 
   const isPhone = breakpoint === 'phone'
   const isTablet = breakpoint === 'tablet'
@@ -157,11 +147,11 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   const canImport = userRole === 'OWNER' || userRole === 'ADMIN'
   const paintLoggedRef = useRef(false)
 
-  // Customers only needed for filters / create / quick-edit — do not block Jobs list paint.
+  // Customers for filters / create / Edit mode — do not block Jobs list paint.
   useEffect(() => {
-    if (!filtersExpanded && !showCreateModal && !editingJob) return
+    if (!filtersExpanded && !showCreateModal && !editMode) return
     api.getCustomers(workspaceId).then(r => setCustomers(r.customers)).catch(() => {})
-  }, [workspaceId, filtersExpanded, showCreateModal, editingJob])
+  }, [workspaceId, filtersExpanded, showCreateModal, editMode])
 
   const refreshWorkspaceJobsTotal = useCallback(() => {
     void api
@@ -364,71 +354,252 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     }
   }
 
-  const openQuickEdit = (job: JobSummary) => {
-    setEditingJob(job)
-    setEditForm(jobToQuickEditForm(job))
-    setEditError('')
-  }
+  const cancelActiveCell = useCallback(() => {
+    setActiveCell(null)
+    setActiveDraft('')
+    setFieldError(null)
+  }, [])
 
-  const closeQuickEdit = () => {
-    if (savingEdit) return
-    setEditingJob(null)
-    setEditForm(null)
-    setEditError('')
-  }
+  const persistInlineField = useCallback(async (
+    jobId: string,
+    field: JobsInlineField,
+    draft: string,
+    baselineJob?: JobSummary
+  ): Promise<boolean> => {
+    if (savingCellKey) return false
+    const job = baselineJob ?? jobs.find((j) => j.id === jobId)
+    if (!job) {
+      cancelActiveCell()
+      return true
+    }
+    if (!jobInlineFieldChanged(job, field, draft)) {
+      cancelActiveCell()
+      return true
+    }
+    const built = buildJobInlineFieldUpdate(field, draft)
+    if (!built.ok) {
+      setFieldError({ jobId, field, message: built.error })
+      return false
+    }
+    const key = jobsInlineCellKey({ jobId, field })
+    setSavingCellKey(key)
+    setFieldError(null)
+    try {
+      const res = await api.updateJob(workspaceId, jobId, built.body)
+      setJobs((prev) =>
+        prev.map((row) =>
+          row.id === jobId ? applyJobInlineUpdateToSummary(row, field, res.job) : row
+        )
+      )
+      invalidateJobsListCache(workspaceId)
+      cancelActiveCell()
+      return true
+    } catch (e) {
+      const message =
+        e instanceof ApiRequestError && e.code === 'JOB_NUMBER_TAKEN'
+          ? (e.message || 'A job with this job number already exists in this workspace')
+          : e instanceof Error
+            ? e.message
+            : 'Failed to update job'
+      setFieldError({ jobId, field, message })
+      return false
+    } finally {
+      setSavingCellKey(null)
+      suppressBlurSaveRef.current = false
+    }
+  }, [cancelActiveCell, jobs, savingCellKey, workspaceId])
 
-  const handleSaveQuickEdit = async () => {
-    if (!editingJob || !editForm || savingEdit) return
-    if (!editForm.jobNumber.trim() || !editForm.name.trim()) {
-      setEditError('Job number and name are required.')
+  const saveActiveCell = useCallback(async (opts?: { thenExitEditMode?: boolean }) => {
+    if (!activeCell) {
+      if (opts?.thenExitEditMode) setEditMode(false)
+      return true
+    }
+    const ok = await persistInlineField(activeCell.jobId, activeCell.field, activeDraft)
+    if (ok && opts?.thenExitEditMode) setEditMode(false)
+    return ok
+  }, [activeCell, activeDraft, persistInlineField])
+
+  const activateCell = useCallback(async (job: JobSummary, field: JobsInlineField) => {
+    if (!editMode || savingCellKey) return
+    if (activeCell && (activeCell.jobId !== job.id || activeCell.field !== field)) {
+      const ok = await saveActiveCell()
+      if (!ok) return
+    }
+    setActiveCell({ jobId: job.id, field })
+    setActiveDraft(jobInlineFieldDraft(job, field))
+    setFieldError(null)
+  }, [activeCell, editMode, saveActiveCell, savingCellKey])
+
+  const toggleEditMode = async () => {
+    if (editMode) {
+      if (activeCell) {
+        await saveActiveCell({ thenExitEditMode: true })
+        return
+      }
+      setEditMode(false)
       return
     }
-    setSavingEdit(true)
-    setEditError('')
-    try {
-      await api.updateJob(workspaceId, editingJob.id, jobQuickEditUpdateBody(editForm))
-      setEditingJob(null)
-      setEditForm(null)
-      invalidateJobsListCache(workspaceId)
-      void loadJobs({ page: 1, append: false })
-      refreshWorkspaceJobsTotal()
-    } catch (e) {
-      if (e instanceof ApiRequestError && e.code === 'JOB_NUMBER_TAKEN') {
-        setEditError(e.message || 'A job with this job number already exists in this workspace')
-      } else {
-        setEditError(e instanceof Error ? e.message : 'Failed to update job')
-      }
-    } finally {
-      setSavingEdit(false)
-    }
+    setEditMode(true)
   }
 
-  const editButton = (job: JobSummary) => (
-    <button
-      type="button"
-      data-testid={`job-quick-edit-${job.id}`}
-      aria-label={`Edit Job ${job.jobNumber ?? job.name}`}
-      onClick={(e) => {
-        e.stopPropagation()
-        e.preventDefault()
-        openQuickEdit(job)
-      }}
-      style={{
-        padding: '4px 10px',
-        border: '1px solid #d0d5dd',
-        borderRadius: 6,
-        background: '#fff',
-        color: '#374151',
-        fontSize: 12,
-        fontWeight: 600,
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-        minHeight: 32,
-      }}
-    >
-      Edit
-    </button>
-  )
+  const handleRowActivate = (job: JobSummary) => {
+    if (editMode) return
+    onSelectJob(job.id, job)
+  }
+
+  const renderInlineField = (job: JobSummary, field: JobsInlineField, opts?: { mono?: boolean }) => {
+    const active = isJobsInlineCell(activeCell, job.id, field)
+    const saving = savingCellKey === jobsInlineCellKey({ jobId: job.id, field })
+    const error =
+      fieldError && fieldError.jobId === job.id && fieldError.field === field
+        ? fieldError.message
+        : null
+    const labels: Record<JobsInlineField, string> = {
+      jobNumber: `Job number for ${job.name}`,
+      name: `Job name for ${job.jobNumber ?? job.name}`,
+      customerId: `Customer for ${job.name}`,
+      startDate: `Start date for ${job.name}`,
+    }
+
+    if (field === 'customerId' && active) {
+      return (
+        <JobsInlineFieldCell
+          jobId={job.id}
+          field={field}
+          editMode={editMode}
+          active
+          saving={saving}
+          error={error}
+          display={jobInlineFieldDisplay(job, field)}
+          draft={activeDraft}
+          onActivate={() => { void activateCell(job, field) }}
+          onDraftChange={setActiveDraft}
+          onSave={() => { void saveActiveCell() }}
+          onCancel={cancelActiveCell}
+          suppressBlurSave
+          ariaLabel={labels.customerId}
+        >
+          <select
+            autoFocus
+            aria-label={labels.customerId}
+            value={activeDraft}
+            disabled={saving}
+            onMouseDown={() => { suppressBlurSaveRef.current = true }}
+            onChange={(e) => {
+              const next = e.target.value
+              setActiveDraft(next)
+              void persistInlineField(job.id, 'customerId', next, job)
+            }}
+            onBlur={() => {
+              if (suppressBlurSaveRef.current || saving) return
+              void saveActiveCell()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelActiveCell()
+              }
+            }}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '4px 6px',
+              border: '1px solid #93c5fd',
+              borderRadius: 4,
+              fontSize: 13,
+              background: '#fff',
+            }}
+          >
+            <option value="">— None —</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+            {activeDraft
+              && !customers.some((c) => c.id === activeDraft)
+              && job.customerName
+              ? <option value={activeDraft}>{job.customerName}</option>
+              : null}
+          </select>
+        </JobsInlineFieldCell>
+      )
+    }
+
+    if (field === 'startDate' && active) {
+      return (
+        <JobsInlineFieldCell
+          jobId={job.id}
+          field={field}
+          editMode={editMode}
+          active
+          saving={saving}
+          error={error}
+          display={jobInlineFieldDisplay(job, field)}
+          draft={activeDraft}
+          onActivate={() => { void activateCell(job, field) }}
+          onDraftChange={setActiveDraft}
+          onSave={() => { void saveActiveCell() }}
+          onCancel={cancelActiveCell}
+          suppressBlurSave
+          ariaLabel={labels.startDate}
+        >
+          <input
+            type="date"
+            autoFocus
+            aria-label={labels.startDate}
+            value={activeDraft}
+            disabled={saving}
+            onMouseDown={() => { suppressBlurSaveRef.current = true }}
+            onChange={(e) => {
+              const next = e.target.value
+              setActiveDraft(next)
+              void persistInlineField(job.id, 'startDate', next, job)
+            }}
+            onBlur={() => {
+              if (suppressBlurSaveRef.current || saving) return
+              void saveActiveCell()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelActiveCell()
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                void saveActiveCell()
+              }
+            }}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '4px 6px',
+              border: '1px solid #93c5fd',
+              borderRadius: 4,
+              fontSize: 13,
+              background: '#fff',
+            }}
+          />
+        </JobsInlineFieldCell>
+      )
+    }
+
+    return (
+      <JobsInlineFieldCell
+        jobId={job.id}
+        field={field}
+        editMode={editMode}
+        active={active}
+        saving={saving}
+        error={error}
+        display={jobInlineFieldDisplay(job, field)}
+        draft={activeDraft}
+        onActivate={() => { void activateCell(job, field) }}
+        onDraftChange={setActiveDraft}
+        onSave={() => { void saveActiveCell() }}
+        onCancel={cancelActiveCell}
+        mono={opts?.mono}
+        ariaLabel={labels[field]}
+      />
+    )
+  }
 
   const sortIndicator = (col: string) => {
     if (sortBy !== col) return ''
@@ -604,28 +775,32 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       {jobs.map(job => (
         <div
           key={job.id}
-          onClick={() => onSelectJob(job.id, job)}
+          onClick={() => handleRowActivate(job)}
           style={{
             padding: 14, border: '1px solid #e5e7eb', borderRadius: 8,
-            background: '#fff', cursor: 'pointer', minHeight: 44,
+            background: editMode ? '#fcfcfd' : '#fff',
+            cursor: editMode ? 'default' : 'pointer',
+            minHeight: 44,
             width: '100%', boxSizing: 'border-box'
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
-            <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
-              {job.jobNumber ?? '—'}
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <StatusBadge status={job.status} />
-              {canEdit ? editButton(job) : null}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {renderInlineField(job, 'jobNumber', { mono: true })}
             </div>
+            <StatusBadge status={job.status} />
           </div>
           <div style={{ fontWeight: 600, fontSize: 14, color: '#111', marginBottom: 4 }}>
-            {job.name}
+            {renderInlineField(job, 'name')}
           </div>
           <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
-            {job.customerName ?? '—'}
+            {renderInlineField(job, 'customerId')}
           </div>
+          {editMode ? (
+            <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+              {renderInlineField(job, 'startDate')}
+            </div>
+          ) : null}
           <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
             <span>✉ {job.emailCount}</span>
             <span>☐ {job.openTaskCount} open</span>
@@ -651,7 +826,8 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   })
 
   const renderTable = () => {
-    const hideExtraCols = isTablet
+    const hideExtraCols = isTablet && !editMode
+    const showStartCol = !isTablet || editMode
 
     return (
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -661,32 +837,48 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
             <th style={thStyle('name')} onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
             <th style={stickyTh()}>Customer</th>
             <th style={thStyle('status')} onClick={() => handleSort('status')}>Status{sortIndicator('status')}</th>
-            {!hideExtraCols && <th style={thStyle('startDate')} onClick={() => handleSort('startDate')}>Start{sortIndicator('startDate')}</th>}
+            {showStartCol && <th style={thStyle('startDate')} onClick={() => handleSort('startDate')}>Start{sortIndicator('startDate')}</th>}
             <th style={stickyTh({ textAlign: 'center' })}>Emails</th>
             <th style={stickyTh({ textAlign: 'center' })}>Open Tasks</th>
             <th style={stickyTh({ textAlign: 'center' })}>Overdue</th>
             {!hideExtraCols && <th style={stickyTh()}>Last Activity</th>}
             {!hideExtraCols && <th style={stickyTh()}>Next Due</th>}
             {!hideExtraCols && <th style={stickyTh()}>Team</th>}
-            {canEdit && <th style={stickyTh({ textAlign: 'right', width: 72 })}> </th>}
           </tr>
         </thead>
         <tbody>
           {jobs.map(job => (
             <tr
               key={job.id}
-              onClick={() => onSelectJob(job.id, job)}
-              style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-              onMouseLeave={e => (e.currentTarget.style.background = '')}
+              onClick={() => handleRowActivate(job)}
+              style={{
+                borderBottom: '1px solid #f0f0f0',
+                cursor: editMode ? 'default' : 'pointer',
+                transition: 'background 0.1s',
+                background: editMode ? '#fcfcfd' : undefined,
+              }}
+              onMouseEnter={e => {
+                if (!editMode) e.currentTarget.style.background = '#f8fafc'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = editMode ? '#fcfcfd' : ''
+              }}
             >
               <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
-                {job.jobNumber ?? '—'}
+                {renderInlineField(job, 'jobNumber', { mono: true })}
               </td>
-              <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>{job.name}</td>
-              <td style={{ padding: '10px 12px', color: '#555' }}>{job.customerName ?? '—'}</td>
+              <td style={{ padding: '10px 12px', fontWeight: 500, color: '#111' }}>
+                {renderInlineField(job, 'name')}
+              </td>
+              <td style={{ padding: '10px 12px', color: '#555' }}>
+                {renderInlineField(job, 'customerId')}
+              </td>
               <td style={{ padding: '10px 12px' }}><StatusBadge status={job.status} /></td>
-              {!hideExtraCols && <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>{job.startDate ? formatDate(job.startDate) : '—'}</td>}
+              {showStartCol && (
+                <td style={{ padding: '10px 12px', color: '#6b7280', fontSize: 12 }}>
+                  {renderInlineField(job, 'startDate')}
+                </td>
+              )}
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.emailCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center' }}>{job.openTaskCount}</td>
               <td style={{ padding: '10px 12px', textAlign: 'center', color: job.overdueTaskCount > 0 ? '#dc2626' : undefined, fontWeight: job.overdueTaskCount > 0 ? 600 : undefined }}>
@@ -716,14 +908,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
                       </span>
                     )}
                   </div>
-                </td>
-              )}
-              {canEdit && (
-                <td
-                  style={{ padding: '8px 12px', textAlign: 'right' }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {editButton(job)}
                 </td>
               )}
             </tr>
@@ -762,6 +946,28 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           {refreshing ? <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 500, color: '#999' }}>Updating…</span> : null}
         </h2>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canEdit && (
+            <button
+              type="button"
+              data-testid="jobs-edit-mode-toggle"
+              aria-pressed={editMode}
+              onClick={() => { void toggleEditMode() }}
+              style={{
+                padding: '8px 16px',
+                background: editMode ? '#1a1a2e' : '#fff',
+                color: editMode ? '#fff' : '#1a1a2e',
+                border: '1px solid #1a1a2e',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                width: isPhone ? '100%' : undefined,
+                minHeight: isPhone ? 44 : undefined,
+              }}
+            >
+              {editMode ? 'Done Editing' : 'Edit'}
+            </button>
+          )}
           {canImport && (
             <button
               type="button"
@@ -800,6 +1006,11 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
       {totalCount > 0 && (
         <div style={{ flexShrink: 0, marginBottom: 8, fontSize: 13, color: '#555' }}>
           Showing {jobs.length} of {totalCount} job{totalCount !== 1 ? 's' : ''}
+          {editMode ? (
+            <span style={{ marginLeft: 10, color: '#1d4ed8', fontWeight: 600 }}>
+              Editing — click a field to change it. Row navigation is paused.
+            </span>
+          ) : null}
         </div>
       )}
 
@@ -955,121 +1166,6 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           }}
         />
       )}
-
-      <JobCrmModal
-        title="Edit Job"
-        open={Boolean(editingJob && editForm)}
-        onClose={closeQuickEdit}
-        footer={(
-          <>
-            <button
-              type="button"
-              onClick={closeQuickEdit}
-              disabled={savingEdit}
-              style={{
-                padding: '8px 16px',
-                border: '1px solid #d0d5dd',
-                borderRadius: 6,
-                background: '#fff',
-                fontSize: 13,
-                cursor: savingEdit ? 'not-allowed' : 'pointer',
-                opacity: savingEdit ? 0.6 : 1,
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              data-testid="job-quick-edit-save"
-              onClick={() => { void handleSaveQuickEdit() }}
-              disabled={savingEdit}
-              style={{
-                padding: '8px 20px',
-                background: '#1a1a2e',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: savingEdit ? 'not-allowed' : 'pointer',
-                opacity: savingEdit ? 0.6 : 1,
-              }}
-            >
-              {savingEdit ? 'Saving…' : 'Save Changes'}
-            </button>
-          </>
-        )}
-      >
-        {editForm && (
-          <div style={{ display: 'grid', gap: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: isPhone ? '1fr' : '1fr 1fr', gap: 12 }}>
-              <JobCrmField label="Job Number" required>
-                <input
-                  value={editForm.jobNumber}
-                  onChange={(e) => setEditForm((f) => f ? { ...f, jobNumber: e.target.value } : f)}
-                  disabled={savingEdit}
-                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }}
-                />
-              </JobCrmField>
-              <JobCrmField label="Status">
-                <select
-                  value={editForm.status}
-                  onChange={(e) => setEditForm((f) => f ? { ...f, status: e.target.value } : f)}
-                  disabled={savingEdit}
-                  style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}
-                >
-                  {!QUICK_EDIT_STATUSES.includes(editForm.status as typeof QUICK_EDIT_STATUSES[number]) && (
-                    <option value={editForm.status}>{editForm.status.replace('_', ' ')}</option>
-                  )}
-                  {QUICK_EDIT_STATUSES.map((s) => (
-                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
-                  ))}
-                </select>
-              </JobCrmField>
-            </div>
-            <JobCrmField label="Job Name" required>
-              <input
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => f ? { ...f, name: e.target.value } : f)}
-                disabled={savingEdit}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }}
-              />
-            </JobCrmField>
-            <JobCrmField label="Customer">
-              <select
-                value={editForm.customerId}
-                onChange={(e) => setEditForm((f) => f ? { ...f, customerId: e.target.value } : f)}
-                disabled={savingEdit}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}
-              >
-                <option value="">— None —</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-                {editForm.customerId
-                  && !customers.some((c) => c.id === editForm.customerId)
-                  && editingJob?.customerName
-                  ? (
-                    <option value={editForm.customerId}>{editingJob.customerName}</option>
-                  )
-                  : null}
-              </select>
-            </JobCrmField>
-            <JobCrmField label="Start Date">
-              <input
-                type="date"
-                value={editForm.startDate}
-                onChange={(e) => setEditForm((f) => f ? { ...f, startDate: e.target.value } : f)}
-                disabled={savingEdit}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }}
-              />
-            </JobCrmField>
-            {editError ? (
-              <div role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{editError}</div>
-            ) : null}
-          </div>
-        )}
-      </JobCrmModal>
     </div>
   )
 }
