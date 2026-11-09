@@ -51,6 +51,10 @@ LLM output, provider payloads, webhooks, and queue payloads must be schema-valid
 
 Shared contracts live in `@forgeops/shared`.
 
+### 8b. Intelligence registration
+
+Any meaningful classifier, matcher, extractor, scoring/recommendation system, LLM workflow, ML model, agent, or automated decision engine must be registered in the canonical Intelligence Registry (`@forgeops/shared` `INTELLIGENCE_CATALOG`). See [`architecture/intelligence-registry.md`](architecture/intelligence-registry.md). Ordinary CRUD validation is not intelligence. Registry metadata must not re-implement the decision engine.
+
 ### 9. Outbound email is explicit and user-initiated
 
 **Updated (was: “do not build sending yet”).** ForgeOps compose/send **is implemented**. Auto-reply and unsolicited customer-facing automation remain out of scope. Do not add code paths that send mail without an explicit user send action.
@@ -76,5 +80,6 @@ Before merging backend work:
 - model and provider outputs are schema-validated
 - email-created tasks preserve source lineage
 - Job matcher auto-assign remains gated off unless explicitly requested
+- new/changed intelligence is registered in `INTELLIGENCE_CATALOG` ([intelligence-registry.md](architecture/intelligence-registry.md))
 - bulk clear does not call Graph/Gmail delete
 - no unsolicited auto-reply behavior

@@ -1,0 +1,19 @@
+---
+description: Register ForgeOps intelligence systems in the canonical typed registry
+alwaysApply: true
+---
+
+# Intelligence registration (ForgeOps)
+
+Whenever adding or **materially changing** a classifier, matcher, extractor, scoring system, LLM workflow, ML model, agent, heuristic decision engine, or other ForgeOps intelligence component, read [`docs/architecture/intelligence-registry.md`](docs/architecture/intelligence-registry.md).
+
+All qualifying intelligence must be registered in the canonical typed catalog (`packages/shared/src/intelligence/`, `INTELLIGENCE_CATALOG`) and remain compatible with Manage → Intelligence discovery.
+
+Do **not**:
+
+- Treat a Markdown file as the runtime registry
+- Duplicate prompt bodies or re-implement matcher/classifier logic inside registry metadata
+- Classify ordinary CRUD validation / auth / filtering as intelligence
+- Invent accuracy metrics without declared ground truth
+
+If evaluation is not ready: still register with `evaluation.supported = false` and explain why.

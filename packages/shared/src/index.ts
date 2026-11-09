@@ -57,6 +57,7 @@ export * from "./task-job-link.js";
 export * from "./subtype-validation.js";
 export * from "./inbox-cleared-at.js";
 export * from "./worker-jobs/registry.js";
+export * from "./intelligence/index.js";
 export * from "./bidding/suggest-bid-project-name.js";
 export * from "./bidding/suggest-next-job-number.js";
 export * from "./bidding/extract-bid-due-date.js";

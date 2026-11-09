@@ -142,6 +142,8 @@ These are different people/systems. Canonical: [auth.md](auth.md).
 
 Enum values `AI_AUTO_ASSIGNED` / `AI_SUGGESTED` are matcher **provenance labels**, not proof that an LLM chose the Job.
 
+Canonical inventory of automated decision systems: [Intelligence Registry](intelligence-registry.md) (`INTELLIGENCE_CATALOG` in `@forgeops/shared`). New intelligence must register there; Manage → Intelligence will discover from the typed catalog (UI planned).
+
 ## Responsive UI scale
 
 **IMPLEMENTED** (not CSS `zoom`).
@@ -160,4 +162,5 @@ Code: `apps/web/src/ui-scale.ts`, `apps/web/src/index.css`, `apps/web/vite-plugi
 - [Classification](email-classification.md)
 - [Job matching](job-matching.md)
 - [Active Bids](bidding-active-bids.md)
+- [Intelligence Registry](intelligence-registry.md)
 - [Deployment](../DEPLOYMENT.md)

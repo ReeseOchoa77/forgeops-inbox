@@ -17,6 +17,7 @@ Status labels used in these docs:
 |-----------|----------------|
 | Onboarding / repo map | [`../README.md`](../README.md) |
 | High-level architecture, queues, AI vs deterministic, UI scale | [`architecture/overview.md`](architecture/overview.md) |
+| Intelligence Registry (registration standard) | [`architecture/intelligence-registry.md`](architecture/intelligence-registry.md) |
 | Email ingest, Sent Items, compose reconcile, attachments | [`architecture/email-ingestion.md`](architecture/email-ingestion.md) |
 | Mailbox category, subtypes, classification authority | [`architecture/email-classification.md`](architecture/email-classification.md) |
 | Job matcher, contacts, authoritative assignment, auto-assign | [`architecture/job-matching.md`](architecture/job-matching.md) |
