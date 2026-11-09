@@ -1,7 +1,10 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { SenderEvidenceView } from './SenderEvidenceView'
 import { DataImportView } from './DataImportView'
 import { api } from '../api'
+import { CustomerDetailView } from '../components/CustomerDetailView'
+import { CustomerSelectOrCreate } from '../components/CustomerSelectOrCreate'
+import type { CustomerSummary } from '../api'
 
 export type ReferenceDataTab =
   | 'customers'
@@ -146,12 +149,16 @@ interface Props {
   userRole?: string
   /** Preferred section when opening Company Data (e.g. redirected from Documents). */
   initialTab?: ReferenceDataTab
+  onOpenJob?: (jobId: string) => void
+  onOpenBid?: (candidateId: string) => void
 }
 
 export function ReferenceDataView({
   workspaceId,
   userRole = 'MEMBER',
   initialTab,
+  onOpenJob,
+  onOpenBid,
 }: Props) {
   const isViewer = userRole === 'VIEWER'
   const canPermanentlyDeleteJobs = userRole === 'OWNER'
@@ -171,6 +178,13 @@ export function ReferenceDataView({
   const [docUploadMsg, setDocUploadMsg] = useState('')
   const [runDocAi, setRunDocAi] = useState(true)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [creatingCustomer, setCreatingCustomer] = useState(false)
+  const [newCustomerDraft, setNewCustomerDraft] = useState<{ customerId: string | null; customerName: string | null }>({
+    customerId: null,
+    customerName: null,
+  })
   const docFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -183,6 +197,7 @@ export function ReferenceDataView({
   const selectTab = (next: ReferenceDataTab) => {
     setTab(next)
     setImportStep('idle')
+    setSelectedCustomerId(null)
     persistReferenceTab(next)
   }
 
@@ -279,12 +294,40 @@ export function ReferenceDataView({
   }
 
   const items = (data[tab] ?? []) as Array<Record<string, unknown>>
-  const showEntityTable = tab !== 'senders' && tab !== 'documents'
+  const customerItems = useMemo(() => {
+    if (tab !== 'customers') return items
+    const q = customerSearch.trim().toLowerCase()
+    if (!q) return items
+    return items.filter((item) => String(item.name ?? '').toLowerCase().includes(q))
+  }, [tab, items, customerSearch])
+  const showEntityTable = tab !== 'senders' && tab !== 'documents' && !(tab === 'customers' && selectedCustomerId)
   const canDeleteTab =
     !isViewer &&
     tab !== 'imports' &&
     tab !== 'senders' &&
     !(tab === 'jobs' && !canPermanentlyDeleteJobs)
+
+  if (tab === 'customers' && selectedCustomerId) {
+    return (
+      <div>
+        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Company Data</h2>
+        <p style={{ fontSize: 13, color: '#888', margin: '0 0 12px' }}>
+          Customer detail — Jobs and Active Bids use canonical customerId links.
+        </p>
+        <CustomerDetailView
+          workspaceId={workspaceId}
+          customerId={selectedCustomerId}
+          canEdit={!isViewer}
+          onBack={() => {
+            setSelectedCustomerId(null)
+            void load('customers')
+          }}
+          onOpenJob={onOpenJob}
+          onOpenBid={onOpenBid}
+        />
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -429,6 +472,67 @@ export function ReferenceDataView({
         </div>
       )}
 
+      {tab === 'customers' && importStep === 'idle' && (
+        <div style={{ marginBottom: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <input
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            placeholder="Search customers…"
+            aria-label="Search customers"
+            style={{
+              flex: 1,
+              minWidth: 180,
+              padding: '8px 10px',
+              border: '1px solid #d0d5dd',
+              borderRadius: 6,
+              fontSize: 13,
+            }}
+          />
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => {
+                setCreatingCustomer((v) => !v)
+                setNewCustomerDraft({ customerId: null, customerName: null })
+              }}
+              style={{
+                padding: '8px 14px',
+                border: '1px solid #1a1a2e',
+                borderRadius: 6,
+                background: creatingCustomer ? '#1a1a2e' : '#fff',
+                color: creatingCustomer ? '#fff' : '#1a1a2e',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {creatingCustomer ? 'Cancel' : 'New Customer'}
+            </button>
+          )}
+        </div>
+      )}
+      {tab === 'customers' && creatingCustomer && !isViewer && (
+        <div className="card" style={{ marginBottom: 12, padding: 12, maxWidth: 420 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Create Customer</div>
+          <CustomerSelectOrCreate
+            workspaceId={workspaceId}
+            customers={(data.customers ?? []) as CustomerSummary[]}
+            value={newCustomerDraft}
+            onChange={(next) => {
+              setNewCustomerDraft(next)
+              if (next.customerId) {
+                setCreatingCustomer(false)
+                setSelectedCustomerId(next.customerId)
+                void load('customers')
+              }
+            }}
+            onCustomersUpdated={(list) => setData((prev) => ({ ...prev, customers: list }))}
+            allowClear={false}
+            placeholder="Type a new customer name…"
+          />
+        </div>
+      )}
+
       {!isViewer && (tab === 'customers' || tab === 'vendors') && importStep === 'idle' && (
         <div style={{ marginBottom: 16, padding: 12, background: '#f8f9fa', borderRadius: 6, border: '1px solid #eee' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
@@ -503,17 +607,17 @@ export function ReferenceDataView({
         <SenderEvidenceView workspaceId={workspaceId} userRole={userRole} />
       )}
 
-      {showEntityTable && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : items.length === 0 ? (
+      {showEntityTable && (loading ? <p style={{ color: '#888', fontSize: 13 }}>Loading...</p> : (tab === 'customers' ? customerItems : items).length === 0 ? (
         <div className="empty-state" style={{ padding: 24 }}>
           <h3>No {tab} yet</h3>
-          <p>{tab === 'customers' || tab === 'vendors' ? 'Import from CSV or paste names above.' : `${tab} will appear here as data is imported.`}</p>
+          <p>{tab === 'customers' || tab === 'vendors' ? 'Import from CSV, create a Customer, or paste names above.' : `${tab} will appear here as data is imported.`}</p>
         </div>
       ) : (
         <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, background: '#fff', overflow: 'auto', maxHeight: 500, WebkitOverflowScrolling: 'touch' as never }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 600 }}>
             <thead>
               <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e5e5', textAlign: 'left', position: 'sticky', top: 0 }}>
-                {tab === 'customers' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Aliases</th><th style={{ padding: '7px 10px' }}>Contacts</th><th style={{ padding: '7px 10px' }}>Jobs</th></>}
+                {tab === 'customers' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Contacts</th><th style={{ padding: '7px 10px' }}>Jobs</th><th style={{ padding: '7px 10px' }}>Bids</th></>}
                 {tab === 'vendors' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Aliases</th><th style={{ padding: '7px 10px' }}>Contacts</th></>}
                 {tab === 'jobs' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Job #</th><th style={{ padding: '7px 10px' }}>Customer</th><th style={{ padding: '7px 10px' }}>Status</th><th style={{ padding: '7px 10px' }}>Aliases</th></>}
                 {tab === 'contacts' && <><th style={{ padding: '7px 10px' }}>Name</th><th style={{ padding: '7px 10px' }}>Email</th><th style={{ padding: '7px 10px' }}>Domain</th><th style={{ padding: '7px 10px' }}>Phone</th><th style={{ padding: '7px 10px' }}>Entity</th><th style={{ padding: '7px 10px' }}>Source</th></>}
@@ -523,9 +627,18 @@ export function ReferenceDataView({
               </tr>
             </thead>
             <tbody>
-              {items.map((item, i) => (
-                <tr key={(item.id as string) ?? i} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  {tab === 'customers' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.jobs) ?? 0}</td></>}
+              {(tab === 'customers' ? customerItems : items).map((item, i) => (
+                <tr
+                  key={(item.id as string) ?? i}
+                  style={{
+                    borderBottom: '1px solid #f0f0f0',
+                    cursor: tab === 'customers' ? 'pointer' : undefined,
+                  }}
+                  onClick={() => {
+                    if (tab === 'customers' && item.id) setSelectedCustomerId(String(item.id))
+                  }}
+                >
+                  {tab === 'customers' && <><td style={{ padding: '6px 10px', fontWeight: 500, color: '#1d4ed8' }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.jobs) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.bidCandidates) ?? 0}</td></>}
                   {tab === 'vendors' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.primaryEmail as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.contacts) ?? 0}</td></>}
                   {tab === 'jobs' && <><td style={{ padding: '6px 10px', fontWeight: 500 }}>{item.name as string}</td><td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 11 }}>{(item.jobNumber as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.customer as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px' }}>{item.status as string}</td><td style={{ padding: '6px 10px' }}>{((item._count as Record<string, number>)?.aliases) ?? 0}</td></>}
                   {tab === 'contacts' && <><td style={{ padding: '6px 10px' }}>{(item.name as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.email as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.domain as string) ?? '—'}</td><td style={{ padding: '6px 10px', color: '#888' }}>{(item.phone as string) ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11 }}>{(item.customer as Record<string, string>)?.name ?? (item.vendor as Record<string, string>)?.name ?? '—'}</td><td style={{ padding: '6px 10px', fontSize: 11, color: '#888' }}>{item.source as string}</td></>}

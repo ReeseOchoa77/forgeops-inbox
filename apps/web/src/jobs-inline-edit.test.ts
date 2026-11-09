@@ -105,9 +105,10 @@ describe('Jobs page Edit mode', () => {
     expect(jobsViewSrc).toContain('saveActiveCell({ thenExitEditMode: true })')
   })
 
-  it('customer select supports clear and avoids fuzzy matching', () => {
-    expect(jobsViewSrc).toContain('— None —')
+  it('customer select-or-create supports clear and avoids fuzzy matching', () => {
+    expect(jobsViewSrc).toContain('CustomerSelectOrCreate')
     expect(jobsViewSrc).toContain('getCustomers')
+    expect(jobsViewSrc).toContain('next.customerId')
     expect(jobsViewSrc).not.toMatch(/fuzzy/i)
   })
 })

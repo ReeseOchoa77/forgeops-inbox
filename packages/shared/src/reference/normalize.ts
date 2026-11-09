@@ -113,7 +113,7 @@ export interface DuplicateCandidate {
 
 export function findDuplicates(
   normalizedInput: string,
-  displayInput: string,
+  _displayInput: string,
   existingEntries: Array<{ id: string; name: string; normalizedName: string }>
 ): DuplicateCandidate[] {
   const candidates: DuplicateCandidate[] = [];

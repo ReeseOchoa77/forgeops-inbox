@@ -24,6 +24,11 @@
       "types": "./src/bidding/scope-detail.ts",
       "import": "./src/bidding/scope-detail.ts",
       "default": "./src/bidding/scope-detail.ts"
+    },
+    "./reference/normalize": {
+      "types": "./src/reference/normalize.ts",
+      "import": "./src/reference/normalize.ts",
+      "default": "./src/reference/normalize.ts"
     }
   },
   "scripts": {

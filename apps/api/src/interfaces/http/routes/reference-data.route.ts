@@ -14,6 +14,10 @@ import {
 } from "@forgeops/shared";
 
 import { deleteWorkspaceJob } from "../../../application/services/delete-workspace-job.js";
+import {
+  createWorkspaceCustomer,
+  CreateWorkspaceCustomerError,
+} from "../../../application/services/create-workspace-customer.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 
@@ -87,18 +91,26 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
     const auth = await requireAuth(app, request, reply, workspaceId);
     if (!auth) return;
 
-    const includeCounts =
-      z
-        .object({
-          includeCounts: z
-            .enum(["true", "false"])
-            .optional()
-            .transform((v) => v === "true"),
-        })
-        .parse(request.query).includeCounts === true;
+    const query = z
+      .object({
+        includeCounts: z
+          .enum(["true", "false"])
+          .optional()
+          .transform((v) => v === "true"),
+        search: z.string().max(200).optional(),
+      })
+      .parse(request.query);
+
+    const includeCounts = query.includeCounts === true;
+    const search = query.search?.trim() ?? "";
 
     const customers = await app.services.prisma.customer.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        ...(search
+          ? { name: { contains: search, mode: "insensitive" as const } }
+          : {}),
+      },
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -112,7 +124,16 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
         createdAt: true,
         updatedAt: true,
         ...(includeCounts
-          ? { _count: { select: { aliases: true, contacts: true, jobs: true } } }
+          ? {
+              _count: {
+                select: {
+                  aliases: true,
+                  contacts: true,
+                  jobs: true,
+                  bidCandidates: true,
+                },
+              },
+            }
           : {}),
       },
     });
@@ -122,9 +143,248 @@ export const registerReferenceDataRoutes = async (app: FastifyInstance): Promise
         ? customers
         : customers.map((c) => ({
             ...c,
-            _count: { aliases: 0, contacts: 0, jobs: 0 },
+            _count: { aliases: 0, contacts: 0, jobs: 0, bidCandidates: 0 },
           })),
     });
+  });
+
+  const createCustomerBody = z.object({
+    name: z.string().min(1).max(300),
+    primaryEmail: z.string().max(300).nullable().optional(),
+    domain: z.string().max(200).nullable().optional(),
+    phone: z.string().max(50).nullable().optional(),
+    externalRef: z.string().max(200).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/reference/customers", async (request, reply) => {
+    const { workspaceId } = wsParams.parse(request.params);
+    const auth = await requireAuth(app, request, reply, workspaceId);
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const body = createCustomerBody.parse(request.body);
+    try {
+      const result = await createWorkspaceCustomer({
+        prisma: app.services.prisma,
+        workspaceId,
+        name: body.name,
+        primaryEmail: body.primaryEmail,
+        domain: body.domain,
+        phone: body.phone,
+        externalRef: body.externalRef,
+        notes: body.notes,
+      });
+
+      if (result.created) {
+        await app.services.auditEventLogger.log({
+          workspaceId,
+          actorUserId: auth.userId,
+          entityType: "CUSTOMER",
+          entityId: result.customer.id,
+          action: "reference.customer_created",
+          metadata: { name: result.customer.name },
+          request,
+        });
+      }
+
+      return reply.code(result.created ? 201 : 200).send({
+        customer: result.customer,
+        created: result.created,
+      });
+    } catch (e) {
+      if (e instanceof CreateWorkspaceCustomerError) {
+        return reply.code(400).send({ code: e.code, message: e.message });
+      }
+      throw e;
+    }
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/reference/customers/:customerId", async (request, reply) => {
+    const params = z
+      .object({ workspaceId: z.string().min(1), customerId: z.string().min(1) })
+      .parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+
+    const customer = await app.services.prisma.customer.findFirst({
+      where: { id: params.customerId, workspaceId: params.workspaceId },
+      select: {
+        id: true,
+        name: true,
+        normalizedName: true,
+        primaryEmail: true,
+        domain: true,
+        phone: true,
+        externalRef: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            aliases: true,
+            contacts: true,
+            jobs: true,
+            bidCandidates: true,
+          },
+        },
+        jobs: {
+          orderBy: [{ archivedAt: "asc" }, { updatedAt: "desc" }],
+          take: 100,
+          select: {
+            id: true,
+            jobNumber: true,
+            name: true,
+            status: true,
+            startDate: true,
+            archivedAt: true,
+            updatedAt: true,
+          },
+        },
+        bidCandidates: {
+          orderBy: { updatedAt: "desc" },
+          take: 100,
+          select: {
+            id: true,
+            proposedProjectName: true,
+            lifecycle: true,
+            proposedBidDueAt: true,
+            anticipatedStartAt: true,
+            canonicalJobId: true,
+            updatedAt: true,
+            quoteStagings: {
+              where: { matchStatus: "MATCHED" },
+              take: 3,
+              select: {
+                id: true,
+                extractedAmount: true,
+                matchStatus: true,
+              },
+            },
+          },
+        },
+        contacts: {
+          orderBy: { updatedAt: "desc" },
+          take: 100,
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            domain: true,
+          },
+        },
+      },
+    });
+
+    if (!customer) return reply.code(404).send({ message: "Customer not found" });
+
+    const { jobs, bidCandidates, contacts, ...customerFields } = customer;
+    return reply.send({
+      customer: customerFields,
+      jobs,
+      bidCandidates: bidCandidates.map((b) => ({
+        id: b.id,
+        projectName: b.proposedProjectName,
+        lifecycle: b.lifecycle,
+        bidDueAt: b.proposedBidDueAt,
+        anticipatedStartAt: b.anticipatedStartAt,
+        canonicalJobId: b.canonicalJobId,
+        updatedAt: b.updatedAt,
+        quotes: b.quoteStagings.map((q) => ({
+          id: q.id,
+          quotedAmount: q.extractedAmount,
+          matchStatus: q.matchStatus,
+        })),
+      })),
+      contacts,
+    });
+  });
+
+  const updateCustomerBody = z.object({
+    name: z.string().min(1).max(300).optional(),
+    primaryEmail: z.string().max(300).nullable().optional(),
+    domain: z.string().max(200).nullable().optional(),
+    phone: z.string().max(50).nullable().optional(),
+    externalRef: z.string().max(200).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  });
+
+  app.patch("/api/v1/workspaces/:workspaceId/reference/customers/:customerId", async (request, reply) => {
+    const params = z
+      .object({ workspaceId: z.string().min(1), customerId: z.string().min(1) })
+      .parse(request.params);
+    const auth = await requireAuth(app, request, reply, params.workspaceId);
+    if (!auth) return;
+    if (!requireEditor(auth.role)) {
+      return reply.code(403).send({ message: "Edit permission required" });
+    }
+
+    const body = updateCustomerBody.parse(request.body);
+    const existing = await app.services.prisma.customer.findFirst({
+      where: { id: params.customerId, workspaceId: params.workspaceId },
+      select: { id: true, name: true, normalizedName: true },
+    });
+    if (!existing) return reply.code(404).send({ message: "Customer not found" });
+
+    const data: Prisma.CustomerUpdateInput = {};
+    if (body.name !== undefined) {
+      const name = body.name.trim();
+      if (!name) {
+        return reply.code(400).send({ message: "Customer name is required" });
+      }
+      const normalizedName = normalizeName(name);
+      if (!normalizedName) {
+        return reply.code(400).send({ message: "Customer name is not valid after normalization" });
+      }
+      if (normalizedName !== existing.normalizedName) {
+        const collision = await app.services.prisma.customer.findFirst({
+          where: {
+            workspaceId: params.workspaceId,
+            normalizedName,
+            id: { not: params.customerId },
+          },
+          select: { id: true, name: true },
+        });
+        if (collision) {
+          return reply.code(409).send({
+            code: "CUSTOMER_NAME_TAKEN",
+            message: `A customer named "${collision.name}" already exists in this workspace`,
+          });
+        }
+      }
+      data.name = name;
+      data.normalizedName = normalizedName;
+    }
+    if (body.primaryEmail !== undefined) data.primaryEmail = body.primaryEmail?.trim() || null;
+    if (body.domain !== undefined) data.domain = body.domain?.trim() || null;
+    if (body.phone !== undefined) data.phone = body.phone?.trim() || null;
+    if (body.externalRef !== undefined) data.externalRef = body.externalRef?.trim() || null;
+    if (body.notes !== undefined) data.notes = body.notes?.trim() || null;
+
+    if (Object.keys(data).length === 0) {
+      return reply.code(400).send({ message: "No fields to update" });
+    }
+
+    const customer = await app.services.prisma.customer.update({
+      where: { id: params.customerId },
+      data,
+    });
+
+    await app.services.auditEventLogger.log({
+      workspaceId: params.workspaceId,
+      actorUserId: auth.userId,
+      entityType: "CUSTOMER",
+      entityId: params.customerId,
+      action: "reference.customer_updated",
+      metadata: { name: customer.name },
+      request,
+    });
+
+    return reply.send({ customer });
   });
 
   app.delete("/api/v1/workspaces/:workspaceId/reference/customers/:customerId", async (request, reply) => {

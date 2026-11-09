@@ -26,6 +26,7 @@ Status labels used in these docs:
 | Login, allowlist, roles, mailbox OAuth | [`architecture/auth.md`](architecture/auth.md) |
 | Inbox UX / filters / search | [`product/inbox.md`](product/inbox.md) |
 | Jobs, numbering, restore | [`product/jobs.md`](product/jobs.md) |
+| Customers (select-or-create, Company Data) | [`product/customers.md`](product/customers.md) |
 | Active Bids product surface | [`product/active-bids.md`](product/active-bids.md) |
 | Local setup, tests, commands | [`operations/local-development.md`](operations/local-development.md) |
 | Env isolation, Railway, Vercel, migrate deploy | [`DEPLOYMENT.md`](DEPLOYMENT.md) |

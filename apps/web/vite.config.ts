@@ -19,6 +19,10 @@ export default defineConfig({
         rootDir,
         '../../packages/shared/src/inbox-participant-match.ts',
       ),
+      '@forgeops/shared/reference/normalize': path.resolve(
+        rootDir,
+        '../../packages/shared/src/reference/normalize.ts',
+      ),
     },
   },
   server: {

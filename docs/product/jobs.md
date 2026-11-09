@@ -26,8 +26,9 @@ Users with Job edit permission (`OWNER` / `ADMIN` / `MEMBER`) can enable page-le
 When Edit mode is ON:
 
 - Primary visible fields become inline-editable (click a field to open its control)
-- Job number, Job/project name, Customer (`Job.customerId`), Start date
+- Job number, Job/project name, Customer (`Job.customerId` via select-or-create), Start date
 - Each field saves independently through the canonical `PUT /jobs/:jobId`
+- Customer uses the shared select-or-create control (existing or explicit Create) — see [customers.md](customers.md)
 - Row navigation into Job detail is paused to avoid accidental page changes
 - Turning **Done Editing** saves any active field (if valid) before exiting; it does not silently discard
 

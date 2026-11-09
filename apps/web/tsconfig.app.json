@@ -25,6 +25,9 @@
       ],
       "@forgeops/shared/bidding/scope-detail": [
         "../../packages/shared/src/bidding/scope-detail.ts"
+      ],
+      "@forgeops/shared/reference/normalize": [
+        "../../packages/shared/src/reference/normalize.ts"
       ]
     },
 

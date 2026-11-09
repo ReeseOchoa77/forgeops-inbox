@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, ApiRequestError, type JobSummary, type CustomerSummary } from '../api'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { JobImportView } from './JobImportView'
+import { CustomerSelectOrCreate } from '../components/CustomerSelectOrCreate'
 import { JobsInlineFieldCell } from '../components/JobsInlineField'
 import {
   getCachedJobsList,
@@ -462,6 +463,7 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
     }
 
     if (field === 'customerId' && active) {
+      const selected = customers.find((c) => c.id === activeDraft)
       return (
         <JobsInlineFieldCell
           jobId={job.id}
@@ -479,47 +481,29 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
           suppressBlurSave
           ariaLabel={labels.customerId}
         >
-          <select
+          <CustomerSelectOrCreate
+            workspaceId={workspaceId}
             autoFocus
-            aria-label={labels.customerId}
-            value={activeDraft}
             disabled={saving}
-            onMouseDown={() => { suppressBlurSaveRef.current = true }}
-            onChange={(e) => {
-              const next = e.target.value
-              setActiveDraft(next)
-              void persistInlineField(job.id, 'customerId', next, job)
+            ariaLabel={labels.customerId}
+            customers={customers}
+            value={{
+              customerId: activeDraft || null,
+              customerName: selected?.name ?? (activeDraft ? job.customerName : null),
             }}
-            onBlur={() => {
-              if (suppressBlurSaveRef.current || saving) return
-              void saveActiveCell()
+            onCustomersUpdated={setCustomers}
+            onFocusWithinChange={(focused) => {
+              suppressBlurSaveRef.current = focused
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                cancelActiveCell()
+            onChange={(next) => {
+              const nextId = next.customerId ?? ''
+              setActiveDraft(nextId)
+              // Persist only when a Customer is chosen, cleared, or create completed.
+              if (next.customerId || next.customerName === null) {
+                void persistInlineField(job.id, 'customerId', nextId, job)
               }
             }}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: '4px 6px',
-              border: '1px solid #93c5fd',
-              borderRadius: 4,
-              fontSize: 13,
-              background: '#fff',
-            }}
-          >
-            <option value="">— None —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-            {activeDraft
-              && !customers.some((c) => c.id === activeDraft)
-              && job.customerName
-              ? <option value={activeDraft}>{job.customerName}</option>
-              : null}
-          </select>
+          />
         </JobsInlineFieldCell>
       )
     }
@@ -1105,11 +1089,18 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Customer</label>
-                  <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 6, fontSize: 13, background: '#fff', boxSizing: 'border-box' }}>
-                    <option value="">— None —</option>
-                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <CustomerSelectOrCreate
+                    workspaceId={workspaceId}
+                    customers={customers}
+                    value={{
+                      customerId: form.customerId || null,
+                      customerName: customers.find((c) => c.id === form.customerId)?.name ?? null,
+                    }}
+                    onCustomersUpdated={setCustomers}
+                    onChange={(next) =>
+                      setForm((f) => ({ ...f, customerId: next.customerId ?? '' }))
+                    }
+                  />
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: '#374151', display: 'block', marginBottom: 4 }}>Description</label>

@@ -2996,8 +2996,56 @@ export const api = {
   getStoredAttachmentDownloadUrl: (workspaceId: string, attachmentId: string, inline = false) =>
     `${BASE}/workspaces/${workspaceId}/attachments/${attachmentId}/download${inline ? '?inline=true' : ''}`,
 
-  getCustomers: (workspaceId: string) =>
-    request<{ customers: CustomerSummary[] }>(`/workspaces/${workspaceId}/reference/customers`),
+  getCustomers: (
+    workspaceId: string,
+    params?: { includeCounts?: boolean; search?: string }
+  ) => {
+    const p = new URLSearchParams()
+    if (params?.includeCounts) p.set('includeCounts', 'true')
+    if (params?.search?.trim()) p.set('search', params.search.trim())
+    const q = p.toString()
+    return request<{ customers: CustomerSummary[] }>(
+      `/workspaces/${workspaceId}/reference/customers${q ? `?${q}` : ''}`
+    )
+  },
+
+  createCustomer: (
+    workspaceId: string,
+    body: {
+      name: string
+      primaryEmail?: string | null
+      domain?: string | null
+      phone?: string | null
+      externalRef?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ customer: CustomerSummary; created: boolean }>(
+      `/workspaces/${workspaceId}/reference/customers`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  getCustomer: (workspaceId: string, customerId: string) =>
+    request<CustomerDetailResponse>(
+      `/workspaces/${workspaceId}/reference/customers/${customerId}`
+    ),
+
+  updateCustomer: (
+    workspaceId: string,
+    customerId: string,
+    body: {
+      name?: string
+      primaryEmail?: string | null
+      domain?: string | null
+      phone?: string | null
+      externalRef?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ customer: CustomerSummary }>(
+      `/workspaces/${workspaceId}/reference/customers/${customerId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
 
   getWorkspaceMembers: (workspaceId: string) =>
     request<{ members: WorkspaceMemberSummary[] }>(`/admin/workspaces/${workspaceId}/members`),
@@ -4810,6 +4858,64 @@ export interface CustomerSummary {
   normalizedName: string;
   primaryEmail: string | null;
   domain: string | null;
+  phone?: string | null;
+  externalRef?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  _count?: {
+    aliases: number;
+    contacts: number;
+    jobs: number;
+    bidCandidates?: number;
+  };
+}
+
+export interface CustomerDetailResponse {
+  customer: CustomerSummary & {
+    phone: string | null;
+    externalRef: string | null;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+    _count: {
+      aliases: number;
+      contacts: number;
+      jobs: number;
+      bidCandidates: number;
+    };
+  };
+  jobs: Array<{
+    id: string;
+    jobNumber: string | null;
+    name: string;
+    status: string;
+    startDate: string | null;
+    archivedAt: string | null;
+    updatedAt: string;
+  }>;
+  bidCandidates: Array<{
+    id: string;
+    projectName: string | null;
+    lifecycle: string;
+    bidDueAt: string | null;
+    anticipatedStartAt: string | null;
+    canonicalJobId: string | null;
+    updatedAt: string;
+    quotes: Array<{
+      id: string;
+      quotedAmount: string | number | null;
+      matchStatus: string;
+    }>;
+  }>;
+  contacts: Array<{
+    id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    role: string | null;
+    domain: string | null;
+  }>;
 }
 
 export interface WorkspaceMemberSummary {

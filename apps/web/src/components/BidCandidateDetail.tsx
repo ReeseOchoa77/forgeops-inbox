@@ -13,6 +13,7 @@ import {
   parseDetailedScope,
   type DetailedScope,
 } from '@forgeops/shared/bidding/scope-detail'
+import { CustomerSelectOrCreate } from './CustomerSelectOrCreate'
 
 type Props = {
   workspaceId: string
@@ -47,6 +48,7 @@ export function BidCandidateDetail({
 
   const [projectName, setProjectName] = useState(detail.projectName ?? '')
   const [customerId, setCustomerId] = useState(detail.customerId ?? '')
+  const [customerName, setCustomerName] = useState(detail.customerName ?? '')
   const [bidDue, setBidDue] = useState(dateInputValue(detail.bidDueAt))
   const [startDate, setStartDate] = useState(
     dateInputValue(detail.anticipatedStartAt)
@@ -68,6 +70,7 @@ export function BidCandidateDetail({
   const hydrateFromDetail = (next: OperationalBidCandidateDetail) => {
     setProjectName(next.projectName ?? '')
     setCustomerId(next.customerId ?? '')
+    setCustomerName(next.customerName ?? '')
     setBidDue(dateInputValue(next.bidDueAt))
     setStartDate(dateInputValue(next.anticipatedStartAt))
     setExternalNumber(next.externalProjectNumber ?? '')
@@ -127,11 +130,18 @@ export function BidCandidateDetail({
     setSaving(true)
     setSaveError(null)
     setSaveOk(false)
-    const selectedCustomer = customers.find((c) => c.id === customerId) ?? null
+    if (customerName.trim() && !customerId) {
+      setSaveError('Select an existing Customer or Create one before saving.')
+      setSaveOk(false)
+      return
+    }
     const customerPayload = customerId
-      ? selectedCustomer
-        ? { customerId, customerName: selectedCustomer.name }
-        : { customerId }
+      ? {
+          customerId,
+          customerName:
+            customers.find((c) => c.id === customerId)?.name ??
+            (customerName.trim() || null),
+        }
       : { customerId: null, customerName: null }
     try {
       await api.patchOperationalBidCandidate(workspaceId, detail.id, {
@@ -256,18 +266,20 @@ export function BidCandidateDetail({
               />
             </Field>
             <Field label="Customer / GC">
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">No customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <CustomerSelectOrCreate
+                workspaceId={workspaceId}
+                customers={customers}
+                value={{
+                  customerId: customerId || null,
+                  customerName: customerName || null,
+                }}
+                onCustomersUpdated={setCustomers}
+                onChange={(next) => {
+                  setCustomerId(next.customerId ?? '')
+                  setCustomerName(next.customerName ?? '')
+                }}
+                disabled={saving}
+              />
             </Field>
             <Field label="Bid due">
               <input
@@ -1140,8 +1152,9 @@ function ConvertToJobDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
-  const [customerName, setCustomerName] = useState('')
+  const [customerName, setCustomerName] = useState<string | null>(null)
   const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [jobNumber, setJobNumber] = useState('')
   const [startDate, setStartDate] = useState('')
   const [bidDueAt, setBidDueAt] = useState('')
@@ -1169,7 +1182,7 @@ function ConvertToJobDialog({
           return
         }
         setProjectName(p.projectName)
-        setCustomerName(p.customerName || '')
+        setCustomerName(p.customerName || null)
         setCustomerId(p.customerId)
         setJobNumber(p.suggestedJobNumber || '')
         setStartDate(p.startDate ? p.startDate.slice(0, 10) : '')
@@ -1190,17 +1203,22 @@ function ConvertToJobDialog({
 
   useEffect(() => {
     loadPreview()
+    api.getCustomers(workspaceId).then((r) => setCustomers(r.customers)).catch(() => setCustomers([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, candidateId])
 
   const confirm = async () => {
     if (!projectName.trim() || !jobNumber.trim()) return
+    if (customerName?.trim() && !customerId) {
+      setError('Select an existing Customer or Create one before converting.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
       const result = await api.convertBidCandidateToJob(workspaceId, candidateId, {
         projectName: projectName.trim(),
-        customerName: customerName.trim() || null,
+        customerName: customerName?.trim() || null,
         customerId,
         jobNumber: jobNumber.trim(),
         startDate: startDate
@@ -1262,14 +1280,20 @@ function ConvertToJobDialog({
               style={{ ...inputStyle, marginTop: 4 }}
             />
           </label>
-          <label style={fieldLabel}>
-            Customer / GC
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              style={{ ...inputStyle, marginTop: 4 }}
+          <div style={{ ...fieldLabel, marginBottom: 10 }}>
+            <div style={{ marginBottom: 4 }}>Customer / GC</div>
+            <CustomerSelectOrCreate
+              workspaceId={workspaceId}
+              customers={customers}
+              value={{ customerId, customerName }}
+              onCustomersUpdated={setCustomers}
+              onChange={(next) => {
+                setCustomerId(next.customerId)
+                setCustomerName(next.customerName)
+              }}
+              disabled={busy}
             />
-          </label>
+          </div>
           <label style={fieldLabel}>
             Job number
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>

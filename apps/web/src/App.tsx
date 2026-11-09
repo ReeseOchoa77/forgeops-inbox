@@ -118,6 +118,7 @@ export default function App() {
     } catch { /* ignore */ }
     return 'customers'
   })
+  const [biddingSelectedIdHint, setBiddingSelectedIdHint] = useState<string | null>(null)
 
   // Legacy Team Access top-level page → Workspace → Team Access tab
   useEffect(() => {
@@ -138,6 +139,10 @@ export default function App() {
     if (page !== 'documents') return
     setReferenceTabHint('documents')
     setPage('reference')
+  }, [page])
+
+  useEffect(() => {
+    if (page !== 'bidding') setBiddingSelectedIdHint(null)
   }, [page])
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -923,6 +928,7 @@ export default function App() {
               <BiddingView
                 workspaceId={workspaceId}
                 breakpoint={bp}
+                initialSelectedId={biddingSelectedIdHint}
                 onOpenMessage={(messageId, inboxConnectionId) =>
                   openMessage(messageId, {
                     connectionId: inboxConnectionId,
@@ -977,6 +983,11 @@ export default function App() {
                 workspaceId={workspaceId}
                 userRole={currentRole}
                 initialTab={referenceTabHint}
+                onOpenJob={(jobId) => openJob(jobId, undefined, 'jobs')}
+                onOpenBid={(candidateId) => {
+                  setBiddingSelectedIdHint(candidateId)
+                  setPage('bidding')
+                }}
               />
             </div>
           )}

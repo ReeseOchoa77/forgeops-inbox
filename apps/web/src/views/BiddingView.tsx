@@ -10,6 +10,8 @@ import {
 } from '../bid-candidate-quoted'
 import { QuotedBadge } from '../components/Badges'
 import { BidCandidateDetail, lifecycleLabel } from '../components/BidCandidateDetail'
+import { CustomerSelectOrCreate } from '../components/CustomerSelectOrCreate'
+import type { CustomerSummary } from '../api'
 import { formatBidDue } from '../bidding-display'
 import type { Breakpoint } from '../hooks/useBreakpoint'
 
@@ -18,6 +20,8 @@ type Props = {
   breakpoint?: Breakpoint
   onOpenMessage?: (messageId: string, inboxConnectionId: string) => void
   onOpenJob?: (jobId: string) => void
+  /** Open a specific Bid Candidate (e.g. from Customer detail). */
+  initialSelectedId?: string | null
 }
 
 type QuoteFilter = 'all' | 'with' | 'without'
@@ -27,6 +31,7 @@ export function BiddingView({
   breakpoint,
   onOpenMessage,
   onOpenJob,
+  initialSelectedId = null,
 }: Props) {
   const isPhone = breakpoint === 'phone'
   const [search, setSearch] = useState('')
@@ -42,14 +47,20 @@ export function BiddingView({
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId)
   const [detail, setDetail] = useState<OperationalBidCandidateDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [createName, setCreateName] = useState('')
-  const [createCustomer, setCreateCustomer] = useState('')
+  const [createCustomerId, setCreateCustomerId] = useState<string | null>(null)
+  const [createCustomerName, setCreateCustomerName] = useState<string | null>(null)
+  const [createCustomers, setCreateCustomers] = useState<CustomerSummary[]>([])
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (initialSelectedId) setSelectedId(initialSelectedId)
+  }, [initialSelectedId])
 
   const reload = () => {
     setLoading(true)
@@ -102,10 +113,12 @@ export function BiddingView({
 
   const openCreate = () => {
     setCreateName('')
-    setCreateCustomer('')
+    setCreateCustomerId(null)
+    setCreateCustomerName(null)
     setCreateError(null)
     setCreateBusy(false)
     setShowCreate(true)
+    api.getCustomers(workspaceId).then((r) => setCreateCustomers(r.customers)).catch(() => setCreateCustomers([]))
   }
 
   const closeCreate = () => {
@@ -116,16 +129,22 @@ export function BiddingView({
 
   const createCandidate = async () => {
     if (!createName.trim() || createBusy) return
+    if (createCustomerName && !createCustomerId) {
+      setCreateError('Select an existing Customer or Create one before saving the Bid.')
+      return
+    }
     setCreateBusy(true)
     setCreateError(null)
     try {
       const res = await api.createOperationalBidCandidate(workspaceId, {
         projectName: createName.trim(),
-        customerName: createCustomer.trim() || null,
+        customerId: createCustomerId,
+        customerName: createCustomerName,
       })
       setShowCreate(false)
       setCreateName('')
-      setCreateCustomer('')
+      setCreateCustomerId(null)
+      setCreateCustomerName(null)
       setCreateError(null)
       setSelectedId(res.candidateId)
       reload()
@@ -240,12 +259,19 @@ export function BiddingView({
       </div>
       {showCreate && (
         <CreateBidModal
+          workspaceId={workspaceId}
           name={createName}
-          customer={createCustomer}
+          customerId={createCustomerId}
+          customerName={createCustomerName}
+          customers={createCustomers}
           busy={createBusy}
           error={createError}
           onName={setCreateName}
-          onCustomer={setCreateCustomer}
+          onCustomerChange={(next) => {
+            setCreateCustomerId(next.customerId)
+            setCreateCustomerName(next.customerName)
+          }}
+          onCustomersUpdated={setCreateCustomers}
           onClose={closeCreate}
           onSubmit={() => void createCandidate()}
         />
@@ -389,21 +415,29 @@ export function BiddingView({
 }
 
 function CreateBidModal({
+  workspaceId,
   name,
-  customer,
+  customerId,
+  customerName,
+  customers,
   busy,
   error,
   onName,
-  onCustomer,
+  onCustomerChange,
+  onCustomersUpdated,
   onClose,
   onSubmit,
 }: {
+  workspaceId: string
   name: string
-  customer: string
+  customerId: string | null
+  customerName: string | null
+  customers: CustomerSummary[]
   busy: boolean
   error: string | null
   onName: (v: string) => void
-  onCustomer: (v: string) => void
+  onCustomerChange: (next: { customerId: string | null; customerName: string | null }) => void
+  onCustomersUpdated: (customers: CustomerSummary[]) => void
   onClose: () => void
   onSubmit: () => void
 }) {
@@ -491,16 +525,18 @@ function CreateBidModal({
             style={{ ...selectStyle, width: '100%', marginTop: 4, boxSizing: 'border-box' }}
           />
         </label>
-        <label style={{ display: 'block', fontSize: 12, color: '#374151', marginBottom: 14 }}>
-          Customer / GC (optional)
-          <input
-            value={customer}
-            onChange={(e) => onCustomer(e.target.value)}
-            placeholder="Customer / GC (optional)"
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: '#374151', marginBottom: 4 }}>Customer / GC (optional)</div>
+          <CustomerSelectOrCreate
+            workspaceId={workspaceId}
+            customers={customers}
+            value={{ customerId, customerName }}
+            onChange={onCustomerChange}
+            onCustomersUpdated={onCustomersUpdated}
             disabled={busy}
-            style={{ ...selectStyle, width: '100%', marginTop: 4, boxSizing: 'border-box' }}
+            placeholder="Customer / GC (optional)"
           />
-        </label>
+        </div>
         {error && (
           <div role="alert" style={{ color: '#b42318', fontSize: 13, marginBottom: 10 }}>
             {error}

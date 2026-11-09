@@ -508,6 +508,16 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       return reply.code(409).send({ message: "A job with this name already exists in this workspace" });
     }
 
+    if (body.customerId) {
+      const customer = await app.services.prisma.customer.findFirst({
+        where: { id: body.customerId, workspaceId },
+        select: { id: true },
+      });
+      if (!customer) {
+        return reply.code(400).send({ message: "Customer is not in this workspace" });
+      }
+    }
+
     const job = await app.services.prisma.$transaction(async (tx) => {
       const created = await tx.job.create({
         data: {
@@ -887,7 +897,7 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       });
       if (!member) return reply.code(400).send({ message: "Estimator is not a member of this workspace" });
     }
-    for (const customerId of [body.contractorCustomerId, body.clientCustomerId]) {
+    for (const customerId of [body.customerId, body.contractorCustomerId, body.clientCustomerId]) {
       if (!customerId) continue;
       const customer = await app.services.prisma.customer.findFirst({
         where: { id: customerId, workspaceId },
