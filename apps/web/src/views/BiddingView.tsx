@@ -14,9 +14,11 @@ import { CustomerSelectOrCreate } from '../components/CustomerSelectOrCreate'
 import type { CustomerSummary } from '../api'
 import { formatBidDue } from '../bidding-display'
 import type { Breakpoint } from '../hooks/useBreakpoint'
+import { loadBiddingState, persistBiddingState } from '../workspace-state'
 
 type Props = {
   workspaceId: string
+  userId?: string
   breakpoint?: Breakpoint
   onOpenMessage?: (messageId: string, inboxConnectionId: string) => void
   onOpenJob?: (jobId: string) => void
@@ -28,16 +30,22 @@ type QuoteFilter = 'all' | 'with' | 'without'
 
 export function BiddingView({
   workspaceId,
+  userId,
   breakpoint,
   onOpenMessage,
   onOpenJob,
   initialSelectedId = null,
 }: Props) {
   const isPhone = breakpoint === 'phone'
-  const [search, setSearch] = useState('')
-  const [quoteFilter, setQuoteFilter] = useState<QuoteFilter>('all')
-  const [dueSoon, setDueSoon] = useState(false)
-  const [includeArchived, setIncludeArchived] = useState(false)
+  const restored = userId ? loadBiddingState({ workspaceId, userId }) : null
+  const restoredQuote: QuoteFilter =
+    restored?.quoteFilter === 'with' || restored?.quoteFilter === 'without' || restored?.quoteFilter === 'all'
+      ? restored.quoteFilter
+      : 'all'
+  const [search, setSearch] = useState(() => restored?.search ?? '')
+  const [quoteFilter, setQuoteFilter] = useState<QuoteFilter>(() => restoredQuote)
+  const [dueSoon, setDueSoon] = useState(() => restored?.dueSoon ?? false)
+  const [includeArchived, setIncludeArchived] = useState(() => restored?.includeArchived ?? false)
   const [rows, setRows] = useState<OperationalBidCandidate[]>([])
   const [summary, setSummary] = useState({
     total: 0,
@@ -61,6 +69,15 @@ export function BiddingView({
   useEffect(() => {
     if (initialSelectedId) setSelectedId(initialSelectedId)
   }, [initialSelectedId])
+
+  useEffect(() => {
+    if (!userId) return
+    persistBiddingState({
+      workspaceId,
+      userId,
+      state: { search, quoteFilter, dueSoon, includeArchived },
+    })
+  }, [workspaceId, userId, search, quoteFilter, dueSoon, includeArchived])
 
   const reload = () => {
     setLoading(true)

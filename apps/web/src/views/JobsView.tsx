@@ -30,9 +30,11 @@ import {
   type JobsInlineActiveCell,
   type JobsInlineField,
 } from '../jobs-inline-edit'
+import { loadJobsState, persistJobsState } from '../workspace-state'
 
 interface Props {
   workspaceId: string
+  userId?: string
   userRole: string
   onSelectJob: (jobId: string, summary?: JobSummary) => void
   breakpoint?: Breakpoint
@@ -96,23 +98,26 @@ const EMPTY_FORM: CreateJobFormState = {
   description: '', startDate: '', targetCompletionDate: '', aliases: ''
 }
 
-export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
+export function JobsView({ workspaceId, userId, userRole, onSelectJob, breakpoint = 'desktop' }: Props) {
+  const restoredJobs = userId ? loadJobsState({ workspaceId, userId }) : null
   const [jobs, setJobs] = useState<JobSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [customerFilter, setCustomerFilter] = useState('')
-  const [assignedUserFilter, setAssignedUserFilter] = useState('')
-  const [hasOverdueTasks, setHasOverdueTasks] = useState(false)
-  const [showArchived, setShowArchived] = useState(false)
+  const [search, setSearch] = useState(() => restoredJobs?.search ?? '')
+  const [debouncedSearch, setDebouncedSearch] = useState(() => restoredJobs?.search ?? '')
+  const [statusFilter, setStatusFilter] = useState(() => restoredJobs?.statusFilter ?? 'ALL')
+  const [customerFilter, setCustomerFilter] = useState(() => restoredJobs?.customerFilter ?? '')
+  const [assignedUserFilter, setAssignedUserFilter] = useState(() => restoredJobs?.assignedUserFilter ?? '')
+  const [hasOverdueTasks, setHasOverdueTasks] = useState(() => restoredJobs?.hasOverdueTasks ?? false)
+  const [showArchived, setShowArchived] = useState(() => restoredJobs?.showArchived ?? false)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [workspaceJobsTotal, setWorkspaceJobsTotal] = useState<number | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const initialSort = getJobListSort()
+  const initialSort = restoredJobs
+    ? { sortBy: restoredJobs.sortBy, sortDir: restoredJobs.sortDir }
+    : getJobListSort()
   const [sortBy, setSortBy] = useState(initialSort.sortBy)
   const [sortDir, setSortDir] = useState<JobListSortDir>(initialSort.sortDir)
 
@@ -174,6 +179,36 @@ export function JobsView({ workspaceId, userRole, onSelectJob, breakpoint = 'des
   useEffect(() => {
     setJobListSort({ sortBy, sortDir })
   }, [sortBy, sortDir])
+
+  // Persist Jobs list filters. Edit Mode intentionally NOT persisted (reload → OFF).
+  useEffect(() => {
+    if (!userId) return
+    persistJobsState({
+      workspaceId,
+      userId,
+      state: {
+        search: debouncedSearch,
+        statusFilter,
+        customerFilter,
+        assignedUserFilter,
+        hasOverdueTasks,
+        showArchived,
+        sortBy,
+        sortDir,
+      },
+    })
+  }, [
+    workspaceId,
+    userId,
+    debouncedSearch,
+    statusFilter,
+    customerFilter,
+    assignedUserFilter,
+    hasOverdueTasks,
+    showArchived,
+    sortBy,
+    sortDir,
+  ])
 
   const filterParams = {
     status: statusFilter !== 'ALL' ? statusFilter : undefined,

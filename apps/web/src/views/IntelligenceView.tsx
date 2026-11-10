@@ -13,9 +13,16 @@ import {
   showInstructionsSection,
   showRulesSection,
 } from '../intelligence-display'
+import {
+  DEFAULT_INTELLIGENCE_STATE,
+  loadIntelligenceState,
+  persistIntelligenceState,
+  type IntelligencePersistedState,
+} from '../workspace-state'
 
 type Props = {
   workspaceId: string
+  userId?: string
   /** Stable registry id — when set, show detail. */
   intelligenceId?: string | null
   onOpen: (id: string) => void
@@ -24,6 +31,7 @@ type Props = {
 
 export function IntelligenceView({
   workspaceId,
+  userId,
   intelligenceId = null,
   onOpen,
   onBack,
@@ -32,6 +40,7 @@ export function IntelligenceView({
     return (
       <IntelligenceDetail
         workspaceId={workspaceId}
+        userId={userId}
         intelligenceId={intelligenceId}
         onBack={onBack}
       />
@@ -111,13 +120,16 @@ function IntelligenceOverview({
 
 function IntelligenceDetail({
   workspaceId,
+  userId,
   intelligenceId,
   onBack,
 }: {
   workspaceId: string
+  userId?: string
   intelligenceId: string
   onBack: () => void
 }) {
+  const restored = userId ? loadIntelligenceState({ workspaceId, userId }) : null
   const [component, setComponent] = useState<IntelligenceSafeDto | null>(null)
   const [instructions, setInstructions] = useState<
     Array<{ key: string; available: boolean; text: string | null; note?: string }>
@@ -125,13 +137,18 @@ function IntelligenceDetail({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<'overview' | 'pipeline' | 'instructions' | 'evaluation' | 'test'>(
-    'overview'
+    () => restored?.tab ?? 'overview'
+  )
+  const [intelUi, setIntelUi] = useState<IntelligencePersistedState>(
+    () => restored ?? DEFAULT_INTELLIGENCE_STATE
   )
 
   useEffect(() => {
     setLoading(true)
     setError(null)
-    setTab('overview')
+    const next = userId ? loadIntelligenceState({ workspaceId, userId }) : null
+    setTab(next?.tab ?? 'overview')
+    setIntelUi(next ?? DEFAULT_INTELLIGENCE_STATE)
     api
       .getIntelligence(workspaceId, intelligenceId)
       .then((r) => {
@@ -143,7 +160,13 @@ function IntelligenceDetail({
         setError(e instanceof Error ? e.message : 'Not found')
       })
       .finally(() => setLoading(false))
-  }, [workspaceId, intelligenceId])
+  }, [workspaceId, intelligenceId, userId])
+
+  useEffect(() => {
+    if (!userId) return
+    const next = { ...intelUi, tab }
+    persistIntelligenceState({ workspaceId, userId, state: next })
+  }, [workspaceId, userId, tab, intelUi])
 
   if (loading) {
     return <div style={{ color: '#6b7280', fontSize: 13 }}>Loading…</div>
@@ -260,7 +283,13 @@ function IntelligenceDetail({
         )}
         {tab === 'evaluation' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <EvaluationSection workspaceId={workspaceId} component={component} />
+            <EvaluationSection
+              workspaceId={workspaceId}
+              userId={userId}
+              component={component}
+              uiState={intelUi}
+              onUiStateChange={setIntelUi}
+            />
           </div>
         )}
         {tab === 'test' && <TestSection workspaceId={workspaceId} component={component} />}
@@ -382,10 +411,16 @@ function InstructionsRulesSection({
 
 function EvaluationSection({
   workspaceId,
+  userId,
   component,
+  uiState,
+  onUiStateChange,
 }: {
   workspaceId: string
+  userId?: string
   component: IntelligenceSafeDto
+  uiState: IntelligencePersistedState
+  onUiStateChange: (next: IntelligencePersistedState) => void
 }) {
   if (!component.evaluation.supported) {
     return (
@@ -413,8 +448,11 @@ function EvaluationSection({
     <div style={{ height: '100%', minHeight: 0 }}>
       <JobMatcherEvaluationPanel
         workspaceId={workspaceId}
+        userId={userId}
         groundTruthQuality={component.evaluation.groundTruthQuality}
         groundTruthNotes={component.evaluation.groundTruthNotes}
+        initialUi={uiState}
+        onUiChange={onUiStateChange}
       />
     </div>
   )

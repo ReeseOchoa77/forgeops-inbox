@@ -1,0 +1,14 @@
+# Persistent workspace state (ForgeOps)
+
+User-facing operational filters, tabs, analysis configuration, and long-running workflows should not unnecessarily disappear on browser refresh.
+
+**Rules:**
+
+- Prefer **URL** state for navigation and shareable filters (`view`, `intel`, `intelTab`, compact query params).
+- Use **scoped, versioned** client persistence (`apps/web/src/workspace-state/`) for safe UI workspace state (prefs, drafts, non-shareable filters).
+- Scope keys by **workspace + user + surface**. Never leak Workspace A filters into Workspace B.
+- Validate restored entity IDs; clear invalid selections.
+- **Never fake durable operations** with localStorage. Running evaluations / worker jobs need a real server-side run or job identity; the server is authoritative on reload.
+- Do not persist secrets, tokens, full email bodies, or attachment content.
+
+Canonical doc: [`docs/architecture/workspace-state-persistence.md`](docs/architecture/workspace-state-persistence.md).

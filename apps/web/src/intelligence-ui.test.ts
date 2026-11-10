@@ -162,6 +162,11 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('Read-only evaluation')
     expect(src).toContain('Match Analysis')
     expect(src).toContain('Correct / Eval')
+    expect(src).toContain('Dataset summary')
+    expect(src).toContain('job-matcher-dataset-summary')
+    expect(src).toContain('job-matcher-metric-cards')
+    expect(src).toContain('No-match rate')
+    expect(src).toContain('Ambiguity')
   })
 
 

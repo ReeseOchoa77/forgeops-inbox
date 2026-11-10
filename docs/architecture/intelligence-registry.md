@@ -124,6 +124,20 @@ Server owns execution. Do not put executable evaluators in client DTOs.
 
 Job Matcher reuses the existing historical evaluator (`job-match-historical-eval`). Do not build a parallel evaluator.
 
+### STATE RESTORATION BEHAVIOR
+
+Any intelligence that adds evaluations, test runners, long-running analysis, or filterable configuration must declare restoration behavior (also see [workspace-state-persistence.md](workspace-state-persistence.md)):
+
+| Concern | Expectation |
+|---------|-------------|
+| Configuration that survives refresh | Draft/config in scoped client persistence and/or URL (jobs mode, sampling, lifecycle, outcome filter, etc.) |
+| Runs that survive refresh | Only if a **canonical server run/task id** exists; client reconnects and polls. Never invent RUNNING from localStorage. |
+| How run identity is restored | Persist run id only; GET authoritative status from server; clear stale ids |
+| What results persist | Prefer server-stored run results. Do not dump large result sets or email bodies into localStorage. |
+| Intentionally transient | In-flight sync HTTP responses, hover/menu state, Edit Mode–like operational locks |
+
+**Job Matcher (current):** sync `POST .../evaluate` only — configuration + UI prefs restore; **results and in-flight runs do not** survive refresh until a durable run API exists.
+
 ## Explainability
 
 Only declare evidence the system actually produces (e.g. matcher `evidence` / `markerTrace`, classification authority, scope `fieldSources`).
@@ -176,6 +190,7 @@ A new intelligence system is NOT complete until:
 - [ ] Explainability capability declared (honest)
 - [ ] Evaluation capability declared (`supported` true/false + why)
 - [ ] Ground-truth quality declared
+- [ ] **STATE RESTORATION BEHAVIOR** documented for eval/test/config surfaces
 - [ ] Version identified from implementation constants where applicable
 - [ ] Appropriate tests added / registry tests still pass
 - [ ] Manage → Intelligence compatibility verified (`discoverable` set intentionally)

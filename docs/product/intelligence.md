@@ -27,8 +27,13 @@ Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENC
 
 See [Intelligence Registry](../architecture/intelligence-registry.md) and [matcher evaluation](../operations/matcher-evaluation.md).
 
+## Refresh / working context
+
+Selected Intelligence component, detail tab, and Job Matcher evaluation **configuration** (plus outcome filter / Emails|Jobs view) restore after reload via URL + scoped workspace persistence. Evaluation **results** and an in-flight sync run do **not** survive refresh — there is no server EvaluationRun id yet. See [workspace-state-persistence.md](../architecture/workspace-state-persistence.md).
+
 ## What you cannot do (V1)
 
 - Edit production prompts, models, or rules
 - Auto-run live LLM calls just by opening a page
 - Mutate Jobs, emails, contacts, classifications, or Outlook from evaluation/test
+- Resume a Manage UI evaluation after refresh without re-running (sync HTTP only)

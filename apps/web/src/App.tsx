@@ -31,6 +31,12 @@ import {
 import { prefetchInboxList } from './inbox-list-cache'
 import { shouldShowDevelopmentIndicator } from './app-env'
 import { canAccessPlatformOperatorNav } from './system-nav-access'
+import {
+  isRestorablePage,
+  loadNavState,
+  persistNavState,
+  type RestorablePage,
+} from './workspace-state'
 
 const SHOW_DEV_INDICATOR = shouldShowDevelopmentIndicator(import.meta.env)
 
@@ -123,6 +129,8 @@ export default function App() {
   })
   const [biddingSelectedIdHint, setBiddingSelectedIdHint] = useState<string | null>(null)
   const [intelligenceId, setIntelligenceId] = useState<string | null>(null)
+  const skipNavRestoreRef = useRef(false)
+  const navRestoredRef = useRef(false)
 
   // Legacy Team Access top-level page → Workspace → Team Access tab
   useEffect(() => {
@@ -201,6 +209,7 @@ export default function App() {
     }
 
     if (params.get('connected')) {
+      skipNavRestoreRef.current = true
       setConnectionNotice({
         type: 'success',
         message: 'Mailbox authorized and connected. Configure listening from Monitored Mailboxes when ready.',
@@ -213,6 +222,7 @@ export default function App() {
     }
 
     if (params.get('connection_error')) {
+      skipNavRestoreRef.current = true
       setConnectionNotice({ type: 'error', message: decodeURIComponent(params.get('connection_error')!) })
       setPage('workspace')
       window.history.replaceState({}, '', window.location.pathname)
@@ -237,6 +247,39 @@ export default function App() {
   useEffect(() => {
     if (workspaceId) localStorage.setItem('forgeops_workspace', workspaceId)
   }, [workspaceId])
+
+  // Restore page / Intelligence selection after refresh (URL wins over localStorage).
+  useEffect(() => {
+    if (!workspaceId || !session?.user?.id || navRestoredRef.current) return
+    navRestoredRef.current = true
+    if (skipNavRestoreRef.current) return
+    const restored = loadNavState({ workspaceId, userId: session.user.id })
+    if (!restored) return
+    if (restored.page === 'intelligence') {
+      const role = session.memberships.find((m) => m.workspace.id === workspaceId)?.role as UserRole | undefined
+      if (!role || !hasMinRole(role, 'ADMIN')) {
+        setPage('inbox')
+        setIntelligenceId(null)
+        return
+      }
+    }
+    setPage(restored.page)
+    setIntelligenceId(restored.page === 'intelligence' ? restored.intelligenceId : null)
+  }, [workspaceId, session])
+
+  // Persist restorable navigation (not ephemeral detail shells).
+  useEffect(() => {
+    if (!workspaceId || !session?.user?.id || !navRestoredRef.current) return
+    if (!isRestorablePage(page)) return
+    persistNavState({
+      workspaceId,
+      userId: session.user.id,
+      state: {
+        page: page as RestorablePage,
+        intelligenceId: page === 'intelligence' ? intelligenceId : null,
+      },
+    })
+  }, [page, intelligenceId, workspaceId, session?.user?.id])
 
   const loadConnections = useCallback(() => {
     if (!workspaceId || !session) return
@@ -870,6 +913,7 @@ export default function App() {
                 onSelectMessage={openMessage}
                 userRole={currentRole}
                 userEmail={userEmail}
+                userId={session.user?.id}
                 connections={connections}
                 breakpoint={bp}
                 openedMessageId={
@@ -932,6 +976,7 @@ export default function App() {
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <BiddingView
                 workspaceId={workspaceId}
+                userId={session.user?.id}
                 breakpoint={bp}
                 initialSelectedId={biddingSelectedIdHint}
                 onOpenMessage={(messageId, inboxConnectionId) =>
@@ -947,7 +992,7 @@ export default function App() {
 
           {page === 'jobs' && (
             <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <JobsView workspaceId={workspaceId} userRole={currentRole} onSelectJob={openJob} breakpoint={bp} />
+              <JobsView workspaceId={workspaceId} userId={session.user?.id} userRole={currentRole} onSelectJob={openJob} breakpoint={bp} />
             </div>
           )}
           {page === 'job-detail' && selectedJobId && (
@@ -1008,6 +1053,7 @@ export default function App() {
             >
               <IntelligenceView
                 workspaceId={workspaceId}
+                userId={session.user?.id}
                 intelligenceId={intelligenceId}
                 onOpen={(id) => setIntelligenceId(id)}
                 onBack={() => setIntelligenceId(null)}

@@ -44,6 +44,32 @@ import {
 import type { Breakpoint } from '../hooks/useBreakpoint'
 import { uiPx } from '../ui-scale'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
+import {
+  DEFAULT_INBOX_STATE,
+  loadInboxState,
+  persistInboxState,
+  type InboxPersistedState,
+} from '../workspace-state'
+
+function normalizeInboxPersisted(state: InboxPersistedState): InboxPersistedState {
+  let businessTypeKey = state.businessTypeKey
+  // Sent + Active Bid / Quote rules must match live filter chrome.
+  if (state.readFilter === 'sent' && businessTypeKey === 'BID_OPPORTUNITY') {
+    businessTypeKey = ''
+  }
+  if (state.readFilter !== 'sent' && businessTypeKey === 'ESTIMATE_QUOTE') {
+    businessTypeKey = ''
+  }
+  const priorityKeys =
+    state.priorityKeys.length > 0 ? state.priorityKeys : DEFAULT_INBOX_STATE.priorityKeys
+  return { ...state, businessTypeKey, priorityKeys }
+}
+
+function resolveInboxPersisted(workspaceId: string, userId?: string): InboxPersistedState {
+  if (!userId) return DEFAULT_INBOX_STATE
+  const loaded = loadInboxState({ workspaceId, userId })
+  return normalizeInboxPersisted(loaded ?? DEFAULT_INBOX_STATE)
+}
 
 function EmailOriginTag({ origin }: { origin: MessageSummary['emailOrigin'] }) {
   if (origin !== 'HISTORICAL_IMPORT') return null
@@ -252,6 +278,8 @@ interface Props {
   onSelectMessage: (id: string, opts?: { connectionId?: string }) => void
   userRole: string
   userEmail: string
+  /** Scopes persisted Inbox filters (workspace + user). */
+  userId?: string
   connections: ConnectionSummary[]
   breakpoint?: Breakpoint
   /** When set (detail open from Inbox), mark that row read locally without refetch. */
@@ -279,7 +307,7 @@ const INBOX_TABS: Array<{ key: InboxTab; label: string }> = [
 type ReadFilter = '' | 'unread' | 'read' | 'sent'
 type PriorityKey = 'LOW' | 'NORMAL' | 'HIGH'
 
-export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, connections, breakpoint = 'desktop', openedMessageId = null, onCompose }: Props) {
+export function MessagesView({ workspaceId, connectionId, onSelectMessage, userRole, userEmail, userId, connections, breakpoint = 'desktop', openedMessageId = null, onCompose }: Props) {
   const isViewer = userRole === 'VIEWER'
   const isAllMailboxes = isAllMailboxesConnectionId(connectionId)
   const canSeeAllPersonal = userRole === 'ADMIN' || userRole === 'OWNER'
@@ -292,7 +320,35 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     connections.find(c => c.id === (m.inboxConnectionId ?? connectionId))?.email ?? null
   const isSentEmail = (m: MessageSummary) => monitoredEmails.has(m.senderEmail.toLowerCase())
 
-  const initialCache = getCachedInboxList(workspaceId, connectionId)
+  const initialPersisted = resolveInboxPersisted(workspaceId, userId)
+  const initialTimezone =
+    typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      : 'UTC'
+  const initialFilters = buildInboxMessageListFilters({
+    inboxTab: initialPersisted.inboxTab as InboxTab,
+    readFilter: initialPersisted.readFilter as ReadFilter,
+    dateRange: initialPersisted.dateRange as '' | 'TODAY' | 'WEEK' | 'MONTH',
+    timezone: initialTimezone,
+    jobFilter: initialPersisted.jobFilter,
+    activeSearch: initialPersisted.search,
+    businessTypeKey: initialPersisted.businessTypeKey || undefined,
+    pinnedOnly: initialPersisted.pinnedOnly,
+    participantEmails: initialPersisted.participantEmails,
+  })
+  const initialQueryKey = inboxListQueryKey(initialFilters)
+  const isDefaultPersisted =
+    initialPersisted.inboxTab === 'ALL_BUSINESS' &&
+    initialPersisted.readFilter === '' &&
+    !initialPersisted.pinnedOnly &&
+    !initialPersisted.jobFilter &&
+    !initialPersisted.businessTypeKey &&
+    !initialPersisted.search &&
+    !initialPersisted.dateRange &&
+    initialPersisted.participantEmails.length === 0
+  const initialCache =
+    getCachedInboxList(workspaceId, connectionId, initialQueryKey) ??
+    (isDefaultPersisted ? getCachedInboxList(workspaceId, connectionId) : null)
   const [messages, setMessages] = useState<MessageSummary[]>(() => initialCache?.messages ?? [])
   const [page, setPage] = useState(() => initialCache?.page ?? 1)
   const [totalCount, setTotalCount] = useState<number | null>(() => initialCache?.totalCount ?? null)
@@ -308,25 +364,29 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
   const requestSeqRef = useRef(0)
   const listAbortRef = useRef<AbortController | null>(null)
   /** Active list query identity — rejects stale responses / decides soft vs replace. */
-  const activeQueryKeyRef = useRef(
-    initialCache ? inboxListQueryKey({ businessCategory: 'BUSINESS' }) : ''
-  )
+  const activeQueryKeyRef = useRef(initialQueryKey)
 
-  const [inboxTab, setInboxTab] = useState<InboxTab>('ALL_BUSINESS')
-  const [readFilter, setReadFilter] = useState<ReadFilter>('')
-  const [pinnedOnly, setPinnedOnly] = useState(false)
-  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(new Set(['LOW', 'NORMAL', 'HIGH']))
-  const [jobFilter, setJobFilter] = useState('')
+  const [inboxTab, setInboxTab] = useState<InboxTab>(() => initialPersisted.inboxTab as InboxTab)
+  const [readFilter, setReadFilter] = useState<ReadFilter>(() => initialPersisted.readFilter as ReadFilter)
+  const [pinnedOnly, setPinnedOnly] = useState(() => initialPersisted.pinnedOnly)
+  const [priorityFilter, setPriorityFilter] = useState<Set<PriorityKey>>(
+    () => new Set(initialPersisted.priorityKeys as PriorityKey[])
+  )
+  const [jobFilter, setJobFilter] = useState(() => initialPersisted.jobFilter)
   /**
    * Inbox source/subtype filter key. BID_OPPORTUNITY = Active Bid membership
    * (BidCandidateEmail on OPEN/QUOTED candidates; not folder provenance).
    * Server-side before pagination.
    */
-  const [businessTypeKey, setBusinessTypeKey] = useState('')
-  const [search, setSearch] = useState('')
-  const [activeSearch, setActiveSearch] = useState('')
-  const [participantTokens, setParticipantTokens] = useState<InboxParticipant[]>([])
-  const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>('')
+  const [businessTypeKey, setBusinessTypeKey] = useState(() => initialPersisted.businessTypeKey)
+  const [search, setSearch] = useState(() => initialPersisted.search)
+  const [activeSearch, setActiveSearch] = useState(() => initialPersisted.search)
+  const [participantTokens, setParticipantTokens] = useState<InboxParticipant[]>(() =>
+    initialPersisted.participantEmails.map((email) => ({ email, name: null }))
+  )
+  const [dateRange, setDateRange] = useState<'' | 'TODAY' | 'WEEK' | 'MONTH'>(
+    () => initialPersisted.dateRange as '' | 'TODAY' | 'WEEK' | 'MONTH'
+  )
   const browserTimeZone =
     typeof Intl !== 'undefined'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -650,35 +710,94 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     setHasMore(true)
     setTotalCount(null)
     setRefreshing(false)
-    setSearch('')
-    setActiveSearch('')
-    setParticipantTokens([])
-    setInboxTab('ALL_BUSINESS')
-    setReadFilter('')
-    setPriorityFilter(new Set(['LOW', 'NORMAL', 'HIGH']))
-    setJobFilter('')
-    setBusinessTypeKey('')
     setMassDeleteMode(false)
 
-    const defaultFilters = { businessCategory: 'BUSINESS' as const }
-    activeQueryKeyRef.current = inboxListQueryKey(defaultFilters)
+    const restored = resolveInboxPersisted(workspaceId, userId)
+    setInboxTab(restored.inboxTab as InboxTab)
+    setReadFilter(restored.readFilter as ReadFilter)
+    setPinnedOnly(restored.pinnedOnly)
+    setPriorityFilter(new Set(restored.priorityKeys as PriorityKey[]))
+    setJobFilter(restored.jobFilter)
+    setBusinessTypeKey(restored.businessTypeKey)
+    setSearch(restored.search)
+    setActiveSearch(restored.search)
+    setParticipantTokens(
+      restored.participantEmails.map((email) => ({ email, name: null }))
+    )
+    setDateRange(restored.dateRange as '' | 'TODAY' | 'WEEK' | 'MONTH')
 
-    const cached = getCachedInboxList(workspaceId, connectionId)
+    const filters = buildInboxMessageListFilters({
+      inboxTab: restored.inboxTab as InboxTab,
+      readFilter: restored.readFilter as ReadFilter,
+      dateRange: restored.dateRange as '' | 'TODAY' | 'WEEK' | 'MONTH',
+      timezone: browserTimeZone,
+      jobFilter: restored.jobFilter,
+      activeSearch: restored.search,
+      businessTypeKey: restored.businessTypeKey || undefined,
+      pinnedOnly: restored.pinnedOnly,
+      participantEmails: restored.participantEmails,
+    })
+    const queryKey = inboxListQueryKey(filters)
+    activeQueryKeyRef.current = queryKey
+
+    const isDefault =
+      restored.inboxTab === 'ALL_BUSINESS' &&
+      restored.readFilter === '' &&
+      !restored.pinnedOnly &&
+      !restored.jobFilter &&
+      !restored.businessTypeKey &&
+      !restored.search &&
+      !restored.dateRange &&
+      restored.participantEmails.length === 0
+    const cached =
+      getCachedInboxList(workspaceId, connectionId, queryKey) ??
+      (isDefault ? getCachedInboxList(workspaceId, connectionId) : null)
     if (cached && cached.messages.length > 0) {
       setMessages(cached.messages)
       setPage(cached.page)
       setHasMore(cached.hasMore)
       setTotalCount(cached.totalCount)
       setLoading(false)
-      // Soft revalidate same Business query — keep cached rows visible.
-      void loadPage(1, defaultFilters, false, { soft: true })
+      void loadPage(1, filters, false, { soft: true })
     } else {
       setMessages([])
       setLoading(true)
-      void loadPage(1, defaultFilters, false)
+      void loadPage(1, filters, false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on mailbox change
-  }, [workspaceId, connectionId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on mailbox / workspace change
+  }, [workspaceId, connectionId, userId])
+
+  // Persist Inbox filters (config only — never message bodies).
+  useEffect(() => {
+    if (!userId) return
+    persistInboxState({
+      workspaceId,
+      userId,
+      state: {
+        inboxTab,
+        readFilter,
+        pinnedOnly,
+        priorityKeys: Array.from(priorityFilter),
+        jobFilter,
+        businessTypeKey,
+        search: activeSearch,
+        dateRange,
+        participantEmails: participantTokens.map((t) => t.email),
+      },
+    })
+  }, [
+    workspaceId,
+    userId,
+    inboxTab,
+    readFilter,
+    pinnedOnly,
+    priorityFilter,
+    jobFilter,
+    businessTypeKey,
+    activeSearch,
+    dateRange,
+    participantTokens,
+  ])
 
   const sentOnly = readFilter === 'sent'
   const unreadOnly = readFilter === 'unread'

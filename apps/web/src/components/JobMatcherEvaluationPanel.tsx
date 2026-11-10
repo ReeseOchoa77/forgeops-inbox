@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   api,
   type JobMatcherEvalPreview,
@@ -6,6 +6,10 @@ import {
   type JobMatcherEvalRow,
   type JobLookup,
 } from '../api'
+import {
+  DEFAULT_INTELLIGENCE_STATE,
+  type IntelligencePersistedState,
+} from '../workspace-state'
 import { SafeEmailBody } from './SafeEmailBody'
 
 type JobsMode = 'ALL' | 'SPECIFIC' | 'SELECTED'
@@ -19,17 +23,23 @@ const PER_JOB_PRESETS = [5, 10, 25, 50, 100]
 
 export function JobMatcherEvaluationPanel({
   workspaceId,
+  userId,
   groundTruthQuality,
   groundTruthNotes,
+  initialUi = DEFAULT_INTELLIGENCE_STATE,
+  onUiChange,
 }: {
   workspaceId: string
+  userId?: string
   groundTruthQuality: string
   groundTruthNotes: string
+  initialUi?: IntelligencePersistedState
+  onUiChange?: (next: IntelligencePersistedState) => void
 }) {
-  const [jobsMode, setJobsMode] = useState<JobsMode>('ALL')
-  const [sampling, setSampling] = useState<Sampling>('TOTAL')
-  const [count, setCount] = useState(50)
-  const [lifecycle, setLifecycle] = useState<Lifecycle>('ALL')
+  const [jobsMode, setJobsMode] = useState<JobsMode>(() => initialUi.evalConfig.jobsMode)
+  const [sampling, setSampling] = useState<Sampling>(() => initialUi.evalConfig.sampling)
+  const [count, setCount] = useState(() => initialUi.evalConfig.count)
+  const [lifecycle, setLifecycle] = useState<Lifecycle>(() => initialUi.evalConfig.lifecycle)
   const [selectedJobs, setSelectedJobs] = useState<JobLookup[]>([])
   const [jobSearch, setJobSearch] = useState('')
   const [jobOptions, setJobOptions] = useState<JobLookup[]>([])
@@ -39,20 +49,88 @@ export function JobMatcherEvaluationPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<JobMatcherEvalResult | null>(null)
-  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>('ALL')
+  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>(() => initialUi.outcomeFilter)
   const [jobFilterId, setJobFilterId] = useState<string | null>(null)
   const [selectedRow, setSelectedRow] = useState<JobMatcherEvalRow | null>(null)
-  const [resultsView, setResultsView] = useState<ResultsView>('emails')
-  const [inspectorTab, setInspectorTab] = useState<'email' | 'match'>('email')
+  const [resultsView, setResultsView] = useState<ResultsView>(() => initialUi.resultsView)
+  const [inspectorTab, setInspectorTab] = useState<'email' | 'match'>(() => initialUi.inspectorTab)
   const [wide, setWide] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1100 : true
   )
+  const jobsHydratedRef = useRef(false)
+  const skipUiPersistRef = useRef(true)
 
   useEffect(() => {
     const onResize = () => setWide(window.innerWidth >= 1100)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  // Rehydrate selected Jobs from persisted IDs once; drop IDs that no longer exist.
+  useEffect(() => {
+    if (jobsHydratedRef.current) return
+    jobsHydratedRef.current = true
+    const ids = initialUi.evalConfig.jobIds
+    if (ids.length === 0 || initialUi.evalConfig.jobsMode === 'ALL') return
+    let cancelled = false
+    api
+      .getJobsLookup(workspaceId, { showArchived: true })
+      .then((r) => {
+        if (cancelled) return
+        const byId = new Map(r.jobs.map((j) => [j.id, j]))
+        setSelectedJobs(ids.map((id) => byId.get(id)).filter(Boolean) as JobLookup[])
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedJobs([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, initialUi.evalConfig.jobIds, initialUi.evalConfig.jobsMode])
+
+  // Persist evaluation draft / UI prefs (never result payloads or email bodies).
+  useEffect(() => {
+    if (!onUiChange) return
+    if (skipUiPersistRef.current) {
+      skipUiPersistRef.current = false
+      return
+    }
+    onUiChange({
+      tab: 'evaluation',
+      evalConfig: {
+        jobsMode,
+        jobIds: selectedJobs.map((j) => j.id),
+        sampling,
+        count,
+        lifecycle,
+      },
+      outcomeFilter,
+      resultsView,
+      selectedEmailMessageId: selectedRow?.emailMessageId ?? null,
+      inspectorTab,
+    })
+  }, [
+    onUiChange,
+    jobsMode,
+    selectedJobs,
+    sampling,
+    count,
+    lifecycle,
+    outcomeFilter,
+    resultsView,
+    selectedRow?.emailMessageId,
+    inspectorTab,
+  ])
+
+  // selectedEmailMessageId is restored only while in-memory `result` exists (results are not durable).
+  useEffect(() => {
+    if (!result || !initialUi.selectedEmailMessageId || selectedRow) return
+    const row = result.rows.find((r) => r.emailMessageId === initialUi.selectedEmailMessageId)
+    if (row) setSelectedRow(row)
+  }, [result, initialUi.selectedEmailMessageId, selectedRow])
+
+  // Silence unused until durable eval runs exist — keep prop for API symmetry.
+  void userId
 
   const dataset = useMemo(() => {
     const jobIds = jobsMode === 'ALL' ? [] : selectedJobs.map((j) => j.id)
@@ -134,6 +212,8 @@ export function JobMatcherEvaluationPanel({
       (jobsMode === 'SELECTED' && selectedJobs.length > 0))
 
   const countPresets = sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
+  const groundTruthParts = parseGroundTruthLabel(preview?.groundTruth ?? '')
+  const m = result?.metrics
 
   return (
     <div
@@ -147,8 +227,12 @@ export function JobMatcherEvaluationPanel({
         overflow: 'hidden',
       }}
     >
-      {/* Compact config bar */}
-      <div style={{ flexShrink: 0 }}>
+      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 11, color: '#6b7280' }} title={groundTruthNotes}>
+          Read-only evaluation · Ground truth quality: {groundTruthQuality}
+        </div>
+
+        {/* Compact configuration — horizontal controls, not stacked fieldsets */}
         <div
           style={{
             display: 'flex',
@@ -210,18 +294,6 @@ export function JobMatcherEvaluationPanel({
               <option value="ALL_ELIGIBLE">All eligible</option>
             </select>
           </Control>
-          <Control label="Lifecycle">
-            <select
-              value={lifecycle}
-              disabled={busy}
-              onChange={(e) => setLifecycle(e.target.value as Lifecycle)}
-              style={selectStyle}
-            >
-              <option value="ALL">Current + Archived</option>
-              <option value="CURRENT">Current</option>
-              <option value="ARCHIVED">Archived</option>
-            </select>
-          </Control>
           {sampling !== 'ALL_ELIGIBLE' && (
             <Control label="Amount">
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -255,25 +327,28 @@ export function JobMatcherEvaluationPanel({
               </div>
             </Control>
           )}
-          <button
-            type="button"
-            onClick={() => void run()}
-            disabled={!canRun}
-            style={{ ...primaryBtn, opacity: canRun ? 1 : 0.5, marginBottom: 1, marginLeft: 'auto' }}
-          >
-            {busy ? 'Running…' : 'Run Evaluation'}
-          </button>
+          <Control label="Lifecycle">
+            <select
+              value={lifecycle}
+              disabled={busy}
+              onChange={(e) => setLifecycle(e.target.value as Lifecycle)}
+              style={selectStyle}
+            >
+              <option value="ALL">Current + Archived</option>
+              <option value="CURRENT">Current</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </Control>
         </div>
 
         {jobPickerOpen && jobsMode !== 'ALL' && (
           <div
             style={{
-              marginTop: 6,
               border: '1px solid #e5e7eb',
               borderRadius: 8,
               background: '#fff',
               padding: 8,
-              maxHeight: 180,
+              maxHeight: 160,
               display: 'flex',
               flexDirection: 'column',
               gap: 6,
@@ -328,89 +403,139 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6, lineHeight: 1.35 }}>
-          {previewError && <span style={{ color: '#b42318' }}>{previewError}</span>}
-          {!preview && !previewError && (
-            <span>
-              {jobsMode !== 'ALL' && selectedJobs.length === 0
-                ? 'Select job(s) to preview eligibility.'
-                : 'Loading eligibility…'}
-            </span>
-          )}
-          {preview && (
-            <span title={groundTruthNotes}>
-              {preview.jobsInScope.toLocaleString()} Jobs ·{' '}
-              {preview.eligibleCount.toLocaleString()} eligible emails ·{' '}
-              {preview.expectedMax.toLocaleString()} selected
-              {preview.capped && preview.capReason ? ` · ${preview.capReason}` : ''}
-              {' · '}
-              Read-only evaluation
-            </span>
-          )}
-          {!preview && !previewError && (
-            <span title={groundTruthNotes}>Read-only evaluation · GT {groundTruthQuality}</span>
-          )}
-        </div>
-        {error && (
-          <div role="alert" style={{ color: '#b42318', fontSize: 12, marginTop: 4 }}>
-            {error}
-          </div>
-        )}
-      </div>
-
-      {/* Metric strip — number over label, matching evaluation workstation wireframe */}
-      {result && (
+        {/* Dataset Summary — keep panel; use horizontal space; Run lives here */}
         <div
+          data-testid="job-matcher-dataset-summary"
           style={{
-            flexShrink: 0,
-            padding: '8px 10px',
+            padding: '10px 12px',
             border: '1px solid #e5e7eb',
             borderRadius: 8,
-            background: '#fff',
+            background: '#f9fafb',
+            fontSize: 13,
           }}
         >
           <div
             style={{
               display: 'flex',
               flexWrap: 'wrap',
-              gap: '10px 22px',
-              alignItems: 'flex-end',
+              gap: 12,
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
             }}
           >
-            <MetricStack label="Evaluated" value={result.metrics.totalEvaluated} />
-            <MetricStack label="Correct" value={result.metrics.correctMatches} emphasize />
-            <MetricStack label="Wrong" value={result.metrics.wrongMatches} />
-            <MetricStack label="Ambiguous" value={result.metrics.ambiguous} />
-            <MetricStack label="Conflict" value={result.metrics.conflict} />
-            <MetricStack label="No match" value={result.metrics.noMatch} />
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '6px 18px',
-              marginTop: 8,
-              fontSize: 12,
-              color: '#374151',
-            }}
-          >
-            <span style={{ fontWeight: 700, color: '#111827' }}>
-              {result.metrics.precision == null
-                ? '— Precision'
-                : `${(result.metrics.precision * 100).toFixed(2)}% Precision`}
-            </span>
-            <span style={{ fontWeight: 700, color: '#111827' }}>
-              {(result.metrics.correctCoverage * 100).toFixed(2)}% Coverage
-            </span>
-            <span>{(result.metrics.wrongMatchRate * 100).toFixed(2)}% Wrong rate</span>
-            <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 11 }}>
-              {result.dataset.actualEvaluated.toLocaleString()} selected · {result.databaseWrites}
-            </span>
+            <div style={{ flex: '1 1 420px', minWidth: 0 }}>
+              <div style={{ fontWeight: 650, marginBottom: 4 }}>Dataset summary</div>
+              {previewError && <div style={{ color: '#b42318' }}>{previewError}</div>}
+              {!preview && !previewError && (
+                <div style={{ color: '#6b7280' }}>
+                  {jobsMode !== 'ALL' && selectedJobs.length === 0
+                    ? 'Select one or more Jobs to preview eligibility.'
+                    : 'Loading eligibility…'}
+                </div>
+              )}
+              {preview && (
+                <>
+                  <div style={{ color: '#111827', fontWeight: 600, marginBottom: 8 }}>
+                    {preview.summaryLabel}
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '8px 20px',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <SummaryStat label="Jobs in scope" value={preview.jobsInScope} />
+                    <SummaryStat label="Eligible emails" value={preview.eligibleCount} />
+                    <SummaryStat label="Expected maximum" value={preview.expectedMax} />
+                  </div>
+                  {preview.capped && preview.capReason && (
+                    <div style={{ color: '#92400e', fontSize: 12, marginBottom: 6 }}>
+                      {preview.capReason}
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '4px 16px',
+                      fontSize: 12,
+                      color: '#4b5563',
+                    }}
+                  >
+                    <span>
+                      <span style={{ color: '#6b7280' }}>Ground truth </span>
+                      <strong style={{ fontWeight: 600, color: '#111827' }}>
+                        {groundTruthParts.included || preview.groundTruth}
+                      </strong>
+                    </span>
+                    {groundTruthParts.excluded && (
+                      <span>
+                        <span style={{ color: '#6b7280' }}>Excluded </span>
+                        <strong style={{ fontWeight: 600, color: '#111827' }}>
+                          {groundTruthParts.excluded}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => void run()}
+                disabled={!canRun}
+                style={{ ...primaryBtn, opacity: canRun ? 1 : 0.5, whiteSpace: 'nowrap' }}
+              >
+                {busy ? 'Running…' : 'Run Evaluation'}
+              </button>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Primary workspace */}
+        {error && (
+          <div role="alert" style={{ color: '#b42318', fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+
+        {/* 12 bordered metric cards — original preferred style */}
+        {result && m && (
+          <div
+            data-testid="job-matcher-metric-cards"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+              gap: 8,
+            }}
+          >
+            <Metric label="Evaluated" value={m.totalEvaluated} />
+            <Metric label="Correct" value={m.correctMatches} tone="positive" />
+            <Metric label="Wrong" value={m.wrongMatches} tone="negative" />
+            <Metric label="Ambiguous" value={m.ambiguous} tone="warning" />
+            <Metric label="Conflict" value={m.conflict} tone="warning" />
+            <Metric label="No Match" value={m.noMatch} />
+            <Metric
+              label="Precision"
+              value={m.precision == null ? '—' : `${(m.precision * 100).toFixed(2)}%`}
+              strong
+            />
+            <Metric
+              label="Coverage"
+              value={`${(m.correctCoverage * 100).toFixed(2)}%`}
+              strong
+            />
+            <Metric label="Wrong rate" value={`${(m.wrongMatchRate * 100).toFixed(2)}%`} />
+            <Metric label="Ambiguity" value={`${(m.ambiguityRate * 100).toFixed(2)}%`} />
+            <Metric label="Conflict rate" value={`${(m.conflictRate * 100).toFixed(2)}%`} />
+            <Metric label="No-match rate" value={`${(m.noMatchRate * 100).toFixed(2)}%`} />
+          </div>
+        )}
+      </div>
+
+      {/* Results | Inspector — remaining viewport */}
       <div
         style={{
           flex: 1,
@@ -955,29 +1080,81 @@ function OutcomePill({ outcome }: { outcome: string }) {
   )
 }
 
-function MetricStack({
-  label,
-  value,
-  emphasize,
-}: {
-  label: string
-  value: number
-  emphasize?: boolean
-}) {
+function parseGroundTruthLabel(raw: string): { included: string; excluded: string | null } {
+  const text = raw.trim()
+  if (!text) return { included: '', excluded: null }
+  const excl = text.match(/JOB_NUMBER_MATCH\s+excluded/i)
+  const included = text
+    .replace(/\(.*?\)/g, '')
+    .replace(/;?\s*JOB_NUMBER_MATCH\s+excluded/i, '')
+    .replace(/\bauthoritative\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return {
+    included: included || text,
+    excluded: excl ? 'JOB_NUMBER_MATCH' : null,
+  }
+}
+
+function SummaryStat({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ minWidth: 64 }}>
+    <div style={{ minWidth: 100 }}>
+      <div style={{ fontSize: 11, color: '#6b7280' }}>{label}</div>
       <div
         style={{
-          fontSize: 20,
-          fontWeight: emphasize ? 750 : 700,
+          fontSize: 16,
+          fontWeight: 700,
           color: '#111827',
-          lineHeight: 1.1,
           fontVariantNumeric: 'tabular-nums',
         }}
       >
         {value.toLocaleString()}
       </div>
-      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{label}</div>
+    </div>
+  )
+}
+
+/** Original bordered white metric cards — preferred evaluation scan style. */
+function Metric({
+  label,
+  value,
+  tone,
+  strong,
+}: {
+  label: string
+  value: string | number
+  tone?: 'positive' | 'negative' | 'warning'
+  strong?: boolean
+}) {
+  const valueColor =
+    tone === 'positive'
+      ? '#166534'
+      : tone === 'negative'
+        ? '#991b1b'
+        : tone === 'warning'
+          ? '#92400e'
+          : '#111827'
+  return (
+    <div
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '10px 12px',
+        background: '#fff',
+        minHeight: 58,
+      }}
+    >
+      <div style={{ fontSize: 11, color: '#6b7280' }}>{label}</div>
+      <div
+        style={{
+          fontSize: 16,
+          fontWeight: strong ? 750 : 700,
+          color: valueColor,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {typeof value === 'number' ? value.toLocaleString() : value}
+      </div>
     </div>
   )
 }

@@ -10,6 +10,7 @@ import {
   sortTasksPinnedFirst,
   TASKS_LIST_FRESH_MS,
 } from '../tasks-list-cache'
+import { loadTasksState, persistTasksState } from '../workspace-state'
 
 interface Props {
   workspaceId: string
@@ -31,6 +32,8 @@ export function TasksView({
 }: Props) {
   const isViewer = userRole === 'VIEWER'
   const canViewWorkspaceTasks = userRole === 'OWNER' || userRole === 'ADMIN'
+  const restored =
+    currentUserId ? loadTasksState({ workspaceId, userId: currentUserId }) : null
   const [tasks, setTasks] = useState<TaskListItem[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState<number | null>(0)
@@ -42,22 +45,44 @@ export function TasksView({
   const [error, setError] = useState<string | null>(null)
   const [loadGen, setLoadGen] = useState(0)
 
-  const [statusFilter, setStatusFilter] = useState<'OPEN' | 'COMPLETED' | 'ALL'>('OPEN')
-  const [due, setDue] = useState<TaskListFilters['due']>('ALL')
-  const [priority, setPriority] = useState<TaskListFilters['priority']>('ALL')
-  const [source, setSource] = useState<TaskListFilters['source']>('ALL')
+  const [statusFilter, setStatusFilter] = useState<'OPEN' | 'COMPLETED' | 'ALL'>(() =>
+    restored?.statusFilter === 'OPEN' ||
+    restored?.statusFilter === 'COMPLETED' ||
+    restored?.statusFilter === 'ALL'
+      ? restored.statusFilter
+      : 'OPEN'
+  )
+  const [due, setDue] = useState<TaskListFilters['due']>(
+    () => (restored?.due as TaskListFilters['due']) || 'ALL'
+  )
+  const [priority, setPriority] = useState<TaskListFilters['priority']>(
+    () => (restored?.priority as TaskListFilters['priority']) || 'ALL'
+  )
+  const [source, setSource] = useState<TaskListFilters['source']>(
+    () => (restored?.source as TaskListFilters['source']) || 'ALL'
+  )
   const [businessTypeKey, setBusinessTypeKey] = useState('')
   const [sender, setSender] = useState('')
   const [senderDraft, setSenderDraft] = useState('')
   /** Canonical ownership: My Tasks vs Requests (requester≠assignee). */
-  const [ownershipView, setOwnershipView] = useState<'MY' | 'REQUESTS' | 'ALL'>('MY')
+  const [ownershipView, setOwnershipView] = useState<'MY' | 'REQUESTS' | 'ALL'>(() =>
+    restored?.ownershipView === 'MY' ||
+    restored?.ownershipView === 'REQUESTS' ||
+    restored?.ownershipView === 'ALL'
+      ? restored.ownershipView
+      : 'MY'
+  )
   /** Email direction filter (Incoming / Sent) — separate from Requests. */
-  const [direction, setDirection] = useState<TaskListFilters['direction']>('ALL')
+  const [direction, setDirection] = useState<TaskListFilters['direction']>(
+    () => (restored?.direction as TaskListFilters['direction']) || 'ALL'
+  )
   /** Admin/Owner: ALL | UNASSIGNED | userId */
   const [tasksFor, setTasksFor] = useState<string>('ALL')
-  const [jobId, setJobId] = useState('')
-  const [sort, setSort] = useState<TaskListFilters['sort']>('DUE_DATE')
-  const [pinnedOnly, setPinnedOnly] = useState(false)
+  const [jobId, setJobId] = useState(() => restored?.jobId ?? '')
+  const [sort, setSort] = useState<TaskListFilters['sort']>(
+    () => (restored?.sort as TaskListFilters['sort']) || 'DUE_DATE'
+  )
+  const [pinnedOnly, setPinnedOnly] = useState(() => restored?.pinnedOnly ?? false)
   const [jobs, setJobs] = useState<Array<{ id: string; name: string; jobNumber: string | null }>>([])
   const [members, setMembers] = useState<
     Array<{ id: string; name: string | null; email: string; role: string }>
@@ -89,6 +114,43 @@ export function TasksView({
     typeof Intl !== 'undefined'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
       : 'UTC'
+
+  useEffect(() => {
+    if (!currentUserId) return
+    persistTasksState({
+      workspaceId,
+      userId: currentUserId,
+      state: {
+        statusFilter,
+        due: due ?? 'ALL',
+        priority: priority ?? 'ALL',
+        source: source ?? 'ALL',
+        ownershipView,
+        direction: direction ?? 'ALL',
+        pinnedOnly,
+        sort: sort ?? 'DUE_DATE',
+        jobId,
+      },
+    })
+  }, [
+    workspaceId,
+    currentUserId,
+    statusFilter,
+    due,
+    priority,
+    source,
+    ownershipView,
+    direction,
+    pinnedOnly,
+    sort,
+    jobId,
+  ])
+
+  // Drop stale job filter if the Job no longer exists in this workspace.
+  useEffect(() => {
+    if (!jobId || jobs.length === 0) return
+    if (!jobs.some((j) => j.id === jobId)) setJobId('')
+  }, [jobs, jobId])
 
   const effectiveView: TaskListFilters['view'] =
     canViewWorkspaceTasks && ownershipView === 'ALL' ? 'ALL' : ownershipView === 'REQUESTS' ? 'REQUESTS' : 'MY'

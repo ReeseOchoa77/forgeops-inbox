@@ -163,4 +163,5 @@ Code: `apps/web/src/ui-scale.ts`, `apps/web/src/index.css`, `apps/web/vite-plugi
 - [Job matching](job-matching.md)
 - [Active Bids](bidding-active-bids.md)
 - [Intelligence Registry](intelligence-registry.md)
+- [Workspace State Persistence](workspace-state-persistence.md)
 - [Deployment](../DEPLOYMENT.md)
