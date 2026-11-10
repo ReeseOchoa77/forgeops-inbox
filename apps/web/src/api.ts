@@ -3016,13 +3016,34 @@ export const api = {
       }>
     }>(`/workspaces/${workspaceId}/intelligence/${encodeURIComponent(intelligenceId)}`),
 
+  previewJobMatcherEvalDataset: (
+    workspaceId: string,
+    body: {
+      dataset?: JobMatcherEvalDatasetSpec
+      limit?: 50 | 100 | 500
+    }
+  ) =>
+    request<{ preview: JobMatcherEvalPreview }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/eval-dataset-preview`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   evaluateJobMatcherIntelligence: (
     workspaceId: string,
-    body: { limit: 50 | 100 | 500; maxWrongDetails?: number }
+    body: {
+      dataset?: JobMatcherEvalDatasetSpec
+      limit?: 50 | 100 | 500
+      maxWrongDetails?: number
+    }
   ) =>
     request<{ evaluation: JobMatcherEvalResult }>(
       `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate`,
       { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  getJobMatcherEvalEmail: (workspaceId: string, emailMessageId: string) =>
+    request<{ email: JobMatcherEvalEmailDetail }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/emails/${encodeURIComponent(emailMessageId)}`
     ),
 
   listJobMatcherTestEmails: (
@@ -4983,11 +5004,70 @@ export interface IntelligenceSafeDto {
   discoverable: boolean
 }
 
+export interface JobMatcherEvalDatasetSpec {
+  jobsMode: 'ALL' | 'SPECIFIC' | 'SELECTED'
+  jobIds: string[]
+  sampling: 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
+  count: number | null
+  jobLifecycle: 'ALL' | 'CURRENT' | 'ARCHIVED'
+}
+
+export interface JobMatcherEvalPreview {
+  spec: JobMatcherEvalDatasetSpec
+  summaryLabel: string
+  eligibleCount: number
+  jobsInScope: number
+  expectedMax: number
+  capped: boolean
+  capReason: string | null
+  jobs: Array<{
+    id: string
+    name: string
+    jobNumber: string | null
+    status: string
+    eligibleEmailCount: number
+  }>
+  groundTruth: string
+}
+
+export interface JobMatcherEvalRow {
+  emailMessageId: string
+  subject: string | null
+  direction: string | null
+  trueJobId: string
+  trueJobName: string
+  trueJobNumber: string | null
+  jobAssignmentSource: string | null
+  predictedJobId: string | null
+  predictedJobName: string | null
+  predictedJobNumber: string | null
+  decision: string
+  outcome: string
+  resolvingMarker: string | null
+  evidence: Array<{ type: string; value: string }>
+  markerTrace: Array<{
+    marker: string
+    status: string
+    candidateJobIds: string[]
+    candidateJobNames: string[]
+  }>
+}
+
 export interface JobMatcherEvalResult {
   intelligenceId: 'job-matcher'
   databaseWrites: 'NONE'
   autoAssignEnabled: boolean
-  sampleSizeRequested: number
+  dataset: {
+    spec: JobMatcherEvalDatasetSpec
+    summaryLabel: string
+    eligibleCount: number
+    jobsInScope: number
+    expectedMax: number
+    sampleSizeRequested: number | null
+    actualEvaluated: number
+    capped: boolean
+    capReason: string | null
+  }
   metrics: {
     totalEvaluated: number
     correctMatches: number
@@ -5002,6 +5082,19 @@ export interface JobMatcherEvalResult {
     conflictRate: number
     noMatchRate: number
   }
+  jobBreakdown: Array<{
+    jobId: string
+    jobNumber: string | null
+    jobName: string
+    jobStatus: string | null
+    evaluated: number
+    correct: number
+    wrong: number
+    ambiguous: number
+    conflict: number
+    noMatch: number
+  }>
+  rows: JobMatcherEvalRow[]
   wrongMatches: Array<{
     emailMessageId: string
     subject: string | null
@@ -5011,6 +5104,33 @@ export interface JobMatcherEvalResult {
   }>
   groundTruthQuality: string
   groundTruthNotes: string
+}
+
+export interface JobMatcherEvalEmailDetail {
+  id: string
+  subject: string | null
+  from: { name: string | null; email: string }
+  to: Array<{ name: string | null; email: string }>
+  cc: Array<{ name: string | null; email: string }>
+  direction: string | null
+  sentAt: string
+  receivedAt: string | null
+  bodyText: string | null
+  bodyHtml: string | null
+  hasAttachments: boolean
+  inboxConnectionId: string
+  jobId: string | null
+  jobAssignmentSource: string | null
+  jobAssignmentIsManual: boolean
+  job: { id: string; name: string; jobNumber: string | null; status: string } | null
+  attachments: Array<{
+    id: string
+    filename: string
+    mimeType: string
+    sizeBytes: number
+    isInline: boolean
+    uploadStatus: string
+  }>
 }
 
 export interface JobMatcherTestOneResult {

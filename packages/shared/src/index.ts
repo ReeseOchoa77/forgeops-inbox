@@ -43,6 +43,7 @@ export * from "./jobs/job-contact-marker.js";
 export * from "./jobs/job-thread-marker.js";
 export * from "./jobs/job-match-eval.js";
 export * from "./jobs/job-match-historical-eval.js";
+export * from "./jobs/job-match-eval-dataset.js";
 export * from "./jobs/job-match-eval-snapshot-loader.js";
 export * from "./jobs/learn-job-contact-from-email.js";
 export * from "./ai-automation-gates.js";

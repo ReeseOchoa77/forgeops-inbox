@@ -2,10 +2,10 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import {
   api,
   type IntelligenceSafeDto,
-  type JobMatcherEvalResult,
   type JobMatcherTestOneResult,
 } from '../api'
 import { IntelligencePipelineView } from '../components/IntelligencePipeline'
+import { JobMatcherEvaluationPanel } from '../components/JobMatcherEvaluationPanel'
 import {
   intelligenceStatusLabel,
   intelligenceTypeLabel,
@@ -342,11 +342,6 @@ function EvaluationSection({
   workspaceId: string
   component: IntelligenceSafeDto
 }) {
-  const [limit, setLimit] = useState<50 | 100 | 500>(50)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<JobMatcherEvalResult | null>(null)
-
   if (!component.evaluation.supported) {
     return (
       <div style={{ fontSize: 13, color: '#6b7280', maxWidth: 640 }}>
@@ -369,94 +364,12 @@ function EvaluationSection({
     )
   }
 
-  const run = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const res = await api.evaluateJobMatcherIntelligence(workspaceId, { limit })
-      setResult(res.evaluation)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Evaluation failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const m = result?.metrics
-
   return (
-    <div style={{ maxWidth: 900 }}>
-      <p style={{ fontSize: 13, color: '#6b7280' }}>
-        Read-only historical evaluation. Does not assign emails, learn contacts, or write Job links.
-        Ground truth: <strong>{component.evaluation.groundTruthQuality}</strong> —{' '}
-        {component.evaluation.groundTruthNotes}
-      </p>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-        <label style={{ fontSize: 13 }}>
-          Sample size{' '}
-          <select
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value) as 50 | 100 | 500)}
-            disabled={busy}
-            style={{ marginLeft: 6, padding: '6px 8px', borderRadius: 6, border: '1px solid #d0d5dd' }}
-          >
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-            <option value={500}>500</option>
-          </select>
-        </label>
-        <button type="button" onClick={() => void run()} disabled={busy} style={primaryBtn}>
-          {busy ? 'Running…' : 'Run Evaluation'}
-        </button>
-      </div>
-      {error && <div role="alert" style={{ color: '#b42318', fontSize: 13 }}>{error}</div>}
-      {m && result && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginTop: 12 }}>
-            <Metric label="Evaluated" value={m.totalEvaluated} />
-            <Metric label="Correct" value={m.correctMatches} />
-            <Metric label="Wrong" value={m.wrongMatches} />
-            <Metric label="Ambiguous" value={m.ambiguous} />
-            <Metric label="Conflict" value={m.conflict} />
-            <Metric label="No Match" value={m.noMatch} />
-            <Metric
-              label="Precision"
-              value={m.precision == null ? '—' : `${(m.precision * 100).toFixed(2)}%`}
-            />
-            <Metric label="Coverage" value={`${(m.correctCoverage * 100).toFixed(2)}%`} />
-          </div>
-          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 10 }}>
-            databaseWrites: {result.databaseWrites} · auto-assign env:{' '}
-            {result.autoAssignEnabled ? 'ON' : 'OFF'}
-          </p>
-          {result.wrongMatches.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <h3 style={sectionH}>Incorrect matches (sample)</h3>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={th}>Subject</th>
-                    <th style={th}>Actual</th>
-                    <th style={th}>Predicted</th>
-                    <th style={th}>Marker</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.wrongMatches.slice(0, 25).map((w) => (
-                    <tr key={w.emailMessageId}>
-                      <td style={td}>{w.subject || '—'}</td>
-                      <td style={td}>{w.actualJobName}</td>
-                      <td style={td}>{w.predictedJobName || '—'}</td>
-                      <td style={td}>{w.resolvingMarker || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <JobMatcherEvaluationPanel
+      workspaceId={workspaceId}
+      groundTruthQuality={component.evaluation.groundTruthQuality}
+      groundTruthNotes={component.evaluation.groundTruthNotes}
+    />
   )
 }
 
@@ -599,15 +512,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span style={badge(bg, fg)}>{intelligenceStatusLabel(status)}</span>
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: '#fff' }}>
-      <div style={{ fontSize: 11, color: '#6b7280' }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{value}</div>
-    </div>
-  )
-}
-
 function KV({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8 }}>
@@ -669,11 +573,3 @@ const preStyle: CSSProperties = {
   maxHeight: 280,
   overflow: 'auto',
 }
-const tableStyle: CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: 12,
-  border: '1px solid #e5e7eb',
-}
-const th: CSSProperties = { textAlign: 'left', padding: '6px 8px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }
-const td: CSSProperties = { padding: '6px 8px', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' }

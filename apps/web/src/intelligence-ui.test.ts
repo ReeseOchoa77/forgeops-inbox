@@ -84,7 +84,9 @@ describe('instructions vs rules sections', () => {
     const src = readFileSync(join(here, 'views/IntelligenceView.tsx'), 'utf8')
     expect(src).toContain('Evaluation is not available for this intelligence.')
     expect(src).toContain("component.id !== 'job-matcher'")
-    expect(src).toContain('Run Evaluation')
+    expect(src).toContain('JobMatcherEvaluationPanel')
+    const panel = readFileSync(join(here, 'components/JobMatcherEvaluationPanel.tsx'), 'utf8')
+    expect(panel).toContain('Run Evaluation')
   })
 })
 
@@ -127,6 +129,37 @@ describe('api client intelligence contract', () => {
     expect(src).toContain('/workspaces/${workspaceId}/intelligence')
     expect(src).toContain('/intelligence/${encodeURIComponent(intelligenceId)}')
     expect(src).toContain('/intelligence/job-matcher/evaluate')
+    expect(src).toContain('/intelligence/job-matcher/eval-dataset-preview')
+    expect(src).toContain('/intelligence/job-matcher/emails/')
     expect(src).toContain('/intelligence/job-matcher/test-one')
+  })
+})
+
+describe('job matcher evaluation UX v2', () => {
+  it('loads email bodies on demand via inspector endpoint, not embedded in eval DTO type', () => {
+    const apiSrc = readFileSync(join(here, 'api.ts'), 'utf8')
+    expect(apiSrc).toContain('getJobMatcherEvalEmail')
+    expect(apiSrc).toContain('JobMatcherEvalRow')
+    // Result rows are summaries — body fields live on email detail type only.
+    const rowBlock = apiSrc.slice(
+      apiSrc.indexOf('export interface JobMatcherEvalRow'),
+      apiSrc.indexOf('export interface JobMatcherEvalResult')
+    )
+    expect(rowBlock).not.toContain('bodyHtml')
+    expect(rowBlock).not.toContain('bodyText')
+  })
+
+  it('evaluation panel uses SafeEmailBody and side inspector', () => {
+    const src = readFileSync(join(here, 'components/JobMatcherEvaluationPanel.tsx'), 'utf8')
+    expect(src).toContain('SafeEmailBody')
+    expect(src).toContain('eval-email-inspector')
+    expect(src).toContain('Job breakdown')
+    expect(src).toContain('PER_JOB')
+    expect(src).toContain('ground-truth emails only')
+  })
+
+  it('SafeEmailBody uses DOMPurify sanitize', () => {
+    const src = readFileSync(join(here, 'components/SafeEmailBody.tsx'), 'utf8')
+    expect(src).toContain('DOMPurify.sanitize')
   })
 })

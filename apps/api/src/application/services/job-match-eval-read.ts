@@ -276,6 +276,99 @@ export async function loadJobMatchEvalSnapshot(
   };
 }
 
+/** Lightweight index for dataset selection (no bodies). */
+export async function loadAuthoritativeEvalEmailIndex(
+  db: JobMatchEvalReadDb,
+  workspaceId: string
+): Promise<Array<{ id: string; jobId: string }>> {
+  const rows = await paginateById((page) =>
+    db.emailMessage.findMany({
+      where: {
+        workspaceId,
+        jobId: { not: null },
+        OR: authoritativeEmailAssignmentOr(),
+      },
+      select: { id: true, jobId: true },
+      orderBy: { id: "asc" },
+      ...page,
+    })
+  );
+  return rows
+    .filter((row): row is typeof row & { jobId: string } => Boolean(row.jobId))
+    .map((row) => ({ id: row.id, jobId: row.jobId }));
+}
+
+export async function loadWorkspaceJobsForEval(
+  db: JobMatchEvalReadDb,
+  workspaceId: string
+): Promise<Array<{ id: string; status: string; name: string; jobNumber: string | null }>> {
+  return paginateById((page) =>
+    db.job.findMany({
+      where: { workspaceId },
+      select: { id: true, status: true, name: true, jobNumber: true },
+      orderBy: { id: "asc" },
+      ...page,
+    })
+  );
+}
+
+export async function loadHistoricalEvalEmailsByIds(
+  db: JobMatchEvalReadDb,
+  input: { workspaceId: string; ids: string[] }
+): Promise<HistoricalEvalEmailRecord[]> {
+  if (input.ids.length === 0) return [];
+  const rows = await db.emailMessage.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      id: { in: input.ids },
+      jobId: { not: null },
+      OR: authoritativeEmailAssignmentOr(),
+    },
+    select: {
+      id: true,
+      subject: true,
+      snippet: true,
+      senderEmail: true,
+      direction: true,
+      inboxConnectionId: true,
+      providerThreadId: true,
+      jobId: true,
+      jobAssignmentIsManual: true,
+      jobAssignmentSource: true,
+      hasAttachments: true,
+      normalizedEmail: { select: { cleanTextBody: true } },
+    },
+  });
+  const byId = new Map(
+    rows
+      .filter((row): row is typeof row & { jobId: string } => Boolean(row.jobId))
+      .map((row) => [
+        row.id,
+        {
+          id: row.id,
+          subject: row.subject,
+          snippet: row.snippet,
+          cleanBody: row.normalizedEmail?.cleanTextBody ?? row.snippet ?? "",
+          senderEmail: row.senderEmail,
+          direction: row.direction,
+          inboxConnectionId: row.inboxConnectionId,
+          providerThreadId: row.providerThreadId,
+          jobId: row.jobId,
+          jobAssignmentIsManual: row.jobAssignmentIsManual,
+          jobAssignmentSource: row.jobAssignmentSource,
+          hasAttachments: row.hasAttachments,
+        } satisfies HistoricalEvalEmailRecord,
+      ])
+  );
+  // Preserve caller selection order.
+  const ordered: HistoricalEvalEmailRecord[] = [];
+  for (const id of input.ids) {
+    const row = byId.get(id);
+    if (row) ordered.push(row);
+  }
+  return ordered;
+}
+
 export async function loadHistoricalEvalEmailsPage(
   db: JobMatchEvalReadDb,
   input: {

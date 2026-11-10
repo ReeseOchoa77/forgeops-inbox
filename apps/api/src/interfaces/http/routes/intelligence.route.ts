@@ -7,9 +7,21 @@ import {
 } from "@forgeops/shared";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { inspectIntelligenceInstructions } from "../../../application/services/intelligence-prompt-inspection.js";
-import { runJobMatcherHistoricalEval } from "../../../application/services/run-job-matcher-historical-eval.js";
+import {
+  previewJobMatcherEvalDataset,
+  runJobMatcherHistoricalEval,
+} from "../../../application/services/run-job-matcher-historical-eval.js";
 import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
+import { loadIntelligenceEvalEmail } from "../../../application/services/load-intelligence-eval-email.js";
 import { getSessionFromRequest } from "../authentication.js";
+
+const datasetSpecSchema = z.object({
+  jobsMode: z.enum(["ALL", "SPECIFIC", "SELECTED"]),
+  jobIds: z.array(z.string().min(1)).max(200).optional(),
+  sampling: z.enum(["TOTAL", "PER_JOB", "ALL_ELIGIBLE"]),
+  count: z.number().int().min(1).max(1000).nullable().optional(),
+  jobLifecycle: z.enum(["ALL", "CURRENT", "ARCHIVED"]).optional(),
+});
 
 const wsParams = z.object({ workspaceId: z.string().min(1) });
 const idParams = z.object({
@@ -103,7 +115,48 @@ export const registerIntelligenceRoutes = async (
     }
   );
 
-  /** Read-only historical Job Matcher evaluation. */
+  /** Preview eligible counts for a dataset definition (no matcher run). */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/eval-dataset-preview",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const body = z
+        .object({
+          dataset: datasetSpecSchema.optional(),
+          limit: z.union([z.literal(50), z.literal(100), z.literal(500)]).optional(),
+        })
+        .parse(request.body);
+
+      try {
+        const preview = await previewJobMatcherEvalDataset({
+          prisma: app.services.prisma,
+          workspaceId,
+          spec: body.dataset
+            ? {
+                jobsMode: body.dataset.jobsMode,
+                sampling: body.dataset.sampling,
+                ...(body.dataset.jobIds ? { jobIds: body.dataset.jobIds } : {}),
+                ...(body.dataset.count !== undefined
+                  ? { count: body.dataset.count }
+                  : {}),
+                ...(body.dataset.jobLifecycle
+                  ? { jobLifecycle: body.dataset.jobLifecycle }
+                  : {}),
+              }
+            : { limit: body.limit ?? 50 },
+        });
+        return reply.send({ preview });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Preview failed";
+        return reply.code(400).send({ message });
+      }
+    }
+  );
+
+  /** Read-only historical Job Matcher evaluation (flexible dataset). */
   app.post(
     "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate",
     async (request, reply) => {
@@ -113,7 +166,9 @@ export const registerIntelligenceRoutes = async (
 
       const body = z
         .object({
-          limit: z.union([z.literal(50), z.literal(100), z.literal(500)]),
+          dataset: datasetSpecSchema.optional(),
+          /** V1 back-compat. */
+          limit: z.union([z.literal(50), z.literal(100), z.literal(500)]).optional(),
           maxWrongDetails: z.number().int().min(1).max(100).optional(),
         })
         .parse(request.body);
@@ -122,7 +177,19 @@ export const registerIntelligenceRoutes = async (
         const result = await runJobMatcherHistoricalEval({
           prisma: app.services.prisma,
           workspaceId,
-          limit: body.limit,
+          dataset: body.dataset
+            ? {
+                jobsMode: body.dataset.jobsMode,
+                sampling: body.dataset.sampling,
+                ...(body.dataset.jobIds ? { jobIds: body.dataset.jobIds } : {}),
+                ...(body.dataset.count !== undefined
+                  ? { count: body.dataset.count }
+                  : {}),
+                ...(body.dataset.jobLifecycle
+                  ? { jobLifecycle: body.dataset.jobLifecycle }
+                  : {}),
+              }
+            : { limit: body.limit ?? 50 },
           ...(body.maxWrongDetails != null
             ? { maxWrongDetails: body.maxWrongDetails }
             : {}),
@@ -132,6 +199,36 @@ export const registerIntelligenceRoutes = async (
         const message = e instanceof Error ? e.message : "Evaluation failed";
         return reply.code(400).send({ message });
       }
+    }
+  );
+
+  /** On-demand email body/headers for evaluation inspector (workspace-scoped). */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/emails/:emailMessageId",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          emailMessageId: z.string().min(1),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+
+      const email = await loadIntelligenceEvalEmail({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
+        emailMessageId: params.emailMessageId,
+      });
+      if (!email) {
+        return reply.code(404).send({ message: "Email not found in workspace" });
+      }
+      return reply.send({ email });
     }
   );
 

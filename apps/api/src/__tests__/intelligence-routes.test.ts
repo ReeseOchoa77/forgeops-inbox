@@ -23,11 +23,12 @@ describe("intelligence route registration", () => {
     app.decorate("services", { prisma: {} } as never);
     await registerIntelligenceRoutes(app);
     await app.ready();
-    const printed = app.printRoutes();
+    const printed = app.printRoutes().replace(/\s+/g, " ");
     expect(printed).toContain("/intelligence");
-    expect(printed).toContain("evaluate (POST");
-    expect(printed).toContain("emails (GET");
-    expect(printed).toContain("one (POST");
+    expect(printed).toContain("uate (POST)"); // Fastify tree-splits "evaluate"
+    expect(printed).toContain("-dataset-preview (POST)");
+    expect(printed).toContain("mails/");
+    expect(printed).toContain("one (POST)");
     expect(printed).toContain("job-matcher");
     await app.close();
   });
@@ -148,6 +149,18 @@ describe("intelligence authorization", () => {
     await app.close();
   });
 
+  it("eval-dataset-preview and email inspector paths are registered", async () => {
+    const app = Fastify();
+    app.decorate("services", { prisma: {} } as never);
+    await registerIntelligenceRoutes(app);
+    await app.ready();
+    const printed = app.printRoutes().replace(/\s+/g, " ");
+    expect(printed).toContain("-dataset-preview (POST)");
+    expect(printed).toContain("mails/");
+    expect(printed).toContain(":emailMessageId");
+    await app.close();
+  });
+
   it("evaluation endpoint requires admin", async () => {
     const { getSessionFromRequest } = await import(
       "../interfaces/http/authentication.js"
@@ -206,8 +219,17 @@ describe("evaluation mutation safety (source contract)", () => {
     );
     expect(src).toContain('eligibilityMode: "evaluation"');
     expect(src).toContain('databaseWrites: "NONE"');
+    expect(src).toContain("target leakage");
     expect(src).not.toContain("persistJobMatch");
     expect(src).not.toContain("emailMessage.update");
+    // Selected Job must not be passed as matcher target hint.
+    expect(src).not.toContain("expectedJobId");
+    expect(src).not.toContain("targetJobId");
+    const matchStart = src.indexOf("const result = await matcher.match({");
+    const matchCall = src.slice(matchStart, src.indexOf("});", matchStart) + 3);
+    expect(matchCall).toContain("eligibilityMode");
+    expect(matchCall).not.toContain("trueJobId");
+    expect(matchCall).not.toContain("jobIds:");
   });
 
   it("test-one is workspace scoped and read-only", () => {
@@ -219,5 +241,14 @@ describe("evaluation mutation safety (source contract)", () => {
     expect(src).toContain('eligibilityMode: "evaluation"');
     expect(src).toContain('databaseWrites: "NONE"');
     expect(src).not.toContain("persistJobMatch");
+  });
+
+  it("email inspector loads by workspace + id (no cross-workspace)", () => {
+    const src = readFileSync(
+      join(here, "../application/services/load-intelligence-eval-email.ts"),
+      "utf8"
+    );
+    expect(src).toContain("workspaceId: input.workspaceId");
+    expect(src).toContain("id: input.emailMessageId");
   });
 });
