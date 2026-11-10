@@ -10,10 +10,11 @@ Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENC
 - Open a system by stable registry id
 - Inspect pipeline metadata, read-only instructions/rules, and explainability notes
 - For **Job Matcher**:
+  - Dense full-viewport **Evaluation** workspace (config bar + metric strip + Results | Inspector)
   - Flexible dataset builder (All / Specific / Selected Jobs × Total / Per-Job / All-eligible)
   - Eligible count preview before run
-  - Aggregate metrics + Job-level breakdown + outcome filters
-  - Side-panel **Email Inspector** (canonical headers + sanitized body + attachments on demand)
+  - Aggregate metrics + Emails/Jobs result views + outcome filters
+  - Side-panel **Email Inspector** (Email | Match tabs; sanitized body + marker progression)
   - Test One on an existing authoritative email
 
 ## Job Matcher evaluation guarantees

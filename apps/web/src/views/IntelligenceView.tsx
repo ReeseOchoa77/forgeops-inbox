@@ -62,9 +62,9 @@ function IntelligenceOverview({
   }, [workspaceId])
 
   return (
-    <div>
+    <div style={{ height: '100%', overflow: 'auto', minHeight: 0 }}>
       <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Intelligence</h2>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px', maxWidth: 640 }}>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px', maxWidth: 720 }}>
         Discoverability surface for ForgeOps automated decision systems. Components are loaded from
         the canonical Intelligence Registry — new registered systems appear here without page-specific cards.
       </p>
@@ -161,6 +161,7 @@ function IntelligenceDetail({
 
   const showInstructions = showInstructionsSection(component.type)
   const showRules = showRulesSection(component.type)
+  const fillWorkspace = tab === 'evaluation'
 
   const tabs: Array<{ key: typeof tab; label: string }> = [
     { key: 'overview', label: 'Overview' },
@@ -170,56 +171,100 @@ function IntelligenceDetail({
     { key: 'test', label: 'Test' },
   ]
 
+  const autoAssignFlag = component.featureFlags.find((f) =>
+    /AUTO_ASSIGN/i.test(f.envName)
+  )
+
   return (
-    <div>
-      <button type="button" onClick={onBack} style={linkBtn}>← Intelligence</button>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{component.name}</h2>
-        <TypeBadge type={component.type} />
-        <StatusBadge status={component.status} />
-      </div>
-      <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 14px' }}>{component.description}</p>
+    <div
+      style={{
+        height: '100%',
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" onClick={onBack} style={linkBtn}>← Intelligence</button>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>{component.name}</h2>
+          <TypeBadge type={component.type} />
+          <StatusBadge status={component.status} />
+          {autoAssignFlag && (
+            <span style={{ fontSize: 11, color: '#6b7280' }}>
+              Auto Assign {autoAssignFlag.defaultEnabled ? 'ON' : 'OFF'}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: '#6b7280',
+            marginTop: 4,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+          title={component.purpose}
+        >
+          {component.purpose}
+        </div>
 
-      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #e5e5e5', marginBottom: 16, overflowX: 'auto' }}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            style={{
-              padding: '8px 14px',
-              fontSize: 12,
-              fontWeight: tab === t.key ? 600 : 400,
-              color: tab === t.key ? '#1a1a2e' : '#888',
-              background: 'none',
-              border: 'none',
-              borderBottom: tab === t.key ? '2px solid #1a1a2e' : '2px solid transparent',
-              marginBottom: -2,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #e5e5e5', marginTop: 8, overflowX: 'auto' }}>
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              style={{
+                padding: '6px 12px',
+                fontSize: 12,
+                fontWeight: tab === t.key ? 600 : 400,
+                color: tab === t.key ? '#1a1a2e' : '#888',
+                background: 'none',
+                border: 'none',
+                borderBottom: tab === t.key ? '2px solid #1a1a2e' : '2px solid transparent',
+                marginBottom: -2,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {tab === 'overview' && <OverviewSection component={component} />}
-      {tab === 'pipeline' && (
-        <IntelligencePipelineView nodes={component.pipeline.nodes} edges={component.pipeline.edges} />
-      )}
-      {tab === 'instructions' && (
-        <InstructionsRulesSection
-          component={component}
-          instructions={instructions}
-          showInstructions={showInstructions}
-          showRules={showRules}
-        />
-      )}
-      {tab === 'evaluation' && (
-        <EvaluationSection workspaceId={workspaceId} component={component} />
-      )}
-      {tab === 'test' && <TestSection workspaceId={workspaceId} component={component} />}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: fillWorkspace ? 'hidden' : 'auto',
+          marginTop: 10,
+          display: fillWorkspace ? 'flex' : undefined,
+          flexDirection: fillWorkspace ? 'column' : undefined,
+        }}
+      >
+        {tab === 'overview' && <OverviewSection component={component} />}
+        {tab === 'pipeline' && (
+          <IntelligencePipelineView nodes={component.pipeline.nodes} edges={component.pipeline.edges} />
+        )}
+        {tab === 'instructions' && (
+          <InstructionsRulesSection
+            component={component}
+            instructions={instructions}
+            showInstructions={showInstructions}
+            showRules={showRules}
+          />
+        )}
+        {tab === 'evaluation' && (
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <EvaluationSection workspaceId={workspaceId} component={component} />
+          </div>
+        )}
+        {tab === 'test' && <TestSection workspaceId={workspaceId} component={component} />}
+      </div>
     </div>
   )
 }
@@ -365,11 +410,13 @@ function EvaluationSection({
   }
 
   return (
-    <JobMatcherEvaluationPanel
-      workspaceId={workspaceId}
-      groundTruthQuality={component.evaluation.groundTruthQuality}
-      groundTruthNotes={component.evaluation.groundTruthNotes}
-    />
+    <div style={{ height: '100%', minHeight: 0 }}>
+      <JobMatcherEvaluationPanel
+        workspaceId={workspaceId}
+        groundTruthQuality={component.evaluation.groundTruthQuality}
+        groundTruthNotes={component.evaluation.groundTruthNotes}
+      />
+    </div>
   )
 }
 

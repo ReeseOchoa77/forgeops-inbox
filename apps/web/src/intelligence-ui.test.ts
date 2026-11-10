@@ -153,9 +153,25 @@ describe('job matcher evaluation UX v2', () => {
     const src = readFileSync(join(here, 'components/JobMatcherEvaluationPanel.tsx'), 'utf8')
     expect(src).toContain('SafeEmailBody')
     expect(src).toContain('eval-email-inspector')
-    expect(src).toContain('Job breakdown')
+    expect(src).toContain('job-matcher-eval-workspace')
     expect(src).toContain('PER_JOB')
-    expect(src).toContain('ground-truth emails only')
+    expect(src).toContain('Emails')
+    expect(src).toContain('Jobs')
+    expect(src).toContain('Marker progression')
+    expect(src).toContain('height: \'100%\'')
+    expect(src).toContain('Read-only evaluation')
+    expect(src).toContain('Match Analysis')
+    expect(src).toContain('Correct / Eval')
+  })
+
+
+  it('evaluation workspace fills height without max-width bottleneck', () => {
+    const panel = readFileSync(join(here, 'components/JobMatcherEvaluationPanel.tsx'), 'utf8')
+    expect(panel).not.toMatch(/maxWidth:\s*640/)
+    expect(panel).not.toMatch(/maxWidth:\s*720/)
+    expect(panel).not.toMatch(/maxWidth:\s*900/)
+    const app = readFileSync(join(here, 'App.tsx'), 'utf8')
+    expect(app).toMatch(/page === 'intelligence'[\s\S]*?overflow: 'hidden'/)
   })
 
   it('SafeEmailBody uses DOMPurify sanitize', () => {

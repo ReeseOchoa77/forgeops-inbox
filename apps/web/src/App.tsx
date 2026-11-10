@@ -997,7 +997,15 @@ export default function App() {
             </div>
           )}
           {page === 'intelligence' && (
-            <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: bp === 'phone' ? 14 : 22 }}>
+            <div
+              style={{
+                flex: 1,
+                overflow: 'hidden',
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
               <IntelligenceView
                 workspaceId={workspaceId}
                 intelligenceId={intelligenceId}
