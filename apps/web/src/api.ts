@@ -2996,6 +2996,66 @@ export const api = {
   getStoredAttachmentDownloadUrl: (workspaceId: string, attachmentId: string, inline = false) =>
     `${BASE}/workspaces/${workspaceId}/attachments/${attachmentId}/download${inline ? '?inline=true' : ''}`,
 
+  listIntelligence: (workspaceId: string, params?: { includeHidden?: boolean }) => {
+    const p = new URLSearchParams()
+    if (params?.includeHidden) p.set('includeHidden', 'true')
+    const q = p.toString()
+    return request<{ components: IntelligenceSafeDto[] }>(
+      `/workspaces/${workspaceId}/intelligence${q ? `?${q}` : ''}`
+    )
+  },
+
+  getIntelligence: (workspaceId: string, intelligenceId: string) =>
+    request<{
+      component: IntelligenceSafeDto
+      instructions: Array<{
+        key: string
+        available: boolean
+        text: string | null
+        note?: string
+      }>
+    }>(`/workspaces/${workspaceId}/intelligence/${encodeURIComponent(intelligenceId)}`),
+
+  evaluateJobMatcherIntelligence: (
+    workspaceId: string,
+    body: { limit: 50 | 100 | 500; maxWrongDetails?: number }
+  ) =>
+    request<{ evaluation: JobMatcherEvalResult }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listJobMatcherTestEmails: (
+    workspaceId: string,
+    params?: { search?: string; take?: number }
+  ) => {
+    const p = new URLSearchParams()
+    if (params?.search?.trim()) p.set('search', params.search.trim())
+    if (params?.take) p.set('take', String(params.take))
+    const q = p.toString()
+    return request<{
+      emails: Array<{
+        id: string
+        subject: string | null
+        senderEmail: string | null
+        receivedAt: string | null
+        jobId: string | null
+        jobName: string | null
+        jobNumber: string | null
+        jobAssignmentSource: string | null
+      }>
+    }>(`/workspaces/${workspaceId}/intelligence/job-matcher/test-emails${q ? `?${q}` : ''}`)
+  },
+
+  testJobMatcherOne: (
+    workspaceId: string,
+    body: { emailMessageId: string }
+  ) =>
+    request<{ test: JobMatcherTestOneResult }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/test-one`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   getCustomers: (
     workspaceId: string,
     params?: { includeCounts?: boolean; search?: string }
@@ -4869,6 +4929,121 @@ export interface CustomerSummary {
     jobs: number;
     bidCandidates?: number;
   };
+}
+
+export interface IntelligenceSafeDto {
+  id: string
+  name: string
+  description: string
+  type: string
+  status: string
+  version: string
+  purpose: string
+  implementation: { packages: string[]; entryPoints: string[] }
+  inputs: string
+  outputs: string
+  pipeline: {
+    nodes: Array<{ id: string; kind: string; label: string; description?: string }>
+    edges: Array<{ from: string; to: string; label?: string }>
+  }
+  instructions:
+    | {
+        available: true
+        source: string
+        inspectionKeys: string[]
+        summary: string
+        editable: false
+      }
+    | { available: false; reason: string }
+  rules:
+    | {
+        available: true
+        items: Array<{ id: string; title: string; summary: string; version?: string }>
+        summary: string
+      }
+    | { available: false; reason: string }
+  evaluation: {
+    supported: boolean
+    evaluatorId?: string
+    metrics: string[]
+    groundTruthQuality: string
+    groundTruthNotes: string
+    notes: string
+  }
+  explainability: {
+    available: boolean
+    capabilities: string[]
+    notes: string
+  }
+  featureFlags: Array<{
+    envName: string
+    defaultEnabled: boolean
+    effect: string
+  }>
+  discoverable: boolean
+}
+
+export interface JobMatcherEvalResult {
+  intelligenceId: 'job-matcher'
+  databaseWrites: 'NONE'
+  autoAssignEnabled: boolean
+  sampleSizeRequested: number
+  metrics: {
+    totalEvaluated: number
+    correctMatches: number
+    wrongMatches: number
+    ambiguous: number
+    conflict: number
+    noMatch: number
+    precision: number | null
+    correctCoverage: number
+    wrongMatchRate: number
+    ambiguityRate: number
+    conflictRate: number
+    noMatchRate: number
+  }
+  wrongMatches: Array<{
+    emailMessageId: string
+    subject: string | null
+    actualJobName: string
+    predictedJobName: string | null
+    resolvingMarker: string | null
+  }>
+  groundTruthQuality: string
+  groundTruthNotes: string
+}
+
+export interface JobMatcherTestOneResult {
+  intelligenceId: 'job-matcher'
+  databaseWrites: 'NONE'
+  email: {
+    id: string
+    subject: string | null
+    senderEmail: string | null
+    direction: string | null
+    jobId: string | null
+    jobAssignmentSource: string | null
+  }
+  result: {
+    decision: string
+    selectedJobId: string | null
+    selectedJobName: string | null
+    confidence: number | null
+    evidence: Array<{ type: string; value: string }>
+    markerTrace: Array<{
+      marker: string
+      status: string
+      candidateJobIds?: string[]
+    }>
+    matcherVersion: string
+    resolvingMarker: string | null
+  }
+  historical: {
+    jobId: string | null
+    jobName: string | null
+    authoritativeGroundTruth: boolean
+    outcome: string | null
+  }
 }
 
 export interface CustomerDetailResponse {

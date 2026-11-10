@@ -1,0 +1,224 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import {
+  getIntelligenceDefinition,
+  listIntelligenceSafeDtos,
+  toIntelligenceSafeDto,
+} from "@forgeops/shared";
+import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
+import { inspectIntelligenceInstructions } from "../../../application/services/intelligence-prompt-inspection.js";
+import { runJobMatcherHistoricalEval } from "../../../application/services/run-job-matcher-historical-eval.js";
+import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
+import { getSessionFromRequest } from "../authentication.js";
+
+const wsParams = z.object({ workspaceId: z.string().min(1) });
+const idParams = z.object({
+  workspaceId: z.string().min(1),
+  intelligenceId: z.string().min(1),
+});
+
+function requireAdmin(role: string): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+async function requireIntelligenceAccess(
+  app: FastifyInstance,
+  request: import("fastify").FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  workspaceId: string
+) {
+  const session = await getSessionFromRequest(request);
+  if (!session) {
+    reply.code(401).send({ message: "Authentication required" });
+    return null;
+  }
+  const membership = await requireWorkspaceMembership(
+    app.services.prisma,
+    session.userId,
+    workspaceId
+  );
+  if (!membership) {
+    reply.code(403).send({ message: "Workspace access denied" });
+    return null;
+  }
+  if (!requireAdmin(membership.role)) {
+    reply.code(403).send({ message: "Admin permission required" });
+    return null;
+  }
+  return { userId: session.userId, role: membership.role };
+}
+
+export const registerIntelligenceRoutes = async (
+  app: FastifyInstance
+): Promise<void> => {
+  /** List discoverable intelligence (safe DTOs from registry). */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const includeHidden =
+        z
+          .object({
+            includeHidden: z
+              .enum(["true", "false"])
+              .optional()
+              .transform((v) => v === "true"),
+          })
+          .parse(request.query).includeHidden === true;
+
+      return reply.send({
+        components: listIntelligenceSafeDtos({
+          discoverableOnly: !includeHidden,
+        }),
+      });
+    }
+  );
+
+  /** Detail for one registered intelligence + optional instruction inspection. */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/:intelligenceId",
+    async (request, reply) => {
+      const { workspaceId, intelligenceId } = idParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const def = getIntelligenceDefinition(intelligenceId);
+      if (!def) {
+        return reply.code(404).send({ message: "Intelligence not found" });
+      }
+
+      const dto = toIntelligenceSafeDto(def);
+      const instructions =
+        def.instructions.available === true
+          ? inspectIntelligenceInstructions(def.instructions.inspectionKeys)
+          : [];
+
+      return reply.send({
+        component: dto,
+        instructions,
+      });
+    }
+  );
+
+  /** Read-only historical Job Matcher evaluation. */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const body = z
+        .object({
+          limit: z.union([z.literal(50), z.literal(100), z.literal(500)]),
+          maxWrongDetails: z.number().int().min(1).max(100).optional(),
+        })
+        .parse(request.body);
+
+      try {
+        const result = await runJobMatcherHistoricalEval({
+          prisma: app.services.prisma,
+          workspaceId,
+          limit: body.limit,
+          ...(body.maxWrongDetails != null
+            ? { maxWrongDetails: body.maxWrongDetails }
+            : {}),
+        });
+        return reply.send({ evaluation: result });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Evaluation failed";
+        return reply.code(400).send({ message });
+      }
+    }
+  );
+
+  /** List candidate emails for Test One (authoritative, workspace-scoped). */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/test-emails",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const query = z
+        .object({
+          search: z.string().max(200).optional(),
+          take: z.coerce.number().int().min(1).max(50).optional(),
+        })
+        .parse(request.query);
+
+      const take = query.take ?? 25;
+      const search = query.search?.trim();
+
+      const emails = await app.services.prisma.emailMessage.findMany({
+        where: {
+          workspaceId,
+          jobId: { not: null },
+          OR: [
+            { jobAssignmentIsManual: true },
+            { jobAssignmentSource: "USER_ASSIGNED" },
+            { jobAssignmentSource: "VERIFIED_PROJECT_FOLDER" },
+          ],
+          ...(search
+            ? {
+                subject: { contains: search, mode: "insensitive" as const },
+              }
+            : {}),
+        },
+        orderBy: { receivedAt: "desc" },
+        take,
+        select: {
+          id: true,
+          subject: true,
+          senderEmail: true,
+          receivedAt: true,
+          jobId: true,
+          jobAssignmentSource: true,
+          job: { select: { id: true, name: true, jobNumber: true } },
+        },
+      });
+
+      return reply.send({
+        emails: emails.map((e) => ({
+          id: e.id,
+          subject: e.subject,
+          senderEmail: e.senderEmail,
+          receivedAt: e.receivedAt,
+          jobId: e.jobId,
+          jobName: e.job?.name ?? null,
+          jobNumber: e.job?.jobNumber ?? null,
+          jobAssignmentSource: e.jobAssignmentSource,
+        })),
+      });
+    }
+  );
+
+  /** Read-only single-email matcher test. */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/test-one",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+
+      const body = z
+        .object({ emailMessageId: z.string().min(1) })
+        .parse(request.body);
+
+      try {
+        const result = await runJobMatcherTestOne({
+          prisma: app.services.prisma,
+          workspaceId,
+          emailMessageId: body.emailMessageId,
+        });
+        return reply.send({ test: result });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Test failed";
+        return reply.code(400).send({ message });
+      }
+    }
+  );
+};

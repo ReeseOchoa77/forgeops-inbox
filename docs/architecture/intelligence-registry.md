@@ -1,8 +1,19 @@
 # ForgeOps Intelligence Registry
 
-**Status:** IMPLEMENTED (code-level registry). Manage → Intelligence UI is **PLANNED** and must consume this registry.
+**Status:** IMPLEMENTED (code-level registry + Manage → Intelligence UI).
 
 Code is the source of truth: `@forgeops/shared` → `intelligence/` (`INTELLIGENCE_CATALOG`, `listDiscoverableIntelligence`, `toIntelligenceSafeDto`).
+
+Manage → **Intelligence** (ADMIN/OWNER) loads safe DTOs from the registry via:
+
+- `GET /api/v1/workspaces/:workspaceId/intelligence`
+- `GET /api/v1/workspaces/:workspaceId/intelligence/:intelligenceId`
+
+Job Matcher evaluation / Test One reuse the existing historical matcher evaluator (read-only):
+
+- `POST .../intelligence/job-matcher/evaluate`
+- `GET .../intelligence/job-matcher/test-emails`
+- `POST .../intelligence/job-matcher/test-one`
 
 Related: [overview.md](overview.md), [email-classification.md](email-classification.md), [job-matching.md](job-matching.md), [bidding-active-bids.md](bidding-active-bids.md), [matcher-evaluation.md](../operations/matcher-evaluation.md).
 
@@ -126,16 +137,20 @@ Safe DTOs must not include API keys, OAuth tokens, or private env values. Prompt
 ## Manage → Intelligence discovery
 
 ```text
-GET intelligence registry (safe DTOs)
+INTELLIGENCE_CATALOG (typed)
         ↓
-filter discoverable + authorization
+listIntelligenceSafeDtos / toIntelligenceSafeDto
         ↓
-render cards from registry
+GET /api/v1/workspaces/:workspaceId/intelligence (ADMIN/OWNER)
         ↓
-open detail by stable id
+IntelligenceView maps components → cards
+        ↓
+open detail by stable id → generic Pipeline / Instructions|Rules / Evaluation / Test
 ```
 
-Do **not** hard-code one card per system in the UI.
+Do **not** hard-code one card per system in the UI. Adding a properly registered `IntelligenceDefinition` with `discoverable: true` makes it eligible to appear without page-specific rendering code.
+
+Pipeline visualization uses `IntelligencePipelineView`, which consumes generic `nodes` + `edges` metadata only.
 
 ## Material changes
 

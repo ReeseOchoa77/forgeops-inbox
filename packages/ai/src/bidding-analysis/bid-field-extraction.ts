@@ -52,7 +52,7 @@ export type BidFieldExtractionResult = {
   fieldStatus: Record<string, "FOUND" | "INFERRED" | "UNKNOWN">;
 };
 
-const systemPrompt = `You extract Bid Invite fields for a steel fabrication shop CRM staging system.
+export const bidFieldExtractionSystemPrompt = `You extract Bid Invite fields for a steel fabrication shop CRM staging system.
 
 Return ONLY JSON:
 {
@@ -204,7 +204,7 @@ export class OpenAIBidFieldExtractor {
     if (!this.client) return emptyBidFieldExtractionResult();
     const params = buildJsonObjectResponseParams({
       model: this.model,
-      instructions: systemPrompt,
+      instructions: bidFieldExtractionSystemPrompt,
       userInput: buildUserPrompt(input),
       maxOutputTokens: 900,
     });

@@ -8,6 +8,7 @@ const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> 
   { page: 'jobs' },
   { page: 'dashboard', section: 'Manage' },
   { page: 'reference', section: 'Manage' },
+  { page: 'intelligence', section: 'Manage', minRole: 'ADMIN' },
   { page: 'workspace' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
   { page: 'email-analysis', section: 'System', minRole: 'MEMBER' },
@@ -33,7 +34,15 @@ describe('job discovery navigation consolidation', () => {
     expect(NAV_SECTIONS.map((i) => i.page)).not.toContain('outlook-folders')
     expect(NAV_SECTIONS.map((i) => i.page)).toContain('email-analysis')
     const managePages = NAV_SECTIONS.filter((i) => i.section === 'Manage').map((i) => i.page)
-    expect(managePages).toEqual(['dashboard', 'reference'])
+    expect(managePages).toEqual(['dashboard', 'reference', 'intelligence'])
+  })
+})
+
+describe('intelligence navigation', () => {
+  it('Intelligence appears under Manage for ADMIN+', () => {
+    const item = NAV_SECTIONS.find((i) => i.page === 'intelligence')
+    expect(item?.section).toBe('Manage')
+    expect(item?.minRole).toBe('ADMIN')
   })
 })
 

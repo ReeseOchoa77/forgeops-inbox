@@ -25,6 +25,7 @@ export * from "./bidding-intake/extractor.js";
 export * from "./bidding-analysis/bid-field-extraction.js";
 export * from "./bidding-analysis/quote-field-extraction.js";
 export * from "./bidding-analysis/match-adjudication.js";
+export * from "./bidding-analysis/scope-detail-parse.js";
 export * from "./inline-image-relevance/constants.js";
 export * from "./inline-image-relevance/dimensions.js";
 export * from "./inline-image-relevance/deterministic.js";

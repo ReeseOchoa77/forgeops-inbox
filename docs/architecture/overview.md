@@ -142,7 +142,7 @@ These are different people/systems. Canonical: [auth.md](auth.md).
 
 Enum values `AI_AUTO_ASSIGNED` / `AI_SUGGESTED` are matcher **provenance labels**, not proof that an LLM chose the Job.
 
-Canonical inventory of automated decision systems: [Intelligence Registry](intelligence-registry.md) (`INTELLIGENCE_CATALOG` in `@forgeops/shared`). New intelligence must register there; Manage → Intelligence will discover from the typed catalog (UI planned).
+Canonical inventory of automated decision systems: [Intelligence Registry](intelligence-registry.md) (`INTELLIGENCE_CATALOG` in `@forgeops/shared`). New intelligence must register there; Manage → Intelligence discovers and renders from the typed catalog (safe DTOs).
 
 ## Responsive UI scale
 

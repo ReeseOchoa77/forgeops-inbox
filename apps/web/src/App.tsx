@@ -18,6 +18,7 @@ import { DashboardView } from './views/DashboardView'
 import { WorkspaceView } from './views/WorkspaceView'
 import { EmailAnalysisView } from './views/EmailAnalysisView'
 import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
+import { IntelligenceView } from './views/IntelligenceView'
 import { JobsView } from './views/JobsView'
 import { BiddingView } from './views/BiddingView'
 import { JobDetailView } from './views/JobDetailView'
@@ -33,7 +34,7 @@ import { canAccessPlatformOperatorNav } from './system-nav-access'
 
 const SHOW_DEV_INDICATOR = shouldShowDevelopmentIndicator(import.meta.env)
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'email-analysis' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'email-analysis' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'intelligence' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -45,6 +46,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'jobs', label: 'Jobs', icon: '\uD83D\uDD28' },
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA', section: 'Manage' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
+  { page: 'intelligence', label: 'Intelligence', icon: '\uD83E\uDDE0', section: 'Manage', minRole: 'ADMIN' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
   { page: 'email-analysis', label: 'Email Analysis', icon: '\uD83D\uDCC2', section: 'System', minRole: 'MEMBER' },
@@ -66,6 +68,7 @@ const PAGE_TITLES: Record<Page, string> = {
   'outlook-folders': 'Email Analysis',
   documents: 'Documents',
   reference: 'Company Data',
+  intelligence: 'Intelligence',
   'team-access': 'Team Access',
   workspace: 'Workspace',
   settings: 'Settings',
@@ -119,6 +122,7 @@ export default function App() {
     return 'customers'
   })
   const [biddingSelectedIdHint, setBiddingSelectedIdHint] = useState<string | null>(null)
+  const [intelligenceId, setIntelligenceId] = useState<string | null>(null)
 
   // Legacy Team Access top-level page → Workspace → Team Access tab
   useEffect(() => {
@@ -382,6 +386,7 @@ export default function App() {
     } else {
       if (p === 'workspace') setWorkspaceTabHint('mailboxes')
       if (p === 'reference') setReferenceTabHint((prev) => prev || 'customers')
+      if (p === 'intelligence') setIntelligenceId(null)
       setPage(p)
     }
     // All Mailboxes is Inbox-only; resolve to a concrete mailbox for other pages.
@@ -988,6 +993,16 @@ export default function App() {
                   setBiddingSelectedIdHint(candidateId)
                   setPage('bidding')
                 }}
+              />
+            </div>
+          )}
+          {page === 'intelligence' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: bp === 'phone' ? 14 : 22 }}>
+              <IntelligenceView
+                workspaceId={workspaceId}
+                intelligenceId={intelligenceId}
+                onOpen={(id) => setIntelligenceId(id)}
+                onBack={() => setIntelligenceId(null)}
               />
             </div>
           )}

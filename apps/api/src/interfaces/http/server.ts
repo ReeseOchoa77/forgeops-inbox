@@ -102,6 +102,7 @@ import { registerDocumentLibraryRoutes } from "./routes/document-library.route.j
 import { registerCalendarRoutes } from "./routes/calendar.route.js";
 import { registerJobImportRoutes } from "./routes/job-import.route.js";
 import { registerDashboardRoutes } from "./routes/dashboard.route.js";
+import { registerIntelligenceRoutes } from "./routes/intelligence.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -489,6 +490,7 @@ export const buildServer = async () => {
   await registerCalendarRoutes(app);
   await registerJobImportRoutes(app);
   await registerDashboardRoutes(app);
+  await registerIntelligenceRoutes(app);
 
   const PUSH_RENEWAL_INTERVAL_MS = 60 * 60 * 1000;
   let pushRenewalTimer: ReturnType<typeof setInterval> | null = null;

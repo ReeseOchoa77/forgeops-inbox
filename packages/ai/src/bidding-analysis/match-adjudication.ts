@@ -39,7 +39,7 @@ export type QuoteMatchAdjudicationResult = {
   decision: "MATCH" | "UNMATCHED" | "INSUFFICIENT_EVIDENCE";
 };
 
-const systemPrompt = `You adjudicate whether a Quote email matches ONE Bid Candidate from a shortlist.
+export const quoteMatchAdjudicationSystemPrompt = `You adjudicate whether a Quote email matches ONE Bid Candidate from a shortlist.
 
 Return ONLY JSON:
 {
@@ -95,7 +95,7 @@ export class OpenAIQuoteMatchAdjudicator {
     const allowed = new Set(input.shortlist.map((c) => c.id));
     const params = buildJsonObjectResponseParams({
       model: this.model,
-      instructions: systemPrompt,
+      instructions: quoteMatchAdjudicationSystemPrompt,
       userInput: buildUserPrompt(input),
       maxOutputTokens: 300,
     });
@@ -181,7 +181,7 @@ export type ExistingJobAdjudicationResult = {
   decision: "POSSIBLE_EXISTING_JOB" | "INSUFFICIENT_EVIDENCE" | "NO_MATCH";
 };
 
-const existingJobSystem = `You suggest whether a Bid Candidate may already exist as a Job in the CRM.
+export const existingJobAdjudicationSystemPrompt = `You suggest whether a Bid Candidate may already exist as a Job in the CRM.
 
 Return ONLY JSON:
 {
@@ -226,7 +226,7 @@ export class OpenAIExistingJobAdjudicator {
     const allowed = new Set(input.shortlist.map((j) => j.jobId));
     const params = buildJsonObjectResponseParams({
       model: this.model,
-      instructions: existingJobSystem,
+      instructions: existingJobAdjudicationSystemPrompt,
       userInput: [
         "Candidate:",
         JSON.stringify(input.candidate),

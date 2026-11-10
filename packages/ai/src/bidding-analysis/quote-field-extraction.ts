@@ -49,7 +49,7 @@ export type QuoteFieldExtractionResult = {
   fieldStatus: Record<string, "FOUND" | "INFERRED" | "UNKNOWN">;
 };
 
-const systemPrompt = `You extract steel fabrication Quote fields from email + PDF text for CRM staging.
+export const quoteFieldExtractionSystemPrompt = `You extract steel fabrication Quote fields from email + PDF text for CRM staging.
 
 Return ONLY JSON:
 {
@@ -236,7 +236,7 @@ export class OpenAIQuoteFieldExtractor {
     if (!this.client) return emptyQuoteFieldExtractionResult();
     const params = buildJsonObjectResponseParams({
       model: this.model,
-      instructions: systemPrompt,
+      instructions: quoteFieldExtractionSystemPrompt,
       userInput: buildUserPrompt(input),
       maxOutputTokens: 900,
     });
