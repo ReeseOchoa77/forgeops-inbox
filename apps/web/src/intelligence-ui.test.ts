@@ -169,6 +169,16 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('Ambiguity')
     expect(src).toContain('setJobMatcherEvalSession')
     expect(src).toContain('getJobMatcherEvalSession')
+    expect(src).toContain('job-matcher-diagnostics')
+    expect(src).toContain('Export')
+  })
+
+  it('eval export helpers never rematch and omit bodies from CSV', () => {
+    const src = readFileSync(join(here, 'job-matcher-eval-export.ts'), 'utf8')
+    expect(src).toContain('buildEvalDetailedCsv')
+    expect(src).toContain('Matcher was not re-run')
+    expect(src).not.toContain('evaluateJobMatcher')
+    expect(src).not.toContain('bodyHtml')
   })
 
 

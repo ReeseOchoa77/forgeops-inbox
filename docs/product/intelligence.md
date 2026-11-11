@@ -13,7 +13,9 @@ Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENC
   - Dense full-viewport **Evaluation** workspace (config bar + metric strip + Results | Inspector)
   - Flexible dataset builder (All / Specific / Selected Jobs × Total / Per-Job / All-eligible)
   - Eligible count preview before run
-  - Aggregate metrics + Emails/Jobs result views + outcome filters
+  - Aggregate metrics + Emails/Jobs/**Diagnostics** result views + outcome filters
+  - Deterministic failure taxonomy, marker precision, GT survival, common confusions
+  - Export Summary/Detailed CSV + Full JSON of the completed run (no rematch; no bodies in CSV)
   - Side-panel **Email Inspector** (Email | Match tabs; sanitized body + marker progression)
   - Test One on an existing authoritative email
 

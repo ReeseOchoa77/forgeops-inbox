@@ -9,11 +9,19 @@ import {
 } from 'react'
 import {
   api,
+  type JobMatcherEvalFailureCategory,
   type JobMatcherEvalPreview,
   type JobMatcherEvalResult,
   type JobMatcherEvalRow,
   type JobLookup,
 } from '../api'
+import {
+  buildEvalDetailedCsv,
+  buildEvalFullJson,
+  buildEvalSummaryCsv,
+  downloadTextFile,
+  jobMatcherEvalExportFilename,
+} from '../job-matcher-eval-export'
 import {
   DEFAULT_INTELLIGENCE_STATE,
   getJobMatcherEvalPending,
@@ -34,6 +42,7 @@ type Sampling = 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
 type Lifecycle = 'ALL' | 'CURRENT' | 'ARCHIVED'
 type OutcomeFilter = 'ALL' | 'CORRECT_MATCH' | 'WRONG_MATCH' | 'AMBIGUOUS' | 'CONFLICT' | 'NO_MATCH'
 type ResultsView = 'emails' | 'jobs'
+type PanelTab = 'emails' | 'jobs' | 'diagnostics'
 
 const TOTAL_PRESETS = [25, 50, 100, 250, 500, 1000]
 const PER_JOB_PRESETS = [5, 10, 25, 50, 100]
@@ -81,6 +90,12 @@ export function JobMatcherEvaluationPanel({
     return sessionSeed.result.rows.find((r) => r.emailMessageId === id) ?? null
   })
   const [resultsView, setResultsView] = useState<ResultsView>(() => initialUi.resultsView)
+  const [panelTab, setPanelTab] = useState<PanelTab>(() => initialUi.resultsView)
+  const [failureFilter, setFailureFilter] = useState<JobMatcherEvalFailureCategory | 'ALL'>('ALL')
+  const [resolvingMarkerFilter, setResolvingMarkerFilter] = useState<
+    'ALL' | 'NAME' | 'CONTACT' | 'THREAD'
+  >('ALL')
+  const [exportOpen, setExportOpen] = useState(false)
   const [inspectorTab, setInspectorTab] = useState<'email' | 'match'>(() => initialUi.inspectorTab)
   const [wide, setWide] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1100 : true
@@ -307,9 +322,54 @@ export function JobMatcherEvaluationPanel({
     return result.rows.filter((row) => {
       if (outcomeFilter !== 'ALL' && row.outcome !== outcomeFilter) return false
       if (jobFilterId && row.trueJobId !== jobFilterId) return false
+      if (failureFilter !== 'ALL' && row.diagnostics?.failureCategory !== failureFilter) {
+        return false
+      }
+      if (
+        resolvingMarkerFilter !== 'ALL' &&
+        (row.diagnostics?.resolvingMarker ?? row.resolvingMarker) !== resolvingMarkerFilter
+      ) {
+        return false
+      }
       return true
     })
-  }, [result, outcomeFilter, jobFilterId])
+  }, [result, outcomeFilter, jobFilterId, failureFilter, resolvingMarkerFilter])
+
+  const exportFull = (kind: 'summary' | 'detailed' | 'json') => {
+    if (!result) return
+    setExportOpen(false)
+    if (kind === 'summary') {
+      downloadTextFile(
+        jobMatcherEvalExportFilename('summary', 'csv'),
+        buildEvalSummaryCsv(result),
+        'text/csv;charset=utf-8'
+      )
+      return
+    }
+    if (kind === 'detailed') {
+      downloadTextFile(
+        jobMatcherEvalExportFilename('detailed', 'csv'),
+        buildEvalDetailedCsv(result.rows),
+        'text/csv;charset=utf-8'
+      )
+      return
+    }
+    downloadTextFile(
+      jobMatcherEvalExportFilename('full', 'json'),
+      buildEvalFullJson(result),
+      'application/json;charset=utf-8'
+    )
+  }
+
+  const exportFiltered = () => {
+    if (!result) return
+    setExportOpen(false)
+    downloadTextFile(
+      jobMatcherEvalExportFilename('detailed', 'csv'),
+      buildEvalDetailedCsv(filteredRows),
+      'text/csv;charset=utf-8'
+    )
+  }
 
   const canRun =
     !!userId &&
@@ -589,7 +649,55 @@ export function JobMatcherEvaluationPanel({
                 </>
               )}
             </div>
-            <div style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
+            <div
+              style={{
+                flex: '0 0 auto',
+                alignSelf: 'flex-end',
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+              }}
+            >
+              {result && (
+                <div style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExportOpen((o) => !o)}
+                    style={{ ...chipBtn, padding: '6px 10px', fontSize: 12 }}
+                  >
+                    Export ▾
+                  </button>
+                  {exportOpen && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        bottom: '110%',
+                        background: '#fff',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 8,
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                        minWidth: 220,
+                        zIndex: 20,
+                        padding: 4,
+                      }}
+                    >
+                      <button type="button" style={exportItemBtn} onClick={() => exportFull('summary')}>
+                        Summary CSV (full evaluation)
+                      </button>
+                      <button type="button" style={exportItemBtn} onClick={() => exportFull('detailed')}>
+                        Detailed CSV (full evaluation)
+                      </button>
+                      <button type="button" style={exportItemBtn} onClick={() => exportFull('json')}>
+                        Full JSON (full evaluation)
+                      </button>
+                      <button type="button" style={exportItemBtn} onClick={exportFiltered}>
+                        Detailed CSV (current filtered results)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => void run()}
@@ -673,13 +781,21 @@ export function JobMatcherEvaluationPanel({
             setOutcomeFilter={setOutcomeFilter}
             jobFilterId={jobFilterId}
             setJobFilterId={setJobFilterId}
+            failureFilter={failureFilter}
+            setFailureFilter={setFailureFilter}
+            resolvingMarkerFilter={resolvingMarkerFilter}
+            setResolvingMarkerFilter={setResolvingMarkerFilter}
             selectedRow={selectedRow}
             setSelectedRow={(row) => {
               setSelectedRow(row)
               setInspectorTab('email')
+              setPanelTab('emails')
             }}
-            resultsView={resultsView}
-            setResultsView={setResultsView}
+            panelTab={panelTab}
+            setPanelTab={(tab) => {
+              setPanelTab(tab)
+              if (tab === 'emails' || tab === 'jobs') setResultsView(tab)
+            }}
             scrollRef={resultsScrollRef}
             onScrollSave={(top) => {
               if (!userId) return
@@ -691,6 +807,29 @@ export function JobMatcherEvaluationPanel({
                 }),
                 top
               )
+            }}
+            onApplyFailureFilter={(cat) => {
+              setOutcomeFilter('WRONG_MATCH')
+              setFailureFilter(cat)
+              setPanelTab('emails')
+              setResultsView('emails')
+            }}
+            onApplyConfusion={(actualId, predictedId) => {
+              setOutcomeFilter('WRONG_MATCH')
+              setJobFilterId(actualId)
+              setFailureFilter('ALL')
+              setPanelTab('emails')
+              setResultsView('emails')
+              const row = result?.rows.find(
+                (r) =>
+                  r.outcome === 'WRONG_MATCH' &&
+                  r.trueJobId === actualId &&
+                  r.predictedJobId === predictedId
+              )
+              if (row) {
+                setSelectedRow(row)
+                setInspectorTab('match')
+              }
             }}
           />
         </div>
@@ -744,12 +883,18 @@ function ResultsPane(props: {
   setOutcomeFilter: (f: OutcomeFilter) => void
   jobFilterId: string | null
   setJobFilterId: (id: string | null) => void
+  failureFilter: JobMatcherEvalFailureCategory | 'ALL'
+  setFailureFilter: (f: JobMatcherEvalFailureCategory | 'ALL') => void
+  resolvingMarkerFilter: 'ALL' | 'NAME' | 'CONTACT' | 'THREAD'
+  setResolvingMarkerFilter: (f: 'ALL' | 'NAME' | 'CONTACT' | 'THREAD') => void
   selectedRow: JobMatcherEvalRow | null
   setSelectedRow: (row: JobMatcherEvalRow | null) => void
-  resultsView: ResultsView
-  setResultsView: (v: ResultsView) => void
+  panelTab: PanelTab
+  setPanelTab: (v: PanelTab) => void
   scrollRef?: RefObject<HTMLDivElement | null>
   onScrollSave?: (scrollTop: number) => void
+  onApplyFailureFilter: (cat: JobMatcherEvalFailureCategory) => void
+  onApplyConfusion: (actualJobId: string, predictedJobId: string) => void
 }) {
   return (
     <>
@@ -768,14 +913,15 @@ function ResultsPane(props: {
           Results{props.result ? ` (${props.filteredRows.length})` : ''}
         </strong>
         <Segmented
-          value={props.resultsView}
-          onChange={props.setResultsView}
+          value={props.panelTab}
+          onChange={props.setPanelTab}
           options={[
             { value: 'emails', label: 'Emails' },
             { value: 'jobs', label: 'Jobs' },
+            { value: 'diagnostics', label: 'Diagnostics' },
           ]}
         />
-        {props.resultsView === 'emails' && (
+        {props.panelTab === 'emails' && (
           <>
             {(
               [
@@ -800,6 +946,36 @@ function ResultsPane(props: {
                 {label}
               </button>
             ))}
+            <select
+              value={props.failureFilter}
+              onChange={(e) =>
+                props.setFailureFilter(e.target.value as JobMatcherEvalFailureCategory | 'ALL')
+              }
+              style={{ ...selectStyle, minWidth: 140 }}
+              aria-label="Failure type"
+            >
+              <option value="ALL">Failure: All</option>
+              <option value="PROJECT_IDENTITY">Project Identity</option>
+              <option value="CONTACT">Contact</option>
+              <option value="THREAD">Thread</option>
+              <option value="MULTI_MARKER_INTERACTION">Multi-marker</option>
+              <option value="OTHER_DETERMINISTIC">Other</option>
+            </select>
+            <select
+              value={props.resolvingMarkerFilter}
+              onChange={(e) =>
+                props.setResolvingMarkerFilter(
+                  e.target.value as 'ALL' | 'NAME' | 'CONTACT' | 'THREAD'
+                )
+              }
+              style={{ ...selectStyle, minWidth: 120 }}
+              aria-label="Resolving marker"
+            >
+              <option value="ALL">Marker: All</option>
+              <option value="NAME">Marker 1</option>
+              <option value="CONTACT">Marker 2</option>
+              <option value="THREAD">Marker 3</option>
+            </select>
           </>
         )}
         {props.jobFilterId && (
@@ -816,7 +992,18 @@ function ResultsPane(props: {
         {!props.result && (
           <div style={{ padding: 16, color: '#9ca3af', fontSize: 12 }}>No evaluation yet.</div>
         )}
-        {props.result && props.resultsView === 'jobs' && (
+        {props.result && props.panelTab === 'diagnostics' && (
+          <DiagnosticsPane
+            result={props.result}
+            onApplyFailureFilter={props.onApplyFailureFilter}
+            onApplyConfusion={props.onApplyConfusion}
+            onSelectJob={(jobId) => {
+              props.setJobFilterId(jobId)
+              props.setPanelTab('emails')
+            }}
+          />
+        )}
+        {props.result && props.panelTab === 'jobs' && (
           <table style={tableStyle}>
             <thead>
               <tr>
@@ -834,7 +1021,7 @@ function ResultsPane(props: {
                   key={j.jobId}
                   onClick={() => {
                     props.setJobFilterId(j.jobId)
-                    props.setResultsView('emails')
+                    props.setPanelTab('emails')
                   }}
                   style={{
                     cursor: 'pointer',
@@ -857,18 +1044,20 @@ function ResultsPane(props: {
             </tbody>
           </table>
         )}
-        {props.result && props.resultsView === 'emails' && (
+        {props.result && props.panelTab === 'emails' && (
           <table style={tableStyle}>
             <thead>
               <tr>
                 <th style={th}>Result</th>
                 <th style={th}>Subject</th>
                 <th style={th}>Historical → Predicted</th>
+                <th style={th}>Resolved by</th>
               </tr>
             </thead>
             <tbody>
               {props.filteredRows.map((row) => {
                 const selected = props.selectedRow?.emailMessageId === row.emailMessageId
+                const d = row.diagnostics
                 return (
                   <tr
                     key={row.emailMessageId}
@@ -894,17 +1083,270 @@ function ResultsPane(props: {
                           : '—'}
                       </div>
                     </td>
+                    <td style={{ ...td, fontSize: 11, color: '#6b7280' }}>
+                      {d?.resolvingMarker
+                        ? `${markerLabel(d.resolvingMarker)}${
+                            d.failureSubcategory ? ` · ${d.failureSubcategory}` : ''
+                          }`
+                        : '—'}
+                      {d?.candidateCountAfterResolving != null && (
+                        <div>cand {d.candidateCountAfterResolving}</div>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
         )}
-        {props.result && props.resultsView === 'emails' && props.filteredRows.length === 0 && (
+        {props.result && props.panelTab === 'emails' && props.filteredRows.length === 0 && (
           <div style={{ padding: 12, color: '#6b7280', fontSize: 12 }}>No rows for this filter.</div>
         )}
       </div>
     </>
+  )
+}
+
+function markerLabel(m: string): string {
+  if (m === 'NAME') return 'Marker 1 · Project Identity'
+  if (m === 'CONTACT') return 'Marker 2 · Contact'
+  if (m === 'THREAD') return 'Marker 3 · Thread'
+  return m
+}
+
+function DiagnosticsPane({
+  result,
+  onApplyFailureFilter,
+  onApplyConfusion,
+  onSelectJob,
+}: {
+  result: JobMatcherEvalResult
+  onApplyFailureFilter: (cat: JobMatcherEvalFailureCategory) => void
+  onApplyConfusion: (actualJobId: string, predictedJobId: string) => void
+  onSelectJob: (jobId: string) => void
+}) {
+  const d = result.diagnostics
+  const [sub, setSub] = useState<'failure' | 'markers' | 'candidates' | 'confusions'>('failure')
+  if (!d) {
+    return (
+      <div style={{ padding: 16, color: '#6b7280', fontSize: 12 }}>
+        Diagnostics unavailable for this evaluation.
+      </div>
+    )
+  }
+  return (
+    <div style={{ padding: 10, fontSize: 12 }} data-testid="job-matcher-diagnostics">
+      <Segmented
+        value={sub}
+        onChange={setSub}
+        options={[
+          { value: 'failure', label: 'Failure Analysis' },
+          { value: 'markers', label: 'Marker Performance' },
+          { value: 'candidates', label: 'Candidate Analysis' },
+          { value: 'confusions', label: 'Common Confusions' },
+        ]}
+      />
+      {sub === 'failure' && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 650, marginBottom: 8 }}>
+            Wrong matches: {d.wrongMatchCount.toLocaleString()}
+          </div>
+          {d.wrongByFailureCategory.map((row) => (
+            <button
+              key={row.category}
+              type="button"
+              onClick={() => onApplyFailureFilter(row.category)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '140px 1fr 64px',
+                gap: 8,
+                width: '100%',
+                alignItems: 'center',
+                border: 'none',
+                background: 'transparent',
+                padding: '4px 0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ color: '#374151' }}>{row.category.replace(/_/g, ' ')}</span>
+              <span
+                style={{
+                  height: 8,
+                  borderRadius: 4,
+                  background: '#e5e7eb',
+                  overflow: 'hidden',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'block',
+                    height: '100%',
+                    width: `${Math.round(row.pct * 100)}%`,
+                    background: '#1a1a2e',
+                  }}
+                />
+              </span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#111827' }}>
+                {row.count} · {(row.pct * 100).toFixed(1)}%
+              </span>
+            </button>
+          ))}
+          <div style={{ fontWeight: 650, margin: '14px 0 6px' }}>Project Identity errors</div>
+          {d.wrongProjectIdentityByEvidence.map((row) => (
+            <div
+              key={row.family}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '3px 0',
+                color: '#374151',
+              }}
+            >
+              <span>{row.family.replace(/_/g, ' ')}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {sub === 'markers' && (
+        <div style={{ marginTop: 12, overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={th}>Marker</th>
+                <th style={th}>Resolved</th>
+                <th style={th}>Correct</th>
+                <th style={th}>Wrong</th>
+                <th style={th}>Precision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.markerPerformance.map((row) => (
+                <tr key={row.marker}>
+                  <td style={td}>{markerLabel(row.marker)}</td>
+                  <td style={td}>{row.resolved}</td>
+                  <td style={td}>{row.correct}</td>
+                  <td style={td}>{row.wrong}</td>
+                  <td style={td}>
+                    {row.precision == null ? '—' : `${(row.precision * 100).toFixed(1)}%`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {sub === 'candidates' && (
+        <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 650, marginBottom: 6 }}>Ground-truth survival</div>
+            {(
+              [
+                ['Marker 1', d.groundTruthSurvival.afterMarker1],
+                ['Marker 2', d.groundTruthSurvival.afterMarker2],
+                ['Marker 3', d.groundTruthSurvival.afterMarker3],
+              ] as const
+            ).map(([label, s]) => (
+              <div
+                key={label}
+                style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}
+              >
+                <span>{label}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {(s.pct * 100).toFixed(1)}% · {s.count}/{s.applicable}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{ fontWeight: 650, marginBottom: 6 }}>First stage correct Job lost</div>
+            {d.firstGroundTruthLoss.map((row) => (
+              <div
+                key={row.stage}
+                style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}
+              >
+                <span>{row.stage.replace(/_/g, ' ')}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{ fontWeight: 650, marginBottom: 6 }}>
+              Wrong matches by candidate count (after resolving marker)
+            </div>
+            {d.candidateBucketsAfterResolving.map((row) => (
+              <div
+                key={row.bucket}
+                style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}
+              >
+                <span>{row.bucket}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {sub === 'confusions' && (
+        <div style={{ marginTop: 12 }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={th}>Actual</th>
+                <th style={th}>Predicted</th>
+                <th style={th}>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.commonConfusions.map((row) => (
+                <tr
+                  key={`${row.actualJobId}-${row.predictedJobId}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onApplyConfusion(row.actualJobId, row.predictedJobId)}
+                >
+                  <td style={td}>
+                    {row.actualJobNumber ? `${row.actualJobNumber} — ` : ''}
+                    {row.actualJobName}
+                  </td>
+                  <td style={td}>
+                    {row.predictedJobNumber ? `${row.predictedJobNumber} — ` : ''}
+                    {row.predictedJobName}
+                  </td>
+                  <td style={td}>{row.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontWeight: 650, margin: '14px 0 6px' }}>Jobs by wrong count</div>
+          {d.jobDiagnostics.slice(0, 15).map((j) => (
+            <button
+              key={j.jobId}
+              type="button"
+              onClick={() => onSelectJob(j.jobId)}
+              style={{
+                display: 'flex',
+                width: '100%',
+                justifyContent: 'space-between',
+                border: 'none',
+                background: 'transparent',
+                padding: '4px 0',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              <span>
+                {j.jobNumber ? `${j.jobNumber} — ` : ''}
+                {j.jobName}
+              </span>
+              <span style={{ color: '#6b7280' }}>
+                wrong {j.wrong}/{j.evaluated}
+                {j.primaryFailureCategory ? ` · ${j.primaryFailureCategory}` : ''}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1101,6 +1543,39 @@ function EmailInspector({
 
         {inspectorTab === 'match' && (
           <>
+            <div style={{ marginBottom: 10, display: 'grid', gap: 4 }}>
+              <MetaLine label="Outcome" value={row.outcome.replace(/_/g, ' ')} />
+              {row.diagnostics?.failureCategory && (
+                <MetaLine
+                  label="Failure"
+                  value={`${row.diagnostics.failureCategory}${
+                    row.diagnostics.failureSubcategory
+                      ? ` · ${row.diagnostics.failureSubcategory}`
+                      : ''
+                  }`}
+                />
+              )}
+              <MetaLine
+                label="Resolved"
+                value={
+                  row.diagnostics?.resolvingMarker
+                    ? markerLabel(row.diagnostics.resolvingMarker)
+                    : row.resolvingMarker || '—'
+                }
+              />
+              {row.diagnostics?.contributingMarkers?.length ? (
+                <MetaLine
+                  label="Contrib."
+                  value={row.diagnostics.contributingMarkers.map(markerLabel).join(' · ')}
+                />
+              ) : null}
+              {row.diagnostics?.firstGroundTruthLossStage && (
+                <MetaLine
+                  label="GT lost"
+                  value={String(row.diagnostics.firstGroundTruthLossStage).replace(/_/g, ' ')}
+                />
+              )}
+            </div>
             <MarkerStrip row={row} />
             {row.evidence.length > 0 && (
               <>
@@ -1125,20 +1600,32 @@ function MarkerStrip({ row }: { row: JobMatcherEvalRow }) {
   const markers = row.markerTrace.length
     ? row.markerTrace
     : [{ marker: '—', status: row.decision, candidateJobIds: [], candidateJobNames: [] }]
+  const lostHere = row.diagnostics?.firstGroundTruthLossStage
 
   return (
     <div>
       <div style={{ fontWeight: 650, marginBottom: 8 }}>Marker progression</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'stretch' }}>
-        {markers.map((t, i) => (
+        {markers.map((t, i) => {
+          const eliminated =
+            lostHere === t.marker ||
+            (lostHere === 'NAME' && t.marker === 'NAME') ||
+            (lostHere === 'CONTACT' && t.marker === 'CONTACT') ||
+            (lostHere === 'THREAD' && t.marker === 'THREAD')
+          const gtInSet = t.candidateJobIds.includes(row.trueJobId)
+          return (
           <div key={`${t.marker}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div
               style={{
-                border: '1px solid #e5e7eb',
+                border: eliminated ? '1px solid #fca5a5' : '1px solid #e5e7eb',
                 borderRadius: 8,
                 padding: '8px 10px',
                 minWidth: 110,
-                background: t.status === 'MATCH' ? '#ecfdf5' : '#f9fafb',
+                background: eliminated
+                  ? '#fef2f2'
+                  : t.status === 'MATCH'
+                    ? '#ecfdf5'
+                    : '#f9fafb',
               }}
             >
               <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', letterSpacing: 0.3 }}>
@@ -1149,10 +1636,18 @@ function MarkerStrip({ row }: { row: JobMatcherEvalRow }) {
                 {t.candidateJobNames.slice(0, 2).join(', ') ||
                   (t.candidateJobIds.length ? `${t.candidateJobIds.length} candidates` : '—')}
               </div>
+              <div style={{ fontSize: 10, marginTop: 4, color: eliminated ? '#991b1b' : '#6b7280' }}>
+                {eliminated
+                  ? 'Ground truth eliminated here'
+                  : gtInSet
+                    ? 'GT still in candidates'
+                    : 'GT not in candidates'}
+              </div>
             </div>
             {i < markers.length - 1 && <span style={{ color: '#9ca3af' }}>→</span>}
           </div>
-        ))}
+          )
+        })}
         <div
           style={{
             border: '1px solid #e5e7eb',
@@ -1360,6 +1855,17 @@ const chipBtn: CSSProperties = {
   borderRadius: 5,
   fontSize: 11,
   cursor: 'pointer',
+}
+const exportItemBtn: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  border: 'none',
+  background: 'transparent',
+  padding: '8px 10px',
+  fontSize: 12,
+  cursor: 'pointer',
+  color: '#111827',
 }
 const primaryBtn: CSSProperties = {
   padding: '6px 12px',

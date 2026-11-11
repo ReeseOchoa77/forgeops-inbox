@@ -46,6 +46,27 @@ Job lifecycle filter (`ALL` / `CURRENT` / `ARCHIVED`) filters which ground-truth
 
 **Bodies:** evaluation result rows include IDs + matcher evidence only. Full From/To/Cc/body/attachments load on inspector click.
 
+### Diagnostics (deterministic)
+
+Computed in `packages/shared/src/jobs/job-match-eval-diagnostics.ts` **after** matcher execution. Ground truth is never fed into the matcher.
+
+| Concept | Definition |
+|---------|------------|
+| Resolving marker | First trace marker with `status=MATCH` (NAME → CONTACT → THREAD) |
+| Contributing markers | Markers that MATCH or narrow the after-stage candidate set |
+| Failure category (exclusive, WRONG MATCH only) | `MULTI_MARKER_INTERACTION` if >1 contributing marker; else PROJECT_IDENTITY / CONTACT / THREAD / OTHER from resolving marker |
+| Project identity subcategory | Canonical NAME evidence family: JOB_NAME / ENTITY_ALIAS / SITE_NAME / EXTERNAL_REF |
+| Marker precision | Correct / (Correct + Wrong) among unique MATCH rows resolved by that marker |
+| GT survival | `trueJobId ∈` after-stage `candidateJobIds` for that marker (eval overlay) |
+| First GT loss stage | First marker where GT leaves the after-stage candidate set |
+| Common confusions | Wrong MATCH pairs (actual Job → predicted Job) by count |
+
+UI: Results → **Diagnostics** (Failure / Marker Performance / Candidate / Confusions). Category clicks filter the email list.
+
+### Export (client, no rematch)
+
+From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodies**), Full JSON. Optional Detailed CSV of **current filtered** rows. Export uses the viewed result only — matcher is not re-run.
+
 ## Safety properties (verified)
 
 | Guarantee | How |

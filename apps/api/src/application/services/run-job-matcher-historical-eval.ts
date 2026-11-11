@@ -8,6 +8,7 @@
 import {
   JobMatcherService,
   aggregateHistoricalEvalResults,
+  buildJobMatcherEvalDiagnostics,
   buildJobMatcherEvalJobBreakdown,
   buildWrongMatchDetails,
   classifyHistoricalEvalOutcome,
@@ -19,9 +20,11 @@ import {
   selectEvalEmailIds,
   summarizeDatasetSpec,
   validateJobMatcherEvalDatasetSpec,
+  type EvalRowDiagnostics,
   type HistoricalEvalEmail,
   type HistoricalEvalMetrics,
   type HistoricalEvalWrongDetail,
+  type JobMatcherEvalDiagnostics,
   type JobMatcherEvalDatasetSpec,
   type JobMatcherEvalJobBreakdown,
   type JobMatcherEvalJobsMode,
@@ -60,6 +63,8 @@ export type JobMatcherEvalRow = {
     candidateJobIds: string[];
     candidateJobNames: string[];
   }>;
+  /** Deterministic diagnostics derived after matcher execution. */
+  diagnostics: EvalRowDiagnostics;
 };
 
 export type JobMatcherHistoricalEvalResult = {
@@ -79,6 +84,7 @@ export type JobMatcherHistoricalEvalResult = {
     workspaceSummary: Awaited<ReturnType<typeof loadHistoricalEvalDatasetSummary>>;
   };
   metrics: HistoricalEvalMetrics;
+  diagnostics: JobMatcherEvalDiagnostics;
   jobBreakdown: JobMatcherEvalJobBreakdown[];
   rows: JobMatcherEvalRow[];
   wrongMatches: HistoricalEvalWrongDetail[];
@@ -318,7 +324,7 @@ export async function runJobMatcherHistoricalEval(input: {
     maxWrongDetails: input.maxWrongDetails ?? 50,
   });
 
-  const rows: JobMatcherEvalRow[] = evaluated.map((row) => {
+  const baseRows = evaluated.map((row) => {
     const trueJob = jobsById.get(row.trueJobId);
     const predicted = row.result.selectedJobId
       ? jobsById.get(row.result.selectedJobId)
@@ -350,6 +356,12 @@ export async function runJobMatcherHistoricalEval(input: {
     };
   });
 
+  const { diagnostics, rowDiagnostics } = buildJobMatcherEvalDiagnostics(baseRows);
+  const rows: JobMatcherEvalRow[] = baseRows.map((row) => ({
+    ...row,
+    diagnostics: rowDiagnostics[row.emailMessageId]!,
+  }));
+
   return {
     intelligenceId: "job-matcher",
     databaseWrites: "NONE",
@@ -367,6 +379,7 @@ export async function runJobMatcherHistoricalEval(input: {
       workspaceSummary,
     },
     metrics,
+    diagnostics,
     jobBreakdown,
     rows,
     wrongMatches: wrong.details,

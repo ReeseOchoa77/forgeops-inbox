@@ -5030,6 +5030,38 @@ export interface JobMatcherEvalPreview {
   groundTruth: string
 }
 
+export type JobMatcherEvalFailureCategory =
+  | 'PROJECT_IDENTITY'
+  | 'CONTACT'
+  | 'THREAD'
+  | 'MULTI_MARKER_INTERACTION'
+  | 'OTHER_DETERMINISTIC'
+
+export type JobMatcherEvalEvidenceFamily =
+  | 'JOB_NAME'
+  | 'ENTITY_ALIAS'
+  | 'SITE_NAME'
+  | 'EXTERNAL_REF'
+  | 'OTHER_IDENTITY'
+
+export interface JobMatcherEvalRowDiagnostics {
+  failureCategory: JobMatcherEvalFailureCategory | null
+  failureSubcategory: JobMatcherEvalEvidenceFamily | null
+  resolvingMarker: 'NAME' | 'CONTACT' | 'THREAD' | null
+  contributingMarkers: Array<'NAME' | 'CONTACT' | 'THREAD'>
+  resolvingEvidenceType: string | null
+  resolvingEvidenceFamily: JobMatcherEvalEvidenceFamily | null
+  candidateCountBeforeResolving: number | null
+  candidateCountAfterResolving: number | null
+  groundTruthSurvivedMarker1: boolean | null
+  groundTruthSurvivedMarker2: boolean | null
+  groundTruthSurvivedMarker3: boolean | null
+  firstGroundTruthLossStage: 'NAME' | 'CONTACT' | 'THREAD' | 'NEVER_PRESENT' | 'NEVER_LOST' | null
+  marker1CandidateCount: number | null
+  marker2CandidateCount: number | null
+  marker3CandidateCount: number | null
+}
+
 export interface JobMatcherEvalRow {
   emailMessageId: string
   subject: string | null
@@ -5051,6 +5083,70 @@ export interface JobMatcherEvalRow {
     candidateJobIds: string[]
     candidateJobNames: string[]
   }>
+  diagnostics?: JobMatcherEvalRowDiagnostics
+}
+
+export interface JobMatcherEvalDiagnostics {
+  wrongMatchCount: number
+  wrongByFailureCategory: Array<{
+    category: JobMatcherEvalFailureCategory
+    count: number
+    pct: number
+  }>
+  wrongByResolvingMarker: Array<{
+    marker: 'NAME' | 'CONTACT' | 'THREAD' | 'NONE'
+    count: number
+    pct: number
+  }>
+  wrongProjectIdentityByEvidence: Array<{
+    family: JobMatcherEvalEvidenceFamily
+    count: number
+    pct: number
+  }>
+  evidenceCollisions: Array<{ value: string; evidenceType: string; count: number }>
+  markerPerformance: Array<{
+    marker: 'NAME' | 'CONTACT' | 'THREAD'
+    resolved: number
+    correct: number
+    wrong: number
+    precision: number | null
+  }>
+  groundTruthSurvival: {
+    afterMarker1: { count: number; applicable: number; pct: number }
+    afterMarker2: { count: number; applicable: number; pct: number }
+    afterMarker3: { count: number; applicable: number; pct: number }
+  }
+  firstGroundTruthLoss: Array<{
+    stage: 'NAME' | 'CONTACT' | 'THREAD' | 'NEVER_PRESENT' | 'NEVER_LOST'
+    count: number
+  }>
+  candidateBucketsAfterResolving: Array<{
+    bucket: '1' | '2-3' | '4-5' | '6-10' | '10+'
+    count: number
+  }>
+  commonConfusions: Array<{
+    actualJobId: string
+    actualJobName: string
+    actualJobNumber: string | null
+    predictedJobId: string
+    predictedJobName: string
+    predictedJobNumber: string | null
+    count: number
+  }>
+  jobDiagnostics: Array<{
+    jobId: string
+    jobNumber: string | null
+    jobName: string
+    evaluated: number
+    correct: number
+    wrong: number
+    ambiguous: number
+    conflict: number
+    noMatch: number
+    precision: number | null
+    primaryFailureCategory: JobMatcherEvalFailureCategory | null
+  }>
+  definitions: Record<string, string>
 }
 
 export interface JobMatcherEvalResult {
@@ -5081,7 +5177,11 @@ export interface JobMatcherEvalResult {
     ambiguityRate: number
     conflictRate: number
     noMatchRate: number
+    marker1Resolutions?: number
+    marker2Resolutions?: number
+    marker3Resolutions?: number
   }
+  diagnostics?: JobMatcherEvalDiagnostics
   jobBreakdown: Array<{
     jobId: string
     jobNumber: string | null
