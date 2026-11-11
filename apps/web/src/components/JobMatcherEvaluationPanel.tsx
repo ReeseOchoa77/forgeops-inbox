@@ -319,9 +319,11 @@ export function JobMatcherEvaluationPanel({
         ? ('CONTEXT_AWARE_V1' as const)
         : evaluationMode === 'COMPARE_V2'
           ? ('CONTEXT_AWARE_V2' as const)
-          : evaluationMode === 'COMPARE_ALL'
-            ? ('ALL_THREE' as const)
-            : null
+          : evaluationMode === 'COMPARE_V2_1'
+            ? ('CONTEXT_AWARE_V2_1' as const)
+            : evaluationMode === 'COMPARE_ALL'
+              ? ('ALL_THREE' as const)
+              : null
     const promise = api
       .evaluateJobMatcherIntelligence(workspaceId, {
         dataset,
@@ -443,7 +445,13 @@ export function JobMatcherEvaluationPanel({
 
   const countPresets = sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
   const groundTruthParts = parseGroundTruthLabel(preview?.groundTruth ?? '')
-  const m = result?.metrics
+  /** Primary cards show the most advanced policy in the completed evaluation. */
+  const displayPolicy =
+    result?.displayIdentityPolicy ??
+    result?.comparison?.proposedPolicy ??
+    result?.identityPolicy ??
+    'BASELINE'
+  const m = result?.displayMetrics ?? result?.metrics
 
   return (
     <div
@@ -580,7 +588,8 @@ export function JobMatcherEvaluationPanel({
               <option value="CURRENT">Current matcher</option>
               <option value="COMPARE_V1">Compare BASELINE vs V1</option>
               <option value="COMPARE_V2">Compare V1 vs V2</option>
-              <option value="COMPARE_ALL">Compare all three</option>
+              <option value="COMPARE_V2_1">Compare V2 vs V2.1</option>
+              <option value="COMPARE_ALL">Compare all (incl. V2.1)</option>
             </select>
           </Control>
         </div>
@@ -811,36 +820,44 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {/* 12 bordered metric cards — original preferred style */}
+        {/* 12 bordered metric cards — most advanced policy in this evaluation */}
         {result && m && (
-          <div
-            data-testid="job-matcher-metric-cards"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-              gap: 8,
-            }}
-          >
-            <Metric label="Evaluated" value={m.totalEvaluated} />
-            <Metric label="Correct" value={m.correctMatches} tone="positive" />
-            <Metric label="Wrong" value={m.wrongMatches} tone="negative" />
-            <Metric label="Ambiguous" value={m.ambiguous} tone="warning" />
-            <Metric label="Conflict" value={m.conflict} tone="warning" />
-            <Metric label="No Match" value={m.noMatch} />
-            <Metric
-              label="Precision"
-              value={m.precision == null ? '—' : `${(m.precision * 100).toFixed(2)}%`}
-              strong
-            />
-            <Metric
-              label="Coverage"
-              value={`${(m.correctCoverage * 100).toFixed(2)}%`}
-              strong
-            />
-            <Metric label="Wrong rate" value={`${(m.wrongMatchRate * 100).toFixed(2)}%`} />
-            <Metric label="Ambiguity" value={`${(m.ambiguityRate * 100).toFixed(2)}%`} />
-            <Metric label="Conflict rate" value={`${(m.conflictRate * 100).toFixed(2)}%`} />
-            <Metric label="No-match rate" value={`${(m.noMatchRate * 100).toFixed(2)}%`} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              data-testid="job-matcher-display-policy"
+              style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}
+            >
+              Showing: {displayPolicy}
+            </div>
+            <div
+              data-testid="job-matcher-metric-cards"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+                gap: 8,
+              }}
+            >
+              <Metric label="Evaluated" value={m.totalEvaluated} />
+              <Metric label="Correct" value={m.correctMatches} tone="positive" />
+              <Metric label="Wrong" value={m.wrongMatches} tone="negative" />
+              <Metric label="Ambiguous" value={m.ambiguous} tone="warning" />
+              <Metric label="Conflict" value={m.conflict} tone="warning" />
+              <Metric label="No Match" value={m.noMatch} />
+              <Metric
+                label="Precision"
+                value={m.precision == null ? '—' : `${(m.precision * 100).toFixed(2)}%`}
+                strong
+              />
+              <Metric
+                label="Coverage"
+                value={`${(m.correctCoverage * 100).toFixed(2)}%`}
+                strong
+              />
+              <Metric label="Wrong rate" value={`${(m.wrongMatchRate * 100).toFixed(2)}%`} />
+              <Metric label="Ambiguity" value={`${(m.ambiguityRate * 100).toFixed(2)}%`} />
+              <Metric label="Conflict rate" value={`${(m.conflictRate * 100).toFixed(2)}%`} />
+              <Metric label="No-match rate" value={`${(m.noMatchRate * 100).toFixed(2)}%`} />
+            </div>
           </div>
         )}
 

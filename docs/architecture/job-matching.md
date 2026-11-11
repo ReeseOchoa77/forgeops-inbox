@@ -71,6 +71,7 @@ Match kinds: `EXACT` (phrase contained) > `ALL_TOKENS` > `OVERLAP` (any shared c
 | `BASELINE` | Unique OVERLAP may `MATCH` (historical Marker 1). | **Yes** |
 | `CONTEXT_AWARE_V1` | Unique weak identity → `AMBIGUOUS` (candidates preserved for Marker 2/3). Strong multiword / rare single-token / externalRef may still `MATCH`. | No — shadow only |
 | `CONTEXT_AWARE_V2` | V1 + shared customer/family disambiguation + generic multiword rejection; weak clears candidates; contact safety (multi-job / AUTH-email-only abstain; MANUAL single-job may resolve). | No — shadow only |
+| `CONTEXT_AWARE_V2_1` | V2 identity gates + weak candidates preserved for later markers; verified single-Job AUTH contact may resolve when independent of thread. Multi-job / broad / weak-name gates unchanged. | No — shadow only |
 
 Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPipeline`. Live `JobMatcherService` omits the field → `BASELINE`.
 
@@ -93,9 +94,15 @@ Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPip
 - Contact: multi-job / broad (≥4) cannot unique-resolve; AUTH-email-only insufficient; MANUAL single-job may resolve; weak-name∩contact intersection abstains.
 - Marker 3 largely unchanged; holdout unchanged; internal `jobNumber` still never evidence.
 
+**CONTEXT_AWARE_V2_1 additions (deterministic):**
+
+- Same family / generic / conflict gates as V2.
+- Weak unique identity **preserves** candidates (V2 cleared them) so Marker 2/3 can still narrow; multi-job contact safety still blocks steered wrong unique MATCH.
+- Contact: verified single-Job `CURRENT_AUTHORITATIVE_EMAIL` may resolve when evidence is independent of the thread (`VERIFIED_AUTHORITATIVE_SINGLE_JOB_CONTACT`). Shared-origin / multi-job / broad still abstain.
+
 Diagnostics: `identityDiagnostics` + `contactDiagnostics` on pipeline results.
 
-Shadow compare: `compareWithIdentityPolicy` = `CONTEXT_AWARE_V1` | `CONTEXT_AWARE_V2` | `ALL_THREE` on the same email IDs/snapshot. Does not change production matching.
+Shadow compare: `compareWithIdentityPolicy` = `CONTEXT_AWARE_V1` | `CONTEXT_AWARE_V2` | `CONTEXT_AWARE_V2_1` | `ALL_THREE` on the same email IDs/snapshot. Primary Evaluation metric cards display the most advanced policy present (`displayIdentityPolicy` / `displayMetrics`). Does not change production matching.
 
 ### Internal Job number
 

@@ -28,8 +28,8 @@ Body options on evaluate:
 
 | Field | Meaning |
 |-------|---------|
-| `identityPolicy` | `BASELINE` (default), `CONTEXT_AWARE_V1`, or `CONTEXT_AWARE_V2` for a single-policy run |
-| `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), or `ALL_THREE` |
+| `identityPolicy` | `BASELINE` (default), `CONTEXT_AWARE_V1`, `CONTEXT_AWARE_V2`, or `CONTEXT_AWARE_V2_1` for a single-policy run |
+| `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), `CONTEXT_AWARE_V2_1` (V2 vs V2.1), or `ALL_THREE` (BASELINE+V1+V2+V2.1) |
 
 Production matcher default remains **BASELINE**. V1/V2 are not activated by running a comparison.
 

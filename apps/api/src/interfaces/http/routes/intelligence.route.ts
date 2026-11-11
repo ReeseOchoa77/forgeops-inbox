@@ -172,14 +172,24 @@ export const registerIntelligenceRoutes = async (
           maxWrongDetails: z.number().int().min(1).max(100).optional(),
           /** Primary identity policy. Default BASELINE (production semantics). */
           identityPolicy: z
-            .enum(["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"])
+            .enum([
+              "BASELINE",
+              "CONTEXT_AWARE_V1",
+              "CONTEXT_AWARE_V2",
+              "CONTEXT_AWARE_V2_1",
+            ])
             .optional(),
           /**
            * Shadow comparison on the same emails/snapshot.
            * Does not change production matcher default (BASELINE).
            */
           compareWithIdentityPolicy: z
-            .enum(["CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2", "ALL_THREE"])
+            .enum([
+              "CONTEXT_AWARE_V1",
+              "CONTEXT_AWARE_V2",
+              "CONTEXT_AWARE_V2_1",
+              "ALL_THREE",
+            ])
             .optional(),
         })
         .parse(request.body);

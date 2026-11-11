@@ -77,7 +77,8 @@ export type IdentityCompareMetricsDelta = {
 export type IdentityComparePolicyId =
   | "BASELINE"
   | "CONTEXT_AWARE_V1"
-  | "CONTEXT_AWARE_V2";
+  | "CONTEXT_AWARE_V2"
+  | "CONTEXT_AWARE_V2_1";
 
 export type IdentityCompareMarkerBreakdown = {
   marker: "NAME" | "CONTACT" | "THREAD" | "NONE";
@@ -112,7 +113,10 @@ export type IdentityCompareReport = {
   };
 };
 
-/** Three-way shadow evaluation: BASELINE + V1 + V2 on the same snapshot. */
+/**
+ * Multi-policy shadow evaluation: BASELINE + V1 + V2 (+ optional V2.1)
+ * on the same snapshot.
+ */
 export type IdentityThreeWayCompareRow = {
   emailMessageId: string;
   subject: string | null;
@@ -122,35 +126,47 @@ export type IdentityThreeWayCompareRow = {
   baseline: IdentityCompareSideSummary;
   v1: IdentityCompareSideSummary;
   v2: IdentityCompareSideSummary;
+  v21?: IdentityCompareSideSummary | null;
   baselineToV1: MatcherTransitionCategory;
   v1ToV2: MatcherTransitionCategory;
+  v2ToV21?: MatcherTransitionCategory | null;
   groundTruthReviewFlag: boolean;
 };
 
 export type IdentityThreeWayCompareReport = {
-  policies: ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"];
+  policies:
+    | ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"]
+    | ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2", "CONTEXT_AWARE_V2_1"];
   baselineMetrics: HistoricalEvalMetrics;
   v1Metrics: HistoricalEvalMetrics;
   v2Metrics: HistoricalEvalMetrics;
+  v21Metrics?: HistoricalEvalMetrics | null;
   baselineToV1: IdentityCompareTransitionCounts;
   v1ToV2: IdentityCompareTransitionCounts;
+  v2ToV21?: IdentityCompareTransitionCounts | null;
   markerBreakdown: {
     baseline: IdentityCompareMarkerBreakdown[];
     v1: IdentityCompareMarkerBreakdown[];
     v2: IdentityCompareMarkerBreakdown[];
+    v21?: IdentityCompareMarkerBreakdown[];
   };
   rows: IdentityThreeWayCompareRow[];
   safetyRegressions: {
     v1ToV2CorrectToWrong: number;
     v1ToV2UnresolvedToWrong: number;
+    v2ToV21CorrectToWrong?: number;
+    v2ToV21UnresolvedToWrong?: number;
+    v2ToV21WrongDifferentJob?: number;
   };
   coverageLoss: {
     v1ToV2CorrectToUnresolved: number;
+    v2ToV21CorrectToUnresolved?: number;
   };
   runtimeMs: {
     baseline: number;
     v1: number;
     v2: number;
+    v21?: number;
   };
 };
 
@@ -360,21 +376,37 @@ export function buildIdentityThreeWayCompareReport(input: {
   baselineMetrics: HistoricalEvalMetrics;
   v1Metrics: HistoricalEvalMetrics;
   v2Metrics: HistoricalEvalMetrics;
+  v21Metrics?: HistoricalEvalMetrics | null;
   rows: IdentityThreeWayCompareRow[];
-  runtimeMs: { baseline: number; v1: number; v2: number };
+  runtimeMs: { baseline: number; v1: number; v2: number; v21?: number };
 }): IdentityThreeWayCompareReport {
   const baselineToV1 = emptyTransitionCounts();
   const v1ToV2 = emptyTransitionCounts();
+  const v2ToV21 = emptyTransitionCounts();
+  let hasV21 = false;
   for (const row of input.rows) {
     baselineToV1[row.baselineToV1] += 1;
     v1ToV2[row.v1ToV2] += 1;
+    if (row.v2ToV21) {
+      hasV21 = true;
+      v2ToV21[row.v2ToV21] += 1;
+    }
   }
   const trueJobIds = input.rows.map((r) => r.trueJobId);
+  const includeV21 = hasV21 || input.v21Metrics != null;
   return {
-    policies: ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"],
+    policies: includeV21
+      ? ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2", "CONTEXT_AWARE_V2_1"]
+      : ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"],
     baselineMetrics: input.baselineMetrics,
     v1Metrics: input.v1Metrics,
     v2Metrics: input.v2Metrics,
+    ...(includeV21
+      ? {
+          v21Metrics: input.v21Metrics ?? null,
+          v2ToV21,
+        }
+      : {}),
     baselineToV1,
     v1ToV2,
     markerBreakdown: {
@@ -390,14 +422,34 @@ export function buildIdentityThreeWayCompareReport(input: {
         input.rows.map((r) => r.v2),
         trueJobIds
       ),
+      ...(includeV21
+        ? {
+            v21: buildMarkerBreakdownFromSides(
+              input.rows
+                .map((r) => r.v21)
+                .filter((s): s is IdentityCompareSideSummary => s != null),
+              trueJobIds
+            ),
+          }
+        : {}),
     },
     rows: input.rows,
     safetyRegressions: {
       v1ToV2CorrectToWrong: v1ToV2.CORRECT_TO_WRONG,
       v1ToV2UnresolvedToWrong: v1ToV2.UNRESOLVED_TO_WRONG,
+      ...(includeV21
+        ? {
+            v2ToV21CorrectToWrong: v2ToV21.CORRECT_TO_WRONG,
+            v2ToV21UnresolvedToWrong: v2ToV21.UNRESOLVED_TO_WRONG,
+            v2ToV21WrongDifferentJob: v2ToV21.WRONG_TO_WRONG_DIFFERENT_JOB,
+          }
+        : {}),
     },
     coverageLoss: {
       v1ToV2CorrectToUnresolved: v1ToV2.CORRECT_TO_UNRESOLVED,
+      ...(includeV21
+        ? { v2ToV21CorrectToUnresolved: v2ToV21.CORRECT_TO_UNRESOLVED }
+        : {}),
     },
     runtimeMs: input.runtimeMs,
   };

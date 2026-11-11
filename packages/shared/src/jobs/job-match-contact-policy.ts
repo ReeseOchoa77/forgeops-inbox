@@ -1,12 +1,15 @@
 /**
- * Marker 2 contact safety for CONTEXT_AWARE_V2.
+ * Marker 2 contact safety for CONTEXT_AWARE_V2 / V2.1.
  * BASELINE / V1 leave contact resolution unchanged.
  */
 
 import type { JobContactHit } from "./job-contact-marker.js";
 import type { JobMatchDecision, JobMatchEvidence } from "./job-matcher.js";
 import type { JobMatchIdentityPolicy } from "./job-name-identity-policy.js";
-import { JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 } from "./job-name-identity-policy.js";
+import {
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+} from "./job-name-identity-policy.js";
 
 export type JobContactAssociationClass =
   | "SINGLE_JOB"
@@ -22,6 +25,7 @@ export type JobContactAuthorityClass =
 
 export type JobContactPolicyReason =
   | "VERIFIED_SINGLE_JOB_CONTACT"
+  | "VERIFIED_AUTHORITATIVE_SINGLE_JOB_CONTACT"
   | "MULTI_JOB_CONTACT"
   | "BROAD_CONTACT_ASSOCIATION"
   | "INSUFFICIENT_CONTACT_AUTHORITY"
@@ -125,9 +129,19 @@ function supportingEmailIds(hits: JobContactHit[]): string[] {
   return unique(out);
 }
 
+function isContextAwareV2Family(policy: JobMatchIdentityPolicy): boolean {
+  return (
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+  );
+}
+
 /**
- * V2 contact safety gate applied after WEAK contact narrowing.
- * Non-V2 policies: pass-through with diagnostics only.
+ * V2 / V2.1 contact safety gate applied after WEAK contact narrowing.
+ * Non-V2-family policies: pass-through with diagnostics only.
+ *
+ * V2.1 narrowly recovers verified single-Job AUTH contacts when evidence is
+ * independent of the thread — without weakening multi-job / broad / weak-name gates.
  */
 export function applyJobContactSafetyPolicy(
   input: ApplyContactSafetyInput
@@ -156,7 +170,7 @@ export function applyJobContactSafetyPolicy(
     ...overrides,
   });
 
-  if (input.policy !== JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2) {
+  if (!isContextAwareV2Family(input.policy)) {
     return {
       status: input.status,
       selectedJobId: input.selectedJobId,
@@ -177,7 +191,7 @@ export function applyJobContactSafetyPolicy(
     };
   }
 
-  // V2 — no contact signal
+  // V2 family — no contact signal
   if (classified.contactJobIds.length === 0) {
     return {
       status: input.status,
@@ -234,30 +248,53 @@ export function applyJobContactSafetyPolicy(
     };
   }
 
-  // Contact-only (empty prior expanded) or unique resolve: require MANUAL basis
-  // for the selected Job. Authoritative-email-only is insufficient alone.
+  // Contact unique resolve: MANUAL always OK; V2.1 also allows single-Job AUTH
+  // when independent of thread evidence.
   if (input.status === "MATCH" && input.selectedJobId) {
     const selectedManual = classified.manualJobIds.includes(input.selectedJobId);
-    if (!selectedManual) {
+    if (selectedManual) {
       return {
-        status: "AMBIGUOUS",
-        selectedJobId: null,
+        status: "MATCH",
+        selectedJobId: input.selectedJobId,
         candidateJobIds: [input.selectedJobId],
         evidence: input.evidence,
         diagnostics: baseDiag({
-          reason: "INSUFFICIENT_CONTACT_AUTHORITY",
-          resolutionAllowed: false,
+          reason: "VERIFIED_SINGLE_JOB_CONTACT",
+          resolutionAllowed: true,
         }),
       };
     }
+
+    const selectedAuth = classified.authoritativeEmailJobIds.includes(
+      input.selectedJobId
+    );
+    const allowAuthSingleJob =
+      input.policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 &&
+      classified.associationClass === "SINGLE_JOB" &&
+      selectedAuth &&
+      evidenceIndependentFromThread !== false;
+
+    if (allowAuthSingleJob) {
+      return {
+        status: "MATCH",
+        selectedJobId: input.selectedJobId,
+        candidateJobIds: [input.selectedJobId],
+        evidence: input.evidence,
+        diagnostics: baseDiag({
+          reason: "VERIFIED_AUTHORITATIVE_SINGLE_JOB_CONTACT",
+          resolutionAllowed: true,
+        }),
+      };
+    }
+
     return {
-      status: "MATCH",
-      selectedJobId: input.selectedJobId,
+      status: "AMBIGUOUS",
+      selectedJobId: null,
       candidateJobIds: [input.selectedJobId],
       evidence: input.evidence,
       diagnostics: baseDiag({
-        reason: "VERIFIED_SINGLE_JOB_CONTACT",
-        resolutionAllowed: true,
+        reason: "INSUFFICIENT_CONTACT_AUTHORITY",
+        resolutionAllowed: false,
       }),
     };
   }

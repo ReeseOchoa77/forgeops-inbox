@@ -37,6 +37,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
 } from "./job-name-identity-policy.js";
 
 /** Marker 1 pool: live operational jobs. COMPLETE/BIDDING/LEAD are excluded. */

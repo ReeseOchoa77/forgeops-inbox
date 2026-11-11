@@ -59,7 +59,11 @@ export type JobMatchInput = {
    * Marker 1 identity policy. Default BASELINE (production).
    * CONTEXT_AWARE_V1 is opt-in for shadow evaluation only until approved.
    */
-  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
+  identityPolicy?:
+    | "BASELINE"
+    | "CONTEXT_AWARE_V1"
+    | "CONTEXT_AWARE_V2"
+    | "CONTEXT_AWARE_V2_1";
 };
 
 export type JobRecordForMatch = {
@@ -124,11 +128,19 @@ export type JobMatchResult = {
   candidateCount: number;
   matcherVersion: string;
   /** Marker 1 identity policy used for this decision (default BASELINE). */
-  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
+  identityPolicy?:
+    | "BASELINE"
+    | "CONTEXT_AWARE_V1"
+    | "CONTEXT_AWARE_V2"
+    | "CONTEXT_AWARE_V2_1";
   /** Structured Marker 1 identity diagnostics when available. */
   identityDiagnostics?: {
     marker: "NAME";
-    identityPolicy: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
+    identityPolicy:
+      | "BASELINE"
+      | "CONTEXT_AWARE_V1"
+      | "CONTEXT_AWARE_V2"
+      | "CONTEXT_AWARE_V2_1";
     identityStrength: string;
     matchedPhrase: string | null;
     matchedTerms: string[];

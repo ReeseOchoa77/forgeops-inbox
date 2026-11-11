@@ -3034,8 +3034,16 @@ export const api = {
       dataset?: JobMatcherEvalDatasetSpec
       limit?: 50 | 100 | 500
       maxWrongDetails?: number
-      identityPolicy?: 'BASELINE' | 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2'
-      compareWithIdentityPolicy?: 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2' | 'ALL_THREE'
+      identityPolicy?:
+        | 'BASELINE'
+        | 'CONTEXT_AWARE_V1'
+        | 'CONTEXT_AWARE_V2'
+        | 'CONTEXT_AWARE_V2_1'
+      compareWithIdentityPolicy?:
+        | 'CONTEXT_AWARE_V1'
+        | 'CONTEXT_AWARE_V2'
+        | 'CONTEXT_AWARE_V2_1'
+        | 'ALL_THREE'
     }
   ) =>
     request<{ evaluation: JobMatcherEvalResult }>(
@@ -5151,7 +5159,11 @@ export interface JobMatcherEvalDiagnostics {
   definitions: Record<string, string>
 }
 
-export type JobMatcherIdentityPolicy = 'BASELINE' | 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2'
+export type JobMatcherIdentityPolicy =
+  | 'BASELINE'
+  | 'CONTEXT_AWARE_V1'
+  | 'CONTEXT_AWARE_V2'
+  | 'CONTEXT_AWARE_V2_1'
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'
@@ -5276,14 +5288,21 @@ export interface JobMatcherEvalResult {
     predictedJobName: string | null
     resolvingMarker: string | null
   }>
+  /** Most advanced policy metrics for the primary 12 cards. */
+  displayIdentityPolicy?: JobMatcherIdentityPolicy
+  displayMetrics?: JobMatcherEvalResult['metrics']
   comparison?: JobMatcherIdentityCompareReport | null
   threeWayComparison?: {
-    policies: ['BASELINE', 'CONTEXT_AWARE_V1', 'CONTEXT_AWARE_V2']
+    policies:
+      | ['BASELINE', 'CONTEXT_AWARE_V1', 'CONTEXT_AWARE_V2']
+      | ['BASELINE', 'CONTEXT_AWARE_V1', 'CONTEXT_AWARE_V2', 'CONTEXT_AWARE_V2_1']
     baselineMetrics: JobMatcherEvalResult['metrics']
     v1Metrics: JobMatcherEvalResult['metrics']
     v2Metrics: JobMatcherEvalResult['metrics']
+    v21Metrics?: JobMatcherEvalResult['metrics'] | null
     baselineToV1: Record<JobMatcherTransitionCategory, number>
     v1ToV2: Record<JobMatcherTransitionCategory, number>
+    v2ToV21?: Record<JobMatcherTransitionCategory, number> | null
     rows: Array<{
       emailMessageId: string
       subject: string | null
@@ -5293,15 +5312,23 @@ export interface JobMatcherEvalResult {
       baseline: JobMatcherIdentityCompareSide
       v1: JobMatcherIdentityCompareSide
       v2: JobMatcherIdentityCompareSide
+      v21?: JobMatcherIdentityCompareSide | null
       baselineToV1: JobMatcherTransitionCategory
       v1ToV2: JobMatcherTransitionCategory
+      v2ToV21?: JobMatcherTransitionCategory | null
       groundTruthReviewFlag: boolean
     }>
     safetyRegressions: {
       v1ToV2CorrectToWrong: number
       v1ToV2UnresolvedToWrong: number
+      v2ToV21CorrectToWrong?: number
+      v2ToV21UnresolvedToWrong?: number
+      v2ToV21WrongDifferentJob?: number
     }
-    coverageLoss: { v1ToV2CorrectToUnresolved: number }
+    coverageLoss: {
+      v1ToV2CorrectToUnresolved: number
+      v2ToV21CorrectToUnresolved?: number
+    }
     runtimeMs: { baseline: number; v1: number; v2: number }
   } | null
   runtimeMs?: number

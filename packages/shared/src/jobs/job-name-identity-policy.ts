@@ -1,10 +1,12 @@
 /**
- * Marker 1 identity policy — BASELINE vs CONTEXT_AWARE_V1 vs CONTEXT_AWARE_V2.
+ * Marker 1 identity policy — BASELINE / V1 / V2 / V2.1.
  *
  * BASELINE: unique OVERLAP may MATCH (historical behavior).
  * CONTEXT_AWARE_V1: unique weak identity must abstain (AMBIGUOUS), not MATCH.
  * CONTEXT_AWARE_V2: V1 + shared-family / generic multiword disambiguation;
  *   weak candidates cleared so they cannot steer Marker 2.
+ * CONTEXT_AWARE_V2_1: V2 identity gates + weak candidates preserved for later
+ *   markers (multi-job contact gate still blocks steered wrong matches).
  * Production default remains BASELINE until explicitly approved.
  */
 
@@ -19,11 +21,14 @@ export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1 =
   "CONTEXT_AWARE_V1" as const;
 export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 =
   "CONTEXT_AWARE_V2" as const;
+export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 =
+  "CONTEXT_AWARE_V2_1" as const;
 
 export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_BASELINE
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1
-  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1;
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
   JOB_MATCH_IDENTITY_POLICY_BASELINE;
@@ -700,20 +705,53 @@ export function applyJobNameIdentityPolicy(
     };
   }
 
-  // CONTEXT_AWARE_V2
-  return applyContextAwareV2IdentityPolicy({
-    input,
-    assessed,
-    selectedJobIds,
-  });
+  // CONTEXT_AWARE_V2 / V2.1 (shared identity gates; weak-candidate handling differs)
+  if (
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+  ) {
+    return applyContextAwareV2IdentityPolicy({
+      input,
+      assessed,
+      selectedJobIds,
+      /**
+       * V2 clears weak candidates (prevents steering).
+       * V2.1 preserves them so Marker 2/3 can narrow; multi-job contact
+       * safety still blocks unique MATCH from multi-job contacts.
+       */
+      preserveWeakCandidates:
+        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      policyId: policy,
+    });
+  }
+
+  // Unknown policy → treat as BASELINE pass-through
+  return {
+    status: "MATCH",
+    preserveCandidates: true,
+    diagnostics: diagBase(policy, input.hit, assessed, selectedJobIds, {
+      identityStrength: assessed.strength,
+      strongIdentityAnchor: assessed.strongIdentityAnchor,
+      resolutionAllowed: true,
+      reason:
+        input.hit.kind === "OVERLAP"
+          ? "BASELINE_UNIQUE_OVERLAP"
+          : "BASELINE_UNIQUE_PHRASE",
+    }),
+  };
 }
 
 function applyContextAwareV2IdentityPolicy(args: {
   input: ApplyIdentityPolicyInput;
   assessed: ReturnType<typeof assessIdentityHitStrength>;
   selectedJobIds: string[];
+  preserveWeakCandidates: boolean;
+  policyId:
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1;
 }): ApplyIdentityPolicyResult {
-  const { input, assessed, selectedJobIds } = args;
+  const { input, assessed, selectedJobIds, preserveWeakCandidates, policyId } =
+    args;
   const hit = input.hit!;
   const peers = input.peerJobs ?? [];
   const subjectTokens = input.subjectTokens ?? hit.subjectTokens;
@@ -798,7 +836,7 @@ function applyContextAwareV2IdentityPolicy(args: {
           selectedJobIdOverride: winner.peer.jobId,
           candidateJobIdsOverride: [winner.peer.jobId],
           diagnostics: diagBase(
-            JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+            policyId,
             hit,
             assessed,
             [winner.peer.jobId],
@@ -822,7 +860,7 @@ function applyContextAwareV2IdentityPolicy(args: {
           preserveCandidates: true,
           candidateJobIdsOverride: ids,
           diagnostics: diagBase(
-            JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+            policyId,
             hit,
             assessed,
             ids,
@@ -844,7 +882,7 @@ function applyContextAwareV2IdentityPolicy(args: {
         preserveCandidates: true,
         candidateJobIdsOverride: familyCandidateIds,
         diagnostics: diagBase(
-          JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+          policyId,
           hit,
           assessed,
           familyCandidateIds,
@@ -868,7 +906,7 @@ function applyContextAwareV2IdentityPolicy(args: {
         status: "MATCH",
         preserveCandidates: true,
         diagnostics: diagBase(
-          JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+          policyId,
           hit,
           assessed,
           selectedJobIds,
@@ -895,7 +933,7 @@ function applyContextAwareV2IdentityPolicy(args: {
           selectedJobIdOverride: winner.peer.jobId,
           candidateJobIdsOverride: [winner.peer.jobId],
           diagnostics: diagBase(
-            JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+            policyId,
             hit,
             assessed,
             [winner.peer.jobId],
@@ -917,7 +955,7 @@ function applyContextAwareV2IdentityPolicy(args: {
         preserveCandidates: true,
         candidateJobIdsOverride: familyCandidateIds,
         diagnostics: diagBase(
-          JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+          policyId,
           hit,
           assessed,
           familyCandidateIds,
@@ -944,7 +982,7 @@ function applyContextAwareV2IdentityPolicy(args: {
       status: "MATCH",
       preserveCandidates: true,
       diagnostics: diagBase(
-        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+        policyId,
         hit,
         assessed,
         selectedJobIds,
@@ -961,16 +999,17 @@ function applyContextAwareV2IdentityPolicy(args: {
     };
   }
 
-  // Weak unique identity → abstain and CLEAR candidates (V2) so Marker 2/3 expand.
+  // Weak unique identity → abstain.
+  // V2 clears candidates so Marker 2 expands from empty; V2.1 preserves them.
   return {
     status: "AMBIGUOUS",
-    preserveCandidates: false,
-    candidateJobIdsOverride: [],
+    preserveCandidates: preserveWeakCandidates,
+    candidateJobIdsOverride: preserveWeakCandidates ? selectedJobIds : [],
     diagnostics: diagBase(
-      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      policyId,
       hit,
       { ...assessed, strength: "WEAK", strongIdentityAnchor: false, reason },
-      [],
+      preserveWeakCandidates ? selectedJobIds : [],
       {
         identityStrength: "WEAK",
         strongIdentityAnchor: false,

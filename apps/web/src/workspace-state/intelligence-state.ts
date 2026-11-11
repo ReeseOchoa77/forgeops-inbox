@@ -15,6 +15,7 @@ export type IntelligenceEvalMode =
   | 'CURRENT'
   | 'COMPARE_V1'
   | 'COMPARE_V2'
+  | 'COMPARE_V2_1'
   | 'COMPARE_ALL'
 
 export type IntelligencePersistedState = {
@@ -55,7 +56,13 @@ const OUTCOMES = new Set([
   'CONFLICT',
   'NO_MATCH',
 ])
-const EVAL_MODES = new Set(['CURRENT', 'COMPARE_V1', 'COMPARE_V2', 'COMPARE_ALL'])
+const EVAL_MODES = new Set([
+  'CURRENT',
+  'COMPARE_V1',
+  'COMPARE_V2',
+  'COMPARE_V2_1',
+  'COMPARE_ALL',
+])
 
 export function validateIntelligenceState(raw: unknown): IntelligencePersistedState | null {
   if (!raw || typeof raw !== 'object') return null

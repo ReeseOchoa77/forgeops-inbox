@@ -190,7 +190,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
           id: "marker-1",
           title: "Marker 1 — Project identity",
           summary:
-            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Optional identityPolicy CONTEXT_AWARE_V1/V2 for shadow eval (production default BASELINE). V2 adds family disambiguation + contact safety.",
+            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Optional identityPolicy CONTEXT_AWARE_V1/V2/V2_1 for shadow eval (production default BASELINE). V2 adds family disambiguation + contact safety; V2.1 preserves weak candidates + verified single-Job AUTH recovery.",
           version: JOB_NAME_MARKER_VERSION,
         },
         {
@@ -229,7 +229,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
       groundTruthNotes:
         "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Exclude AI_* / JOB_NUMBER_MATCH / IMPORT. Folder labels can be noisy.",
       notes:
-        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Shadow compare: CONTEXT_AWARE_V1 | CONTEXT_AWARE_V2 | ALL_THREE on the same email IDs/snapshot. Production default identityPolicy remains BASELINE. Documented baseline 500/438/23 is historical, not a live metric.",
+        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Shadow compare: CONTEXT_AWARE_V1 | CONTEXT_AWARE_V2 | CONTEXT_AWARE_V2_1 | ALL_THREE on the same email IDs/snapshot. Primary metric cards use the most advanced evaluated policy (registry rank). Production default identityPolicy remains BASELINE. Documented baseline 500/438/23 is historical, not a live metric.",
     },
     explainability: {
       available: true,

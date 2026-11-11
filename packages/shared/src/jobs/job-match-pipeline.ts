@@ -13,6 +13,7 @@ import {
   runJobNameMarker,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   type JobMatchEligibilityMode,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
@@ -387,9 +388,13 @@ export function runJobMatchPipeline(input: {
     laterStrength: thread.candidateJobIds.length === 0 ? "ABSENT" : "STRONG",
   });
 
-  // V2 conflict veto: strong name family evidence vs disjoint authoritative thread.
+  const isV2Family =
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1;
+
+  // V2 / V2.1 conflict veto: strong name family evidence vs disjoint authoritative thread.
   if (
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 &&
+    isV2Family &&
     marker1.identityDiagnostics.strongIdentityAnchor &&
     marker1.identityDiagnostics.competingJobIds.length > 0 &&
     thread.candidateJobIds.length === 1 &&
@@ -415,10 +420,10 @@ export function runJobMatchPipeline(input: {
     };
   }
 
-  // V2: contact+thread from same supporting emails are not independent
+  // V2 family: contact+thread from same supporting emails are not independent
   // corroboration for contact-only paths (already abstained). Flag only.
   if (
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 &&
+    isV2Family &&
     contactSafety.diagnostics.evidenceIndependentFromThread === false &&
     afterThread.status === "MATCH" &&
     current.status !== "MATCH" &&

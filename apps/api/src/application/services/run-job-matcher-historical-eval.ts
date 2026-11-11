@@ -41,6 +41,7 @@ import {
   type JobMatcherEvalSampling,
   type JobMatchResult,
   JOB_MATCHER_EVAL_MAX_SYNC,
+  selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
 import type { PrismaClient } from "@prisma/client";
 import {
@@ -104,8 +105,14 @@ export type JobMatcherHistoricalEvalResult = {
   wrongMatches: HistoricalEvalWrongDetail[];
   /** Present when paired compare was requested. Same email IDs / snapshot. */
   comparison: IdentityCompareReport | null;
-  /** Present when three-way BASELINE/V1/V2 compare was requested. */
+  /** Present when three-way BASELINE/V1/V2(+V2.1) compare was requested. */
   threeWayComparison: IdentityThreeWayCompareReport | null;
+  /**
+   * Metrics for the primary Evaluation cards — most advanced policy present
+   * in this completed evaluation (registry rank). Never mixes policies.
+   */
+  displayIdentityPolicy: JobMatchIdentityPolicy;
+  displayMetrics: HistoricalEvalMetrics;
   runtimeMs: number;
   groundTruthQuality: "MODERATE";
   groundTruthNotes: string;
@@ -343,12 +350,14 @@ export async function runJobMatcherHistoricalEval(input: {
    * Shadow compare mode on the same emails/snapshot.
    * - CONTEXT_AWARE_V1: BASELINE vs V1
    * - CONTEXT_AWARE_V2: V1 vs V2 (paired)
-   * - ALL_THREE: BASELINE + V1 + V2
-   * Production default remains BASELINE; V1/V2 are never auto-activated.
+   * - CONTEXT_AWARE_V2_1: V2 vs V2.1 (paired)
+   * - ALL_THREE: BASELINE + V1 + V2 + V2.1
+   * Production default remains BASELINE; V1/V2/V2.1 are never auto-activated.
    */
   compareWithIdentityPolicy?:
     | "CONTEXT_AWARE_V1"
     | "CONTEXT_AWARE_V2"
+    | "CONTEXT_AWARE_V2_1"
     | "ALL_THREE";
 }): Promise<JobMatcherHistoricalEvalResult> {
   const startedAt = Date.now();
@@ -535,19 +544,44 @@ export async function runJobMatcherHistoricalEval(input: {
       );
     }
     comparison = report;
+  } else if (compareWith === "CONTEXT_AWARE_V2_1") {
+    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
+    const v21 = await scoreEmails("CONTEXT_AWARE_V2_1");
+    const compareRows = pairedRows(v2.evaluated, v21.evaluated, false);
+    const report = buildIdentityCompareReport({
+      baselinePolicy: "CONTEXT_AWARE_V2",
+      proposedPolicy: "CONTEXT_AWARE_V2_1",
+      baselineMetrics: aggregateHistoricalEvalResults(v2.evaluated),
+      proposedMetrics: aggregateHistoricalEvalResults(v21.evaluated),
+      rows: compareRows,
+      runtimeMs: {
+        baseline: v2.runtimeMs,
+        proposed: v21.runtimeMs,
+      },
+    });
+    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
+      throw new Error(
+        `V2→V2.1 transition counts do not equal evaluated (${compareRows.length})`
+      );
+    }
+    comparison = report;
   } else if (compareWith === "ALL_THREE") {
     const v1 = await scoreEmails("CONTEXT_AWARE_V1");
     const v2 = await scoreEmails("CONTEXT_AWARE_V2");
+    const v21 = await scoreEmails("CONTEXT_AWARE_V2_1");
     const v1ById = new Map(v1.evaluated.map((r) => [r.id, r]));
     const v2ById = new Map(v2.evaluated.map((r) => [r.id, r]));
+    const v21ById = new Map(v21.evaluated.map((r) => [r.id, r]));
     const threeRows: IdentityThreeWayCompareRow[] = [];
     for (const baselineRow of evaluated) {
       const v1Row = v1ById.get(baselineRow.id);
       const v2Row = v2ById.get(baselineRow.id);
-      if (!v1Row || !v2Row) continue;
+      const v21Row = v21ById.get(baselineRow.id);
+      if (!v1Row || !v2Row || !v21Row) continue;
       const baseline = sideSummaryFromEval(baselineRow, jobsById);
       const v1Side = sideSummaryFromEval(v1Row, jobsById);
       const v2Side = sideSummaryFromEval(v2Row, jobsById);
+      const v21Side = sideSummaryFromEval(v21Row, jobsById);
       const baselineToV1 = classifyMatcherTransition({
         baselineOutcome: baseline.outcome,
         proposedOutcome: v1Side.outcome,
@@ -560,6 +594,12 @@ export async function runJobMatcherHistoricalEval(input: {
         baselinePredictedJobId: v1Side.predictedJobId,
         proposedPredictedJobId: v2Side.predictedJobId,
       });
+      const v2ToV21 = classifyMatcherTransition({
+        baselineOutcome: v2Side.outcome,
+        proposedOutcome: v21Side.outcome,
+        baselinePredictedJobId: v2Side.predictedJobId,
+        proposedPredictedJobId: v21Side.predictedJobId,
+      });
       threeRows.push({
         emailMessageId: baselineRow.id,
         subject: baselineRow.subject,
@@ -570,9 +610,12 @@ export async function runJobMatcherHistoricalEval(input: {
         baseline,
         v1: v1Side,
         v2: v2Side,
+        v21: v21Side,
         baselineToV1,
         v1ToV2,
+        v2ToV21,
         groundTruthReviewFlag:
+          v21Side.outcome === "WRONG_MATCH" ||
           v2Side.outcome === "WRONG_MATCH" ||
           v1Side.outcome === "WRONG_MATCH" ||
           baseline.outcome === "WRONG_MATCH",
@@ -582,44 +625,54 @@ export async function runJobMatcherHistoricalEval(input: {
       baselineMetrics: aggregateHistoricalEvalResults(evaluated),
       v1Metrics: aggregateHistoricalEvalResults(v1.evaluated),
       v2Metrics: aggregateHistoricalEvalResults(v2.evaluated),
+      v21Metrics: aggregateHistoricalEvalResults(v21.evaluated),
       rows: threeRows,
       runtimeMs: {
         baseline: primary.runtimeMs,
         v1: v1.runtimeMs,
         v2: v2.runtimeMs,
+        v21: v21.runtimeMs,
       },
     });
     if (
       !assertTransitionsReconcile(three.baselineToV1, threeRows.length) ||
-      !assertTransitionsReconcile(three.v1ToV2, threeRows.length)
+      !assertTransitionsReconcile(three.v1ToV2, threeRows.length) ||
+      (three.v2ToV21 != null &&
+        !assertTransitionsReconcile(three.v2ToV21, threeRows.length))
     ) {
       throw new Error(
-        `Three-way transition counts do not equal evaluated (${threeRows.length})`
+        `Multi-policy transition counts do not equal evaluated (${threeRows.length})`
       );
     }
     threeWayComparison = three;
-    // Also expose V1→V2 as the paired comparison panel.
+    // Expose V2→V2.1 as the paired comparison panel (most advanced delta).
     comparison = buildIdentityCompareReport({
-      baselinePolicy: "CONTEXT_AWARE_V1",
-      proposedPolicy: "CONTEXT_AWARE_V2",
-      baselineMetrics: three.v1Metrics,
-      proposedMetrics: three.v2Metrics,
+      baselinePolicy: "CONTEXT_AWARE_V2",
+      proposedPolicy: "CONTEXT_AWARE_V2_1",
+      baselineMetrics: three.v2Metrics,
+      proposedMetrics: three.v21Metrics!,
       rows: threeRows.map((r) => ({
         emailMessageId: r.emailMessageId,
         subject: r.subject,
         trueJobId: r.trueJobId,
         trueJobName: r.trueJobName,
         groundTruthSource: r.groundTruthSource,
-        baseline: r.v1,
-        proposed: r.v2,
-        transition: r.v1ToV2,
+        baseline: r.v2,
+        proposed: r.v21!,
+        transition: r.v2ToV21!,
         groundTruthReviewFlag: r.groundTruthReviewFlag,
       })),
-      runtimeMs: { baseline: v1.runtimeMs, proposed: v2.runtimeMs },
+      runtimeMs: { baseline: v2.runtimeMs, proposed: v21.runtimeMs },
     });
   }
 
   const metrics = aggregateHistoricalEvalResults(evaluated);
+  const display = selectDisplayMetricsForEvaluation({
+    primaryPolicy,
+    primaryMetrics: metrics,
+    comparison,
+    threeWayComparison,
+  });
   const jobBreakdown = buildJobMatcherEvalJobBreakdown(evaluated, jobsById);
   const wrong = buildWrongMatchDetails({
     rows: evaluated,
@@ -652,6 +705,8 @@ export async function runJobMatcherHistoricalEval(input: {
       workspaceSummary,
     },
     metrics,
+    displayIdentityPolicy: display.policy,
+    displayMetrics: display.metrics,
     diagnostics,
     jobBreakdown,
     rows,
@@ -661,6 +716,6 @@ export async function runJobMatcherHistoricalEval(input: {
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2 are shadow-only until approved; production default remains BASELINE.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2/V2.1 are shadow-only until approved; production default remains BASELINE.",
   };
 }

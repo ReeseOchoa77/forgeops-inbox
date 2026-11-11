@@ -227,8 +227,10 @@ export function buildEvalComparisonCsv(
   return lines.join('\n')
 }
 
-/** Three-way BASELINE / V1 / V2 comparison CSV (one row per email). */
+/** Multi-policy BASELINE / V1 / V2 / V2.1 comparison CSV (one row per email). */
 export function buildEvalThreeWayComparisonCsv(comparison: ThreeWay): string {
+  const includeV21 =
+    comparison.policies.length === 4 || comparison.v21Metrics != null
   const headers = [
     'email_message_id',
     'subject',
@@ -250,6 +252,16 @@ export function buildEvalThreeWayComparisonCsv(comparison: ThreeWay): string {
     'v2_resolving_marker',
     'v2_identity_reason',
     'v2_abstention_reason',
+    ...(includeV21
+      ? ([
+          'v21_decision',
+          'v21_outcome',
+          'v21_predicted_job',
+          'v21_resolving_marker',
+          'v21_identity_reason',
+          'v2_to_v21',
+        ] as const)
+      : []),
     'baseline_to_v1',
     'v1_to_v2',
     'ground_truth_review_flag',
@@ -280,6 +292,16 @@ export function buildEvalThreeWayComparisonCsv(comparison: ThreeWay): string {
         row.v2.identityDiagnostics?.resolutionAllowed === false
           ? row.v2.identityDiagnostics.reason
           : '',
+        ...(includeV21
+          ? [
+              row.v21?.decision ?? '',
+              row.v21?.outcome ?? '',
+              row.v21?.predictedJobName ?? '',
+              row.v21?.resolvingMarker ?? '',
+              row.v21?.identityDiagnostics?.reason ?? '',
+              row.v2ToV21 ?? '',
+            ]
+          : []),
         row.baselineToV1,
         row.v1ToV2,
         row.groundTruthReviewFlag,
