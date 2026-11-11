@@ -29,7 +29,9 @@ See [Intelligence Registry](../architecture/intelligence-registry.md) and [match
 
 ## Refresh / working context
 
-Selected Intelligence component, detail tab, and Job Matcher evaluation **configuration** (plus outcome filter / Emails|Jobs view) restore after reload via URL + scoped workspace persistence. Evaluation **results** and an in-flight sync run do **not** survive refresh — there is no server EvaluationRun id yet. See [workspace-state-persistence.md](../architecture/workspace-state-persistence.md).
+Selected Intelligence component, detail tab, and Job Matcher evaluation **configuration** (plus outcome filter / Emails|Jobs view) restore after reload via URL + scoped workspace persistence.
+
+**In-app navigation** (leave Intelligence → return): completed Job Matcher evaluation results, filters, selection, and scroll restore from SPA session memory — no automatic rerun. **Browser refresh** still clears results (no server EvaluationRun id yet). See [workspace-state-persistence.md](../architecture/workspace-state-persistence.md).
 
 ## What you cannot do (V1)
 

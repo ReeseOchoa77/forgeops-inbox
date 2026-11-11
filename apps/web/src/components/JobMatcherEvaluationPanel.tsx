@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import {
   api,
   type JobMatcherEvalPreview,
@@ -8,6 +16,15 @@ import {
 } from '../api'
 import {
   DEFAULT_INTELLIGENCE_STATE,
+  getJobMatcherEvalPending,
+  getJobMatcherEvalSession,
+  patchJobMatcherEvalSessionUi,
+  saveSessionScroll,
+  sessionScrollKey,
+  getSessionScroll,
+  setJobMatcherEvalPending,
+  setJobMatcherEvalSession,
+  clearJobMatcherEvalPending,
   type IntelligencePersistedState,
 } from '../workspace-state'
 import { SafeEmailBody } from './SafeEmailBody'
@@ -46,12 +63,23 @@ export function JobMatcherEvaluationPanel({
   const [jobPickerOpen, setJobPickerOpen] = useState(false)
   const [preview, setPreview] = useState<JobMatcherEvalPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const sessionSeed =
+    userId ? getJobMatcherEvalSession(workspaceId, userId) : null
+  const pendingSeed = userId ? getJobMatcherEvalPending(workspaceId, userId) : null
+  const [busy, setBusy] = useState(() => !!pendingSeed)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<JobMatcherEvalResult | null>(null)
+  const [result, setResult] = useState<JobMatcherEvalResult | null>(
+    () => sessionSeed?.result ?? null
+  )
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>(() => initialUi.outcomeFilter)
-  const [jobFilterId, setJobFilterId] = useState<string | null>(null)
-  const [selectedRow, setSelectedRow] = useState<JobMatcherEvalRow | null>(null)
+  const [jobFilterId, setJobFilterId] = useState<string | null>(
+    () => sessionSeed?.jobFilterId ?? null
+  )
+  const [selectedRow, setSelectedRow] = useState<JobMatcherEvalRow | null>(() => {
+    const id = initialUi.selectedEmailMessageId
+    if (!id || !sessionSeed?.result) return null
+    return sessionSeed.result.rows.find((r) => r.emailMessageId === id) ?? null
+  })
   const [resultsView, setResultsView] = useState<ResultsView>(() => initialUi.resultsView)
   const [inspectorTab, setInspectorTab] = useState<'email' | 'match'>(() => initialUi.inspectorTab)
   const [wide, setWide] = useState(
@@ -59,6 +87,7 @@ export function JobMatcherEvaluationPanel({
   )
   const jobsHydratedRef = useRef(false)
   const skipUiPersistRef = useRef(true)
+  const resultsScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const onResize = () => setWide(window.innerWidth >= 1100)
@@ -129,8 +158,69 @@ export function JobMatcherEvaluationPanel({
     if (row) setSelectedRow(row)
   }, [result, initialUi.selectedEmailMessageId, selectedRow])
 
-  // Silence unused until durable eval runs exist — keep prop for API symmetry.
-  void userId
+  // Re-attach to an in-flight SPA evaluation after navigating away/back.
+  useEffect(() => {
+    if (!userId) return
+    const pending = getJobMatcherEvalPending(workspaceId, userId)
+    if (!pending) return
+    let cancelled = false
+    setBusy(true)
+    pending.promise
+      .then((evaluation) => {
+        if (cancelled) return
+        setResult(evaluation)
+        setJobMatcherEvalSession({
+          workspaceId,
+          userId,
+          result: evaluation,
+          jobFilterId: null,
+        })
+        clearJobMatcherEvalPending(workspaceId, userId)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setError(e instanceof Error ? e.message : 'Evaluation failed')
+        clearJobMatcherEvalPending(workspaceId, userId)
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, userId])
+
+  // Keep completed evaluation in SPA session memory (navigation, not browser reload).
+  useEffect(() => {
+    if (!userId || !result) return
+    setJobMatcherEvalSession({
+      workspaceId,
+      userId,
+      result,
+      jobFilterId,
+    })
+  }, [workspaceId, userId, result, jobFilterId])
+
+  useEffect(() => {
+    if (!userId || !result) return
+    patchJobMatcherEvalSessionUi({ workspaceId, userId, jobFilterId })
+  }, [workspaceId, userId, result, jobFilterId])
+
+  // Restore results list scroll after remount when rows are present.
+  useEffect(() => {
+    if (!userId || !result || !resultsScrollRef.current) return
+    const key = sessionScrollKey({
+      workspaceId,
+      userId,
+      surface: 'job-matcher-results',
+    })
+    const top = getSessionScroll(key)
+    if (top == null) return
+    const el = resultsScrollRef.current
+    requestAnimationFrame(() => {
+      el.scrollTop = top
+    })
+  }, [workspaceId, userId, result?.dataset.actualEvaluated])
 
   const dataset = useMemo(() => {
     const jobIds = jobsMode === 'ALL' ? [] : selectedJobs.map((j) => j.id)
@@ -180,18 +270,34 @@ export function JobMatcherEvaluationPanel({
   }, [workspaceId, dataset, jobsMode, selectedJobs.length])
 
   const run = async () => {
+    if (!userId) {
+      setError('Sign in required to run evaluation.')
+      return
+    }
     setBusy(true)
     setError(null)
     setSelectedRow(null)
     setJobFilterId(null)
     setOutcomeFilter('ALL')
     setResultsView('emails')
+    setResult(null)
+    const promise = api
+      .evaluateJobMatcherIntelligence(workspaceId, { dataset })
+      .then((res) => res.evaluation)
+    setJobMatcherEvalPending({ workspaceId, userId, promise })
     try {
-      const res = await api.evaluateJobMatcherIntelligence(workspaceId, { dataset })
-      setResult(res.evaluation)
+      const evaluation = await promise
+      setResult(evaluation)
+      setJobMatcherEvalSession({
+        workspaceId,
+        userId,
+        result: evaluation,
+        jobFilterId: null,
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Evaluation failed')
     } finally {
+      clearJobMatcherEvalPending(workspaceId, userId)
       setBusy(false)
     }
   }
@@ -206,6 +312,7 @@ export function JobMatcherEvaluationPanel({
   }, [result, outcomeFilter, jobFilterId])
 
   const canRun =
+    !!userId &&
     !busy &&
     (jobsMode === 'ALL' ||
       (jobsMode === 'SPECIFIC' && selectedJobs.length === 1) ||
@@ -573,6 +680,18 @@ export function JobMatcherEvaluationPanel({
             }}
             resultsView={resultsView}
             setResultsView={setResultsView}
+            scrollRef={resultsScrollRef}
+            onScrollSave={(top) => {
+              if (!userId) return
+              saveSessionScroll(
+                sessionScrollKey({
+                  workspaceId,
+                  userId,
+                  surface: 'job-matcher-results',
+                }),
+                top
+              )
+            }}
           />
         </div>
         <div
@@ -587,6 +706,7 @@ export function JobMatcherEvaluationPanel({
           {selectedRow ? (
             <EmailInspector
               workspaceId={workspaceId}
+              userId={userId}
               row={selectedRow}
               groundTruthQuality={groundTruthQuality}
               inspectorTab={inspectorTab}
@@ -628,6 +748,8 @@ function ResultsPane(props: {
   setSelectedRow: (row: JobMatcherEvalRow | null) => void
   resultsView: ResultsView
   setResultsView: (v: ResultsView) => void
+  scrollRef?: RefObject<HTMLDivElement | null>
+  onScrollSave?: (scrollTop: number) => void
 }) {
   return (
     <>
@@ -686,7 +808,11 @@ function ResultsPane(props: {
           </button>
         )}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div
+        ref={props.scrollRef}
+        onScroll={(e) => props.onScrollSave?.(e.currentTarget.scrollTop)}
+        style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+      >
         {!props.result && (
           <div style={{ padding: 16, color: '#9ca3af', fontSize: 12 }}>No evaluation yet.</div>
         )}
@@ -784,6 +910,7 @@ function ResultsPane(props: {
 
 function EmailInspector({
   workspaceId,
+  userId,
   row,
   groundTruthQuality,
   inspectorTab,
@@ -791,6 +918,7 @@ function EmailInspector({
   onClose,
 }: {
   workspaceId: string
+  userId?: string
   row: JobMatcherEvalRow
   groundTruthQuality: string
   inspectorTab: 'email' | 'match'
@@ -802,6 +930,7 @@ function EmailInspector({
   const [email, setEmail] = useState<
     Awaited<ReturnType<typeof api.getJobMatcherEvalEmail>>['email'] | null
   >(null)
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -823,6 +952,22 @@ function EmailInspector({
       cancelled = true
     }
   }, [workspaceId, row.emailMessageId])
+
+  useEffect(() => {
+    if (!userId || !email || !bodyScrollRef.current) return
+    const key = sessionScrollKey({
+      workspaceId,
+      userId,
+      surface: 'job-matcher-inspector',
+      context: row.emailMessageId,
+    })
+    const top = getSessionScroll(key)
+    if (top == null) return
+    const el = bodyScrollRef.current
+    requestAnimationFrame(() => {
+      el.scrollTop = top
+    })
+  }, [workspaceId, userId, row.emailMessageId, email, inspectorTab])
 
   return (
     <aside
@@ -889,7 +1034,22 @@ function EmailInspector({
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px', fontSize: 12 }}>
+      <div
+        ref={bodyScrollRef}
+        onScroll={(e) => {
+          if (!userId) return
+          saveSessionScroll(
+            sessionScrollKey({
+              workspaceId,
+              userId,
+              surface: 'job-matcher-inspector',
+              context: row.emailMessageId,
+            }),
+            e.currentTarget.scrollTop
+          )
+        }}
+        style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px', fontSize: 12 }}
+      >
         {inspectorTab === 'email' && (
           <>
             {loading && <div style={{ color: '#6b7280' }}>Loading email…</div>}

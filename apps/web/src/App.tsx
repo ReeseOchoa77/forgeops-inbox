@@ -32,6 +32,8 @@ import { prefetchInboxList } from './inbox-list-cache'
 import { shouldShowDevelopmentIndicator } from './app-env'
 import { canAccessPlatformOperatorNav } from './system-nav-access'
 import {
+  clearJobMatcherEvalSessionsForWorkspace,
+  clearSessionScrollForWorkspace,
   isRestorablePage,
   loadNavState,
   persistNavState,
@@ -244,8 +246,18 @@ export default function App() {
       .catch(e => setError(e.message))
   }, [])
 
+  const prevWorkspaceIdRef = useRef<string>('')
   useEffect(() => {
     if (workspaceId) localStorage.setItem('forgeops_workspace', workspaceId)
+    // Workspace switch: drop other workspace session memory (eval results, scrolls).
+    if (
+      prevWorkspaceIdRef.current &&
+      prevWorkspaceIdRef.current !== workspaceId
+    ) {
+      clearJobMatcherEvalSessionsForWorkspace(prevWorkspaceIdRef.current)
+      clearSessionScrollForWorkspace(prevWorkspaceIdRef.current)
+    }
+    prevWorkspaceIdRef.current = workspaceId
   }, [workspaceId])
 
   // Restore page / Intelligence selection after refresh (URL wins over localStorage).

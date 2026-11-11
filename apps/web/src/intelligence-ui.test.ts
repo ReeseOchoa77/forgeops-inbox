@@ -167,6 +167,8 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('job-matcher-metric-cards')
     expect(src).toContain('No-match rate')
     expect(src).toContain('Ambiguity')
+    expect(src).toContain('setJobMatcherEvalSession')
+    expect(src).toContain('getJobMatcherEvalSession')
   })
 
 

@@ -1,6 +1,6 @@
 # Persistent workspace state (ForgeOps)
 
-User-facing operational filters, tabs, analysis configuration, and long-running workflows should not unnecessarily disappear on browser refresh.
+User-facing operational filters, tabs, analysis configuration, and long-running workflows should not unnecessarily disappear on browser refresh **or in-app navigation**.
 
 **Rules:**
 
@@ -10,5 +10,19 @@ User-facing operational filters, tabs, analysis configuration, and long-running 
 - Validate restored entity IDs; clear invalid selections.
 - **Never fake durable operations** with localStorage. Running evaluations / worker jobs need a real server-side run or job identity; the server is authoritative on reload.
 - Do not persist secrets, tokens, full email bodies, or attachment content.
+
+## Navigation state preservation
+
+Operational ForgeOps surfaces should preserve meaningful working context across in-app navigation.
+
+Do not force users to rebuild filters, analysis configuration, selection, or completed evaluation state merely because they visited another page.
+
+Prefer:
+
+1. Cached server list data (module Maps + stale-while-revalidate)
+2. Persisted lightweight UI/filter state
+3. SPA **session memory** for expensive completed analysis results (Job Matcher) and scroll positions
+
+Do **not** keep heavyweight pages mounted indefinitely without performance justification. Inbox `display:none` during message-detail is the intentional keep-alive exception.
 
 Canonical doc: [`docs/architecture/workspace-state-persistence.md`](docs/architecture/workspace-state-persistence.md).

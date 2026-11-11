@@ -46,8 +46,11 @@ import { uiPx } from '../ui-scale'
 import { isAllMailboxesConnectionId } from '../mailbox-selection'
 import {
   DEFAULT_INBOX_STATE,
+  getSessionScroll,
   loadInboxState,
   persistInboxState,
+  saveSessionScroll,
+  sessionScrollKey,
   type InboxPersistedState,
 } from '../workspace-state'
 
@@ -851,16 +854,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search])
 
+  const inboxScrollKey =
+    userId
+      ? sessionScrollKey({
+          workspaceId,
+          userId,
+          surface: 'inbox-list',
+          context: connectionId,
+        })
+      : null
+
+  useEffect(() => {
+    if (!inboxScrollKey || !scrollRef.current || messages.length === 0) return
+    const top = getSessionScroll(inboxScrollKey)
+    if (top == null || top <= 0) return
+    const el = scrollRef.current
+    requestAnimationFrame(() => {
+      el.scrollTop = top
+    })
+  }, [inboxScrollKey, messages.length > 0 ? messages[0]?.id : ''])
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
-    if (!el || loadingMore || !hasMore || loading || refreshing) return
+    if (!el) return
+    if (inboxScrollKey) saveSessionScroll(inboxScrollKey, el.scrollTop)
+    if (loadingMore || !hasMore || loading || refreshing) return
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
       const filters = buildFilters()
       // Only append when still on the same query identity.
       if (inboxListQueryKey(filters) !== activeQueryKeyRef.current) return
       loadPage(page + 1, filters, true)
     }
-  }, [page, buildFilters, hasMore, loadingMore, loading, refreshing, loadPage])
+  }, [page, buildFilters, hasMore, loadingMore, loading, refreshing, loadPage, inboxScrollKey])
 
   const handleTrash = async (messageId: string, isTrashed: boolean) => {
     const msg = messages.find(m => m.id === messageId)

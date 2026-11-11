@@ -6,9 +6,13 @@ Related: [overview.md](overview.md), [intelligence-registry.md](intelligence-reg
 
 ## Goal
 
-Refreshing the browser should restore the user’s working context when doing so is **safe, meaningful, and truthful**.
+Refreshing the browser **and** navigating away/back within the SPA should restore the user’s working context when doing so is **safe, meaningful, and truthful**.
 
-Do **not** dump the whole app into `localStorage`. Different categories use different mechanisms.
+Navigating away from a workspace must not feel like closing it.
+
+Do **not** dump the whole app into `localStorage`. Do **not** keep every route mounted forever.
+
+Different categories use different mechanisms.
 
 ## State categories
 
@@ -19,6 +23,7 @@ Do **not** dump the whole app into `localStorage`. Different categories use diff
 | 3. Workspace UI prefs | Inspector tab, Emails vs Jobs view, density | Scoped localStorage |
 | 4. Draft / unsaved input | Job Matcher eval configuration before run | Scoped localStorage (config only) |
 | 5. Durable operations | Long evals, worker jobs | **Server run/task identity only** — never faked in localStorage |
+| 6. SPA session memory | Completed Job Matcher results, scroll tops, in-flight eval Promise | In-memory Maps (`session-memory.ts`) — survive remount, **not** refresh |
 
 ## Precedence
 
@@ -86,7 +91,26 @@ Persist list refinements that are useful across reload. Transient create/bulk mo
 - Detail tab via `intelTab` + localStorage
 - Job Matcher eval **configuration** + result UI prefs (outcome filter, Emails/Jobs view, inspector tab, selected result **id**)
 
-**Not persisted:** evaluation result rows, email bodies, progress as “still running.”
+**localStorage does not store:** evaluation result rows, email bodies, or fabricated RUNNING flags.
+
+**SPA session memory does store:** the latest completed Job Matcher evaluation summary/result for the workspace+user (no email bodies), plus scroll tops and an in-flight evaluate Promise handle.
+
+## Navigation vs browser reload
+
+| Event | Mechanism |
+|-------|-----------|
+| In-app leave/return | Module list caches (SWR) + `session-memory` (eval results, scrolls) + localStorage filters/tabs |
+| Browser refresh | localStorage/URL for filters/config/tabs; **eval results cleared** (no server run id yet) |
+
+## Keep-alive policy
+
+| Surface | Keep mounted while hidden? | Why |
+|---------|----------------------------|-----|
+| Inbox during message-detail (from Inbox) | **Yes** (`display:none`) | Existing pattern — preserves list scroll without retaining other pages |
+| Intelligence / Job Matcher | **No** | Results restored via session memory; avoid retaining email HTML DOM + listeners |
+| Jobs / Bids / Tasks / Customers | **No** | Filters in localStorage; list Maps soft-hydrate; Edit Mode stays off |
+
+Hidden pages must not keep polling. Worker Jobs / import polls stop on unmount today — keep that.
 
 ## Long-running evaluation (Job Matcher)
 
@@ -95,18 +119,19 @@ Current architecture:
 ```text
 POST .../intelligence/job-matcher/evaluate
   → synchronous response (max sample 1000)
-  → result lives in React state only
+  → React state + SPA session memory (navigation)
+  → lost on full browser refresh (no EvaluationRun id)
 ```
 
 There is **no** EvaluationRun / worker job id for Manage → Intelligence evaluation today.
 
 Therefore:
 
-- Refresh **aborts** the in-flight browser request and **clears** on-screen results
-- Configuration **does** restore so the user can re-run
+- **In-app navigation:** completed results restore from session memory; in-flight Promise can re-attach
+- **Browser refresh:** configuration restores; results do **not** — user re-runs
 - Do **not** store `busy: true` in localStorage and claim a run is active
 
-If durable runs are required later: reuse Worker Jobs / analysis-run patterns already used elsewhere (reclassify, bid analysis, project-folder analyze). **Stop and design** before adding a new `EvaluationRun` table.
+If durable cross-reload runs are required later: reuse Worker Jobs / analysis-run patterns. **Stop and design** before adding a new `EvaluationRun` table.
 
 ## Reset / clear
 

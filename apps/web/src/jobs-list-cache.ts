@@ -9,6 +9,8 @@ export type JobsListCacheEntry = {
 }
 
 const TTL_MS = 45_000
+/** Soft-revalidate but skip network when entry is newer than this. */
+export const JOBS_LIST_FRESH_MS = 12_000
 const MAX_ENTRIES = 16
 
 const cache = new Map<string, JobsListCacheEntry>()

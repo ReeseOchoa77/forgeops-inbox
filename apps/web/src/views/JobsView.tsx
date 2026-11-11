@@ -7,6 +7,7 @@ import { JobsInlineFieldCell } from '../components/JobsInlineField'
 import {
   getCachedJobsList,
   invalidateJobsListCache,
+  JOBS_LIST_FRESH_MS,
   jobsListCacheKey,
   setCachedJobsList,
 } from '../jobs-list-cache'
@@ -30,7 +31,13 @@ import {
   type JobsInlineActiveCell,
   type JobsInlineField,
 } from '../jobs-inline-edit'
-import { loadJobsState, persistJobsState } from '../workspace-state'
+import {
+  getSessionScroll,
+  loadJobsState,
+  persistJobsState,
+  saveSessionScroll,
+  sessionScrollKey,
+} from '../workspace-state'
 
 interface Props {
   workspaceId: string
@@ -337,13 +344,39 @@ export function JobsView({ workspaceId, userId, userRole, onSelectJob, breakpoin
           rowCount: cached.jobs.length,
         })
       }
+      const age = Date.now() - cached.cachedAt
+      if (age < JOBS_LIST_FRESH_MS) {
+        return
+      }
     }
     void loadJobs({ page: 1, append: false })
   }, [loadJobs, workspaceId, statusFilter, debouncedSearch, showArchived, customerFilter, assignedUserFilter, hasOverdueTasks, sortBy, sortDir])
 
+  useEffect(() => {
+    if (!userId || !listRef.current || jobs.length === 0) return
+    const key = sessionScrollKey({
+      workspaceId,
+      userId,
+      surface: 'jobs-list',
+    })
+    const top = getSessionScroll(key)
+    if (top == null || top <= 0) return
+    const el = listRef.current
+    requestAnimationFrame(() => {
+      el.scrollTop = top
+    })
+  }, [workspaceId, userId, jobs.length > 0 ? jobs[0]?.id : ''])
+
   const handleListScroll = () => {
     const el = listRef.current
-    if (!el || !hasMore || loadingMore || loadMoreLock.current) return
+    if (!el) return
+    if (userId) {
+      saveSessionScroll(
+        sessionScrollKey({ workspaceId, userId, surface: 'jobs-list' }),
+        el.scrollTop
+      )
+    }
+    if (!hasMore || loadingMore || loadMoreLock.current) return
     const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
     if (remaining < 240) {
       loadMoreLock.current = true
