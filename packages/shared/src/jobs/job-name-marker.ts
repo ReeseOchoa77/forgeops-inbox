@@ -36,6 +36,7 @@ export {
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
 } from "./job-name-identity-policy.js";
 
 /** Marker 1 pool: live operational jobs. COMPLETE/BIDDING/LEAD are excluded. */
@@ -630,6 +631,15 @@ export function runJobNameMarker(input: {
   const decision = decideFromHits(hits);
   const selectedIds = decision.selected.map((h) => h.job.job.id);
   const primaryHit = decision.selected[0] ?? null;
+  const peerJobs = hits.map((h) => ({
+    jobId: h.job.job.id,
+    customerId: h.job.job.customerId,
+    contentTokens: [...h.job.contentTokens],
+    distinguishingTokens: [...h.job.distinguishingTokens],
+    phraseTokenLists: h.job.phrases.map((p) => p.tokens),
+    matchedContentTokens: h.matchedContentTokens,
+    kind: h.kind,
+  }));
   const gated = applyJobNameIdentityPolicy({
     policy: identityPolicy,
     status: decision.status,
@@ -643,18 +653,26 @@ export function runJobNameMarker(input: {
         )
       : null,
     competingJobIds: selectedIds.length > 1 ? selectedIds : [],
+    peerJobs,
+    subjectTokens,
+    bodyTokens,
   });
 
   const finalStatus = gated.status;
   const finalIds =
-    finalStatus === "NO_MATCH"
-      ? []
-      : gated.preserveCandidates
-        ? selectedIds
-        : [];
+    gated.candidateJobIdsOverride !== undefined
+      ? gated.candidateJobIdsOverride
+      : finalStatus === "NO_MATCH"
+        ? []
+        : gated.preserveCandidates
+          ? selectedIds
+          : [];
+  const selectedOverride = gated.selectedJobIdOverride;
   const evidence = (
-    finalStatus === "MATCH" && primaryHit
-      ? [primaryHit]
+    finalStatus === "MATCH"
+      ? decision.selected.filter((h) =>
+          finalIds.includes(h.job.job.id)
+        )
       : finalStatus === "AMBIGUOUS"
         ? decision.selected
         : []
@@ -667,13 +685,16 @@ export function runJobNameMarker(input: {
         ? TIER_CONFIDENCE[topCandidate.tier]
         : 0.4;
 
-  if (finalStatus === "MATCH" && primaryHit && finalIds[0]) {
+  if (finalStatus === "MATCH" && finalIds[0]) {
+    const winnerId = selectedOverride ?? finalIds[0];
+    const winnerHit =
+      hits.find((h) => h.job.job.id === winnerId) ?? primaryHit;
     return {
       status: "MATCH",
-      selectedJobId: finalIds[0],
+      selectedJobId: winnerId,
       confidence,
-      evidence: primaryHit.evidence,
-      candidateJobIds: [finalIds[0]],
+      evidence: winnerHit?.evidence ?? evidence,
+      candidateJobIds: [winnerId],
       ambiguousCandidateIds: [],
       candidates: ranked,
       eligibleJobCount: prepared.length,

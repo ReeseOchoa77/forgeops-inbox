@@ -3034,8 +3034,8 @@ export const api = {
       dataset?: JobMatcherEvalDatasetSpec
       limit?: 50 | 100 | 500
       maxWrongDetails?: number
-      identityPolicy?: 'BASELINE' | 'CONTEXT_AWARE_V1'
-      compareWithIdentityPolicy?: 'CONTEXT_AWARE_V1'
+      identityPolicy?: 'BASELINE' | 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2'
+      compareWithIdentityPolicy?: 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2' | 'ALL_THREE'
     }
   ) =>
     request<{ evaluation: JobMatcherEvalResult }>(
@@ -5151,7 +5151,7 @@ export interface JobMatcherEvalDiagnostics {
   definitions: Record<string, string>
 }
 
-export type JobMatcherIdentityPolicy = 'BASELINE' | 'CONTEXT_AWARE_V1'
+export type JobMatcherIdentityPolicy = 'BASELINE' | 'CONTEXT_AWARE_V1' | 'CONTEXT_AWARE_V2'
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'
@@ -5196,8 +5196,8 @@ export interface JobMatcherIdentityCompareRow {
 }
 
 export interface JobMatcherIdentityCompareReport {
-  baselinePolicy: 'BASELINE'
-  proposedPolicy: 'CONTEXT_AWARE_V1'
+  baselinePolicy: JobMatcherIdentityPolicy
+  proposedPolicy: JobMatcherIdentityPolicy
   baselineMetrics: JobMatcherEvalResult['metrics']
   proposedMetrics: JobMatcherEvalResult['metrics']
   metricsDelta: {
@@ -5277,6 +5277,33 @@ export interface JobMatcherEvalResult {
     resolvingMarker: string | null
   }>
   comparison?: JobMatcherIdentityCompareReport | null
+  threeWayComparison?: {
+    policies: ['BASELINE', 'CONTEXT_AWARE_V1', 'CONTEXT_AWARE_V2']
+    baselineMetrics: JobMatcherEvalResult['metrics']
+    v1Metrics: JobMatcherEvalResult['metrics']
+    v2Metrics: JobMatcherEvalResult['metrics']
+    baselineToV1: Record<JobMatcherTransitionCategory, number>
+    v1ToV2: Record<JobMatcherTransitionCategory, number>
+    rows: Array<{
+      emailMessageId: string
+      subject: string | null
+      trueJobId: string
+      trueJobName: string
+      groundTruthSource: string | null
+      baseline: JobMatcherIdentityCompareSide
+      v1: JobMatcherIdentityCompareSide
+      v2: JobMatcherIdentityCompareSide
+      baselineToV1: JobMatcherTransitionCategory
+      v1ToV2: JobMatcherTransitionCategory
+      groundTruthReviewFlag: boolean
+    }>
+    safetyRegressions: {
+      v1ToV2CorrectToWrong: number
+      v1ToV2UnresolvedToWrong: number
+    }
+    coverageLoss: { v1ToV2CorrectToUnresolved: number }
+    runtimeMs: { baseline: number; v1: number; v2: number }
+  } | null
   runtimeMs?: number
   groundTruthQuality: string
   groundTruthNotes: string

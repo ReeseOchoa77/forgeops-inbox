@@ -69,7 +69,8 @@ Match kinds: `EXACT` (phrase contained) > `ALL_TOKENS` > `OVERLAP` (any shared c
 | Policy | Behavior | Production default? |
 |--------|----------|---------------------|
 | `BASELINE` | Unique OVERLAP may `MATCH` (historical Marker 1). | **Yes** |
-| `CONTEXT_AWARE_V1` | Unique weak identity → `AMBIGUOUS` (candidates preserved for Marker 2/3). Strong multiword / rare single-token / externalRef may still `MATCH`. | No — shadow evaluation only until approved |
+| `CONTEXT_AWARE_V1` | Unique weak identity → `AMBIGUOUS` (candidates preserved for Marker 2/3). Strong multiword / rare single-token / externalRef may still `MATCH`. | No — shadow only |
+| `CONTEXT_AWARE_V2` | V1 + shared customer/family disambiguation + generic multiword rejection; weak clears candidates; contact safety (multi-job / AUTH-email-only abstain; MANUAL single-job may resolve). | No — shadow only |
 
 Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPipeline`. Live `JobMatcherService` omits the field → `BASELINE`.
 
@@ -83,9 +84,18 @@ Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPip
 - Rarity alone never authorizes a match.
 - Weak abstention keeps `candidateJobIds` so Marker 2/3 can still resolve; it does **not** early-exit as `MATCH`.
 
-Diagnostics: `identityDiagnostics` on Marker 1 / pipeline results (`identityStrength`, `matchedTerms`, `reason`, `resolutionAllowed`, …).
+**CONTEXT_AWARE_V2 additions (deterministic):**
 
-Shadow compare: Intelligence evaluate with `compareWithIdentityPolicy: "CONTEXT_AWARE_V1"` scores the **same** selected email IDs against the same Job/contact/thread snapshot under both policies and returns transition metrics. Does not change production matching.
+- Project family via shared `customerId` and/or shared identity tokens (workspace-derived; no hardcoded names).
+- Customer-only phrase among a family → `SHARED_CUSTOMER_IDENTITY` abstain; distinguishing sibling tokens may reselect.
+- Contiguous multiword OVERLAP rejected when entirely generic construction vocabulary or shared across Jobs (`GENERIC_MULTIWORD_OVERLAP`).
+- Weak identity clears candidates so Marker 2/3 can expand freely.
+- Contact: multi-job / broad (≥4) cannot unique-resolve; AUTH-email-only insufficient; MANUAL single-job may resolve; weak-name∩contact intersection abstains.
+- Marker 3 largely unchanged; holdout unchanged; internal `jobNumber` still never evidence.
+
+Diagnostics: `identityDiagnostics` + `contactDiagnostics` on pipeline results.
+
+Shadow compare: `compareWithIdentityPolicy` = `CONTEXT_AWARE_V1` | `CONTEXT_AWARE_V2` | `ALL_THREE` on the same email IDs/snapshot. Does not change production matching.
 
 ### Internal Job number
 

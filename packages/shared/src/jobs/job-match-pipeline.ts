@@ -12,12 +12,17 @@ import {
 import {
   runJobNameMarker,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   type JobMatchEligibilityMode,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
 } from "./job-name-marker.js";
 
 import { runJobContactMarker, type JobContactHit } from "./job-contact-marker.js";
+import {
+  applyJobContactSafetyPolicy,
+  type JobContactDiagnostics,
+} from "./job-match-contact-policy.js";
 import { runJobThreadMarker, type JobThreadHit } from "./job-thread-marker.js";
 
 export const JOB_MATCH_PIPELINE_VERSION = "job-match-pipeline-v3";
@@ -189,6 +194,7 @@ function toResult(input: {
   markerTrace: JobMatchMarkerTrace[];
   identityPolicy: JobMatchIdentityPolicy;
   identityDiagnostics: JobNameIdentityDiagnostics;
+  contactDiagnostics?: JobContactDiagnostics;
 }): JobMatchResult {
   const requiresReview =
     input.decision === "AMBIGUOUS" || input.decision === "CONFLICT";
@@ -207,6 +213,9 @@ function toResult(input: {
     matcherVersion: JOB_MATCH_PIPELINE_VERSION,
     identityPolicy: input.identityPolicy,
     identityDiagnostics: input.identityDiagnostics,
+    ...(input.contactDiagnostics
+      ? { contactDiagnostics: input.contactDiagnostics }
+      : {}),
   };
 }
 
@@ -296,7 +305,7 @@ export function runJobMatchPipeline(input: {
     eligibleJobs: input.jobs,
     eligibilityMode,
   });
-  const afterContact = narrowJobMatchCandidates({
+  const afterContactNarrow = narrowJobMatchCandidates({
     priorStatus: current.status,
     priorSelectedJobId: current.selectedJobId,
     priorCandidateJobIds: current.candidateJobIds,
@@ -306,19 +315,37 @@ export function runJobMatchPipeline(input: {
     laterEvidence: contact.evidence,
     laterStrength: contact.candidateJobIds.length === 0 ? "ABSENT" : "WEAK",
   });
+
+  const threadPreviewHits = input.threadHits ?? [];
+  const threadSupportingEmailIds = threadPreviewHits.flatMap(
+    (h) => h.supportingEmailIds ?? []
+  );
+  const contactSafety = applyJobContactSafetyPolicy({
+    policy: identityPolicy,
+    status: afterContactNarrow.status,
+    selectedJobId: afterContactNarrow.selectedJobId,
+    candidateJobIds: afterContactNarrow.candidateJobIds,
+    evidence: afterContactNarrow.evidence,
+    contactHits: input.contactHits ?? [],
+    nameIdentityWasWeak:
+      marker1.identityDiagnostics.identityStrength === "WEAK",
+    nameHadStrongAnchor: marker1.identityDiagnostics.strongIdentityAnchor,
+    threadSupportingEmailIds,
+  });
+
   markerTrace.push({
     marker: "CONTACT",
-    status: afterContact.status,
-    selectedJobId: afterContact.selectedJobId,
-    candidateJobIds: afterContact.candidateJobIds,
+    status: contactSafety.status,
+    selectedJobId: contactSafety.selectedJobId,
+    candidateJobIds: contactSafety.candidateJobIds,
   });
   current = {
-    status: afterContact.status,
-    selectedJobId: afterContact.selectedJobId,
-    candidateJobIds: afterContact.candidateJobIds,
-    evidence: afterContact.evidence,
+    status: contactSafety.status,
+    selectedJobId: contactSafety.selectedJobId,
+    candidateJobIds: contactSafety.candidateJobIds,
+    evidence: contactSafety.evidence,
     confidence:
-      afterContact.status === "MATCH"
+      contactSafety.status === "MATCH"
         ? Math.max(current.confidence, 0.86)
         : current.confidence,
   };
@@ -338,6 +365,7 @@ export function runJobMatchPipeline(input: {
       markerTrace,
       identityPolicy,
       identityDiagnostics: marker1.identityDiagnostics,
+      contactDiagnostics: contactSafety.diagnostics,
     });
   }
 
@@ -348,7 +376,7 @@ export function runJobMatchPipeline(input: {
     eligibleJobs: input.jobs,
     eligibilityMode,
   });
-  const afterThread = narrowJobMatchCandidates({
+  let afterThread = narrowJobMatchCandidates({
     priorStatus: current.status,
     priorSelectedJobId: current.selectedJobId,
     priorCandidateJobIds: current.candidateJobIds,
@@ -358,6 +386,48 @@ export function runJobMatchPipeline(input: {
     laterEvidence: thread.evidence,
     laterStrength: thread.candidateJobIds.length === 0 ? "ABSENT" : "STRONG",
   });
+
+  // V2 conflict veto: strong name family evidence vs disjoint authoritative thread.
+  if (
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 &&
+    marker1.identityDiagnostics.strongIdentityAnchor &&
+    marker1.identityDiagnostics.competingJobIds.length > 0 &&
+    thread.candidateJobIds.length === 1 &&
+    afterThread.status === "MATCH" &&
+    afterThread.selectedJobId &&
+    !marker1.identityDiagnostics.competingJobIds.includes(
+      afterThread.selectedJobId
+    ) &&
+    !marker1.identityDiagnostics.candidateJobIds.includes(
+      afterThread.selectedJobId
+    )
+  ) {
+    afterThread = {
+      status: "CONFLICT",
+      selectedJobId: null,
+      candidateJobIds: uniqueIds([
+        ...marker1.identityDiagnostics.competingJobIds,
+        ...thread.candidateJobIds,
+      ]),
+      evidence: afterThread.evidence,
+      narrowed: false,
+      conflict: true,
+    };
+  }
+
+  // V2: contact+thread from same supporting emails are not independent
+  // corroboration for contact-only paths (already abstained). Flag only.
+  if (
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 &&
+    contactSafety.diagnostics.evidenceIndependentFromThread === false &&
+    afterThread.status === "MATCH" &&
+    current.status !== "MATCH" &&
+    marker1.identityDiagnostics.identityStrength === "WEAK"
+  ) {
+    // Thread alone remains authoritative continuity — keep MATCH.
+    // Shared-origin note lives in contactDiagnostics.
+  }
+
   markerTrace.push({
     marker: "THREAD",
     status: afterThread.status,
@@ -386,6 +456,7 @@ export function runJobMatchPipeline(input: {
     markerTrace,
     identityPolicy,
     identityDiagnostics: marker1.identityDiagnostics,
+    contactDiagnostics: contactSafety.diagnostics,
   });
 }
 

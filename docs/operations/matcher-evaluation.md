@@ -28,12 +28,12 @@ Body options on evaluate:
 
 | Field | Meaning |
 |-------|---------|
-| `identityPolicy` | `BASELINE` (default) or `CONTEXT_AWARE_V1` for a single-policy run |
-| `compareWithIdentityPolicy: "CONTEXT_AWARE_V1"` | Paired shadow compare: same selected email IDs + Job/contact/thread snapshot under BASELINE then V1 |
+| `identityPolicy` | `BASELINE` (default), `CONTEXT_AWARE_V1`, or `CONTEXT_AWARE_V2` for a single-policy run |
+| `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), or `ALL_THREE` |
 
-Production matcher default remains **BASELINE**. V1 is not activated by running a comparison.
+Production matcher default remains **BASELINE**. V1/V2 are not activated by running a comparison.
 
-UI: Evaluation mode → **Current matcher** | **Compare with proposed V1**. Comparison shows metric deltas, decision transitions (filterable), side-by-side inspector decisions, and Comparison CSV export.
+UI: Evaluation mode → **Current matcher** | **Compare BASELINE vs V1** | **Compare V1 vs V2** | **Compare all three**. Shows metric deltas, transitions, ground-truth review flags, and paired/3-way Comparison CSV export.
 
 ### Dataset modes
 

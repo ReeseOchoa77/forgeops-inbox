@@ -9,6 +9,8 @@ import type {
   JobMatcherIdentityCompareReport,
 } from './api'
 
+type ThreeWay = NonNullable<JobMatcherEvalResult['threeWayComparison']>
+
 function csvEscape(value: string | number | boolean | null | undefined): string {
   if (value == null) return ''
   const s = String(value)
@@ -25,7 +27,7 @@ function todayStamp(): string {
 }
 
 export function jobMatcherEvalExportFilename(
-  kind: 'summary' | 'detailed' | 'full' | 'comparison',
+  kind: 'summary' | 'detailed' | 'full' | 'comparison' | 'comparison-3way',
   ext: 'csv' | 'json'
 ): string {
   return `forgeops-job-matcher-evaluation-${kind}-${todayStamp()}.${ext}`
@@ -216,6 +218,70 @@ export function buildEvalComparisonCsv(
           ? row.proposed.identityDiagnostics.reason
           : '',
         row.transition,
+        row.groundTruthReviewFlag,
+      ]
+        .map(csvEscape)
+        .join(',')
+    )
+  }
+  return lines.join('\n')
+}
+
+/** Three-way BASELINE / V1 / V2 comparison CSV (one row per email). */
+export function buildEvalThreeWayComparisonCsv(comparison: ThreeWay): string {
+  const headers = [
+    'email_message_id',
+    'subject',
+    'ground_truth_job_id',
+    'ground_truth_job_name',
+    'ground_truth_source',
+    'baseline_decision',
+    'baseline_outcome',
+    'baseline_predicted_job',
+    'baseline_resolving_marker',
+    'v1_decision',
+    'v1_outcome',
+    'v1_predicted_job',
+    'v1_resolving_marker',
+    'v1_identity_reason',
+    'v2_decision',
+    'v2_outcome',
+    'v2_predicted_job',
+    'v2_resolving_marker',
+    'v2_identity_reason',
+    'v2_abstention_reason',
+    'baseline_to_v1',
+    'v1_to_v2',
+    'ground_truth_review_flag',
+  ]
+  const lines = [headers.join(',')]
+  for (const row of comparison.rows) {
+    lines.push(
+      [
+        row.emailMessageId,
+        row.subject,
+        row.trueJobId,
+        row.trueJobName,
+        row.groundTruthSource,
+        row.baseline.decision,
+        row.baseline.outcome,
+        row.baseline.predictedJobName,
+        row.baseline.resolvingMarker,
+        row.v1.decision,
+        row.v1.outcome,
+        row.v1.predictedJobName,
+        row.v1.resolvingMarker,
+        row.v1.identityDiagnostics?.reason ?? '',
+        row.v2.decision,
+        row.v2.outcome,
+        row.v2.predictedJobName,
+        row.v2.resolvingMarker,
+        row.v2.identityDiagnostics?.reason ?? '',
+        row.v2.identityDiagnostics?.resolutionAllowed === false
+          ? row.v2.identityDiagnostics.reason
+          : '',
+        row.baselineToV1,
+        row.v1ToV2,
         row.groundTruthReviewFlag,
       ]
         .map(csvEscape)

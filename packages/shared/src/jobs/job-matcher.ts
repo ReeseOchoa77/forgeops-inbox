@@ -59,7 +59,7 @@ export type JobMatchInput = {
    * Marker 1 identity policy. Default BASELINE (production).
    * CONTEXT_AWARE_V1 is opt-in for shadow evaluation only until approved.
    */
-  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1";
+  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
 };
 
 export type JobRecordForMatch = {
@@ -124,16 +124,19 @@ export type JobMatchResult = {
   candidateCount: number;
   matcherVersion: string;
   /** Marker 1 identity policy used for this decision (default BASELINE). */
-  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1";
+  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
   /** Structured Marker 1 identity diagnostics when available. */
   identityDiagnostics?: {
     marker: "NAME";
-    identityPolicy: "BASELINE" | "CONTEXT_AWARE_V1";
+    identityPolicy: "BASELINE" | "CONTEXT_AWARE_V1" | "CONTEXT_AWARE_V2";
     identityStrength: string;
     matchedPhrase: string | null;
     matchedTerms: string[];
     weakTerms: string[];
     distinctiveTerms: string[];
+    sharedIdentityTerms?: string[];
+    distinguishingIdentityTerms?: string[];
+    identityFamilyJobIds?: string[];
     evidenceSource: string | null;
     evidenceType: string | null;
     matchKind: string | null;
@@ -141,6 +144,20 @@ export type JobMatchResult = {
     candidateJobIds: string[];
     candidateCount: number;
     competingJobIds: string[];
+    resolutionAllowed: boolean;
+    reason: string;
+  };
+  /** Structured Marker 2 contact diagnostics when available. */
+  contactDiagnostics?: {
+    marker: "CONTACT";
+    associationClass: string;
+    authorityClass: string;
+    contactJobCount: number;
+    contactJobIds: string[];
+    manualJobIds: string[];
+    authoritativeEmailJobIds: string[];
+    sharedSupportingEmailIds: string[];
+    evidenceIndependentFromThread: boolean | null;
     resolutionAllowed: boolean;
     reason: string;
   };

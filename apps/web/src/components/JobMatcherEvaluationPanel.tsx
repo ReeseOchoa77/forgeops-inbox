@@ -21,6 +21,7 @@ import {
   buildEvalDetailedCsv,
   buildEvalFullJson,
   buildEvalSummaryCsv,
+  buildEvalThreeWayComparisonCsv,
   downloadTextFile,
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
@@ -313,12 +314,18 @@ export function JobMatcherEvaluationPanel({
     setTransitionFilter('ALL')
     setResultsView('emails')
     setResult(null)
+    const compareWith =
+      evaluationMode === 'COMPARE_V1'
+        ? ('CONTEXT_AWARE_V1' as const)
+        : evaluationMode === 'COMPARE_V2'
+          ? ('CONTEXT_AWARE_V2' as const)
+          : evaluationMode === 'COMPARE_ALL'
+            ? ('ALL_THREE' as const)
+            : null
     const promise = api
       .evaluateJobMatcherIntelligence(workspaceId, {
         dataset,
-        ...(evaluationMode === 'COMPARE_V1'
-          ? { compareWithIdentityPolicy: 'CONTEXT_AWARE_V1' as const }
-          : {}),
+        ...(compareWith ? { compareWithIdentityPolicy: compareWith } : {}),
       })
       .then((res) => res.evaluation)
     setJobMatcherEvalPending({ workspaceId, userId, promise })
@@ -371,7 +378,9 @@ export function JobMatcherEvaluationPanel({
     transitionFilter,
   ])
 
-  const exportFull = (kind: 'summary' | 'detailed' | 'json' | 'comparison') => {
+  const exportFull = (
+    kind: 'summary' | 'detailed' | 'json' | 'comparison' | 'comparison-3way'
+  ) => {
     if (!result) return
     setExportOpen(false)
     if (kind === 'summary') {
@@ -387,6 +396,15 @@ export function JobMatcherEvaluationPanel({
       downloadTextFile(
         jobMatcherEvalExportFilename('comparison', 'csv'),
         buildEvalComparisonCsv(result.comparison),
+        'text/csv;charset=utf-8'
+      )
+      return
+    }
+    if (kind === 'comparison-3way') {
+      if (!result.threeWayComparison) return
+      downloadTextFile(
+        jobMatcherEvalExportFilename('comparison-3way', 'csv'),
+        buildEvalThreeWayComparisonCsv(result.threeWayComparison),
         'text/csv;charset=utf-8'
       )
       return
@@ -560,7 +578,9 @@ export function JobMatcherEvaluationPanel({
               data-testid="job-matcher-eval-mode"
             >
               <option value="CURRENT">Current matcher</option>
-              <option value="COMPARE_V1">Compare with proposed V1</option>
+              <option value="COMPARE_V1">Compare BASELINE vs V1</option>
+              <option value="COMPARE_V2">Compare V1 vs V2</option>
+              <option value="COMPARE_ALL">Compare all three</option>
             </select>
           </Control>
         </div>
@@ -754,7 +774,16 @@ export function JobMatcherEvaluationPanel({
                           style={exportItemBtn}
                           onClick={() => exportFull('comparison')}
                         >
-                          Comparison CSV (baseline vs V1)
+                          Comparison CSV (paired policies)
+                        </button>
+                      )}
+                      {result.threeWayComparison && (
+                        <button
+                          type="button"
+                          style={exportItemBtn}
+                          onClick={() => exportFull('comparison-3way')}
+                        >
+                          Comparison CSV (BASELINE / V1 / V2)
                         </button>
                       )}
                       <button type="button" style={exportItemBtn} onClick={exportFiltered}>
@@ -1820,14 +1849,16 @@ function ComparisonPanel({
         fontSize: 12,
       }}
     >
-      <div style={{ fontWeight: 650, marginBottom: 8 }}>Matcher comparison</div>
+      <div style={{ fontWeight: 650, marginBottom: 8 }}>
+        Matcher comparison ({comparison.baselinePolicy} → {comparison.proposedPolicy})
+      </div>
       <div style={{ overflowX: 'auto', marginBottom: 10 }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
           <thead>
             <tr style={{ textAlign: 'left', color: '#6b7280' }}>
               <th style={cmpTh}>Metric</th>
-              <th style={{ ...cmpTh, textAlign: 'right' }}>Current</th>
-              <th style={{ ...cmpTh, textAlign: 'right' }}>Proposed V1</th>
+              <th style={{ ...cmpTh, textAlign: 'right' }}>{comparison.baselinePolicy}</th>
+              <th style={{ ...cmpTh, textAlign: 'right' }}>{comparison.proposedPolicy}</th>
               <th style={{ ...cmpTh, textAlign: 'right' }}>Change</th>
             </tr>
           </thead>

@@ -74,14 +74,30 @@ export type IdentityCompareMetricsDelta = {
   noMatchRate: { baseline: number; proposed: number; delta: number };
 };
 
+export type IdentityComparePolicyId =
+  | "BASELINE"
+  | "CONTEXT_AWARE_V1"
+  | "CONTEXT_AWARE_V2";
+
+export type IdentityCompareMarkerBreakdown = {
+  marker: "NAME" | "CONTACT" | "THREAD" | "NONE";
+  resolved: number;
+  correct: number;
+  wrong: number;
+  precision: number | null;
+  shareOfWrong: number | null;
+};
+
 export type IdentityCompareReport = {
-  baselinePolicy: "BASELINE";
-  proposedPolicy: "CONTEXT_AWARE_V1";
+  baselinePolicy: IdentityComparePolicyId;
+  proposedPolicy: IdentityComparePolicyId;
   baselineMetrics: HistoricalEvalMetrics;
   proposedMetrics: HistoricalEvalMetrics;
   metricsDelta: IdentityCompareMetricsDelta;
   transitions: IdentityCompareTransitionCounts;
   rows: IdentityCompareRow[];
+  baselineMarkerBreakdown: IdentityCompareMarkerBreakdown[];
+  proposedMarkerBreakdown: IdentityCompareMarkerBreakdown[];
   safetyRegressions: {
     correctToWrong: number;
     unresolvedToWrong: number;
@@ -93,6 +109,48 @@ export type IdentityCompareReport = {
     baseline: number;
     proposed: number;
     overheadRatio: number | null;
+  };
+};
+
+/** Three-way shadow evaluation: BASELINE + V1 + V2 on the same snapshot. */
+export type IdentityThreeWayCompareRow = {
+  emailMessageId: string;
+  subject: string | null;
+  trueJobId: string;
+  trueJobName: string;
+  groundTruthSource: string | null;
+  baseline: IdentityCompareSideSummary;
+  v1: IdentityCompareSideSummary;
+  v2: IdentityCompareSideSummary;
+  baselineToV1: MatcherTransitionCategory;
+  v1ToV2: MatcherTransitionCategory;
+  groundTruthReviewFlag: boolean;
+};
+
+export type IdentityThreeWayCompareReport = {
+  policies: ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"];
+  baselineMetrics: HistoricalEvalMetrics;
+  v1Metrics: HistoricalEvalMetrics;
+  v2Metrics: HistoricalEvalMetrics;
+  baselineToV1: IdentityCompareTransitionCounts;
+  v1ToV2: IdentityCompareTransitionCounts;
+  markerBreakdown: {
+    baseline: IdentityCompareMarkerBreakdown[];
+    v1: IdentityCompareMarkerBreakdown[];
+    v2: IdentityCompareMarkerBreakdown[];
+  };
+  rows: IdentityThreeWayCompareRow[];
+  safetyRegressions: {
+    v1ToV2CorrectToWrong: number;
+    v1ToV2UnresolvedToWrong: number;
+  };
+  coverageLoss: {
+    v1ToV2CorrectToUnresolved: number;
+  };
+  runtimeMs: {
+    baseline: number;
+    v1: number;
+    v2: number;
   };
 };
 
@@ -197,7 +255,55 @@ export function buildIdentityCompareMetricsDelta(
   };
 }
 
+export function buildMarkerBreakdownFromSides(
+  sides: IdentityCompareSideSummary[],
+  trueJobIds: string[]
+): IdentityCompareMarkerBreakdown[] {
+  const markers: Array<"NAME" | "CONTACT" | "THREAD" | "NONE"> = [
+    "NAME",
+    "CONTACT",
+    "THREAD",
+    "NONE",
+  ];
+  const wrongTotal = sides.filter((s) => s.outcome === "WRONG_MATCH").length;
+  return markers.map((marker) => {
+    let resolved = 0;
+    let correct = 0;
+    let wrong = 0;
+    for (let i = 0; i < sides.length; i += 1) {
+      const side = sides[i]!;
+      const resolving = (side.resolvingMarker ?? "NONE") as
+        | "NAME"
+        | "CONTACT"
+        | "THREAD"
+        | "NONE";
+      if (side.outcome !== "CORRECT_MATCH" && side.outcome !== "WRONG_MATCH") {
+        continue;
+      }
+      if (resolving !== marker) continue;
+      resolved += 1;
+      if (side.outcome === "CORRECT_MATCH" && side.predictedJobId === trueJobIds[i]) {
+        correct += 1;
+      } else if (side.outcome === "WRONG_MATCH") {
+        wrong += 1;
+      } else if (side.outcome === "CORRECT_MATCH") {
+        correct += 1;
+      }
+    }
+    return {
+      marker,
+      resolved,
+      correct,
+      wrong,
+      precision: resolved === 0 ? null : correct / resolved,
+      shareOfWrong: wrongTotal === 0 ? null : wrong / wrongTotal,
+    };
+  });
+}
+
 export function buildIdentityCompareReport(input: {
+  baselinePolicy?: IdentityComparePolicyId;
+  proposedPolicy?: IdentityComparePolicyId;
   baselineMetrics: HistoricalEvalMetrics;
   proposedMetrics: HistoricalEvalMetrics;
   rows: IdentityCompareRow[];
@@ -212,9 +318,13 @@ export function buildIdentityCompareReport(input: {
       ? null
       : input.runtimeMs.proposed / input.runtimeMs.baseline;
 
+  const baselineSides = input.rows.map((r) => r.baseline);
+  const proposedSides = input.rows.map((r) => r.proposed);
+  const trueJobIds = input.rows.map((r) => r.trueJobId);
+
   return {
-    baselinePolicy: "BASELINE",
-    proposedPolicy: "CONTEXT_AWARE_V1",
+    baselinePolicy: input.baselinePolicy ?? "BASELINE",
+    proposedPolicy: input.proposedPolicy ?? "CONTEXT_AWARE_V1",
     baselineMetrics: input.baselineMetrics,
     proposedMetrics: input.proposedMetrics,
     metricsDelta: buildIdentityCompareMetricsDelta(
@@ -223,6 +333,14 @@ export function buildIdentityCompareReport(input: {
     ),
     transitions,
     rows: input.rows,
+    baselineMarkerBreakdown: buildMarkerBreakdownFromSides(
+      baselineSides,
+      trueJobIds
+    ),
+    proposedMarkerBreakdown: buildMarkerBreakdownFromSides(
+      proposedSides,
+      trueJobIds
+    ),
     safetyRegressions: {
       correctToWrong: transitions.CORRECT_TO_WRONG,
       unresolvedToWrong: transitions.UNRESOLVED_TO_WRONG,
@@ -235,5 +353,52 @@ export function buildIdentityCompareReport(input: {
       proposed: input.runtimeMs.proposed,
       overheadRatio,
     },
+  };
+}
+
+export function buildIdentityThreeWayCompareReport(input: {
+  baselineMetrics: HistoricalEvalMetrics;
+  v1Metrics: HistoricalEvalMetrics;
+  v2Metrics: HistoricalEvalMetrics;
+  rows: IdentityThreeWayCompareRow[];
+  runtimeMs: { baseline: number; v1: number; v2: number };
+}): IdentityThreeWayCompareReport {
+  const baselineToV1 = emptyTransitionCounts();
+  const v1ToV2 = emptyTransitionCounts();
+  for (const row of input.rows) {
+    baselineToV1[row.baselineToV1] += 1;
+    v1ToV2[row.v1ToV2] += 1;
+  }
+  const trueJobIds = input.rows.map((r) => r.trueJobId);
+  return {
+    policies: ["BASELINE", "CONTEXT_AWARE_V1", "CONTEXT_AWARE_V2"],
+    baselineMetrics: input.baselineMetrics,
+    v1Metrics: input.v1Metrics,
+    v2Metrics: input.v2Metrics,
+    baselineToV1,
+    v1ToV2,
+    markerBreakdown: {
+      baseline: buildMarkerBreakdownFromSides(
+        input.rows.map((r) => r.baseline),
+        trueJobIds
+      ),
+      v1: buildMarkerBreakdownFromSides(
+        input.rows.map((r) => r.v1),
+        trueJobIds
+      ),
+      v2: buildMarkerBreakdownFromSides(
+        input.rows.map((r) => r.v2),
+        trueJobIds
+      ),
+    },
+    rows: input.rows,
+    safetyRegressions: {
+      v1ToV2CorrectToWrong: v1ToV2.CORRECT_TO_WRONG,
+      v1ToV2UnresolvedToWrong: v1ToV2.UNRESOLVED_TO_WRONG,
+    },
+    coverageLoss: {
+      v1ToV2CorrectToUnresolved: v1ToV2.CORRECT_TO_UNRESOLVED,
+    },
+    runtimeMs: input.runtimeMs,
   };
 }

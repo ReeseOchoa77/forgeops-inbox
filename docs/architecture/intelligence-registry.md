@@ -12,7 +12,7 @@ Manage → **Intelligence** (ADMIN/OWNER) loads safe DTOs from the registry via:
 Job Matcher evaluation / Test One reuse the existing historical matcher evaluator (read-only):
 
 - `POST .../intelligence/job-matcher/eval-dataset-preview`
-- `POST .../intelligence/job-matcher/evaluate` (dataset modes: ALL/SPECIFIC/SELECTED × TOTAL/PER_JOB/ALL_ELIGIBLE; optional `compareWithIdentityPolicy: CONTEXT_AWARE_V1` for paired shadow comparison; production identity default remains `BASELINE`)
+- `POST .../intelligence/job-matcher/evaluate` (dataset modes: ALL/SPECIFIC/SELECTED × TOTAL/PER_JOB/ALL_ELIGIBLE; optional `compareWithIdentityPolicy`: `CONTEXT_AWARE_V1` | `CONTEXT_AWARE_V2` | `ALL_THREE`; production identity default remains `BASELINE`)
 - `GET .../intelligence/job-matcher/emails/:emailMessageId` (on-demand inspector body)
 - `GET .../intelligence/job-matcher/test-emails`
 - `POST .../intelligence/job-matcher/test-one`

@@ -10,6 +10,7 @@ import {
   aggregateHistoricalEvalResults,
   assertTransitionsReconcile,
   buildIdentityCompareReport,
+  buildIdentityThreeWayCompareReport,
   buildJobMatcherEvalDiagnostics,
   buildJobMatcherEvalJobBreakdown,
   buildWrongMatchDetails,
@@ -29,6 +30,8 @@ import {
   type HistoricalEvalWrongDetail,
   type IdentityCompareReport,
   type IdentityCompareRow,
+  type IdentityThreeWayCompareReport,
+  type IdentityThreeWayCompareRow,
   type JobMatchIdentityPolicy,
   type JobMatcherEvalDiagnostics,
   type JobMatcherEvalDatasetSpec,
@@ -99,8 +102,10 @@ export type JobMatcherHistoricalEvalResult = {
   jobBreakdown: JobMatcherEvalJobBreakdown[];
   rows: JobMatcherEvalRow[];
   wrongMatches: HistoricalEvalWrongDetail[];
-  /** Present when compareWithIdentityPolicy was requested. Same email IDs / snapshot. */
+  /** Present when paired compare was requested. Same email IDs / snapshot. */
   comparison: IdentityCompareReport | null;
+  /** Present when three-way BASELINE/V1/V2 compare was requested. */
+  threeWayComparison: IdentityThreeWayCompareReport | null;
   runtimeMs: number;
   groundTruthQuality: "MODERATE";
   groundTruthNotes: string;
@@ -335,10 +340,16 @@ export async function runJobMatcherHistoricalEval(input: {
    */
   identityPolicy?: JobMatchIdentityPolicy;
   /**
-   * When set to CONTEXT_AWARE_V1, also score the same emails/snapshot with V1
-   * and attach a paired comparison report. Primary metrics remain identityPolicy.
+   * Shadow compare mode on the same emails/snapshot.
+   * - CONTEXT_AWARE_V1: BASELINE vs V1
+   * - CONTEXT_AWARE_V2: V1 vs V2 (paired)
+   * - ALL_THREE: BASELINE + V1 + V2
+   * Production default remains BASELINE; V1/V2 are never auto-activated.
    */
-  compareWithIdentityPolicy?: "CONTEXT_AWARE_V1";
+  compareWithIdentityPolicy?:
+    | "CONTEXT_AWARE_V1"
+    | "CONTEXT_AWARE_V2"
+    | "ALL_THREE";
 }): Promise<JobMatcherHistoricalEvalResult> {
   const startedAt = Date.now();
   const identityPolicy: JobMatchIdentityPolicy =
@@ -436,22 +447,27 @@ export async function runJobMatcherHistoricalEval(input: {
     return { evaluated, runtimeMs: Date.now() - t0 };
   }
 
-  // When comparing, always run BASELINE then V1 on the same ordered email set.
+  // Comparison modes always score BASELINE as the primary metrics panel.
   const primaryPolicy: JobMatchIdentityPolicy =
     compareWith != null ? "BASELINE" : identityPolicy;
   const primary = await scoreEmails(primaryPolicy);
   const evaluated = primary.evaluated;
 
   let comparison: IdentityCompareReport | null = null;
-  if (compareWith === "CONTEXT_AWARE_V1") {
-    const proposed = await scoreEmails("CONTEXT_AWARE_V1");
-    const proposedById = new Map(proposed.evaluated.map((r) => [r.id, r]));
-    const compareRows: IdentityCompareRow[] = [];
-    for (const baselineRow of evaluated) {
-      const proposedRow = proposedById.get(baselineRow.id);
-      if (!proposedRow) continue;
-      const baseline = sideSummaryFromEval(baselineRow, jobsById);
-      const proposedSide = sideSummaryFromEval(proposedRow, jobsById);
+  let threeWayComparison: IdentityThreeWayCompareReport | null = null;
+
+  function pairedRows(
+    left: HistoricalEvalEmail[],
+    right: HistoricalEvalEmail[],
+    leftIsBaselineLabel: boolean
+  ): IdentityCompareRow[] {
+    const rightById = new Map(right.map((r) => [r.id, r]));
+    const out: IdentityCompareRow[] = [];
+    for (const leftRow of left) {
+      const rightRow = rightById.get(leftRow.id);
+      if (!rightRow) continue;
+      const baseline = sideSummaryFromEval(leftRow, jobsById);
+      const proposedSide = sideSummaryFromEval(rightRow, jobsById);
       const transition = classifyMatcherTransition({
         baselineOutcome: baseline.outcome,
         proposedOutcome: proposedSide.outcome,
@@ -459,23 +475,31 @@ export async function runJobMatcherHistoricalEval(input: {
         proposedPredictedJobId: proposedSide.predictedJobId,
       });
       const groundTruthReviewFlag =
-        proposedSide.outcome === "WRONG_MATCH" &&
-        baseline.outcome === "WRONG_MATCH" &&
-        proposedSide.predictedJobId !== null &&
-        proposedSide.predictedJobId !== baselineRow.trueJobId;
-      compareRows.push({
-        emailMessageId: baselineRow.id,
-        subject: baselineRow.subject,
-        trueJobId: baselineRow.trueJobId,
-        trueJobName: jobsById.get(baselineRow.trueJobId)?.name ?? "(missing Job)",
-        groundTruthSource: sourceById.get(baselineRow.id) ?? null,
+        baseline.outcome === "WRONG_MATCH" ||
+        proposedSide.outcome === "WRONG_MATCH" ||
+        (leftIsBaselineLabel && transition === "WRONG_TO_UNRESOLVED");
+      out.push({
+        emailMessageId: leftRow.id,
+        subject: leftRow.subject,
+        trueJobId: leftRow.trueJobId,
+        trueJobName:
+          jobsById.get(leftRow.trueJobId)?.name ?? "(missing Job)",
+        groundTruthSource: sourceById.get(leftRow.id) ?? null,
         baseline,
         proposed: proposedSide,
         transition,
         groundTruthReviewFlag,
       });
     }
+    return out;
+  }
+
+  if (compareWith === "CONTEXT_AWARE_V1") {
+    const proposed = await scoreEmails("CONTEXT_AWARE_V1");
+    const compareRows = pairedRows(evaluated, proposed.evaluated, true);
     const report = buildIdentityCompareReport({
+      baselinePolicy: "BASELINE",
+      proposedPolicy: "CONTEXT_AWARE_V1",
       baselineMetrics: aggregateHistoricalEvalResults(evaluated),
       proposedMetrics: aggregateHistoricalEvalResults(proposed.evaluated),
       rows: compareRows,
@@ -484,14 +508,115 @@ export async function runJobMatcherHistoricalEval(input: {
         proposed: proposed.runtimeMs,
       },
     });
-    if (
-      !assertTransitionsReconcile(report.transitions, compareRows.length)
-    ) {
+    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
       throw new Error(
-        `Comparison transition counts (${Object.values(report.transitions).reduce((a, b) => a + b, 0)}) do not equal evaluated (${compareRows.length})`
+        `Comparison transition counts do not equal evaluated (${compareRows.length})`
       );
     }
     comparison = report;
+  } else if (compareWith === "CONTEXT_AWARE_V2") {
+    const v1 = await scoreEmails("CONTEXT_AWARE_V1");
+    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
+    const compareRows = pairedRows(v1.evaluated, v2.evaluated, false);
+    const report = buildIdentityCompareReport({
+      baselinePolicy: "CONTEXT_AWARE_V1",
+      proposedPolicy: "CONTEXT_AWARE_V2",
+      baselineMetrics: aggregateHistoricalEvalResults(v1.evaluated),
+      proposedMetrics: aggregateHistoricalEvalResults(v2.evaluated),
+      rows: compareRows,
+      runtimeMs: {
+        baseline: v1.runtimeMs,
+        proposed: v2.runtimeMs,
+      },
+    });
+    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
+      throw new Error(
+        `V1→V2 transition counts do not equal evaluated (${compareRows.length})`
+      );
+    }
+    comparison = report;
+  } else if (compareWith === "ALL_THREE") {
+    const v1 = await scoreEmails("CONTEXT_AWARE_V1");
+    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
+    const v1ById = new Map(v1.evaluated.map((r) => [r.id, r]));
+    const v2ById = new Map(v2.evaluated.map((r) => [r.id, r]));
+    const threeRows: IdentityThreeWayCompareRow[] = [];
+    for (const baselineRow of evaluated) {
+      const v1Row = v1ById.get(baselineRow.id);
+      const v2Row = v2ById.get(baselineRow.id);
+      if (!v1Row || !v2Row) continue;
+      const baseline = sideSummaryFromEval(baselineRow, jobsById);
+      const v1Side = sideSummaryFromEval(v1Row, jobsById);
+      const v2Side = sideSummaryFromEval(v2Row, jobsById);
+      const baselineToV1 = classifyMatcherTransition({
+        baselineOutcome: baseline.outcome,
+        proposedOutcome: v1Side.outcome,
+        baselinePredictedJobId: baseline.predictedJobId,
+        proposedPredictedJobId: v1Side.predictedJobId,
+      });
+      const v1ToV2 = classifyMatcherTransition({
+        baselineOutcome: v1Side.outcome,
+        proposedOutcome: v2Side.outcome,
+        baselinePredictedJobId: v1Side.predictedJobId,
+        proposedPredictedJobId: v2Side.predictedJobId,
+      });
+      threeRows.push({
+        emailMessageId: baselineRow.id,
+        subject: baselineRow.subject,
+        trueJobId: baselineRow.trueJobId,
+        trueJobName:
+          jobsById.get(baselineRow.trueJobId)?.name ?? "(missing Job)",
+        groundTruthSource: sourceById.get(baselineRow.id) ?? null,
+        baseline,
+        v1: v1Side,
+        v2: v2Side,
+        baselineToV1,
+        v1ToV2,
+        groundTruthReviewFlag:
+          v2Side.outcome === "WRONG_MATCH" ||
+          v1Side.outcome === "WRONG_MATCH" ||
+          baseline.outcome === "WRONG_MATCH",
+      });
+    }
+    const three = buildIdentityThreeWayCompareReport({
+      baselineMetrics: aggregateHistoricalEvalResults(evaluated),
+      v1Metrics: aggregateHistoricalEvalResults(v1.evaluated),
+      v2Metrics: aggregateHistoricalEvalResults(v2.evaluated),
+      rows: threeRows,
+      runtimeMs: {
+        baseline: primary.runtimeMs,
+        v1: v1.runtimeMs,
+        v2: v2.runtimeMs,
+      },
+    });
+    if (
+      !assertTransitionsReconcile(three.baselineToV1, threeRows.length) ||
+      !assertTransitionsReconcile(three.v1ToV2, threeRows.length)
+    ) {
+      throw new Error(
+        `Three-way transition counts do not equal evaluated (${threeRows.length})`
+      );
+    }
+    threeWayComparison = three;
+    // Also expose V1→V2 as the paired comparison panel.
+    comparison = buildIdentityCompareReport({
+      baselinePolicy: "CONTEXT_AWARE_V1",
+      proposedPolicy: "CONTEXT_AWARE_V2",
+      baselineMetrics: three.v1Metrics,
+      proposedMetrics: three.v2Metrics,
+      rows: threeRows.map((r) => ({
+        emailMessageId: r.emailMessageId,
+        subject: r.subject,
+        trueJobId: r.trueJobId,
+        trueJobName: r.trueJobName,
+        groundTruthSource: r.groundTruthSource,
+        baseline: r.v1,
+        proposed: r.v2,
+        transition: r.v1ToV2,
+        groundTruthReviewFlag: r.groundTruthReviewFlag,
+      })),
+      runtimeMs: { baseline: v1.runtimeMs, proposed: v2.runtimeMs },
+    });
   }
 
   const metrics = aggregateHistoricalEvalResults(evaluated);
@@ -532,9 +657,10 @@ export async function runJobMatcherHistoricalEval(input: {
     rows,
     wrongMatches: wrong.details,
     comparison,
+    threeWayComparison,
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1 is shadow-only until approved; production default remains BASELINE.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2 are shadow-only until approved; production default remains BASELINE.",
   };
 }
