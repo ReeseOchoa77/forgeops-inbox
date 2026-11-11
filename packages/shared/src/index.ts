@@ -38,6 +38,8 @@ export * from "./jobs/job-matcher.js";
 export * from "./jobs/job-matcher-service.js";
 export * from "./jobs/job-name-normalize.js";
 export * from "./jobs/job-name-marker.js";
+export * from "./jobs/job-name-identity-policy.js";
+export * from "./jobs/job-match-identity-compare.js";
 export * from "./jobs/job-match-pipeline.js";
 export * from "./jobs/job-contact-marker.js";
 export * from "./jobs/job-thread-marker.js";

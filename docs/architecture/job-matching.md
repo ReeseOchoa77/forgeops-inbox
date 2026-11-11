@@ -64,6 +64,29 @@ Haystack: subject (prefixes stripped) and body (quoted history stripped, 8k cap)
 
 Match kinds: `EXACT` (phrase contained) > `ALL_TOKENS` > `OVERLAP` (any shared content token). A unique hit at the strongest kind is `MATCH`; multiple is `AMBIGUOUS`.
 
+### Identity policy (Marker 1 safety gate)
+
+| Policy | Behavior | Production default? |
+|--------|----------|---------------------|
+| `BASELINE` | Unique OVERLAP may `MATCH` (historical Marker 1). | **Yes** |
+| `CONTEXT_AWARE_V1` | Unique weak identity → `AMBIGUOUS` (candidates preserved for Marker 2/3). Strong multiword / rare single-token / externalRef may still `MATCH`. | No — shadow evaluation only until approved |
+
+Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPipeline`. Live `JobMatcherService` omits the field → `BASELINE`.
+
+**CONTEXT_AWARE_V1 rules (deterministic):**
+
+- Multi-token `EXACT` / `ALL_TOKENS` (≥2 content tokens) → strong.
+- Contiguous multiword OVERLAP (phrase subsequence length ≥2 present in email) → strong.
+- `EXTERNAL_REF` full-phrase hit → strong.
+- Single-token full phrase (e.g. alias `MGCC`) → strong only if workspace-rare (df=1) and not common construction vocabulary.
+- Single generic token OVERLAP (`stairs`, `up`, `beam`, …) → weak → abstain.
+- Rarity alone never authorizes a match.
+- Weak abstention keeps `candidateJobIds` so Marker 2/3 can still resolve; it does **not** early-exit as `MATCH`.
+
+Diagnostics: `identityDiagnostics` on Marker 1 / pipeline results (`identityStrength`, `matchedTerms`, `reason`, `resolutionAllowed`, …).
+
+Shadow compare: Intelligence evaluate with `compareWithIdentityPolicy: "CONTEXT_AWARE_V1"` scores the **same** selected email IDs against the same Job/contact/thread snapshot under both policies and returns transition metrics. Does not change production matching.
+
 ### Internal Job number
 
 **Invariant (live matcher):** `Job.jobNumber` is the internal ForgeOps/company identifier. External senders generally do not know it. It is **not** matching evidence.
@@ -172,7 +195,9 @@ These remain possible in Marker 1 v3. They are **not** documented as fixed.
 
 `JOB_NAME_STOP_TOKENS` drops generic words (`project`, `bid`, `quote`, `building`, …). Tokens **not** on that list can become `OVERLAP` identity evidence if they appear in a Job name/alias/site/externalRef and in the email.
 
-Examples that historically produced weak matches and are **still not stopwords**: `up`, `stairs`, `beam`, `point`, `auto`, `rtu`. A unique OVERLAP hit is treated as `MATCH` (`UNIQUE_SUBJECT` / `UNIQUE_BODY`).
+Examples that historically produced weak matches and are **still not stopwords** under BASELINE: `up`, `stairs`, `beam`, `point`, `auto`, `rtu`. A unique OVERLAP hit is treated as `MATCH` (`UNIQUE_SUBJECT` / `UNIQUE_BODY`) when `identityPolicy=BASELINE`.
+
+Under `CONTEXT_AWARE_V1`, those generic single-token overlaps abstain (`AMBIGUOUS`) instead of resolving. They are classified via workspace distinctiveness + common construction vocabulary as a **negative signal**, not a permanent stopword list that removes them from tokenization.
 
 Numeric tokens and north/south/east/west are distinguishing (they disambiguate sibling Jobs; they do not generate candidates alone). Tokens shorter than 2 characters are dropped except numerics, so `up` (2 chars) is kept.
 

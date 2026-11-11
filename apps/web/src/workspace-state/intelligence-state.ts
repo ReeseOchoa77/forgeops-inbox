@@ -11,6 +11,8 @@ import {
 export const INTEL_STATE_VERSION = 1
 export const INTEL_SURFACE = 'intelligence'
 
+export type IntelligenceEvalMode = 'CURRENT' | 'COMPARE_V1'
+
 export type IntelligencePersistedState = {
   tab: 'overview' | 'pipeline' | 'instructions' | 'evaluation' | 'test'
   /** Job Matcher evaluation draft / UI prefs — config only, never result bodies. */
@@ -20,6 +22,8 @@ export type IntelligencePersistedState = {
     sampling: 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
     count: number
     lifecycle: 'ALL' | 'CURRENT' | 'ARCHIVED'
+    /** CURRENT = baseline only; COMPARE_V1 = paired shadow comparison. */
+    evaluationMode: IntelligenceEvalMode
   }
   outcomeFilter:
     | 'ALL'
@@ -28,6 +32,8 @@ export type IntelligencePersistedState = {
     | 'AMBIGUOUS'
     | 'CONFLICT'
     | 'NO_MATCH'
+  /** Transition filter when comparison results are present. */
+  transitionFilter: string | null
   resultsView: 'emails' | 'jobs'
   selectedEmailMessageId: string | null
   inspectorTab: 'email' | 'match'
@@ -45,6 +51,7 @@ const OUTCOMES = new Set([
   'CONFLICT',
   'NO_MATCH',
 ])
+const EVAL_MODES = new Set(['CURRENT', 'COMPARE_V1'])
 
 export function validateIntelligenceState(raw: unknown): IntelligencePersistedState | null {
   if (!raw || typeof raw !== 'object') return null
@@ -60,6 +67,10 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
     return null
   }
   if (typeof ec.lifecycle !== 'string' || !LIFECYCLE.has(ec.lifecycle)) return null
+  const evaluationMode =
+    typeof ec.evaluationMode === 'string' && EVAL_MODES.has(ec.evaluationMode)
+      ? (ec.evaluationMode as IntelligencePersistedState['evalConfig']['evaluationMode'])
+      : 'CURRENT'
   if (typeof o.outcomeFilter !== 'string' || !OUTCOMES.has(o.outcomeFilter)) return null
   if (o.resultsView !== 'emails' && o.resultsView !== 'jobs') return null
   const selectedEmailMessageId =
@@ -68,6 +79,11 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
       : asString(o.selectedEmailMessageId, 80)
   if (o.selectedEmailMessageId != null && selectedEmailMessageId == null) return null
   if (o.inspectorTab !== 'email' && o.inspectorTab !== 'match') return null
+  const transitionFilter =
+    o.transitionFilter === null || o.transitionFilter === undefined
+      ? null
+      : asString(o.transitionFilter, 64)
+  if (o.transitionFilter != null && transitionFilter == null) return null
   return {
     tab: o.tab as IntelligencePersistedState['tab'],
     evalConfig: {
@@ -76,8 +92,10 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
       sampling: ec.sampling as IntelligencePersistedState['evalConfig']['sampling'],
       count: ec.count,
       lifecycle: ec.lifecycle as IntelligencePersistedState['evalConfig']['lifecycle'],
+      evaluationMode,
     },
     outcomeFilter: o.outcomeFilter as IntelligencePersistedState['outcomeFilter'],
+    transitionFilter,
     resultsView: o.resultsView,
     selectedEmailMessageId,
     inspectorTab: o.inspectorTab,
@@ -92,8 +110,10 @@ export const DEFAULT_INTELLIGENCE_STATE: IntelligencePersistedState = {
     sampling: 'TOTAL',
     count: 50,
     lifecycle: 'ALL',
+    evaluationMode: 'CURRENT',
   },
   outcomeFilter: 'ALL',
+  transitionFilter: null,
   resultsView: 'emails',
   selectedEmailMessageId: null,
   inspectorTab: 'email',

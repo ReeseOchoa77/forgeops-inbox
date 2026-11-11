@@ -170,6 +170,15 @@ export const registerIntelligenceRoutes = async (
           /** V1 back-compat. */
           limit: z.union([z.literal(50), z.literal(100), z.literal(500)]).optional(),
           maxWrongDetails: z.number().int().min(1).max(100).optional(),
+          /** Primary identity policy. Default BASELINE (production semantics). */
+          identityPolicy: z
+            .enum(["BASELINE", "CONTEXT_AWARE_V1"])
+            .optional(),
+          /**
+           * Shadow comparison: score the same emails/snapshot with CONTEXT_AWARE_V1.
+           * Does not change production matcher default.
+           */
+          compareWithIdentityPolicy: z.literal("CONTEXT_AWARE_V1").optional(),
         })
         .parse(request.body);
 
@@ -192,6 +201,10 @@ export const registerIntelligenceRoutes = async (
             : { limit: body.limit ?? 50 },
           ...(body.maxWrongDetails != null
             ? { maxWrongDetails: body.maxWrongDetails }
+            : {}),
+          ...(body.identityPolicy ? { identityPolicy: body.identityPolicy } : {}),
+          ...(body.compareWithIdentityPolicy
+            ? { compareWithIdentityPolicy: body.compareWithIdentityPolicy }
             : {}),
         });
         return reply.send({ evaluation: result });

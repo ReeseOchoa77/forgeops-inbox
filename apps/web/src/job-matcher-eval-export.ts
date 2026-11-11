@@ -3,7 +3,11 @@
  * Never re-runs the matcher — serializes the viewed result only.
  * Standard CSV excludes email bodies.
  */
-import type { JobMatcherEvalResult, JobMatcherEvalRow } from './api'
+import type {
+  JobMatcherEvalResult,
+  JobMatcherEvalRow,
+  JobMatcherIdentityCompareReport,
+} from './api'
 
 function csvEscape(value: string | number | boolean | null | undefined): string {
   if (value == null) return ''
@@ -21,7 +25,7 @@ function todayStamp(): string {
 }
 
 export function jobMatcherEvalExportFilename(
-  kind: 'summary' | 'detailed' | 'full',
+  kind: 'summary' | 'detailed' | 'full' | 'comparison',
   ext: 'csv' | 'json'
 ): string {
   return `forgeops-job-matcher-evaluation-${kind}-${todayStamp()}.${ext}`
@@ -151,4 +155,72 @@ export function buildEvalFullJson(result: JobMatcherEvalResult): string {
     null,
     2
   )
+}
+
+/** One row per email for baseline vs CONTEXT_AWARE_V1 paired comparison. */
+export function buildEvalComparisonCsv(
+  comparison: JobMatcherIdentityCompareReport
+): string {
+  const headers = [
+    'email_message_id',
+    'subject',
+    'ground_truth_job_id',
+    'ground_truth_job_name',
+    'ground_truth_source',
+    'baseline_decision',
+    'baseline_predicted_job_id',
+    'baseline_predicted_job_name',
+    'baseline_outcome',
+    'baseline_resolving_marker',
+    'baseline_identity_evidence',
+    'baseline_identity_reason',
+    'v1_decision',
+    'v1_predicted_job_id',
+    'v1_predicted_job_name',
+    'v1_outcome',
+    'v1_resolving_marker',
+    'v1_identity_evidence',
+    'v1_abstention_reason',
+    'transition',
+    'ground_truth_review_flag',
+  ]
+  const lines = [headers.join(',')]
+  for (const row of comparison.rows) {
+    const bEvidence =
+      row.baseline.identityDiagnostics?.matchedTerms?.join('|') ||
+      row.baseline.evidence.map((e) => `${e.type}:${e.value}`).join('|')
+    const vEvidence =
+      row.proposed.identityDiagnostics?.matchedTerms?.join('|') ||
+      row.proposed.evidence.map((e) => `${e.type}:${e.value}`).join('|')
+    lines.push(
+      [
+        row.emailMessageId,
+        row.subject,
+        row.trueJobId,
+        row.trueJobName,
+        row.groundTruthSource,
+        row.baseline.decision,
+        row.baseline.predictedJobId,
+        row.baseline.predictedJobName,
+        row.baseline.outcome,
+        row.baseline.resolvingMarker,
+        bEvidence,
+        row.baseline.identityDiagnostics?.reason ?? '',
+        row.proposed.decision,
+        row.proposed.predictedJobId,
+        row.proposed.predictedJobName,
+        row.proposed.outcome,
+        row.proposed.resolvingMarker,
+        vEvidence,
+        row.proposed.identityDiagnostics?.resolutionAllowed === false
+          ? row.proposed.identityDiagnostics.reason
+          : '',
+        row.transition,
+        row.groundTruthReviewFlag,
+      ]
+        .map(csvEscape)
+        .join(',')
+    )
+  }
+  return lines.join('\n')
 }

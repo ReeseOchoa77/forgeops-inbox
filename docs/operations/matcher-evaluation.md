@@ -24,6 +24,17 @@ ADMIN/OWNER only, workspace-scoped:
 | `POST .../intelligence/job-matcher/evaluate` | Run read-only evaluation |
 | `GET .../intelligence/job-matcher/emails/:emailMessageId` | On-demand email inspector body |
 
+Body options on evaluate:
+
+| Field | Meaning |
+|-------|---------|
+| `identityPolicy` | `BASELINE` (default) or `CONTEXT_AWARE_V1` for a single-policy run |
+| `compareWithIdentityPolicy: "CONTEXT_AWARE_V1"` | Paired shadow compare: same selected email IDs + Job/contact/thread snapshot under BASELINE then V1 |
+
+Production matcher default remains **BASELINE**. V1 is not activated by running a comparison.
+
+UI: Evaluation mode → **Current matcher** | **Compare with proposed V1**. Comparison shows metric deltas, decision transitions (filterable), side-by-side inspector decisions, and Comparison CSV export.
+
 ### Dataset modes
 
 | Jobs mode | Meaning |
@@ -65,7 +76,7 @@ UI: Results → **Diagnostics** (Failure / Marker Performance / Candidate / Conf
 
 ### Export (client, no rematch)
 
-From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodies**), Full JSON. Optional Detailed CSV of **current filtered** rows. Export uses the viewed result only — matcher is not re-run.
+From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodies**), Full JSON. Optional Detailed CSV of **current filtered** rows. When a paired comparison is present: **Comparison CSV** (one row/email with baseline + V1 decisions, identity evidence, transition). Export uses the viewed result only — matcher is not re-run.
 
 ## Safety properties (verified)
 

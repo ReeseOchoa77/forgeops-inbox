@@ -8,10 +8,13 @@
 import {
   JobMatcherService,
   aggregateHistoricalEvalResults,
+  assertTransitionsReconcile,
+  buildIdentityCompareReport,
   buildJobMatcherEvalDiagnostics,
   buildJobMatcherEvalJobBreakdown,
   buildWrongMatchDetails,
   classifyHistoricalEvalOutcome,
+  classifyMatcherTransition,
   createJobMatchEvalLoaderFromSnapshot,
   isHistoricalEvalGroundTruth,
   isJobMatcherAutoAssignEnabled,
@@ -24,12 +27,16 @@ import {
   type HistoricalEvalEmail,
   type HistoricalEvalMetrics,
   type HistoricalEvalWrongDetail,
+  type IdentityCompareReport,
+  type IdentityCompareRow,
+  type JobMatchIdentityPolicy,
   type JobMatcherEvalDiagnostics,
   type JobMatcherEvalDatasetSpec,
   type JobMatcherEvalJobBreakdown,
   type JobMatcherEvalJobsMode,
   type JobMatcherEvalLifecycle,
   type JobMatcherEvalSampling,
+  type JobMatchResult,
   JOB_MATCHER_EVAL_MAX_SYNC,
 } from "@forgeops/shared";
 import type { PrismaClient } from "@prisma/client";
@@ -63,6 +70,8 @@ export type JobMatcherEvalRow = {
     candidateJobIds: string[];
     candidateJobNames: string[];
   }>;
+  identityPolicy?: JobMatchIdentityPolicy;
+  identityDiagnostics?: JobMatchResult["identityDiagnostics"];
   /** Deterministic diagnostics derived after matcher execution. */
   diagnostics: EvalRowDiagnostics;
 };
@@ -71,6 +80,7 @@ export type JobMatcherHistoricalEvalResult = {
   intelligenceId: "job-matcher";
   databaseWrites: "NONE";
   autoAssignEnabled: boolean;
+  identityPolicy: JobMatchIdentityPolicy;
   dataset: {
     spec: JobMatcherEvalDatasetSpec;
     summaryLabel: string;
@@ -81,6 +91,7 @@ export type JobMatcherHistoricalEvalResult = {
     actualEvaluated: number;
     capped: boolean;
     capReason: string | null;
+    selectedEmailIds: string[];
     workspaceSummary: Awaited<ReturnType<typeof loadHistoricalEvalDatasetSummary>>;
   };
   metrics: HistoricalEvalMetrics;
@@ -88,6 +99,9 @@ export type JobMatcherHistoricalEvalResult = {
   jobBreakdown: JobMatcherEvalJobBreakdown[];
   rows: JobMatcherEvalRow[];
   wrongMatches: HistoricalEvalWrongDetail[];
+  /** Present when compareWithIdentityPolicy was requested. Same email IDs / snapshot. */
+  comparison: IdentityCompareReport | null;
+  runtimeMs: number;
   groundTruthQuality: "MODERATE";
   groundTruthNotes: string;
 };
@@ -222,6 +236,91 @@ export async function previewJobMatcherEvalDataset(input: {
   };
 }
 
+function sideSummaryFromEval(
+  row: HistoricalEvalEmail,
+  jobsById: Map<string, { name: string }>
+): IdentityCompareRow["baseline"] {
+  const outcome = classifyHistoricalEvalOutcome(row);
+  const predicted = row.result.selectedJobId
+    ? jobsById.get(row.result.selectedJobId)
+    : undefined;
+  const diag = row.result.identityDiagnostics;
+  return {
+    decision: row.result.decision ?? "NO_MATCH",
+    outcome,
+    predictedJobId: row.result.selectedJobId,
+    predictedJobName: predicted?.name ?? null,
+    resolvingMarker: resolvingMarkerForResult(row.result),
+    evidence: row.result.evidence.map((e) => ({ type: e.type, value: e.value })),
+    identityDiagnostics: diag
+      ? {
+          identityStrength: diag.identityStrength,
+          matchedPhrase: diag.matchedPhrase,
+          matchedTerms: diag.matchedTerms,
+          weakTerms: diag.weakTerms,
+          reason: diag.reason,
+          resolutionAllowed: diag.resolutionAllowed,
+          strongIdentityAnchor: diag.strongIdentityAnchor,
+        }
+      : null,
+  };
+}
+
+function toEvalRows(input: {
+  evaluated: HistoricalEvalEmail[];
+  jobsById: Map<
+    string,
+    { name: string; jobNumber: string | null; status?: string | null }
+  >;
+  sourceById: Map<string, string | null>;
+  identityPolicy: JobMatchIdentityPolicy;
+}): { rows: JobMatcherEvalRow[]; diagnostics: JobMatcherEvalDiagnostics } {
+  const baseRows = input.evaluated.map((row) => {
+    const trueJob = input.jobsById.get(row.trueJobId);
+    const predicted = row.result.selectedJobId
+      ? input.jobsById.get(row.result.selectedJobId)
+      : undefined;
+    const outcome = classifyHistoricalEvalOutcome(row);
+    return {
+      emailMessageId: row.id,
+      subject: row.subject,
+      direction: row.direction,
+      trueJobId: row.trueJobId,
+      trueJobName: trueJob?.name ?? "(missing Job)",
+      trueJobNumber: trueJob?.jobNumber ?? null,
+      jobAssignmentSource: input.sourceById.get(row.id) ?? null,
+      predictedJobId: row.result.selectedJobId,
+      predictedJobName: predicted?.name ?? null,
+      predictedJobNumber: predicted?.jobNumber ?? null,
+      decision: row.result.decision ?? "NO_MATCH",
+      outcome,
+      resolvingMarker: resolvingMarkerForResult(row.result),
+      evidence: row.result.evidence.map((e) => ({
+        type: e.type,
+        value: e.value,
+      })),
+      markerTrace: (row.result.markerTrace ?? []).map((t) => ({
+        marker: t.marker,
+        status: t.status,
+        candidateJobIds: t.candidateJobIds,
+        candidateJobNames: t.candidateJobIds.map(
+          (id) => input.jobsById.get(id)?.name ?? id
+        ),
+      })),
+      identityPolicy: input.identityPolicy,
+      identityDiagnostics: row.result.identityDiagnostics,
+    };
+  });
+
+  const { diagnostics, rowDiagnostics } =
+    buildJobMatcherEvalDiagnostics(baseRows);
+  const rows: JobMatcherEvalRow[] = baseRows.map((row) => ({
+    ...row,
+    diagnostics: rowDiagnostics[row.emailMessageId]!,
+  }));
+  return { rows, diagnostics };
+}
+
 export async function runJobMatcherHistoricalEval(input: {
   prisma: PrismaClient;
   workspaceId: string;
@@ -230,7 +329,22 @@ export async function runJobMatcherHistoricalEval(input: {
   /** V1 back-compat. */
   limit?: number;
   maxWrongDetails?: number;
+  /**
+   * Identity policy for the primary evaluation result.
+   * Default BASELINE — production matcher semantics.
+   */
+  identityPolicy?: JobMatchIdentityPolicy;
+  /**
+   * When set to CONTEXT_AWARE_V1, also score the same emails/snapshot with V1
+   * and attach a paired comparison report. Primary metrics remain identityPolicy.
+   */
+  compareWithIdentityPolicy?: "CONTEXT_AWARE_V1";
 }): Promise<JobMatcherHistoricalEvalResult> {
+  const startedAt = Date.now();
+  const identityPolicy: JobMatchIdentityPolicy =
+    input.identityPolicy ?? "BASELINE";
+  const compareWith = input.compareWithIdentityPolicy ?? null;
+
   const spec = normalizeSpec(
     input.dataset ?? (input.limit != null ? { limit: input.limit } : { limit: 50 })
   );
@@ -282,38 +396,102 @@ export async function runJobMatcherHistoricalEval(input: {
     ids: selection.selectedIds,
   });
 
-  const evaluated: HistoricalEvalEmail[] = [];
   const sourceById = new Map(
     emailRecords.map((e) => [e.id, e.jobAssignmentSource] as const)
   );
 
-  const scored = await mapLimit(emailRecords, 2, async (email) => {
-    if (!isHistoricalEvalGroundTruth(email)) {
-      return null;
-    }
-    // Matcher must NOT receive trueJobId / selected Job as a hint.
-    const result = await matcher.match({
-      workspaceId: input.workspaceId,
-      emailMessageId: email.id,
-      inboxConnectionId: email.inboxConnectionId,
-      subject: email.subject,
-      cleanBody: email.cleanBody,
-      senderEmail: email.senderEmail,
-      providerThreadId: email.providerThreadId,
-      eligibilityMode: "evaluation",
+  async function scoreEmails(
+    policy: JobMatchIdentityPolicy
+  ): Promise<{ evaluated: HistoricalEvalEmail[]; runtimeMs: number }> {
+    const t0 = Date.now();
+    const scored = await mapLimit(emailRecords, 2, async (email) => {
+      if (!isHistoricalEvalGroundTruth(email)) {
+        return null;
+      }
+      // Matcher must NOT receive trueJobId / selected Job as a hint.
+      const result = await matcher.match({
+        workspaceId: input.workspaceId,
+        emailMessageId: email.id,
+        inboxConnectionId: email.inboxConnectionId,
+        subject: email.subject,
+        cleanBody: email.cleanBody,
+        senderEmail: email.senderEmail,
+        providerThreadId: email.providerThreadId,
+        eligibilityMode: "evaluation",
+        identityPolicy: policy,
+      });
+      return {
+        id: email.id,
+        subject: email.subject,
+        direction: email.direction,
+        trueJobId: email.jobId,
+        hasAttachments: email.hasAttachments,
+        result,
+      } satisfies HistoricalEvalEmail;
     });
-    return {
-      id: email.id,
-      subject: email.subject,
-      direction: email.direction,
-      trueJobId: email.jobId,
-      hasAttachments: email.hasAttachments,
-      result,
-    } satisfies HistoricalEvalEmail;
-  });
+    const evaluated: HistoricalEvalEmail[] = [];
+    for (const row of scored) {
+      if (row) evaluated.push(row);
+    }
+    return { evaluated, runtimeMs: Date.now() - t0 };
+  }
 
-  for (const row of scored) {
-    if (row) evaluated.push(row);
+  // When comparing, always run BASELINE then V1 on the same ordered email set.
+  const primaryPolicy: JobMatchIdentityPolicy =
+    compareWith != null ? "BASELINE" : identityPolicy;
+  const primary = await scoreEmails(primaryPolicy);
+  const evaluated = primary.evaluated;
+
+  let comparison: IdentityCompareReport | null = null;
+  if (compareWith === "CONTEXT_AWARE_V1") {
+    const proposed = await scoreEmails("CONTEXT_AWARE_V1");
+    const proposedById = new Map(proposed.evaluated.map((r) => [r.id, r]));
+    const compareRows: IdentityCompareRow[] = [];
+    for (const baselineRow of evaluated) {
+      const proposedRow = proposedById.get(baselineRow.id);
+      if (!proposedRow) continue;
+      const baseline = sideSummaryFromEval(baselineRow, jobsById);
+      const proposedSide = sideSummaryFromEval(proposedRow, jobsById);
+      const transition = classifyMatcherTransition({
+        baselineOutcome: baseline.outcome,
+        proposedOutcome: proposedSide.outcome,
+        baselinePredictedJobId: baseline.predictedJobId,
+        proposedPredictedJobId: proposedSide.predictedJobId,
+      });
+      const groundTruthReviewFlag =
+        proposedSide.outcome === "WRONG_MATCH" &&
+        baseline.outcome === "WRONG_MATCH" &&
+        proposedSide.predictedJobId !== null &&
+        proposedSide.predictedJobId !== baselineRow.trueJobId;
+      compareRows.push({
+        emailMessageId: baselineRow.id,
+        subject: baselineRow.subject,
+        trueJobId: baselineRow.trueJobId,
+        trueJobName: jobsById.get(baselineRow.trueJobId)?.name ?? "(missing Job)",
+        groundTruthSource: sourceById.get(baselineRow.id) ?? null,
+        baseline,
+        proposed: proposedSide,
+        transition,
+        groundTruthReviewFlag,
+      });
+    }
+    const report = buildIdentityCompareReport({
+      baselineMetrics: aggregateHistoricalEvalResults(evaluated),
+      proposedMetrics: aggregateHistoricalEvalResults(proposed.evaluated),
+      rows: compareRows,
+      runtimeMs: {
+        baseline: primary.runtimeMs,
+        proposed: proposed.runtimeMs,
+      },
+    });
+    if (
+      !assertTransitionsReconcile(report.transitions, compareRows.length)
+    ) {
+      throw new Error(
+        `Comparison transition counts (${Object.values(report.transitions).reduce((a, b) => a + b, 0)}) do not equal evaluated (${compareRows.length})`
+      );
+    }
+    comparison = report;
   }
 
   const metrics = aggregateHistoricalEvalResults(evaluated);
@@ -323,49 +501,18 @@ export async function runJobMatcherHistoricalEval(input: {
     jobsById,
     maxWrongDetails: input.maxWrongDetails ?? 50,
   });
-
-  const baseRows = evaluated.map((row) => {
-    const trueJob = jobsById.get(row.trueJobId);
-    const predicted = row.result.selectedJobId
-      ? jobsById.get(row.result.selectedJobId)
-      : undefined;
-    const outcome = classifyHistoricalEvalOutcome(row);
-    return {
-      emailMessageId: row.id,
-      subject: row.subject,
-      direction: row.direction,
-      trueJobId: row.trueJobId,
-      trueJobName: trueJob?.name ?? "(missing Job)",
-      trueJobNumber: trueJob?.jobNumber ?? null,
-      jobAssignmentSource: sourceById.get(row.id) ?? null,
-      predictedJobId: row.result.selectedJobId,
-      predictedJobName: predicted?.name ?? null,
-      predictedJobNumber: predicted?.jobNumber ?? null,
-      decision: row.result.decision ?? "NO_MATCH",
-      outcome,
-      resolvingMarker: resolvingMarkerForResult(row.result),
-      evidence: row.result.evidence.map((e) => ({ type: e.type, value: e.value })),
-      markerTrace: (row.result.markerTrace ?? []).map((t) => ({
-        marker: t.marker,
-        status: t.status,
-        candidateJobIds: t.candidateJobIds,
-        candidateJobNames: t.candidateJobIds.map(
-          (id) => jobsById.get(id)?.name ?? id
-        ),
-      })),
-    };
+  const { rows, diagnostics } = toEvalRows({
+    evaluated,
+    jobsById,
+    sourceById,
+    identityPolicy: primaryPolicy,
   });
-
-  const { diagnostics, rowDiagnostics } = buildJobMatcherEvalDiagnostics(baseRows);
-  const rows: JobMatcherEvalRow[] = baseRows.map((row) => ({
-    ...row,
-    diagnostics: rowDiagnostics[row.emailMessageId]!,
-  }));
 
   return {
     intelligenceId: "job-matcher",
     databaseWrites: "NONE",
     autoAssignEnabled: isJobMatcherAutoAssignEnabled(),
+    identityPolicy: primaryPolicy,
     dataset: {
       spec,
       summaryLabel: summarizeDatasetSpec(spec),
@@ -376,6 +523,7 @@ export async function runJobMatcherHistoricalEval(input: {
       actualEvaluated: evaluated.length,
       capped: selection.capped,
       capReason: selection.capReason,
+      selectedEmailIds: selection.selectedIds,
       workspaceSummary,
     },
     metrics,
@@ -383,8 +531,10 @@ export async function runJobMatcherHistoricalEval(input: {
     jobBreakdown,
     rows,
     wrongMatches: wrong.details,
+    comparison,
+    runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1 is shadow-only until approved; production default remains BASELINE.",
   };
 }

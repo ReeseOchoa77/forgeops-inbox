@@ -11,7 +11,10 @@ import {
 } from "./job-matcher.js";
 import {
   runJobNameMarker,
+  DEFAULT_JOB_MATCH_IDENTITY_POLICY,
   type JobMatchEligibilityMode,
+  type JobMatchIdentityPolicy,
+  type JobNameIdentityDiagnostics,
 } from "./job-name-marker.js";
 
 import { runJobContactMarker, type JobContactHit } from "./job-contact-marker.js";
@@ -184,6 +187,8 @@ function toResult(input: {
   confidence: number;
   eligibleJobCount: number;
   markerTrace: JobMatchMarkerTrace[];
+  identityPolicy: JobMatchIdentityPolicy;
+  identityDiagnostics: JobNameIdentityDiagnostics;
 }): JobMatchResult {
   const requiresReview =
     input.decision === "AMBIGUOUS" || input.decision === "CONFLICT";
@@ -200,6 +205,8 @@ function toResult(input: {
     assignmentSource: input.assignmentSource,
     candidateCount: input.eligibleJobCount,
     matcherVersion: JOB_MATCH_PIPELINE_VERSION,
+    identityPolicy: input.identityPolicy,
+    identityDiagnostics: input.identityDiagnostics,
   };
 }
 
@@ -236,8 +243,11 @@ export function runJobMatchPipeline(input: {
   contactHits?: JobContactHit[] | undefined;
   threadHits?: JobThreadHit[] | undefined;
   eligibilityMode?: JobMatchEligibilityMode;
+  identityPolicy?: JobMatchIdentityPolicy;
 }): JobMatchResult {
   const eligibilityMode = input.eligibilityMode ?? "production";
+  const identityPolicy =
+    input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
   const marker1 = runJobNameMarker({
     subject: input.subject,
     bodyText: input.bodyText,
@@ -245,6 +255,7 @@ export function runJobMatchPipeline(input: {
     jobs: input.jobs,
     aliases: input.aliases ?? [],
     eligibilityMode,
+    identityPolicy,
   });
 
   const markerTrace: JobMatchMarkerTrace[] = [
@@ -266,6 +277,8 @@ export function runJobMatchPipeline(input: {
       confidence: marker1.confidence,
       eligibleJobCount: marker1.eligibleJobCount,
       markerTrace,
+      identityPolicy,
+      identityDiagnostics: marker1.identityDiagnostics,
     });
   }
 
@@ -323,6 +336,8 @@ export function runJobMatchPipeline(input: {
       confidence: current.confidence,
       eligibleJobCount: marker1.eligibleJobCount,
       markerTrace,
+      identityPolicy,
+      identityDiagnostics: marker1.identityDiagnostics,
     });
   }
 
@@ -369,6 +384,8 @@ export function runJobMatchPipeline(input: {
     confidence,
     eligibleJobCount: marker1.eligibleJobCount,
     markerTrace,
+    identityPolicy,
+    identityDiagnostics: marker1.identityDiagnostics,
   });
 }
 
@@ -393,5 +410,6 @@ export function jobMatchPipelineFromEmailInput(
     contactHits: extras?.contactHits,
     threadHits: extras?.threadHits,
     eligibilityMode: input.eligibilityMode ?? "production",
+    identityPolicy: input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY,
   });
 }

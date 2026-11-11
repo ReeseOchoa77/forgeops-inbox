@@ -73,6 +73,7 @@ export class JobMatcherService {
       jobs,
       aliases,
       eligibilityMode: input.eligibilityMode ?? "production",
+      ...(input.identityPolicy ? { identityPolicy: input.identityPolicy } : {}),
     });
 
     let contactHits: JobContactHit[] | undefined;

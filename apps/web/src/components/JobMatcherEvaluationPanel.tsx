@@ -13,9 +13,11 @@ import {
   type JobMatcherEvalPreview,
   type JobMatcherEvalResult,
   type JobMatcherEvalRow,
+  type JobMatcherTransitionCategory,
   type JobLookup,
 } from '../api'
 import {
+  buildEvalComparisonCsv,
   buildEvalDetailedCsv,
   buildEvalFullJson,
   buildEvalSummaryCsv,
@@ -33,6 +35,7 @@ import {
   setJobMatcherEvalPending,
   setJobMatcherEvalSession,
   clearJobMatcherEvalPending,
+  type IntelligenceEvalMode,
   type IntelligencePersistedState,
 } from '../workspace-state'
 import { SafeEmailBody } from './SafeEmailBody'
@@ -66,6 +69,15 @@ export function JobMatcherEvaluationPanel({
   const [sampling, setSampling] = useState<Sampling>(() => initialUi.evalConfig.sampling)
   const [count, setCount] = useState(() => initialUi.evalConfig.count)
   const [lifecycle, setLifecycle] = useState<Lifecycle>(() => initialUi.evalConfig.lifecycle)
+  const [evaluationMode, setEvaluationMode] = useState<IntelligenceEvalMode>(
+    () => initialUi.evalConfig.evaluationMode ?? 'CURRENT'
+  )
+  const [transitionFilter, setTransitionFilter] = useState<JobMatcherTransitionCategory | 'ALL'>(
+    () =>
+      initialUi.transitionFilter
+        ? (initialUi.transitionFilter as JobMatcherTransitionCategory)
+        : 'ALL'
+  )
   const [selectedJobs, setSelectedJobs] = useState<JobLookup[]>([])
   const [jobSearch, setJobSearch] = useState('')
   const [jobOptions, setJobOptions] = useState<JobLookup[]>([])
@@ -147,8 +159,10 @@ export function JobMatcherEvaluationPanel({
         sampling,
         count,
         lifecycle,
+        evaluationMode,
       },
       outcomeFilter,
+      transitionFilter: transitionFilter === 'ALL' ? null : transitionFilter,
       resultsView,
       selectedEmailMessageId: selectedRow?.emailMessageId ?? null,
       inspectorTab,
@@ -160,7 +174,9 @@ export function JobMatcherEvaluationPanel({
     sampling,
     count,
     lifecycle,
+    evaluationMode,
     outcomeFilter,
+    transitionFilter,
     resultsView,
     selectedRow?.emailMessageId,
     inspectorTab,
@@ -294,10 +310,16 @@ export function JobMatcherEvaluationPanel({
     setSelectedRow(null)
     setJobFilterId(null)
     setOutcomeFilter('ALL')
+    setTransitionFilter('ALL')
     setResultsView('emails')
     setResult(null)
     const promise = api
-      .evaluateJobMatcherIntelligence(workspaceId, { dataset })
+      .evaluateJobMatcherIntelligence(workspaceId, {
+        dataset,
+        ...(evaluationMode === 'COMPARE_V1'
+          ? { compareWithIdentityPolicy: 'CONTEXT_AWARE_V1' as const }
+          : {}),
+      })
       .then((res) => res.evaluation)
     setJobMatcherEvalPending({ workspaceId, userId, promise })
     try {
@@ -319,6 +341,9 @@ export function JobMatcherEvaluationPanel({
 
   const filteredRows = useMemo(() => {
     if (!result) return []
+    const compareById = new Map(
+      (result.comparison?.rows ?? []).map((r) => [r.emailMessageId, r] as const)
+    )
     return result.rows.filter((row) => {
       if (outcomeFilter !== 'ALL' && row.outcome !== outcomeFilter) return false
       if (jobFilterId && row.trueJobId !== jobFilterId) return false
@@ -331,17 +356,37 @@ export function JobMatcherEvaluationPanel({
       ) {
         return false
       }
+      if (transitionFilter !== 'ALL') {
+        const cmp = compareById.get(row.emailMessageId)
+        if (!cmp || cmp.transition !== transitionFilter) return false
+      }
       return true
     })
-  }, [result, outcomeFilter, jobFilterId, failureFilter, resolvingMarkerFilter])
+  }, [
+    result,
+    outcomeFilter,
+    jobFilterId,
+    failureFilter,
+    resolvingMarkerFilter,
+    transitionFilter,
+  ])
 
-  const exportFull = (kind: 'summary' | 'detailed' | 'json') => {
+  const exportFull = (kind: 'summary' | 'detailed' | 'json' | 'comparison') => {
     if (!result) return
     setExportOpen(false)
     if (kind === 'summary') {
       downloadTextFile(
         jobMatcherEvalExportFilename('summary', 'csv'),
         buildEvalSummaryCsv(result),
+        'text/csv;charset=utf-8'
+      )
+      return
+    }
+    if (kind === 'comparison') {
+      if (!result.comparison) return
+      downloadTextFile(
+        jobMatcherEvalExportFilename('comparison', 'csv'),
+        buildEvalComparisonCsv(result.comparison),
         'text/csv;charset=utf-8'
       )
       return
@@ -504,6 +549,18 @@ export function JobMatcherEvaluationPanel({
               <option value="ALL">Current + Archived</option>
               <option value="CURRENT">Current</option>
               <option value="ARCHIVED">Archived</option>
+            </select>
+          </Control>
+          <Control label="Evaluation mode">
+            <select
+              value={evaluationMode}
+              disabled={busy}
+              onChange={(e) => setEvaluationMode(e.target.value as IntelligenceEvalMode)}
+              style={{ ...selectStyle, minWidth: 200 }}
+              data-testid="job-matcher-eval-mode"
+            >
+              <option value="CURRENT">Current matcher</option>
+              <option value="COMPARE_V1">Compare with proposed V1</option>
             </select>
           </Control>
         </div>
@@ -691,6 +748,15 @@ export function JobMatcherEvaluationPanel({
                       <button type="button" style={exportItemBtn} onClick={() => exportFull('json')}>
                         Full JSON (full evaluation)
                       </button>
+                      {result.comparison && (
+                        <button
+                          type="button"
+                          style={exportItemBtn}
+                          onClick={() => exportFull('comparison')}
+                        >
+                          Comparison CSV (baseline vs V1)
+                        </button>
+                      )}
                       <button type="button" style={exportItemBtn} onClick={exportFiltered}>
                         Detailed CSV (current filtered results)
                       </button>
@@ -747,6 +813,14 @@ export function JobMatcherEvaluationPanel({
             <Metric label="Conflict rate" value={`${(m.conflictRate * 100).toFixed(2)}%`} />
             <Metric label="No-match rate" value={`${(m.noMatchRate * 100).toFixed(2)}%`} />
           </div>
+        )}
+
+        {result?.comparison && (
+          <ComparisonPanel
+            comparison={result.comparison}
+            transitionFilter={transitionFilter}
+            onTransitionFilter={setTransitionFilter}
+          />
         )}
       </div>
 
@@ -847,6 +921,11 @@ export function JobMatcherEvaluationPanel({
               workspaceId={workspaceId}
               userId={userId}
               row={selectedRow}
+              compareRow={
+                result?.comparison?.rows.find(
+                  (r) => r.emailMessageId === selectedRow.emailMessageId
+                ) ?? null
+              }
               groundTruthQuality={groundTruthQuality}
               inspectorTab={inspectorTab}
               setInspectorTab={setInspectorTab}
@@ -1354,6 +1433,7 @@ function EmailInspector({
   workspaceId,
   userId,
   row,
+  compareRow,
   groundTruthQuality,
   inspectorTab,
   setInspectorTab,
@@ -1362,6 +1442,7 @@ function EmailInspector({
   workspaceId: string
   userId?: string
   row: JobMatcherEvalRow
+  compareRow?: NonNullable<JobMatcherEvalResult['comparison']>['rows'][number] | null
   groundTruthQuality: string
   inspectorTab: 'email' | 'match'
   setInspectorTab: (t: 'email' | 'match') => void
@@ -1543,6 +1624,45 @@ function EmailInspector({
 
         {inspectorTab === 'match' && (
           <>
+            {compareRow && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 8,
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}>
+                  <div style={{ fontWeight: 650, marginBottom: 4 }}>Current (BASELINE)</div>
+                  <div>{compareRow.baseline.outcome.replace(/_/g, ' ')}</div>
+                  <div style={{ color: '#6b7280' }}>
+                    {compareRow.baseline.predictedJobName || '—'}
+                  </div>
+                  <div style={{ color: '#6b7280', marginTop: 4 }}>
+                    {compareRow.baseline.identityDiagnostics?.reason ||
+                      compareRow.baseline.resolvingMarker ||
+                      '—'}
+                  </div>
+                </div>
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}>
+                  <div style={{ fontWeight: 650, marginBottom: 4 }}>Proposed V1</div>
+                  <div>{compareRow.proposed.outcome.replace(/_/g, ' ')}</div>
+                  <div style={{ color: '#6b7280' }}>
+                    {compareRow.proposed.predictedJobName || '—'}
+                  </div>
+                  <div style={{ color: '#6b7280', marginTop: 4 }}>
+                    {compareRow.proposed.identityDiagnostics?.reason ||
+                      compareRow.proposed.resolvingMarker ||
+                      '—'}
+                  </div>
+                  <div style={{ marginTop: 6, fontWeight: 600 }}>
+                    {compareRow.transition.replace(/_TO_/g, ' → ')}
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={{ marginBottom: 10, display: 'grid', gap: 4 }}>
               <MetaLine label="Outcome" value={row.outcome.replace(/_/g, ' ')} />
               {row.diagnostics?.failureCategory && (
@@ -1666,6 +1786,145 @@ function MarkerStrip({ row }: { row: JobMatcherEvalRow }) {
       </div>
     </div>
   )
+}
+
+function ComparisonPanel({
+  comparison,
+  transitionFilter,
+  onTransitionFilter,
+}: {
+  comparison: NonNullable<JobMatcherEvalResult['comparison']>
+  transitionFilter: JobMatcherTransitionCategory | 'ALL'
+  onTransitionFilter: (next: JobMatcherTransitionCategory | 'ALL') => void
+}) {
+  const d = comparison.metricsDelta
+  const fmtPct = (v: number | null) =>
+    v == null ? '—' : `${(v * 100).toFixed(2)}%`
+  const fmtDelta = (v: number | null, pct = false) => {
+    if (v == null) return '—'
+    const sign = v > 0 ? '+' : ''
+    return pct ? `${sign}${(v * 100).toFixed(2)}pp` : `${sign}${v}`
+  }
+  const transitionEntries = (
+    Object.entries(comparison.transitions) as Array<[JobMatcherTransitionCategory, number]>
+  ).filter(([, n]) => n > 0)
+
+  return (
+    <div
+      data-testid="job-matcher-comparison"
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '10px 12px',
+        background: '#f8fafc',
+        fontSize: 12,
+      }}
+    >
+      <div style={{ fontWeight: 650, marginBottom: 8 }}>Matcher comparison</div>
+      <div style={{ overflowX: 'auto', marginBottom: 10 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
+          <thead>
+            <tr style={{ textAlign: 'left', color: '#6b7280' }}>
+              <th style={cmpTh}>Metric</th>
+              <th style={{ ...cmpTh, textAlign: 'right' }}>Current</th>
+              <th style={{ ...cmpTh, textAlign: 'right' }}>Proposed V1</th>
+              <th style={{ ...cmpTh, textAlign: 'right' }}>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <CmpRow label="Correct" a={d.correct.baseline} b={d.correct.proposed} delta={d.correct.delta} />
+            <CmpRow label="Wrong" a={d.wrong.baseline} b={d.wrong.proposed} delta={d.wrong.delta} />
+            <CmpRow
+              label="Precision"
+              a={fmtPct(d.precision.baseline)}
+              b={fmtPct(d.precision.proposed)}
+              delta={fmtDelta(d.precision.delta, true)}
+            />
+            <CmpRow
+              label="Coverage"
+              a={fmtPct(d.correctCoverage.baseline)}
+              b={fmtPct(d.correctCoverage.proposed)}
+              delta={fmtDelta(d.correctCoverage.delta, true)}
+            />
+            <CmpRow label="Ambiguous" a={d.ambiguous.baseline} b={d.ambiguous.proposed} delta={d.ambiguous.delta} />
+            <CmpRow label="Conflict" a={d.conflict.baseline} b={d.conflict.proposed} delta={d.conflict.delta} />
+            <CmpRow label="No Match" a={d.noMatch.baseline} b={d.noMatch.proposed} delta={d.noMatch.delta} />
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontWeight: 650, marginBottom: 6 }}>Decision transitions</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+        <button
+          type="button"
+          onClick={() => onTransitionFilter('ALL')}
+          style={{
+            ...chipBtn,
+            background: transitionFilter === 'ALL' ? '#111827' : '#fff',
+            color: transitionFilter === 'ALL' ? '#fff' : '#111827',
+          }}
+        >
+          All
+        </button>
+        {transitionEntries.map(([key, n]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onTransitionFilter(key)}
+            style={{
+              ...chipBtn,
+              background: transitionFilter === key ? '#111827' : '#fff',
+              color: transitionFilter === key ? '#fff' : '#111827',
+            }}
+          >
+            {key.replace(/_TO_/g, ' → ')} ({n})
+          </button>
+        ))}
+      </div>
+      <div style={{ color: '#6b7280', fontSize: 11 }}>
+        Safety regressions: CORRECT→WRONG {comparison.safetyRegressions.correctToWrong},
+        UNRESOLVED→WRONG {comparison.safetyRegressions.unresolvedToWrong}. Coverage loss
+        CORRECT→UNRESOLVED {comparison.coverageLoss.correctToUnresolved}.
+        {comparison.runtimeMs.overheadRatio != null && (
+          <>
+            {' '}
+            Runtime overhead ×{comparison.runtimeMs.overheadRatio.toFixed(2)}.
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CmpRow({
+  label,
+  a,
+  b,
+  delta,
+}: {
+  label: string
+  a: string | number
+  b: string | number
+  delta: string | number
+}) {
+  return (
+    <tr>
+      <td style={cmpTd}>{label}</td>
+      <td style={{ ...cmpTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{a}</td>
+      <td style={{ ...cmpTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b}</td>
+      <td style={{ ...cmpTd, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{delta}</td>
+    </tr>
+  )
+}
+
+const cmpTh: CSSProperties = {
+  padding: '4px 8px',
+  borderBottom: '1px solid #e5e7eb',
+  fontWeight: 600,
+  fontSize: 11,
+}
+const cmpTd: CSSProperties = {
+  padding: '4px 8px',
+  borderBottom: '1px solid #f3f4f6',
 }
 
 function Control({ label, children }: { label: string; children: ReactNode }) {

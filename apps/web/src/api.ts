@@ -3034,6 +3034,8 @@ export const api = {
       dataset?: JobMatcherEvalDatasetSpec
       limit?: 50 | 100 | 500
       maxWrongDetails?: number
+      identityPolicy?: 'BASELINE' | 'CONTEXT_AWARE_V1'
+      compareWithIdentityPolicy?: 'CONTEXT_AWARE_V1'
     }
   ) =>
     request<{ evaluation: JobMatcherEvalResult }>(
@@ -5149,10 +5151,81 @@ export interface JobMatcherEvalDiagnostics {
   definitions: Record<string, string>
 }
 
+export type JobMatcherIdentityPolicy = 'BASELINE' | 'CONTEXT_AWARE_V1'
+
+export type JobMatcherTransitionCategory =
+  | 'WRONG_TO_CORRECT'
+  | 'WRONG_TO_UNRESOLVED'
+  | 'WRONG_TO_WRONG_SAME_JOB'
+  | 'WRONG_TO_WRONG_DIFFERENT_JOB'
+  | 'CORRECT_TO_CORRECT'
+  | 'CORRECT_TO_UNRESOLVED'
+  | 'CORRECT_TO_WRONG'
+  | 'UNRESOLVED_TO_CORRECT'
+  | 'UNRESOLVED_TO_WRONG'
+  | 'UNRESOLVED_TO_UNRESOLVED'
+
+export interface JobMatcherIdentityCompareSide {
+  decision: string
+  outcome: string
+  predictedJobId: string | null
+  predictedJobName: string | null
+  resolvingMarker: string | null
+  evidence: Array<{ type: string; value: string }>
+  identityDiagnostics: {
+    identityStrength: string
+    matchedPhrase: string | null
+    matchedTerms: string[]
+    weakTerms: string[]
+    reason: string
+    resolutionAllowed: boolean
+    strongIdentityAnchor: boolean
+  } | null
+}
+
+export interface JobMatcherIdentityCompareRow {
+  emailMessageId: string
+  subject: string | null
+  trueJobId: string
+  trueJobName: string
+  groundTruthSource: string | null
+  baseline: JobMatcherIdentityCompareSide
+  proposed: JobMatcherIdentityCompareSide
+  transition: JobMatcherTransitionCategory
+  groundTruthReviewFlag: boolean
+}
+
+export interface JobMatcherIdentityCompareReport {
+  baselinePolicy: 'BASELINE'
+  proposedPolicy: 'CONTEXT_AWARE_V1'
+  baselineMetrics: JobMatcherEvalResult['metrics']
+  proposedMetrics: JobMatcherEvalResult['metrics']
+  metricsDelta: {
+    evaluated: number
+    correct: { baseline: number; proposed: number; delta: number }
+    wrong: { baseline: number; proposed: number; delta: number }
+    ambiguous: { baseline: number; proposed: number; delta: number }
+    conflict: { baseline: number; proposed: number; delta: number }
+    noMatch: { baseline: number; proposed: number; delta: number }
+    precision: { baseline: number | null; proposed: number | null; delta: number | null }
+    correctCoverage: { baseline: number; proposed: number; delta: number }
+    wrongMatchRate: { baseline: number; proposed: number; delta: number }
+    ambiguityRate: { baseline: number; proposed: number; delta: number }
+    conflictRate: { baseline: number; proposed: number; delta: number }
+    noMatchRate: { baseline: number; proposed: number; delta: number }
+  }
+  transitions: Record<JobMatcherTransitionCategory, number>
+  rows: JobMatcherIdentityCompareRow[]
+  safetyRegressions: { correctToWrong: number; unresolvedToWrong: number }
+  coverageLoss: { correctToUnresolved: number }
+  runtimeMs: { baseline: number; proposed: number; overheadRatio: number | null }
+}
+
 export interface JobMatcherEvalResult {
   intelligenceId: 'job-matcher'
   databaseWrites: 'NONE'
   autoAssignEnabled: boolean
+  identityPolicy?: JobMatcherIdentityPolicy
   dataset: {
     spec: JobMatcherEvalDatasetSpec
     summaryLabel: string
@@ -5163,6 +5236,7 @@ export interface JobMatcherEvalResult {
     actualEvaluated: number
     capped: boolean
     capReason: string | null
+    selectedEmailIds?: string[]
   }
   metrics: {
     totalEvaluated: number
@@ -5202,6 +5276,8 @@ export interface JobMatcherEvalResult {
     predictedJobName: string | null
     resolvingMarker: string | null
   }>
+  comparison?: JobMatcherIdentityCompareReport | null
+  runtimeMs?: number
   groundTruthQuality: string
   groundTruthNotes: string
 }

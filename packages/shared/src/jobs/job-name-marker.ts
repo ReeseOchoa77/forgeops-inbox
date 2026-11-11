@@ -15,8 +15,28 @@ import {
   phraseContained,
   stripSubjectPrefixes,
 } from "./job-name-normalize.js";
+import {
+  applyJobNameIdentityPolicy,
+  buildWorkspaceIdentityTokenStats,
+  DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  type JobMatchIdentityPolicy,
+  type JobNameIdentityDiagnostics,
+  type WorkspaceIdentityTokenStats,
+} from "./job-name-identity-policy.js";
 
 export const JOB_NAME_MARKER_VERSION = "job-name-marker-v3";
+
+export type {
+  JobMatchIdentityPolicy,
+  JobNameIdentityDiagnostics,
+  JobNameIdentityReasonCode,
+  JobNameIdentityStrength,
+} from "./job-name-identity-policy.js";
+export {
+  DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  JOB_MATCH_IDENTITY_POLICY_BASELINE,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
+} from "./job-name-identity-policy.js";
 
 /** Marker 1 pool: live operational jobs. COMPLETE/BIDDING/LEAD are excluded. */
 export const JOB_NAME_MARKER_ELIGIBLE_STATUSES = [
@@ -86,6 +106,8 @@ export type JobNameMarkerResult = {
   candidates: JobNameMarkerCandidate[];
   eligibleJobCount: number;
   markerVersion: string;
+  identityPolicy: JobMatchIdentityPolicy;
+  identityDiagnostics: JobNameIdentityDiagnostics;
 };
 
 type PreparedPhrase = {
@@ -115,6 +137,8 @@ type JobHit = {
   phraseHits: PhraseHit[];
   evidence: JobMatchEvidence[];
   distinguishingHits: string[];
+  /** Content tokens shared with the email (identity overlap evidence). */
+  matchedContentTokens: string[];
 };
 
 export function isJobMatcherEligibleStatus(
@@ -358,8 +382,20 @@ function scoreJob(input: {
     evidence.push(evidenceFor(hit.field, hit.phrase, hit.kind));
   }
 
+  const hayContent = new Set([
+    ...input.subjectTokens.filter(isJobNameContentToken),
+    ...input.bodyTokens.filter(isJobNameContentToken),
+  ]);
+  const overlapTokens: string[] = [];
+  for (const token of input.job.contentTokens) {
+    if (hayContent.has(token)) overlapTokens.push(token);
+  }
+
   const best = bestKind(phraseHits);
   if (best) {
+    const phraseContentMatched = best.phrase.tokens.filter(
+      (t) => isJobNameContentToken(t) && hayContent.has(t)
+    );
     return {
       job: input.job,
       kind: best.kind,
@@ -372,28 +408,22 @@ function scoreJob(input: {
         input.subjectTokens,
         input.bodyTokens
       ),
+      matchedContentTokens:
+        phraseContentMatched.length > 0 ? phraseContentMatched : overlapTokens,
     };
   }
 
-  const hayContent = new Set([
-    ...input.subjectTokens.filter(isJobNameContentToken),
-    ...input.bodyTokens.filter(isJobNameContentToken),
-  ]);
-  const overlap: string[] = [];
-  for (const token of input.job.contentTokens) {
-    if (hayContent.has(token)) overlap.push(token);
-  }
-  if (overlap.length > 0) {
+  if (overlapTokens.length > 0) {
     const phrase = input.job.phrases[0]!;
     evidence.push({
       type: evidenceType("subject", phrase.source),
-      value: overlap.join(" ").slice(0, 200),
+      value: overlapTokens.join(" ").slice(0, 200),
       confidence: 0.55,
     });
     return {
       job: input.job,
       kind: "OVERLAP",
-      field: overlap.some((t) => input.subjectTokens.includes(t))
+      field: overlapTokens.some((t) => input.subjectTokens.includes(t))
         ? "subject"
         : "body",
       phrase,
@@ -404,6 +434,7 @@ function scoreJob(input: {
         input.subjectTokens,
         input.bodyTokens
       ),
+      matchedContentTokens: overlapTokens,
     };
   }
 
@@ -415,7 +446,28 @@ function scoreJob(input: {
     phraseHits: [],
     evidence: [],
     distinguishingHits: [],
+    matchedContentTokens: [],
   };
+}
+
+function hitToAssessmentInput(
+  hit: JobHit,
+  subjectTokens: string[],
+  bodyTokens: string[],
+  workspaceStats: WorkspaceIdentityTokenStats
+) {
+  return {
+    kind: hit.kind,
+    field: hit.field,
+    phraseLabel: hit.phrase?.label ?? null,
+    phraseSource: hit.phrase?.source ?? null,
+    phraseTokens: hit.phrase?.tokens ?? [],
+    allPhraseTokenLists: hit.job.phrases.map((p) => p.tokens),
+    matchedContentTokens: hit.matchedContentTokens,
+    subjectTokens,
+    bodyTokens,
+    workspaceStats,
+  } as const;
 }
 
 function toCandidate(hit: JobHit): JobNameMarkerCandidate {
@@ -501,23 +553,43 @@ export function runJobNameMarker(input: {
   jobs: JobRecordForMatch[];
   aliases?: JobAliasForMatch[];
   eligibilityMode?: JobMatchEligibilityMode;
+  /**
+   * BASELINE (default): historical Marker 1 resolution rules.
+   * CONTEXT_AWARE_V1: weak unique identity abstains (AMBIGUOUS); not production default.
+   */
+  identityPolicy?: JobMatchIdentityPolicy;
 }): JobNameMarkerResult {
+  const identityPolicy =
+    input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
   const prepared = prepareJobs(
     input.jobs,
     input.aliases ?? [],
     input.eligibilityMode ?? "production"
   );
-  const empty = (status: JobNameMarkerStatus): JobNameMarkerResult => ({
-    status,
-    selectedJobId: null,
-    confidence: 0,
-    evidence: [],
-    candidateJobIds: [],
-    ambiguousCandidateIds: [],
-    candidates: [],
-    eligibleJobCount: prepared.length,
-    markerVersion: JOB_NAME_MARKER_VERSION,
-  });
+  const workspaceStats = buildWorkspaceIdentityTokenStats(
+    prepared.map((p) => p.contentTokens)
+  );
+  const empty = (status: JobNameMarkerStatus): JobNameMarkerResult => {
+    const gated = applyJobNameIdentityPolicy({
+      policy: identityPolicy,
+      status,
+      selectedJobIds: [],
+      hit: null,
+    });
+    return {
+      status,
+      selectedJobId: null,
+      confidence: 0,
+      evidence: [],
+      candidateJobIds: [],
+      ambiguousCandidateIds: [],
+      candidates: [],
+      eligibleJobCount: prepared.length,
+      markerVersion: JOB_NAME_MARKER_VERSION,
+      identityPolicy,
+      identityDiagnostics: gated.diagnostics,
+    };
+  };
 
   if (prepared.length === 0) return empty("NO_MATCH");
 
@@ -557,31 +629,61 @@ export function runJobNameMarker(input: {
 
   const decision = decideFromHits(hits);
   const selectedIds = decision.selected.map((h) => h.job.job.id);
-  const evidence = decision.selected.flatMap((h) => h.evidence);
-  const topCandidate = ranked.find((c) => selectedIds.includes(c.jobId));
+  const primaryHit = decision.selected[0] ?? null;
+  const gated = applyJobNameIdentityPolicy({
+    policy: identityPolicy,
+    status: decision.status,
+    selectedJobIds: selectedIds,
+    hit: primaryHit
+      ? hitToAssessmentInput(
+          primaryHit,
+          subjectTokens,
+          bodyTokens,
+          workspaceStats
+        )
+      : null,
+    competingJobIds: selectedIds.length > 1 ? selectedIds : [],
+  });
+
+  const finalStatus = gated.status;
+  const finalIds =
+    finalStatus === "NO_MATCH"
+      ? []
+      : gated.preserveCandidates
+        ? selectedIds
+        : [];
+  const evidence = (
+    finalStatus === "MATCH" && primaryHit
+      ? [primaryHit]
+      : finalStatus === "AMBIGUOUS"
+        ? decision.selected
+        : []
+  ).flatMap((h) => h.evidence);
+  const topCandidate = ranked.find((c) => finalIds.includes(c.jobId));
   const confidence =
-    decision.status === "NO_MATCH"
+    finalStatus === "NO_MATCH"
       ? 0
       : topCandidate
         ? TIER_CONFIDENCE[topCandidate.tier]
         : 0.4;
 
-  if (decision.status === "MATCH" && decision.selected[0]) {
-    const winner = decision.selected[0];
+  if (finalStatus === "MATCH" && primaryHit && finalIds[0]) {
     return {
       status: "MATCH",
-      selectedJobId: winner.job.job.id,
+      selectedJobId: finalIds[0],
       confidence,
-      evidence: winner.evidence,
-      candidateJobIds: [winner.job.job.id],
+      evidence: primaryHit.evidence,
+      candidateJobIds: [finalIds[0]],
       ambiguousCandidateIds: [],
       candidates: ranked,
       eligibleJobCount: prepared.length,
       markerVersion: JOB_NAME_MARKER_VERSION,
+      identityPolicy,
+      identityDiagnostics: gated.diagnostics,
     };
   }
 
-  if (decision.status === "AMBIGUOUS") {
+  if (finalStatus === "AMBIGUOUS") {
     return {
       status: "AMBIGUOUS",
       selectedJobId: null,
@@ -596,11 +698,13 @@ export function runJobNameMarker(input: {
                 confidence: 0.4,
               },
             ],
-      candidateJobIds: selectedIds,
-      ambiguousCandidateIds: selectedIds,
+      candidateJobIds: finalIds,
+      ambiguousCandidateIds: finalIds,
       candidates: ranked,
       eligibleJobCount: prepared.length,
       markerVersion: JOB_NAME_MARKER_VERSION,
+      identityPolicy,
+      identityDiagnostics: gated.diagnostics,
     };
   }
 
@@ -614,6 +718,8 @@ export function runJobNameMarker(input: {
     candidates: ranked,
     eligibleJobCount: prepared.length,
     markerVersion: JOB_NAME_MARKER_VERSION,
+    identityPolicy,
+    identityDiagnostics: gated.diagnostics,
   };
 }
 

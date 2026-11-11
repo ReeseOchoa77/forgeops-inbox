@@ -55,6 +55,11 @@ export type JobMatchInput = {
    * Must not be set by the live matcher path.
    */
   eligibilityMode?: "production" | "evaluation";
+  /**
+   * Marker 1 identity policy. Default BASELINE (production).
+   * CONTEXT_AWARE_V1 is opt-in for shadow evaluation only until approved.
+   */
+  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1";
 };
 
 export type JobRecordForMatch = {
@@ -118,6 +123,27 @@ export type JobMatchResult = {
   assignmentSource: JobMatchAssignmentSource | null;
   candidateCount: number;
   matcherVersion: string;
+  /** Marker 1 identity policy used for this decision (default BASELINE). */
+  identityPolicy?: "BASELINE" | "CONTEXT_AWARE_V1";
+  /** Structured Marker 1 identity diagnostics when available. */
+  identityDiagnostics?: {
+    marker: "NAME";
+    identityPolicy: "BASELINE" | "CONTEXT_AWARE_V1";
+    identityStrength: string;
+    matchedPhrase: string | null;
+    matchedTerms: string[];
+    weakTerms: string[];
+    distinctiveTerms: string[];
+    evidenceSource: string | null;
+    evidenceType: string | null;
+    matchKind: string | null;
+    strongIdentityAnchor: boolean;
+    candidateJobIds: string[];
+    candidateCount: number;
+    competingJobIds: string[];
+    resolutionAllowed: boolean;
+    reason: string;
+  };
 };
 
 const SUBJECT_WEIGHT = 0.5;
