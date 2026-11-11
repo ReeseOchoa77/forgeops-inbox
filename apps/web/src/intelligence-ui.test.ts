@@ -181,6 +181,11 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('Showing:')
     expect(src).toContain('displayMetrics')
     expect(src).toContain('compareWithIdentityPolicy')
+    expect(src).toContain('ALL_ELIGIBLE')
+    expect(src).toContain('All available')
+    expect(src).toContain('job-matcher-eval-progress')
+    expect(src).toContain('evaluationRunId')
+    expect(src).toContain('[100, 500, 1000]')
   })
 
   it('eval export helpers never rematch and omit bodies from CSV', () => {

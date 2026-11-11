@@ -40,9 +40,10 @@ import {
   type JobMatcherEvalLifecycle,
   type JobMatcherEvalSampling,
   type JobMatchResult,
-  JOB_MATCHER_EVAL_MAX_SYNC,
+  JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
+import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
   findEvalWorkspace,
@@ -52,6 +53,12 @@ import {
   loadJobMatchEvalSnapshot,
   loadWorkspaceJobsForEval,
 } from "./job-match-eval-read.js";
+import {
+  completeJobMatcherEvalProgress,
+  failJobMatcherEvalProgress,
+  startJobMatcherEvalProgress,
+  updateJobMatcherEvalProgress,
+} from "./job-matcher-eval-progress.js";
 
 export type JobMatcherEvalRow = {
   emailMessageId: string;
@@ -84,6 +91,8 @@ export type JobMatcherHistoricalEvalResult = {
   intelligenceId: "job-matcher";
   databaseWrites: "NONE";
   autoAssignEnabled: boolean;
+  /** Stable id for this evaluation run (exports / progress). */
+  evaluationRunId: string;
   identityPolicy: JobMatchIdentityPolicy;
   dataset: {
     spec: JobMatcherEvalDatasetSpec;
@@ -121,6 +130,11 @@ export type JobMatcherHistoricalEvalResult = {
 export type JobMatcherEvalDatasetPreview = {
   spec: JobMatcherEvalDatasetSpec;
   summaryLabel: string;
+  /** Workspace-wide email count (all emails, not just eligible). */
+  workspaceTotalEmails: number;
+  /** Authoritative GT pool before Job/lifecycle filters. */
+  authoritativeEmailCount: number;
+  /** Eligible under current Jobs mode + lifecycle filters. */
   eligibleCount: number;
   jobsInScope: number;
   expectedMax: number;
@@ -201,9 +215,10 @@ export async function previewJobMatcherEvalDataset(input: {
   const workspace = await findEvalWorkspace(input.prisma, input.workspaceId);
   if (!workspace) throw new Error("Workspace not found");
 
-  const [index, jobs] = await Promise.all([
+  const [index, jobs, workspaceSummary] = await Promise.all([
     loadAuthoritativeEvalEmailIndex(input.prisma, input.workspaceId),
     loadWorkspaceJobsForEval(input.prisma, input.workspaceId),
+    loadHistoricalEvalDatasetSummary(input.prisma, workspace),
   ]);
   const jobStatusById = new Map(jobs.map((j) => [j.id, j.status]));
   const selection = selectEvalEmailIds({
@@ -229,6 +244,8 @@ export async function previewJobMatcherEvalDataset(input: {
   return {
     spec,
     summaryLabel: summarizeDatasetSpec(spec),
+    workspaceTotalEmails: workspaceSummary.totalEmails,
+    authoritativeEmailCount: workspaceSummary.authoritativeEmails,
     eligibleCount: selection.eligibleCount,
     jobsInScope: selection.jobsInScope,
     expectedMax: selection.expectedMax,
@@ -359,8 +376,11 @@ export async function runJobMatcherHistoricalEval(input: {
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
     | "ALL_THREE";
+  /** Optional client-supplied run id for progress polling. */
+  evaluationRunId?: string;
 }): Promise<JobMatcherHistoricalEvalResult> {
   const startedAt = Date.now();
+  const evaluationRunId = input.evaluationRunId?.trim() || randomUUID();
   const identityPolicy: JobMatchIdentityPolicy =
     input.identityPolicy ?? "BASELINE";
   const compareWith = input.compareWithIdentityPolicy ?? null;
@@ -376,6 +396,17 @@ export async function runJobMatcherHistoricalEval(input: {
     throw new Error("Workspace not found");
   }
 
+  const policiesTotal =
+    compareWith === "ALL_THREE"
+      ? 4
+      : compareWith === "CONTEXT_AWARE_V2" ||
+          compareWith === "CONTEXT_AWARE_V2_1"
+        ? 3
+        : compareWith === "CONTEXT_AWARE_V1"
+          ? 2
+          : 1;
+
+  try {
   const [workspaceSummary, index, jobs, snapshot] = await Promise.all([
     loadHistoricalEvalDatasetSummary(input.prisma, workspace),
     loadAuthoritativeEvalEmailIndex(input.prisma, input.workspaceId),
@@ -398,11 +429,17 @@ export async function runJobMatcherHistoricalEval(input: {
     spec,
   });
 
-  if (spec.sampling === "ALL_ELIGIBLE" && selection.eligibleCount > JOB_MATCHER_EVAL_MAX_SYNC) {
-    throw new Error(
-      `ALL_ELIGIBLE has ${selection.eligibleCount} emails; sync max is ${JOB_MATCHER_EVAL_MAX_SYNC}. Use TOTAL or PER_JOB sampling.`
-    );
+  if (new Set(selection.selectedIds).size !== selection.selectedIds.length) {
+    throw new Error("Evaluation selection produced duplicate email IDs");
   }
+
+  startJobMatcherEvalProgress({
+    workspaceId: input.workspaceId,
+    evaluationRunId,
+    emailsTotal: selection.selectedIds.length,
+    policiesTotal,
+    phase: "loading_emails",
+  });
 
   const matcher = new JobMatcherService(
     createJobMatchEvalLoaderFromSnapshot(snapshot),
@@ -414,45 +451,94 @@ export async function runJobMatcherHistoricalEval(input: {
   const emailRecords = await loadHistoricalEvalEmailsByIds(input.prisma, {
     workspaceId: input.workspaceId,
     ids: selection.selectedIds,
+    batchSize: JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
   });
+
+  if (emailRecords.length !== selection.selectedIds.length) {
+    throw new Error(
+      `Failed to load evaluation emails: expected ${selection.selectedIds.length}, loaded ${emailRecords.length}. Refusing incomplete evaluation.`
+    );
+  }
 
   const sourceById = new Map(
     emailRecords.map((e) => [e.id, e.jobAssignmentSource] as const)
   );
 
+  let policiesCompleted = 0;
+
   async function scoreEmails(
     policy: JobMatchIdentityPolicy
   ): Promise<{ evaluated: HistoricalEvalEmail[]; runtimeMs: number }> {
     const t0 = Date.now();
-    const scored = await mapLimit(emailRecords, 2, async (email) => {
-      if (!isHistoricalEvalGroundTruth(email)) {
-        return null;
-      }
-      // Matcher must NOT receive trueJobId / selected Job as a hint.
-      const result = await matcher.match({
-        workspaceId: input.workspaceId,
-        emailMessageId: email.id,
-        inboxConnectionId: email.inboxConnectionId,
-        subject: email.subject,
-        cleanBody: email.cleanBody,
-        senderEmail: email.senderEmail,
-        providerThreadId: email.providerThreadId,
-        eligibilityMode: "evaluation",
-        identityPolicy: policy,
-      });
-      return {
-        id: email.id,
-        subject: email.subject,
-        direction: email.direction,
-        trueJobId: email.jobId,
-        hasAttachments: email.hasAttachments,
-        result,
-      } satisfies HistoricalEvalEmail;
+    updateJobMatcherEvalProgress({
+      workspaceId: input.workspaceId,
+      evaluationRunId,
+      phase: `scoring_${policy}`,
+      emailsCompleted: 0,
+      emailsTotal: emailRecords.length,
+      policiesCompleted,
+      policiesTotal,
     });
+
+    const SCORE_BATCH = 50;
     const evaluated: HistoricalEvalEmail[] = [];
-    for (const row of scored) {
-      if (row) evaluated.push(row);
+    for (let offset = 0; offset < emailRecords.length; offset += SCORE_BATCH) {
+      const batch = emailRecords.slice(offset, offset + SCORE_BATCH);
+      const scored = await mapLimit(batch, 2, async (email) => {
+        if (!isHistoricalEvalGroundTruth(email)) {
+          return null;
+        }
+        // Matcher must NOT receive trueJobId / selected Job as a hint.
+        const result = await matcher.match({
+          workspaceId: input.workspaceId,
+          emailMessageId: email.id,
+          inboxConnectionId: email.inboxConnectionId,
+          subject: email.subject,
+          cleanBody: email.cleanBody,
+          senderEmail: email.senderEmail,
+          providerThreadId: email.providerThreadId,
+          eligibilityMode: "evaluation",
+          identityPolicy: policy,
+        });
+        return {
+          id: email.id,
+          subject: email.subject,
+          direction: email.direction,
+          trueJobId: email.jobId,
+          hasAttachments: email.hasAttachments,
+          result,
+        } satisfies HistoricalEvalEmail;
+      });
+      for (const row of scored) {
+        if (row) evaluated.push(row);
+      }
+      updateJobMatcherEvalProgress({
+        workspaceId: input.workspaceId,
+        evaluationRunId,
+        phase: `scoring_${policy}`,
+        emailsCompleted: Math.min(
+          offset + batch.length,
+          emailRecords.length
+        ),
+        emailsTotal: emailRecords.length,
+        policiesCompleted,
+        policiesTotal,
+      });
     }
+    if (evaluated.length !== emailRecords.length) {
+      throw new Error(
+        `Incomplete scoring under ${policy}: expected ${emailRecords.length}, got ${evaluated.length}`
+      );
+    }
+    policiesCompleted += 1;
+    updateJobMatcherEvalProgress({
+      workspaceId: input.workspaceId,
+      evaluationRunId,
+      phase: `scored_${policy}`,
+      emailsCompleted: emailRecords.length,
+      policiesCompleted,
+      policiesTotal,
+    });
     return { evaluated, runtimeMs: Date.now() - t0 };
   }
 
@@ -686,10 +772,11 @@ export async function runJobMatcherHistoricalEval(input: {
     identityPolicy: primaryPolicy,
   });
 
-  return {
+  const result: JobMatcherHistoricalEvalResult = {
     intelligenceId: "job-matcher",
     databaseWrites: "NONE",
     autoAssignEnabled: isJobMatcherAutoAssignEnabled(),
+    evaluationRunId,
     identityPolicy: primaryPolicy,
     dataset: {
       spec,
@@ -718,4 +805,17 @@ export async function runJobMatcherHistoricalEval(input: {
     groundTruthNotes:
       "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2/V2.1 are shadow-only until approved; production default remains BASELINE.",
   };
+  completeJobMatcherEvalProgress({
+    workspaceId: input.workspaceId,
+    evaluationRunId,
+  });
+  return result;
+  } catch (err) {
+    failJobMatcherEvalProgress({
+      workspaceId: input.workspaceId,
+      evaluationRunId,
+      error: err instanceof Error ? err.message : "Evaluation failed",
+    });
+    throw err;
+  }
 }

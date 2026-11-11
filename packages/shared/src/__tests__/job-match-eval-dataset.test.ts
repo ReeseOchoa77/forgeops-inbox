@@ -217,7 +217,7 @@ describe("selectEvalEmailIds", () => {
     expect(r.expectedMax).toBe(1);
   });
 
-  it("caps ALL_ELIGIBLE at sync max", () => {
+  it("ALL_ELIGIBLE returns every eligible email with no artificial ceiling", () => {
     const many = Array.from({ length: JOB_MATCHER_EVAL_MAX_SYNC + 5 }, (_, i) =>
       email(`e${String(i).padStart(4, "0")}`, "j1")
     );
@@ -232,8 +232,40 @@ describe("selectEvalEmailIds", () => {
         jobLifecycle: "ALL",
       },
     });
-    expect(r.selectedIds).toHaveLength(JOB_MATCHER_EVAL_MAX_SYNC);
-    expect(r.capped).toBe(true);
+    expect(r.selectedIds).toHaveLength(JOB_MATCHER_EVAL_MAX_SYNC + 5);
+    expect(r.expectedMax).toBe(JOB_MATCHER_EVAL_MAX_SYNC + 5);
+    expect(r.capped).toBe(false);
+    expect(new Set(r.selectedIds).size).toBe(r.selectedIds.length);
+  });
+
+  it("TOTAL sample still respects 1000 max; use ALL_ELIGIBLE for full set", () => {
+    expect(
+      validateJobMatcherEvalDatasetSpec({
+        jobsMode: "ALL",
+        jobIds: [],
+        sampling: "TOTAL",
+        count: 1001,
+        jobLifecycle: "ALL",
+      })
+    ).toMatch(/cannot exceed/);
+    expect(
+      validateJobMatcherEvalDatasetSpec({
+        jobsMode: "ALL",
+        jobIds: [],
+        sampling: "TOTAL",
+        count: 1000,
+        jobLifecycle: "ALL",
+      })
+    ).toBeNull();
+    expect(
+      validateJobMatcherEvalDatasetSpec({
+        jobsMode: "ALL",
+        jobIds: [],
+        sampling: "ALL_ELIGIBLE",
+        count: null,
+        jobLifecycle: "ALL",
+      })
+    ).toBeNull();
   });
 });
 

@@ -10,11 +10,19 @@ import {
 } from "./job-match-historical-eval.js";
 import type { JobRecordForMatch } from "./job-matcher.js";
 
-/** Soft sync ceiling — larger runs should use sampling, not unbounded HTTP. */
-export const JOB_MATCHER_EVAL_MAX_SYNC = 1000;
+/**
+ * Max TOTAL-sample size for Manage UI discrete samples (100 / 500 / 1000).
+ * ALL_ELIGIBLE is intentionally uncapped — evaluates every eligible email.
+ * Kept as JOB_MATCHER_EVAL_MAX_SYNC for back-compat with older imports/docs.
+ */
+export const JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX = 1000;
+export const JOB_MATCHER_EVAL_MAX_SYNC = JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX;
 
-export const JOB_MATCHER_EVAL_TOTAL_PRESETS = [25, 50, 100, 250, 500, 1000] as const;
+export const JOB_MATCHER_EVAL_TOTAL_PRESETS = [100, 500, 1000] as const;
 export const JOB_MATCHER_EVAL_PER_JOB_PRESETS = [5, 10, 25, 50, 100] as const;
+
+/** Batch size for loading evaluation email bodies by id. */
+export const JOB_MATCHER_EVAL_LOAD_BATCH_SIZE = 200;
 
 export type JobMatcherEvalJobsMode = "ALL" | "SPECIFIC" | "SELECTED";
 export type JobMatcherEvalSampling = "TOTAL" | "PER_JOB" | "ALL_ELIGIBLE";
@@ -88,8 +96,11 @@ export function validateJobMatcherEvalDatasetSpec(
     if (spec.count == null || !Number.isInteger(spec.count) || spec.count < 1) {
       return "count must be a positive integer";
     }
-    if (spec.sampling === "TOTAL" && spec.count > JOB_MATCHER_EVAL_MAX_SYNC) {
-      return `TOTAL count cannot exceed ${JOB_MATCHER_EVAL_MAX_SYNC}`;
+    if (
+      spec.sampling === "TOTAL" &&
+      spec.count > JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX
+    ) {
+      return `TOTAL count cannot exceed ${JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX}; use ALL_ELIGIBLE for the full dataset`;
     }
     if (spec.sampling === "PER_JOB" && spec.count > 100) {
       return "PER_JOB count cannot exceed 100";
@@ -101,13 +112,17 @@ export function validateJobMatcherEvalDatasetSpec(
 /**
  * Deterministic sample: emails ordered by id ascending within each Job,
  * then selection rules applied. Never duplicates.
+ *
+ * ALL_ELIGIBLE returns every eligible id (no artificial ceiling).
+ * TOTAL samples are bounded by JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX.
  */
 export function selectEvalEmailIds(input: {
   emails: EligibleEmailIndexRow[];
   /** jobId → status for lifecycle filtering when jobs are not pre-filtered. */
   jobStatusById: Map<string, string | null | undefined>;
   spec: JobMatcherEvalDatasetSpec;
-  maxSync?: number;
+  /** Optional TOTAL-sample ceiling override (defaults to TOTAL_SAMPLE_MAX). */
+  maxTotalSample?: number;
 }): {
   selectedIds: string[];
   eligibleCount: number;
@@ -116,7 +131,8 @@ export function selectEvalEmailIds(input: {
   capped: boolean;
   capReason: string | null;
 } {
-  const maxSync = input.maxSync ?? JOB_MATCHER_EVAL_MAX_SYNC;
+  const maxTotalSample =
+    input.maxTotalSample ?? JOB_MATCHER_EVAL_TOTAL_SAMPLE_MAX;
   const scopedJobIds =
     input.spec.jobsMode === "ALL"
       ? null
@@ -156,27 +172,17 @@ export function selectEvalEmailIds(input: {
     for (const jobId of jobIds) {
       selected.push(...(byJob.get(jobId) ?? []).slice(0, per));
     }
-    if (selected.length > maxSync) {
-      selected = selected.slice(0, maxSync);
-      capped = true;
-      capReason = `Capped at ${maxSync} emails for synchronous evaluation`;
-    }
   } else if (input.spec.sampling === "ALL_ELIGIBLE") {
     for (const jobId of jobIds) {
       selected.push(...(byJob.get(jobId) ?? []));
     }
-    if (selected.length > maxSync) {
-      selected = selected.slice(0, maxSync);
-      capped = true;
-      capReason = `ALL_ELIGIBLE exceeds sync max ${maxSync}; evaluate a sample or raise ops queue work`;
-    }
   } else {
     // TOTAL — round-robin across Jobs so large Jobs do not dominate.
     const per = input.spec.count ?? 0;
-    const target = Math.min(per, maxSync, eligibleCount);
-    if (per > maxSync) {
+    const target = Math.min(per, maxTotalSample, eligibleCount);
+    if (per > maxTotalSample) {
       capped = true;
-      capReason = `Capped at ${maxSync} emails for synchronous evaluation`;
+      capReason = `TOTAL sample capped at ${maxTotalSample}; use All eligible for the full dataset`;
     }
     const cursors = new Map(jobIds.map((id) => [id, 0]));
     while (selected.length < target) {
@@ -194,12 +200,22 @@ export function selectEvalEmailIds(input: {
     }
   }
 
+  // Deduplicate while preserving order (defensive — selection should already be unique).
+  const seen = new Set<string>();
+  const uniqueSelected: string[] = [];
+  for (const id of selected) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    uniqueSelected.push(id);
+  }
+  selected = uniqueSelected;
+
   const expectedMax =
     input.spec.sampling === "PER_JOB"
-      ? Math.min(jobsInScope * (input.spec.count ?? 0), maxSync, eligibleCount)
+      ? Math.min(jobsInScope * (input.spec.count ?? 0), eligibleCount)
       : input.spec.sampling === "ALL_ELIGIBLE"
-        ? Math.min(eligibleCount, maxSync)
-        : Math.min(input.spec.count ?? 0, maxSync, eligibleCount);
+        ? eligibleCount
+        : Math.min(input.spec.count ?? 0, maxTotalSample, eligibleCount);
 
   return {
     selectedIds: selected,

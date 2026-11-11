@@ -11,6 +11,7 @@ import {
   previewJobMatcherEvalDataset,
   runJobMatcherHistoricalEval,
 } from "../../../application/services/run-job-matcher-historical-eval.js";
+import { getJobMatcherEvalProgress } from "../../../application/services/job-matcher-eval-progress.js";
 import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
 import { loadIntelligenceEvalEmail } from "../../../application/services/load-intelligence-eval-email.js";
 import { getSessionFromRequest } from "../authentication.js";
@@ -19,6 +20,7 @@ const datasetSpecSchema = z.object({
   jobsMode: z.enum(["ALL", "SPECIFIC", "SELECTED"]),
   jobIds: z.array(z.string().min(1)).max(200).optional(),
   sampling: z.enum(["TOTAL", "PER_JOB", "ALL_ELIGIBLE"]),
+  /** TOTAL sample max 1000; ALL_ELIGIBLE uses null (uncapped). */
   count: z.number().int().min(1).max(1000).nullable().optional(),
   jobLifecycle: z.enum(["ALL", "CURRENT", "ARCHIVED"]).optional(),
 });
@@ -191,6 +193,8 @@ export const registerIntelligenceRoutes = async (
               "ALL_THREE",
             ])
             .optional(),
+          /** Client-generated id for progress polling during long runs. */
+          evaluationRunId: z.string().uuid().optional(),
         })
         .parse(request.body);
 
@@ -218,12 +222,43 @@ export const registerIntelligenceRoutes = async (
           ...(body.compareWithIdentityPolicy
             ? { compareWithIdentityPolicy: body.compareWithIdentityPolicy }
             : {}),
+          ...(body.evaluationRunId
+            ? { evaluationRunId: body.evaluationRunId }
+            : {}),
         });
         return reply.send({ evaluation: result });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Evaluation failed";
         return reply.code(400).send({ message });
       }
+    }
+  );
+
+  /** Progress snapshot for a running/completed evaluation (in-memory, short TTL). */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/progress",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          evaluationRunId: z.string().uuid(),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const progress = getJobMatcherEvalProgress({
+        workspaceId: params.workspaceId,
+        evaluationRunId: params.evaluationRunId,
+      });
+      if (!progress) {
+        return reply.code(404).send({ message: "Progress not found" });
+      }
+      return reply.send({ progress });
     }
   );
 

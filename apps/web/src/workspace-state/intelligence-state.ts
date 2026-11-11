@@ -119,7 +119,7 @@ export const DEFAULT_INTELLIGENCE_STATE: IntelligencePersistedState = {
     jobsMode: 'ALL',
     jobIds: [],
     sampling: 'TOTAL',
-    count: 50,
+    count: 100,
     lifecycle: 'ALL',
     evaluationMode: 'CURRENT',
   },

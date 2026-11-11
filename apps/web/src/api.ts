@@ -3044,11 +3044,30 @@ export const api = {
         | 'CONTEXT_AWARE_V2'
         | 'CONTEXT_AWARE_V2_1'
         | 'ALL_THREE'
+      evaluationRunId?: string
     }
   ) =>
     request<{ evaluation: JobMatcherEvalResult }>(
       `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate`,
       { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  getJobMatcherEvalProgress: (workspaceId: string, evaluationRunId: string) =>
+    request<{
+      progress: {
+        evaluationRunId: string
+        workspaceId: string
+        status: 'running' | 'completed' | 'failed'
+        phase: string
+        emailsTotal: number
+        emailsCompleted: number
+        policiesTotal: number
+        policiesCompleted: number
+        error: string | null
+        updatedAt: number
+      }
+    }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/progress`
     ),
 
   getJobMatcherEvalEmail: (workspaceId: string, emailMessageId: string) =>
@@ -5025,6 +5044,8 @@ export interface JobMatcherEvalDatasetSpec {
 export interface JobMatcherEvalPreview {
   spec: JobMatcherEvalDatasetSpec
   summaryLabel: string
+  workspaceTotalEmails: number
+  authoritativeEmailCount: number
   eligibleCount: number
   jobsInScope: number
   expectedMax: number
@@ -5237,6 +5258,7 @@ export interface JobMatcherEvalResult {
   intelligenceId: 'job-matcher'
   databaseWrites: 'NONE'
   autoAssignEnabled: boolean
+  evaluationRunId?: string
   identityPolicy?: JobMatcherIdentityPolicy
   dataset: {
     spec: JobMatcherEvalDatasetSpec
@@ -5249,6 +5271,10 @@ export interface JobMatcherEvalResult {
     capped: boolean
     capReason: string | null
     selectedEmailIds?: string[]
+    workspaceSummary?: {
+      totalEmails: number
+      authoritativeEmails: number
+    }
   }
   metrics: {
     totalEvaluated: number

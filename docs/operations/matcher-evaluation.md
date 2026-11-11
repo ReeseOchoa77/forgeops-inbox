@@ -47,7 +47,7 @@ UI: Evaluation mode → **Current matcher** | **Compare BASELINE vs V1** | **Com
 |----------|---------|
 | `TOTAL` | N emails total (round-robin across Jobs) |
 | `PER_JOB` | N emails from each Job in scope |
-| `ALL_ELIGIBLE` | Every eligible email in scope (refused if over sync max 1000) |
+| `ALL_ELIGIBLE` | Every eligible email in scope (uncapped; loaded/scored in batches) |
 
 Job lifecycle filter (`ALL` / `CURRENT` / `ARCHIVED`) filters which ground-truth Jobs contribute emails. Default `ALL` matches historical CLI behavior.
 
@@ -92,7 +92,8 @@ From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodi
 | No target leakage | Job selection is GT dataset filter only |
 | Historical Jobs | `eligibilityMode: evaluation` (includes completed/archived) |
 | Ground truth | Authoritative assignments only; `JOB_NUMBER_MATCH` **excluded** |
-| Sync ceiling | Max 1000 emails per Manage UI run |
+| TOTAL sample max | Discrete samples 100 / 500 / 1000 |
+| Full dataset | `ALL_ELIGIBLE` evaluates every eligible email (batched load; no silent skip) |
 
 Do **not** paste production `DATABASE_URL` into Cursor. Run inside the **Railway API service** so the platform injects env.
 

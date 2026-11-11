@@ -48,8 +48,15 @@ type OutcomeFilter = 'ALL' | 'CORRECT_MATCH' | 'WRONG_MATCH' | 'AMBIGUOUS' | 'CO
 type ResultsView = 'emails' | 'jobs'
 type PanelTab = 'emails' | 'jobs' | 'diagnostics'
 
-const TOTAL_PRESETS = [25, 50, 100, 250, 500, 1000]
-const PER_JOB_PRESETS = [5, 10, 25, 50, 100]
+const TOTAL_PRESETS = [100, 500, 1000] as const
+const PER_JOB_PRESETS = [5, 10, 25, 50, 100] as const
+
+function newEvaluationRunId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+  return `eval-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
 
 export function JobMatcherEvaluationPanel({
   workspaceId,
@@ -113,6 +120,15 @@ export function JobMatcherEvaluationPanel({
   const [wide, setWide] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1100 : true
   )
+  const [runProgress, setRunProgress] = useState<{
+    evaluationRunId: string
+    phase: string
+    emailsCompleted: number
+    emailsTotal: number
+    policiesCompleted: number
+    policiesTotal: number
+    elapsedSec: number
+  } | null>(null)
   const jobsHydratedRef = useRef(false)
   const skipUiPersistRef = useRef(true)
   const resultsScrollRef = useRef<HTMLDivElement | null>(null)
@@ -314,6 +330,43 @@ export function JobMatcherEvaluationPanel({
     setTransitionFilter('ALL')
     setResultsView('emails')
     setResult(null)
+    const evaluationRunId = newEvaluationRunId()
+    const startedAt = Date.now()
+    setRunProgress({
+      evaluationRunId,
+      phase: 'starting',
+      emailsCompleted: 0,
+      emailsTotal: preview?.expectedMax ?? preview?.eligibleCount ?? 0,
+      policiesCompleted: 0,
+      policiesTotal: 1,
+      elapsedSec: 0,
+    })
+    const progressTimer = window.setInterval(() => {
+      setRunProgress((prev) =>
+        prev
+          ? { ...prev, elapsedSec: Math.floor((Date.now() - startedAt) / 1000) }
+          : prev
+      )
+    }, 1000)
+    const progressPoll = window.setInterval(() => {
+      api
+        .getJobMatcherEvalProgress(workspaceId, evaluationRunId)
+        .then((res) => {
+          const p = res.progress
+          setRunProgress((prev) => ({
+            evaluationRunId,
+            phase: p.phase,
+            emailsCompleted: p.emailsCompleted,
+            emailsTotal: p.emailsTotal,
+            policiesCompleted: p.policiesCompleted,
+            policiesTotal: p.policiesTotal,
+            elapsedSec: prev?.elapsedSec ?? Math.floor((Date.now() - startedAt) / 1000),
+          }))
+        })
+        .catch(() => {
+          /* progress is best-effort while the evaluate request is in flight */
+        })
+    }, 1500)
     const compareWith =
       evaluationMode === 'COMPARE_V1'
         ? ('CONTEXT_AWARE_V1' as const)
@@ -327,6 +380,7 @@ export function JobMatcherEvaluationPanel({
     const promise = api
       .evaluateJobMatcherIntelligence(workspaceId, {
         dataset,
+        evaluationRunId,
         ...(compareWith ? { compareWithIdentityPolicy: compareWith } : {}),
       })
       .then((res) => res.evaluation)
@@ -343,7 +397,10 @@ export function JobMatcherEvaluationPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Evaluation failed')
     } finally {
+      window.clearInterval(progressTimer)
+      window.clearInterval(progressPoll)
       clearJobMatcherEvalPending(workspaceId, userId)
+      setRunProgress(null)
       setBusy(false)
     }
   }
@@ -380,6 +437,15 @@ export function JobMatcherEvaluationPanel({
     transitionFilter,
   ])
 
+  const exportMeta = result
+    ? {
+        policy:
+          result.displayIdentityPolicy ?? result.identityPolicy ?? null,
+        evaluated: result.dataset.actualEvaluated,
+        runId: result.evaluationRunId ?? null,
+      }
+    : undefined
+
   const exportFull = (
     kind: 'summary' | 'detailed' | 'json' | 'comparison' | 'comparison-3way'
   ) => {
@@ -387,7 +453,7 @@ export function JobMatcherEvaluationPanel({
     setExportOpen(false)
     if (kind === 'summary') {
       downloadTextFile(
-        jobMatcherEvalExportFilename('summary', 'csv'),
+        jobMatcherEvalExportFilename('summary', 'csv', exportMeta),
         buildEvalSummaryCsv(result),
         'text/csv;charset=utf-8'
       )
@@ -396,7 +462,7 @@ export function JobMatcherEvaluationPanel({
     if (kind === 'comparison') {
       if (!result.comparison) return
       downloadTextFile(
-        jobMatcherEvalExportFilename('comparison', 'csv'),
+        jobMatcherEvalExportFilename('comparison', 'csv', exportMeta),
         buildEvalComparisonCsv(result.comparison),
         'text/csv;charset=utf-8'
       )
@@ -405,7 +471,7 @@ export function JobMatcherEvaluationPanel({
     if (kind === 'comparison-3way') {
       if (!result.threeWayComparison) return
       downloadTextFile(
-        jobMatcherEvalExportFilename('comparison-3way', 'csv'),
+        jobMatcherEvalExportFilename('comparison-3way', 'csv', exportMeta),
         buildEvalThreeWayComparisonCsv(result.threeWayComparison),
         'text/csv;charset=utf-8'
       )
@@ -413,14 +479,14 @@ export function JobMatcherEvaluationPanel({
     }
     if (kind === 'detailed') {
       downloadTextFile(
-        jobMatcherEvalExportFilename('detailed', 'csv'),
+        jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
         buildEvalDetailedCsv(result.rows),
         'text/csv;charset=utf-8'
       )
       return
     }
     downloadTextFile(
-      jobMatcherEvalExportFilename('full', 'json'),
+      jobMatcherEvalExportFilename('full', 'json', exportMeta),
       buildEvalFullJson(result),
       'application/json;charset=utf-8'
     )
@@ -430,7 +496,7 @@ export function JobMatcherEvaluationPanel({
     if (!result) return
     setExportOpen(false)
     downloadTextFile(
-      jobMatcherEvalExportFilename('detailed', 'csv'),
+      jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
       buildEvalDetailedCsv(filteredRows),
       'text/csv;charset=utf-8'
     )
@@ -443,7 +509,8 @@ export function JobMatcherEvaluationPanel({
       (jobsMode === 'SPECIFIC' && selectedJobs.length === 1) ||
       (jobsMode === 'SELECTED' && selectedJobs.length > 0))
 
-  const countPresets = sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
+  const countPresets: readonly number[] =
+    sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
   const groundTruthParts = parseGroundTruthLabel(preview?.groundTruth ?? '')
   /** Primary cards show the most advanced policy in the completed evaluation. */
   const displayPolicy =
@@ -523,27 +590,40 @@ export function JobMatcherEvaluationPanel({
                 const next = e.target.value as Sampling
                 setSampling(next)
                 if (next === 'PER_JOB' && count > 100) setCount(25)
-                if (next === 'TOTAL' && count < 25) setCount(50)
+                if (next === 'TOTAL' && !TOTAL_PRESETS.includes(count as (typeof TOTAL_PRESETS)[number])) {
+                  setCount(100)
+                }
               }}
               style={selectStyle}
+              data-testid="job-matcher-sampling"
             >
               <option value="TOTAL">Total sample</option>
               <option value="PER_JOB">Per Job</option>
-              <option value="ALL_ELIGIBLE">All eligible</option>
+              <option value="ALL_ELIGIBLE">
+                All available
+                {preview ? ` (${preview.eligibleCount.toLocaleString()} eligible)` : ''}
+              </option>
             </select>
           </Control>
           {sampling !== 'ALL_ELIGIBLE' && (
-            <Control label="Amount">
+            <Control
+              label={
+                preview
+                  ? `Amount (${preview.eligibleCount.toLocaleString()} eligible)`
+                  : 'Amount'
+              }
+            >
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 <select
-                  value={countPresets.includes(count as (typeof countPresets)[number]) ? count : ''}
+                  value={countPresets.includes(count) ? count : ''}
                   disabled={busy}
                   onChange={(e) => {
                     if (e.target.value) setCount(Number(e.target.value))
                   }}
                   style={{ ...selectStyle, minWidth: 88 }}
+                  data-testid="job-matcher-amount"
                 >
-                  {!countPresets.includes(count as (typeof countPresets)[number]) && (
+                  {!countPresets.includes(count) && (
                     <option value="">Custom</option>
                   )}
                   {countPresets.map((n) => (
@@ -552,16 +632,18 @@ export function JobMatcherEvaluationPanel({
                     </option>
                   ))}
                 </select>
-                <input
-                  type="number"
-                  min={1}
-                  max={sampling === 'PER_JOB' ? 100 : 1000}
-                  value={count}
-                  disabled={busy}
-                  onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))}
-                  style={{ ...selectStyle, width: 72, minWidth: 72 }}
-                  aria-label="Custom amount"
-                />
+                {sampling === 'PER_JOB' && (
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={count}
+                    disabled={busy}
+                    onChange={(e) => setCount(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                    style={{ ...selectStyle, width: 72, minWidth: 72 }}
+                    aria-label="Custom amount"
+                  />
+                )}
               </div>
             </Control>
           )}
@@ -699,9 +781,22 @@ export function JobMatcherEvaluationPanel({
                       marginBottom: 8,
                     }}
                   >
+                    <SummaryStat
+                      label="Workspace emails"
+                      value={preview.workspaceTotalEmails}
+                    />
+                    <SummaryStat
+                      label="Authoritative GT pool"
+                      value={preview.authoritativeEmailCount}
+                    />
+                    <SummaryStat label="Eligible (filters)" value={preview.eligibleCount} />
                     <SummaryStat label="Jobs in scope" value={preview.jobsInScope} />
-                    <SummaryStat label="Eligible emails" value={preview.eligibleCount} />
-                    <SummaryStat label="Expected maximum" value={preview.expectedMax} />
+                    <SummaryStat
+                      label={
+                        sampling === 'ALL_ELIGIBLE' ? 'Will evaluate (all)' : 'Will evaluate'
+                      }
+                      value={preview.expectedMax}
+                    />
                   </div>
                   {preview.capped && preview.capReason && (
                     <div style={{ color: '#92400e', fontSize: 12, marginBottom: 6 }}>
@@ -813,6 +908,28 @@ export function JobMatcherEvaluationPanel({
             </div>
           </div>
         </div>
+
+        {busy && runProgress && (
+          <div
+            data-testid="job-matcher-eval-progress"
+            style={{
+              fontSize: 12,
+              color: '#374151',
+              padding: '6px 10px',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              background: '#f9fafb',
+            }}
+          >
+            Evaluating {runProgress.emailsCompleted.toLocaleString()} /{' '}
+            {runProgress.emailsTotal.toLocaleString()} emails
+            {runProgress.policiesTotal > 1
+              ? ` · policy ${runProgress.policiesCompleted}/${runProgress.policiesTotal}`
+              : ''}
+            {' · '}
+            {runProgress.phase.replace(/_/g, ' ')} · {runProgress.elapsedSec}s
+          </div>
+        )}
 
         {error && (
           <div role="alert" style={{ color: '#b42318', fontSize: 12 }}>

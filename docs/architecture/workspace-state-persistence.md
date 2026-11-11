@@ -118,7 +118,7 @@ Current architecture:
 
 ```text
 POST .../intelligence/job-matcher/evaluate
-  → synchronous response (max sample 1000)
+  → synchronous response (TOTAL samples ≤1000; ALL_ELIGIBLE uncapped)
   → React state + SPA session memory (navigation)
   → lost on full browser refresh (no EvaluationRun id)
 ```

@@ -25,7 +25,7 @@ Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENC
 - **Holdout:** evaluated email excluded from Marker 2/3 evidence
 - **No target leakage:** selecting a Job filters ground-truth emails only — matcher is not told the answer
 - **Bodies on demand:** evaluation payload does not embed every email body
-- **Sync max:** 1000 emails per Manage UI run (larger ALL_ELIGIBLE refused)
+- **Dataset sizes:** TOTAL samples 100 / 500 / 1000, or All available (`ALL_ELIGIBLE`, uncapped)
 
 See [Intelligence Registry](../architecture/intelligence-registry.md) and [matcher evaluation](../operations/matcher-evaluation.md).
 

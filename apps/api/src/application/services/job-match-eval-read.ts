@@ -312,57 +312,72 @@ export async function loadWorkspaceJobsForEval(
   );
 }
 
+/**
+ * Load evaluation email bodies by id in bounded batches (avoids oversized IN clauses).
+ * Preserves caller selection order. Missing ids are omitted — callers must reconcile.
+ */
 export async function loadHistoricalEvalEmailsByIds(
   db: JobMatchEvalReadDb,
-  input: { workspaceId: string; ids: string[] }
+  input: {
+    workspaceId: string;
+    ids: string[];
+    /** Default 200 — matches JOB_MATCHER_EVAL_LOAD_BATCH_SIZE. */
+    batchSize?: number;
+  }
 ): Promise<HistoricalEvalEmailRecord[]> {
   if (input.ids.length === 0) return [];
-  const rows = await db.emailMessage.findMany({
-    where: {
-      workspaceId: input.workspaceId,
-      id: { in: input.ids },
-      jobId: { not: null },
-      OR: authoritativeEmailAssignmentOr(),
-    },
-    select: {
-      id: true,
-      subject: true,
-      snippet: true,
-      senderEmail: true,
-      direction: true,
-      inboxConnectionId: true,
-      providerThreadId: true,
-      jobId: true,
-      jobAssignmentIsManual: true,
-      jobAssignmentSource: true,
-      hasAttachments: true,
-      normalizedEmail: { select: { cleanTextBody: true } },
-    },
-  });
-  const byId = new Map(
-    rows
-      .filter((row): row is typeof row & { jobId: string } => Boolean(row.jobId))
-      .map((row) => [
-        row.id,
-        {
-          id: row.id,
-          subject: row.subject,
-          snippet: row.snippet,
-          cleanBody: row.normalizedEmail?.cleanTextBody ?? row.snippet ?? "",
-          senderEmail: row.senderEmail,
-          direction: row.direction,
-          inboxConnectionId: row.inboxConnectionId,
-          providerThreadId: row.providerThreadId,
-          jobId: row.jobId,
-          jobAssignmentIsManual: row.jobAssignmentIsManual,
-          jobAssignmentSource: row.jobAssignmentSource,
-          hasAttachments: row.hasAttachments,
-        } satisfies HistoricalEvalEmailRecord,
-      ])
-  );
-  // Preserve caller selection order.
+  const batchSize = Math.max(1, input.batchSize ?? 200);
+  const byId = new Map<string, HistoricalEvalEmailRecord>();
+
+  for (let offset = 0; offset < input.ids.length; offset += batchSize) {
+    const chunk = input.ids.slice(offset, offset + batchSize);
+    const rows = await db.emailMessage.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        id: { in: chunk },
+        jobId: { not: null },
+        OR: authoritativeEmailAssignmentOr(),
+      },
+      select: {
+        id: true,
+        subject: true,
+        snippet: true,
+        senderEmail: true,
+        direction: true,
+        inboxConnectionId: true,
+        providerThreadId: true,
+        jobId: true,
+        jobAssignmentIsManual: true,
+        jobAssignmentSource: true,
+        hasAttachments: true,
+        normalizedEmail: { select: { cleanTextBody: true } },
+      },
+    });
+    for (const row of rows) {
+      if (!row.jobId) continue;
+      byId.set(row.id, {
+        id: row.id,
+        subject: row.subject,
+        snippet: row.snippet,
+        cleanBody: row.normalizedEmail?.cleanTextBody ?? row.snippet ?? "",
+        senderEmail: row.senderEmail,
+        direction: row.direction,
+        inboxConnectionId: row.inboxConnectionId,
+        providerThreadId: row.providerThreadId,
+        jobId: row.jobId,
+        jobAssignmentIsManual: row.jobAssignmentIsManual,
+        jobAssignmentSource: row.jobAssignmentSource,
+        hasAttachments: row.hasAttachments,
+      });
+    }
+  }
+
+  // Preserve caller selection order; skip duplicates in the id list.
   const ordered: HistoricalEvalEmailRecord[] = [];
+  const seen = new Set<string>();
   for (const id of input.ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
     const row = byId.get(id);
     if (row) ordered.push(row);
   }

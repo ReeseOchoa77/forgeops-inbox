@@ -28,9 +28,22 @@ function todayStamp(): string {
 
 export function jobMatcherEvalExportFilename(
   kind: 'summary' | 'detailed' | 'full' | 'comparison' | 'comparison-3way',
-  ext: 'csv' | 'json'
+  ext: 'csv' | 'json',
+  meta?: {
+    policy?: string | null
+    evaluated?: number | null
+    runId?: string | null
+  }
 ): string {
-  return `forgeops-job-matcher-evaluation-${kind}-${todayStamp()}.${ext}`
+  const parts = [
+    'forgeops-job-matcher-evaluation',
+    kind,
+    meta?.policy ? meta.policy.toLowerCase() : null,
+    meta?.evaluated != null ? `${meta.evaluated}emails` : null,
+    meta?.runId ? meta.runId.slice(0, 8) : null,
+    todayStamp(),
+  ].filter(Boolean)
+  return `${parts.join('-')}.${ext}`
 }
 
 export function downloadTextFile(filename: string, content: string, mime: string): void {
@@ -48,9 +61,18 @@ export function buildEvalSummaryCsv(result: JobMatcherEvalResult): string {
   const push = (section: string, metric: string, category: string, value: string | number) => {
     lines.push([section, metric, category, value].map(csvEscape).join(','))
   }
-  const m = result.metrics
+  const m = result.displayMetrics ?? result.metrics
   const d = result.diagnostics
+  push('meta', 'evaluation_run_id', '', result.evaluationRunId ?? '')
+  push(
+    'meta',
+    'display_policy',
+    '',
+    result.displayIdentityPolicy ?? result.identityPolicy ?? ''
+  )
   push('meta', 'summary_label', '', result.dataset.summaryLabel)
+  push('meta', 'eligible_count', '', result.dataset.eligibleCount)
+  push('meta', 'sample_size_requested', '', result.dataset.sampleSizeRequested ?? 'ALL')
   push('meta', 'actual_evaluated', '', result.dataset.actualEvaluated)
   push('headline', 'evaluated', '', m.totalEvaluated)
   push('headline', 'correct', '', m.correctMatches)
