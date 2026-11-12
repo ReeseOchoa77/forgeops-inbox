@@ -206,6 +206,17 @@ export function buildEvalComparisonCsv(
     'v1_identity_evidence',
     'v1_abstention_reason',
     'transition',
+    'decision_transition',
+    'change_reason',
+    'change_detail',
+    'wrong_failure_category',
+    'unresolved_recoverability',
+    'baseline_name_candidates',
+    'proposed_name_candidates',
+    'baseline_contact_reason',
+    'proposed_contact_reason',
+    'gt_in_baseline_final',
+    'gt_in_proposed_final',
     'ground_truth_review_flag',
   ]
   const lines = [headers.join(',')]
@@ -240,6 +251,17 @@ export function buildEvalComparisonCsv(
           ? row.proposed.identityDiagnostics.reason
           : '',
         row.transition,
+        row.decisionTransition ?? '',
+        row.changeAttribution?.reason ?? '',
+        row.changeAttribution?.detail ?? '',
+        row.wrongFailureCategory ?? '',
+        row.unresolvedRecoverability ?? '',
+        row.baseline.markerCandidateCounts?.name ?? '',
+        row.proposed.markerCandidateCounts?.name ?? '',
+        row.baseline.contactDiagnostics?.reason ?? '',
+        row.proposed.contactDiagnostics?.reason ?? '',
+        row.baseline.gtInFinalCandidates ?? '',
+        row.proposed.gtInFinalCandidates ?? '',
         row.groundTruthReviewFlag,
       ]
         .map(csvEscape)

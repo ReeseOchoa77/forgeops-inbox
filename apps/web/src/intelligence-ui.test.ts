@@ -186,6 +186,8 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('job-matcher-eval-progress')
     expect(src).toContain('evaluationRunId')
     expect(src).toContain('[100, 500, 1000]')
+    expect(src).toContain('job-matcher-policy-diagnostics')
+    expect(src).toContain('Newly wrong')
   })
 
   it('eval export helpers never rematch and omit bodies from CSV', () => {

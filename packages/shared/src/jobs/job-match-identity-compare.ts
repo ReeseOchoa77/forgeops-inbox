@@ -4,6 +4,20 @@
  */
 
 import type { HistoricalEvalMetrics, HistoricalEvalOutcome } from "./job-match-historical-eval.js";
+import {
+  attributePolicyChange,
+  classifyDecisionTransition,
+  classifyUnresolvedRecoverability,
+  classifyWrongMatchFailure,
+  emptyDecisionTransitionCounts,
+  summarizeNewlyWrong,
+  type DecisionTransitionKey,
+  type NewlyWrongBreakdown,
+  type PolicyChangeAttribution,
+  type PolicyChangeReasonCode,
+  type UnresolvedRecoverability,
+  type WrongMatchFailureCategory,
+} from "./job-match-decision-transitions.js";
 
 export type MatcherDecisionBucket = "CORRECT" | "WRONG" | "UNRESOLVED";
 
@@ -35,6 +49,21 @@ export type IdentityCompareSideSummary = {
     resolutionAllowed: boolean;
     strongIdentityAnchor: boolean;
   } | null;
+  contactDiagnostics?: {
+    reason: string;
+    associationClass: string;
+    authorityClass: string;
+    resolutionAllowed: boolean;
+    evidenceIndependentFromThread: boolean | null;
+  } | null;
+  markerCandidateCounts?: {
+    name: number;
+    contact: number;
+    thread: number;
+    final: number;
+  } | null;
+  gtInNameCandidates?: boolean | null;
+  gtInFinalCandidates?: boolean | null;
 };
 
 export type IdentityCompareRow = {
@@ -46,8 +75,23 @@ export type IdentityCompareRow = {
   baseline: IdentityCompareSideSummary;
   proposed: IdentityCompareSideSummary;
   transition: MatcherTransitionCategory;
+  /** Granular CORRECT/WRONG/AMBIGUOUS/CONFLICT/NO_MATCH transition. */
+  decisionTransition?: DecisionTransitionKey;
+  changeAttribution?: PolicyChangeAttribution;
+  wrongFailureCategory?: WrongMatchFailureCategory | null;
+  unresolvedRecoverability?: UnresolvedRecoverability | null;
   /** Manual-review hint when proposed MATCH disagrees with label but may be more coherent. */
   groundTruthReviewFlag: boolean;
+};
+
+export type PolicyDiagnosticReport = {
+  decisionTransitions: Record<DecisionTransitionKey, number>;
+  newlyWrong: NewlyWrongBreakdown;
+  changeReasonCounts: Partial<Record<PolicyChangeReasonCode, number>>;
+  wrongFailureCategories: Partial<Record<WrongMatchFailureCategory, number>>;
+  unresolvedRecoverability: Partial<Record<UnresolvedRecoverability, number>>;
+  regressionEmailIds: string[];
+  improvementEmailIds: string[];
 };
 
 export type IdentityCompareTransitionCounts = Record<
@@ -111,6 +155,8 @@ export type IdentityCompareReport = {
     proposed: number;
     overheadRatio: number | null;
   };
+  /** Granular decision matrix + newly-wrong / failure / recoverability breakdowns. */
+  diagnostics?: PolicyDiagnosticReport;
 };
 
 /**
@@ -317,6 +363,206 @@ export function buildMarkerBreakdownFromSides(
   });
 }
 
+export function enrichIdentityCompareRow(
+  row: IdentityCompareRow
+): IdentityCompareRow {
+  const decisionTransition = classifyDecisionTransition({
+    baselineOutcome: row.baseline.outcome,
+    proposedOutcome: row.proposed.outcome,
+  });
+  const changeAttribution = attributePolicyChange({
+    baseline: {
+      decision: row.baseline.decision,
+      outcome: row.baseline.outcome,
+      predictedJobId: row.baseline.predictedJobId,
+      resolvingMarker: row.baseline.resolvingMarker,
+      identityStrength: row.baseline.identityDiagnostics?.identityStrength ?? null,
+      identityReason: row.baseline.identityDiagnostics?.reason ?? null,
+      strongIdentityAnchor:
+        row.baseline.identityDiagnostics?.strongIdentityAnchor ?? null,
+      contactReason: row.baseline.contactDiagnostics?.reason ?? null,
+      nameCandidateCount: row.baseline.markerCandidateCounts?.name ?? null,
+      contactCandidateCount: row.baseline.markerCandidateCounts?.contact ?? null,
+      threadCandidateCount: row.baseline.markerCandidateCounts?.thread ?? null,
+      finalCandidateCount: row.baseline.markerCandidateCounts?.final ?? null,
+      gtInNameCandidates: row.baseline.gtInNameCandidates ?? null,
+      gtInFinalCandidates: row.baseline.gtInFinalCandidates ?? null,
+    },
+    proposed: {
+      decision: row.proposed.decision,
+      outcome: row.proposed.outcome,
+      predictedJobId: row.proposed.predictedJobId,
+      resolvingMarker: row.proposed.resolvingMarker,
+      identityStrength: row.proposed.identityDiagnostics?.identityStrength ?? null,
+      identityReason: row.proposed.identityDiagnostics?.reason ?? null,
+      strongIdentityAnchor:
+        row.proposed.identityDiagnostics?.strongIdentityAnchor ?? null,
+      contactReason: row.proposed.contactDiagnostics?.reason ?? null,
+      nameCandidateCount: row.proposed.markerCandidateCounts?.name ?? null,
+      contactCandidateCount: row.proposed.markerCandidateCounts?.contact ?? null,
+      threadCandidateCount: row.proposed.markerCandidateCounts?.thread ?? null,
+      finalCandidateCount: row.proposed.markerCandidateCounts?.final ?? null,
+      gtInNameCandidates: row.proposed.gtInNameCandidates ?? null,
+      gtInFinalCandidates: row.proposed.gtInFinalCandidates ?? null,
+    },
+    trueJobId: row.trueJobId,
+  });
+
+  const wrongFailureCategory =
+    row.proposed.outcome === "WRONG_MATCH" ||
+    row.baseline.outcome === "WRONG_MATCH"
+      ? classifyWrongMatchFailure({
+          resolvingMarker:
+            row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.resolvingMarker
+              : row.baseline.resolvingMarker,
+          identityStrength:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.identityDiagnostics?.identityStrength
+              : row.baseline.identityDiagnostics?.identityStrength) ?? null,
+          identityReason:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.identityDiagnostics?.reason
+              : row.baseline.identityDiagnostics?.reason) ?? null,
+          contactReason:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.contactDiagnostics?.reason
+              : row.baseline.contactDiagnostics?.reason) ?? null,
+          gtInNameCandidates:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.gtInNameCandidates
+              : row.baseline.gtInNameCandidates) ?? null,
+          gtInFinalCandidates:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.gtInFinalCandidates
+              : row.baseline.gtInFinalCandidates) ?? null,
+          nameCandidateCount:
+            (row.proposed.outcome === "WRONG_MATCH"
+              ? row.proposed.markerCandidateCounts?.name
+              : row.baseline.markerCandidateCounts?.name) ?? null,
+          groundTruthReviewFlag: row.groundTruthReviewFlag,
+        })
+      : null;
+
+  const unresolvedSide =
+    row.baseline.outcome === "AMBIGUOUS" ||
+    row.baseline.outcome === "CONFLICT" ||
+    row.baseline.outcome === "NO_MATCH"
+      ? row.baseline
+      : row.proposed.outcome === "AMBIGUOUS" ||
+          row.proposed.outcome === "CONFLICT" ||
+          row.proposed.outcome === "NO_MATCH"
+        ? row.proposed
+        : null;
+  const unresolvedRecoverability = unresolvedSide
+    ? classifyUnresolvedRecoverability({
+        outcome: unresolvedSide.outcome,
+        gtInFinalCandidates: unresolvedSide.gtInFinalCandidates ?? null,
+        gtInNameCandidates: unresolvedSide.gtInNameCandidates ?? null,
+        finalCandidateCount: unresolvedSide.markerCandidateCounts?.final ?? null,
+        strongIdentityAnchor:
+          unresolvedSide.identityDiagnostics?.strongIdentityAnchor ?? null,
+        contactReason: unresolvedSide.contactDiagnostics?.reason ?? null,
+        identityReason: unresolvedSide.identityDiagnostics?.reason ?? null,
+      })
+    : null;
+
+  return {
+    ...row,
+    decisionTransition,
+    changeAttribution,
+    wrongFailureCategory,
+    unresolvedRecoverability,
+  };
+}
+
+export function buildPolicyDiagnosticReport(
+  rows: IdentityCompareRow[]
+): PolicyDiagnosticReport {
+  const decisionTransitions = emptyDecisionTransitionCounts();
+  const changeReasonCounts: Partial<Record<PolicyChangeReasonCode, number>> =
+    {};
+  const wrongFailureCategories: Partial<
+    Record<WrongMatchFailureCategory, number>
+  > = {};
+  const unresolvedRecoverability: Partial<
+    Record<UnresolvedRecoverability, number>
+  > = {};
+  const regressionEmailIds: string[] = [];
+  const improvementEmailIds: string[] = [];
+  let wrongDifferentJob = 0;
+
+  for (const raw of rows) {
+    const row = raw.decisionTransition
+      ? raw
+      : enrichIdentityCompareRow(raw);
+    const key = row.decisionTransition!;
+    decisionTransitions[key] = (decisionTransitions[key] ?? 0) + 1;
+    const reason = row.changeAttribution?.reason ?? "OTHER_DECISION_DELTA";
+    changeReasonCounts[reason] = (changeReasonCounts[reason] ?? 0) + 1;
+    if (row.wrongFailureCategory) {
+      wrongFailureCategories[row.wrongFailureCategory] =
+        (wrongFailureCategories[row.wrongFailureCategory] ?? 0) + 1;
+    }
+    if (
+      row.baseline.outcome === "AMBIGUOUS" ||
+      row.baseline.outcome === "CONFLICT" ||
+      row.baseline.outcome === "NO_MATCH"
+    ) {
+      const rec =
+        row.unresolvedRecoverability ??
+        classifyUnresolvedRecoverability({
+          outcome: row.baseline.outcome,
+          gtInFinalCandidates: row.baseline.gtInFinalCandidates ?? null,
+          gtInNameCandidates: row.baseline.gtInNameCandidates ?? null,
+          finalCandidateCount: row.baseline.markerCandidateCounts?.final ?? null,
+          strongIdentityAnchor:
+            row.baseline.identityDiagnostics?.strongIdentityAnchor ?? null,
+        });
+      unresolvedRecoverability[rec] =
+        (unresolvedRecoverability[rec] ?? 0) + 1;
+    }
+    if (row.transition === "WRONG_TO_WRONG_DIFFERENT_JOB") {
+      wrongDifferentJob += 1;
+    }
+    if (
+      row.transition === "CORRECT_TO_WRONG" ||
+      row.transition === "CORRECT_TO_UNRESOLVED" ||
+      row.transition === "UNRESOLVED_TO_WRONG"
+    ) {
+      regressionEmailIds.push(row.emailMessageId);
+    }
+    if (
+      row.transition === "WRONG_TO_CORRECT" ||
+      row.transition === "UNRESOLVED_TO_CORRECT" ||
+      row.transition === "WRONG_TO_UNRESOLVED"
+    ) {
+      improvementEmailIds.push(row.emailMessageId);
+    }
+  }
+
+  return {
+    decisionTransitions,
+    newlyWrong: summarizeNewlyWrong({
+      transitions: {
+        ...decisionTransitions,
+        CORRECT_TO_WRONG: decisionTransitions.CORRECT_TO_WRONG,
+        UNRESOLVED_TO_WRONG:
+          (decisionTransitions.AMBIGUOUS_TO_WRONG ?? 0) +
+          (decisionTransitions.CONFLICT_TO_WRONG ?? 0) +
+          (decisionTransitions.NO_MATCH_TO_WRONG ?? 0),
+        WRONG_TO_CORRECT: decisionTransitions.WRONG_TO_CORRECT,
+      },
+      wrongDifferentJob,
+    }),
+    changeReasonCounts,
+    wrongFailureCategories,
+    unresolvedRecoverability,
+    regressionEmailIds,
+    improvementEmailIds,
+  };
+}
+
 export function buildIdentityCompareReport(input: {
   baselinePolicy?: IdentityComparePolicyId;
   proposedPolicy?: IdentityComparePolicyId;
@@ -324,9 +570,10 @@ export function buildIdentityCompareReport(input: {
   proposedMetrics: HistoricalEvalMetrics;
   rows: IdentityCompareRow[];
   runtimeMs: { baseline: number; proposed: number };
-}): IdentityCompareReport {
+}): IdentityCompareReport & { diagnostics?: PolicyDiagnosticReport } {
+  const enrichedRows = input.rows.map(enrichIdentityCompareRow);
   const transitions = emptyTransitionCounts();
-  for (const row of input.rows) {
+  for (const row of enrichedRows) {
     transitions[row.transition] += 1;
   }
   const overheadRatio =
@@ -334,9 +581,10 @@ export function buildIdentityCompareReport(input: {
       ? null
       : input.runtimeMs.proposed / input.runtimeMs.baseline;
 
-  const baselineSides = input.rows.map((r) => r.baseline);
-  const proposedSides = input.rows.map((r) => r.proposed);
-  const trueJobIds = input.rows.map((r) => r.trueJobId);
+  const baselineSides = enrichedRows.map((r) => r.baseline);
+  const proposedSides = enrichedRows.map((r) => r.proposed);
+  const trueJobIds = enrichedRows.map((r) => r.trueJobId);
+  const diagnostics = buildPolicyDiagnosticReport(enrichedRows);
 
   return {
     baselinePolicy: input.baselinePolicy ?? "BASELINE",
@@ -348,7 +596,7 @@ export function buildIdentityCompareReport(input: {
       input.proposedMetrics
     ),
     transitions,
-    rows: input.rows,
+    rows: enrichedRows,
     baselineMarkerBreakdown: buildMarkerBreakdownFromSides(
       baselineSides,
       trueJobIds
@@ -369,6 +617,7 @@ export function buildIdentityCompareReport(input: {
       proposed: input.runtimeMs.proposed,
       overheadRatio,
     },
+    diagnostics,
   };
 }
 

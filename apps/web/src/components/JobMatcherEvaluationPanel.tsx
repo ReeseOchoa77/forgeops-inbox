@@ -1971,6 +1971,17 @@ function ComparisonPanel({
   const transitionEntries = (
     Object.entries(comparison.transitions) as Array<[JobMatcherTransitionCategory, number]>
   ).filter(([, n]) => n > 0)
+  const diag = comparison.diagnostics
+  const decisionEntries = diag
+    ? Object.entries(diag.decisionTransitions)
+        .filter(([, n]) => n > 0)
+        .sort((a, b) => b[1] - a[1])
+    : []
+  const reasonEntries = diag
+    ? Object.entries(diag.changeReasonCounts)
+        .filter(([k, n]) => n > 0 && k !== 'UNCHANGED')
+        .sort((a, b) => b[1] - a[1])
+    : []
 
   return (
     <div
@@ -2056,6 +2067,77 @@ function ComparisonPanel({
           </>
         )}
       </div>
+
+      {diag && (
+        <div
+          data-testid="job-matcher-policy-diagnostics"
+          style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <div style={{ fontWeight: 650 }}>Policy diagnostics</div>
+          <div style={{ fontSize: 12, color: '#374151' }}>
+            Newly wrong: {diag.newlyWrong.totalNewlyWrong} (CORRECT→WRONG{' '}
+            {diag.newlyWrong.correctToWrong}, unresolved→WRONG{' '}
+            {diag.newlyWrong.unresolvedToWrong}, WRONG different Job{' '}
+            {diag.newlyWrong.wrongDifferentJob}). Wrong→Correct recovered:{' '}
+            {diag.newlyWrong.wrongToCorrect}. Regressions:{' '}
+            {diag.regressionEmailIds.length}. Improvements:{' '}
+            {diag.improvementEmailIds.length}.
+          </div>
+          {decisionEntries.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 4 }}>
+                Granular decision matrix (non-zero)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {decisionEntries.map(([key, n]) => (
+                  <span
+                    key={key}
+                    style={{
+                      ...chipBtn,
+                      fontSize: 11,
+                      cursor: 'default',
+                    }}
+                  >
+                    {key.replace(/_TO_/g, ' → ')} ({n})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {reasonEntries.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 4 }}>
+                Change attribution
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {reasonEntries.map(([key, n]) => (
+                  <span key={key} style={{ ...chipBtn, fontSize: 11, cursor: 'default' }}>
+                    {key} ({n})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {Object.keys(diag.wrongFailureCategories).length > 0 && (
+            <div style={{ fontSize: 12 }}>
+              Wrong failure categories:{' '}
+              {Object.entries(diag.wrongFailureCategories)
+                .filter(([, n]) => n > 0)
+                .map(([k, n]) => `${k} ${n}`)
+                .join(' · ') || '—'}
+            </div>
+          )}
+          {Object.keys(diag.unresolvedRecoverability).length > 0 && (
+            <div style={{ fontSize: 12 }}>
+              Baseline unresolved recoverability:{' '}
+              {Object.entries(diag.unresolvedRecoverability)
+                .filter(([, n]) => n > 0)
+                .map(([k, n]) => `${k} ${n}`)
+                .join(' · ') || '—'}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

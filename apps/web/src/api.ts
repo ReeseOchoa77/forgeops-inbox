@@ -5214,6 +5214,21 @@ export interface JobMatcherIdentityCompareSide {
     resolutionAllowed: boolean
     strongIdentityAnchor: boolean
   } | null
+  contactDiagnostics?: {
+    reason: string
+    associationClass: string
+    authorityClass: string
+    resolutionAllowed: boolean
+    evidenceIndependentFromThread: boolean | null
+  } | null
+  markerCandidateCounts?: {
+    name: number
+    contact: number
+    thread: number
+    final: number
+  } | null
+  gtInNameCandidates?: boolean | null
+  gtInFinalCandidates?: boolean | null
 }
 
 export interface JobMatcherIdentityCompareRow {
@@ -5225,6 +5240,10 @@ export interface JobMatcherIdentityCompareRow {
   baseline: JobMatcherIdentityCompareSide
   proposed: JobMatcherIdentityCompareSide
   transition: JobMatcherTransitionCategory
+  decisionTransition?: string
+  changeAttribution?: { reason: string; detail: string }
+  wrongFailureCategory?: string | null
+  unresolvedRecoverability?: string | null
   groundTruthReviewFlag: boolean
 }
 
@@ -5252,6 +5271,21 @@ export interface JobMatcherIdentityCompareReport {
   safetyRegressions: { correctToWrong: number; unresolvedToWrong: number }
   coverageLoss: { correctToUnresolved: number }
   runtimeMs: { baseline: number; proposed: number; overheadRatio: number | null }
+  diagnostics?: {
+    decisionTransitions: Record<string, number>
+    newlyWrong: {
+      correctToWrong: number
+      unresolvedToWrong: number
+      wrongDifferentJob: number
+      totalNewlyWrong: number
+      wrongToCorrect: number
+    }
+    changeReasonCounts: Record<string, number>
+    wrongFailureCategories: Record<string, number>
+    unresolvedRecoverability: Record<string, number>
+    regressionEmailIds: string[]
+    improvementEmailIds: string[]
+  }
 }
 
 export interface JobMatcherEvalResult {

@@ -274,6 +274,16 @@ function sideSummaryFromEval(
     ? jobsById.get(row.result.selectedJobId)
     : undefined;
   const diag = row.result.identityDiagnostics;
+  const contact = row.result.contactDiagnostics;
+  const trace = row.result.markerTrace ?? [];
+  const nameTrace = trace.find((t) => t.marker === "NAME");
+  const contactTrace = trace.find((t) => t.marker === "CONTACT");
+  const threadTrace = trace.find((t) => t.marker === "THREAD");
+  const nameCandidates = nameTrace?.candidateJobIds ?? [];
+  const finalCandidates =
+    row.result.candidateJobIds ??
+    row.result.ambiguousCandidateIds ??
+    (row.result.selectedJobId ? [row.result.selectedJobId] : []);
   return {
     decision: row.result.decision ?? "NO_MATCH",
     outcome,
@@ -292,6 +302,23 @@ function sideSummaryFromEval(
           strongIdentityAnchor: diag.strongIdentityAnchor,
         }
       : null,
+    contactDiagnostics: contact
+      ? {
+          reason: contact.reason,
+          associationClass: contact.associationClass,
+          authorityClass: contact.authorityClass,
+          resolutionAllowed: contact.resolutionAllowed,
+          evidenceIndependentFromThread: contact.evidenceIndependentFromThread,
+        }
+      : null,
+    markerCandidateCounts: {
+      name: nameCandidates.length,
+      contact: contactTrace?.candidateJobIds.length ?? 0,
+      thread: threadTrace?.candidateJobIds.length ?? 0,
+      final: finalCandidates.length,
+    },
+    gtInNameCandidates: nameCandidates.includes(row.trueJobId),
+    gtInFinalCandidates: finalCandidates.includes(row.trueJobId),
   };
 }
 
