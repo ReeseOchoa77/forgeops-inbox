@@ -219,14 +219,21 @@ export function summarizeNewlyWrong(input: {
 }): NewlyWrongBreakdown {
   const t = input.transitions;
   const correctToWrong = t.CORRECT_TO_WRONG ?? 0;
-  const unresolvedToWrong =
+  // Prefer granular AMBIGUOUS/CONFLICT/NO_MATCH keys when present. Never add
+  // UNRESOLVED_TO_WRONG on top of those — that double-counts (legacy alias).
+  const granularUnresolvedToWrong =
     (t.AMBIGUOUS_TO_WRONG ?? 0) +
     (t.CONFLICT_TO_WRONG ?? 0) +
-    (t.NO_MATCH_TO_WRONG ?? 0) +
-    (t.UNRESOLVED_TO_WRONG ?? 0);
+    (t.NO_MATCH_TO_WRONG ?? 0);
+  const unresolvedToWrong =
+    granularUnresolvedToWrong > 0 ||
+    t.AMBIGUOUS_TO_WRONG != null ||
+    t.CONFLICT_TO_WRONG != null ||
+    t.NO_MATCH_TO_WRONG != null
+      ? granularUnresolvedToWrong
+      : (t.UNRESOLVED_TO_WRONG ?? 0);
   const wrongDifferentJob = input.wrongDifferentJob ?? 0;
-  const wrongToCorrect =
-    (t.WRONG_TO_CORRECT ?? 0);
+  const wrongToCorrect = t.WRONG_TO_CORRECT ?? 0;
   return {
     correctToWrong,
     unresolvedToWrong,
@@ -234,6 +241,180 @@ export function summarizeNewlyWrong(input: {
     totalNewlyWrong: correctToWrong + unresolvedToWrong + wrongDifferentJob,
     wrongToCorrect,
   };
+}
+
+/**
+ * Apply a granular decision-transition matrix to baseline outcome counts.
+ * Used to verify the matrix reconciles with both policies' aggregate metrics.
+ */
+export function applyDecisionTransitionsToCounts(
+  baseline: {
+    correctMatches: number;
+    wrongMatches: number;
+    ambiguous: number;
+    conflict: number;
+    noMatch: number;
+  },
+  transitions: Record<string, number>
+): {
+  correctMatches: number;
+  wrongMatches: number;
+  ambiguous: number;
+  conflict: number;
+  noMatch: number;
+} {
+  const labels: MatcherOutcomeLabel[] = [
+    "CORRECT",
+    "WRONG",
+    "AMBIGUOUS",
+    "CONFLICT",
+    "NO_MATCH",
+  ];
+  const fromKey: Record<MatcherOutcomeLabel, keyof typeof baseline> = {
+    CORRECT: "correctMatches",
+    WRONG: "wrongMatches",
+    AMBIGUOUS: "ambiguous",
+    CONFLICT: "conflict",
+    NO_MATCH: "noMatch",
+  };
+  const out = {
+    correctMatches: 0,
+    wrongMatches: 0,
+    ambiguous: 0,
+    conflict: 0,
+    noMatch: 0,
+  };
+  const toKey: Record<MatcherOutcomeLabel, keyof typeof out> = {
+    CORRECT: "correctMatches",
+    WRONG: "wrongMatches",
+    AMBIGUOUS: "ambiguous",
+    CONFLICT: "conflict",
+    NO_MATCH: "noMatch",
+  };
+  for (const from of labels) {
+    for (const to of labels) {
+      const n = transitions[`${from}_TO_${to}`] ?? 0;
+      out[toKey[to]] += n;
+    }
+  }
+  // Sanity: outbound from each baseline bucket should match baseline counts.
+  for (const from of labels) {
+    let outbound = 0;
+    for (const to of labels) {
+      outbound += transitions[`${from}_TO_${to}`] ?? 0;
+    }
+    if (outbound !== baseline[fromKey[from]]) {
+      // Still return proposed-side projection; caller checks both sides.
+    }
+  }
+  return out;
+}
+
+export type TransitionMetricsIntegrityResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
+ * Verify decision transitions sum to evaluated and reproduce both policies' metrics.
+ */
+export function assertTransitionMetricsReconcile(input: {
+  transitions: Record<string, number>;
+  baseline: {
+    totalEvaluated: number;
+    correctMatches: number;
+    wrongMatches: number;
+    ambiguous: number;
+    conflict: number;
+    noMatch: number;
+  };
+  proposed: {
+    totalEvaluated: number;
+    correctMatches: number;
+    wrongMatches: number;
+    ambiguous: number;
+    conflict: number;
+    noMatch: number;
+  };
+}): TransitionMetricsIntegrityResult {
+  if (!assertDecisionTransitionsReconcile(input.transitions, input.baseline.totalEvaluated)) {
+    return {
+      ok: false,
+      message: `Transition integrity error: matrix sum ≠ baseline evaluated (${input.baseline.totalEvaluated}).`,
+    };
+  }
+  if (input.baseline.totalEvaluated !== input.proposed.totalEvaluated) {
+    return {
+      ok: false,
+      message: `Transition integrity error: baseline evaluated ${input.baseline.totalEvaluated} ≠ proposed ${input.proposed.totalEvaluated}.`,
+    };
+  }
+  const labels: MatcherOutcomeLabel[] = [
+    "CORRECT",
+    "WRONG",
+    "AMBIGUOUS",
+    "CONFLICT",
+    "NO_MATCH",
+  ];
+  const baselineKey: Record<
+    MatcherOutcomeLabel,
+    keyof typeof input.baseline
+  > = {
+    CORRECT: "correctMatches",
+    WRONG: "wrongMatches",
+    AMBIGUOUS: "ambiguous",
+    CONFLICT: "conflict",
+    NO_MATCH: "noMatch",
+  };
+  for (const from of labels) {
+    let outbound = 0;
+    for (const to of labels) {
+      outbound += input.transitions[`${from}_TO_${to}`] ?? 0;
+    }
+    const expected = input.baseline[baselineKey[from]] as number;
+    if (outbound !== expected) {
+      return {
+        ok: false,
+        message: `Transition integrity error: outbound ${from} ${outbound} ≠ baseline ${expected}.`,
+      };
+    }
+  }
+  const projected = applyDecisionTransitionsToCounts(
+    input.baseline,
+    input.transitions
+  );
+  const mismatches: string[] = [];
+  if (projected.correctMatches !== input.proposed.correctMatches) {
+    mismatches.push(
+      `correct ${projected.correctMatches}≠${input.proposed.correctMatches}`
+    );
+  }
+  if (projected.wrongMatches !== input.proposed.wrongMatches) {
+    mismatches.push(
+      `wrong ${projected.wrongMatches}≠${input.proposed.wrongMatches}`
+    );
+  }
+  if (projected.ambiguous !== input.proposed.ambiguous) {
+    mismatches.push(
+      `ambiguous ${projected.ambiguous}≠${input.proposed.ambiguous}`
+    );
+  }
+  if (projected.conflict !== input.proposed.conflict) {
+    mismatches.push(
+      `conflict ${projected.conflict}≠${input.proposed.conflict}`
+    );
+  }
+  if (projected.noMatch !== input.proposed.noMatch) {
+    mismatches.push(
+      `noMatch ${projected.noMatch}≠${input.proposed.noMatch}`
+    );
+  }
+  if (mismatches.length > 0) {
+    return {
+      ok: false,
+      message: `Transition integrity error: applying matrix to baseline does not reproduce proposed metrics (${mismatches.join("; ")}).`,
+    };
+  }
+  return { ok: true };
 }
 
 /** Ranked failure categories for WRONG_MATCH rows (deterministic heuristics). */

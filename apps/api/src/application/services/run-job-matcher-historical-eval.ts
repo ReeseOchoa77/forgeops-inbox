@@ -41,6 +41,7 @@ import {
   type JobMatcherEvalSampling,
   type JobMatchResult,
   JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
+  assertExportRowsMatchMetrics,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
 import { randomUUID } from "node:crypto";
@@ -117,11 +118,14 @@ export type JobMatcherHistoricalEvalResult = {
   /** Present when three-way BASELINE/V1/V2(+V2.1) compare was requested. */
   threeWayComparison: IdentityThreeWayCompareReport | null;
   /**
-   * Metrics for the primary Evaluation cards — most advanced policy present
-   * in this completed evaluation (registry rank). Never mixes policies.
+   * Metrics + rows for the primary Evaluation cards / email list / detailed export —
+   * most advanced policy present in this completed evaluation (registry rank).
+   * Never mixes policies. Must reconcile with displayRows aggregates.
    */
   displayIdentityPolicy: JobMatchIdentityPolicy;
   displayMetrics: HistoricalEvalMetrics;
+  /** Same evaluation run fingerprint (sorted selected email ids). */
+  datasetFingerprint: string;
   runtimeMs: number;
   groundTruthQuality: "MODERATE";
   groundTruthNotes: string;
@@ -492,6 +496,10 @@ export async function runJobMatcherHistoricalEval(input: {
   );
 
   let policiesCompleted = 0;
+  const evaluatedByPolicy = new Map<
+    JobMatchIdentityPolicy,
+    HistoricalEvalEmail[]
+  >();
 
   async function scoreEmails(
     policy: JobMatchIdentityPolicy
@@ -557,6 +565,7 @@ export async function runJobMatcherHistoricalEval(input: {
         `Incomplete scoring under ${policy}: expected ${emailRecords.length}, got ${evaluated.length}`
       );
     }
+    evaluatedByPolicy.set(policy, evaluated);
     policiesCompleted += 1;
     updateJobMatcherEvalProgress({
       workspaceId: input.workspaceId,
@@ -786,18 +795,53 @@ export async function runJobMatcherHistoricalEval(input: {
     comparison,
     threeWayComparison,
   });
-  const jobBreakdown = buildJobMatcherEvalJobBreakdown(evaluated, jobsById);
+  const displayEvaluated =
+    evaluatedByPolicy.get(display.policy) ?? evaluated;
+  const displayMetricsRecomputed =
+    aggregateHistoricalEvalResults(displayEvaluated);
+  // Prefer recomputed metrics from the same email records used for display rows.
+  const displayMetrics = displayMetricsRecomputed;
+  if (
+    display.metrics.correctMatches !== displayMetrics.correctMatches ||
+    display.metrics.wrongMatches !== displayMetrics.wrongMatches ||
+    display.metrics.ambiguous !== displayMetrics.ambiguous ||
+    display.metrics.conflict !== displayMetrics.conflict ||
+    display.metrics.noMatch !== displayMetrics.noMatch
+  ) {
+    throw new Error(
+      `Display metrics for ${display.policy} disagree with scored email aggregates`
+    );
+  }
+
+  const jobBreakdown = buildJobMatcherEvalJobBreakdown(
+    displayEvaluated,
+    jobsById
+  );
   const wrong = buildWrongMatchDetails({
-    rows: evaluated,
+    rows: displayEvaluated,
     jobsById,
     maxWrongDetails: input.maxWrongDetails ?? 50,
   });
+  /**
+   * Email list + detailed export rows always match the displayed (most advanced)
+   * policy — never BASELINE primary rows labeled as V2/V2.1.
+   */
   const { rows, diagnostics } = toEvalRows({
-    evaluated,
+    evaluated: displayEvaluated,
     jobsById,
     sourceById,
-    identityPolicy: primaryPolicy,
+    identityPolicy: display.policy,
   });
+  const integrity = assertExportRowsMatchMetrics({
+    rows,
+    metrics: displayMetrics,
+    policyLabel: display.policy,
+  });
+  if (!integrity.ok) {
+    throw new Error(integrity.message);
+  }
+
+  const datasetFingerprint = selection.selectedIds.slice().sort().join(",");
 
   const result: JobMatcherHistoricalEvalResult = {
     intelligenceId: "job-matcher",
@@ -812,7 +856,7 @@ export async function runJobMatcherHistoricalEval(input: {
       jobsInScope: selection.jobsInScope,
       expectedMax: selection.expectedMax,
       sampleSizeRequested: spec.count,
-      actualEvaluated: evaluated.length,
+      actualEvaluated: displayEvaluated.length,
       capped: selection.capped,
       capReason: selection.capReason,
       selectedEmailIds: selection.selectedIds,
@@ -820,7 +864,8 @@ export async function runJobMatcherHistoricalEval(input: {
     },
     metrics,
     displayIdentityPolicy: display.policy,
-    displayMetrics: display.metrics,
+    displayMetrics,
+    datasetFingerprint,
     diagnostics,
     jobBreakdown,
     rows,
@@ -830,7 +875,7 @@ export async function runJobMatcherHistoricalEval(input: {
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2/V2.1 are shadow-only until approved; production default remains BASELINE.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2/V2.1 are shadow-only until approved; production default remains BASELINE. Detailed rows/export always use displayIdentityPolicy (most advanced scored policy), not primary BASELINE compare scaffolding.",
   };
   completeJobMatcherEvalProgress({
     workspaceId: input.workspaceId,

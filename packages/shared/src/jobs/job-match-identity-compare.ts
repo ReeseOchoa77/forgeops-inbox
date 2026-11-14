@@ -5,6 +5,7 @@
 
 import type { HistoricalEvalMetrics, HistoricalEvalOutcome } from "./job-match-historical-eval.js";
 import {
+  assertTransitionMetricsReconcile,
   attributePolicyChange,
   classifyDecisionTransition,
   classifyUnresolvedRecoverability,
@@ -92,6 +93,8 @@ export type PolicyDiagnosticReport = {
   unresolvedRecoverability: Partial<Record<UnresolvedRecoverability, number>>;
   regressionEmailIds: string[];
   improvementEmailIds: string[];
+  /** Present when transition matrix disagrees with baseline/proposed aggregates. */
+  integrityError?: string | null;
 };
 
 export type IdentityCompareTransitionCounts = Record<
@@ -543,16 +546,10 @@ export function buildPolicyDiagnosticReport(
 
   return {
     decisionTransitions,
+    // Pass granular decision transitions only — do not pre-sum UNRESOLVED_TO_WRONG
+    // or summarizeNewlyWrong will double-count AMBIGUOUS/CONFLICT/NO_MATCH → WRONG.
     newlyWrong: summarizeNewlyWrong({
-      transitions: {
-        ...decisionTransitions,
-        CORRECT_TO_WRONG: decisionTransitions.CORRECT_TO_WRONG,
-        UNRESOLVED_TO_WRONG:
-          (decisionTransitions.AMBIGUOUS_TO_WRONG ?? 0) +
-          (decisionTransitions.CONFLICT_TO_WRONG ?? 0) +
-          (decisionTransitions.NO_MATCH_TO_WRONG ?? 0),
-        WRONG_TO_CORRECT: decisionTransitions.WRONG_TO_CORRECT,
-      },
+      transitions: decisionTransitions,
       wrongDifferentJob,
     }),
     changeReasonCounts,
@@ -585,6 +582,14 @@ export function buildIdentityCompareReport(input: {
   const proposedSides = enrichedRows.map((r) => r.proposed);
   const trueJobIds = enrichedRows.map((r) => r.trueJobId);
   const diagnostics = buildPolicyDiagnosticReport(enrichedRows);
+  const transitionIntegrity = assertTransitionMetricsReconcile({
+    transitions: diagnostics.decisionTransitions,
+    baseline: input.baselineMetrics,
+    proposed: input.proposedMetrics,
+  });
+  if (!transitionIntegrity.ok) {
+    diagnostics.integrityError = transitionIntegrity.message;
+  }
 
   return {
     baselinePolicy: input.baselinePolicy ?? "BASELINE",
@@ -606,8 +611,10 @@ export function buildIdentityCompareReport(input: {
       trueJobIds
     ),
     safetyRegressions: {
-      correctToWrong: transitions.CORRECT_TO_WRONG,
-      unresolvedToWrong: transitions.UNRESOLVED_TO_WRONG,
+      // Canonical: same source as diagnostics.newlyWrong (per-email compare rows).
+      // Does NOT include WRONG→WRONG different Job (see newlyWrong.totalNewlyWrong).
+      correctToWrong: diagnostics.newlyWrong.correctToWrong,
+      unresolvedToWrong: diagnostics.newlyWrong.unresolvedToWrong,
     },
     coverageLoss: {
       correctToUnresolved: transitions.CORRECT_TO_UNRESOLVED,

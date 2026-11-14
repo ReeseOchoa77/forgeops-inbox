@@ -2,12 +2,77 @@
  * Client-side export of a completed Job Matcher evaluation.
  * Never re-runs the matcher — serializes the viewed result only.
  * Standard CSV excludes email bodies.
+ * Detailed rows must aggregate to displayMetrics for displayIdentityPolicy.
  */
 import type {
   JobMatcherEvalResult,
   JobMatcherEvalRow,
   JobMatcherIdentityCompareReport,
 } from './api'
+
+export type ExportIntegrityError = {
+  ok: false
+  message: string
+}
+
+export function assertDetailedExportMatchesDashboard(
+  result: JobMatcherEvalResult,
+  rows: JobMatcherEvalRow[]
+): { ok: true } | ExportIntegrityError {
+  const metrics = result.displayMetrics ?? result.metrics
+  const policy =
+    result.displayIdentityPolicy ?? result.identityPolicy ?? 'UNKNOWN'
+  let correctMatches = 0
+  let wrongMatches = 0
+  let ambiguous = 0
+  let conflict = 0
+  let noMatch = 0
+  for (const row of rows) {
+    switch (row.outcome) {
+      case 'CORRECT_MATCH':
+        correctMatches += 1
+        break
+      case 'WRONG_MATCH':
+        wrongMatches += 1
+        break
+      case 'AMBIGUOUS':
+        ambiguous += 1
+        break
+      case 'CONFLICT':
+        conflict += 1
+        break
+      default:
+        noMatch += 1
+        break
+    }
+  }
+  const mismatches: string[] = []
+  if (rows.length !== metrics.totalEvaluated) {
+    mismatches.push(`evaluated ${rows.length}≠${metrics.totalEvaluated}`)
+  }
+  if (correctMatches !== metrics.correctMatches) {
+    mismatches.push(`correct ${correctMatches}≠${metrics.correctMatches}`)
+  }
+  if (wrongMatches !== metrics.wrongMatches) {
+    mismatches.push(`wrong ${wrongMatches}≠${metrics.wrongMatches}`)
+  }
+  if (ambiguous !== metrics.ambiguous) {
+    mismatches.push(`ambiguous ${ambiguous}≠${metrics.ambiguous}`)
+  }
+  if (conflict !== metrics.conflict) {
+    mismatches.push(`conflict ${conflict}≠${metrics.conflict}`)
+  }
+  if (noMatch !== metrics.noMatch) {
+    mismatches.push(`noMatch ${noMatch}≠${metrics.noMatch}`)
+  }
+  if (mismatches.length > 0) {
+    return {
+      ok: false,
+      message: `Export integrity error (${policy}): detailed rows disagree with dashboard metrics (${mismatches.join('; ')}). Refusing inconsistent export.`,
+    }
+  }
+  return { ok: true }
+}
 
 type ThreeWay = NonNullable<JobMatcherEvalResult['threeWayComparison']>
 
@@ -106,8 +171,18 @@ export function buildEvalSummaryCsv(result: JobMatcherEvalResult): string {
   return lines.join('\n')
 }
 
-export function buildEvalDetailedCsv(rows: JobMatcherEvalRow[]): string {
+export function buildEvalDetailedCsv(
+  rows: JobMatcherEvalRow[],
+  meta?: {
+    evaluationRunId?: string | null
+    identityPolicy?: string | null
+    datasetFingerprint?: string | null
+  }
+): string {
   const headers = [
+    'evaluation_run_id',
+    'identity_policy',
+    'dataset_fingerprint',
     'email_message_id',
     'direction',
     'subject',
@@ -133,10 +208,17 @@ export function buildEvalDetailedCsv(rows: JobMatcherEvalRow[]): string {
     'first_ground_truth_loss_stage',
   ]
   const lines = [headers.join(',')]
+  const runId = meta?.evaluationRunId ?? ''
+  const policy = meta?.identityPolicy ?? ''
+  const fingerprint = meta?.datasetFingerprint ?? ''
   for (const row of rows) {
     const d = row.diagnostics
+    const rowPolicy = row.identityPolicy ?? policy
     lines.push(
       [
+        runId,
+        rowPolicy,
+        fingerprint,
         row.emailMessageId,
         row.direction,
         row.subject,

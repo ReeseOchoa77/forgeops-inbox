@@ -206,6 +206,12 @@ describe('job matcher evaluation UX v2', () => {
     expect(panel).not.toMatch(/maxWidth:\s*640/)
     expect(panel).not.toMatch(/maxWidth:\s*720/)
     expect(panel).not.toMatch(/maxWidth:\s*900/)
+    // Results must not be crushed by tall config/metrics chrome.
+    expect(panel).toContain('job-matcher-eval-chrome')
+    expect(panel).toContain("maxHeight: '42%'")
+    expect(panel).toContain('job-matcher-results-split')
+    expect(panel).toContain('minHeight: 240')
+    expect(panel).toContain('job-matcher-results-filters')
     const app = readFileSync(join(here, 'App.tsx'), 'utf8')
     expect(app).toMatch(/page === 'intelligence'[\s\S]*?overflow: 'hidden'/)
   })

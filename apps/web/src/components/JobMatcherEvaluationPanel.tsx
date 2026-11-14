@@ -18,6 +18,7 @@ import {
 } from '../api'
 import {
   buildEvalComparisonCsv,
+  assertDetailedExportMatchesDashboard,
   buildEvalDetailedCsv,
   buildEvalFullJson,
   buildEvalSummaryCsv,
@@ -446,6 +447,15 @@ export function JobMatcherEvaluationPanel({
       }
     : undefined
 
+  const detailedExportMeta = result
+    ? {
+        evaluationRunId: result.evaluationRunId ?? null,
+        identityPolicy:
+          result.displayIdentityPolicy ?? result.identityPolicy ?? null,
+        datasetFingerprint: result.datasetFingerprint ?? null,
+      }
+    : undefined
+
   const exportFull = (
     kind: 'summary' | 'detailed' | 'json' | 'comparison' | 'comparison-3way'
   ) => {
@@ -478,9 +488,14 @@ export function JobMatcherEvaluationPanel({
       return
     }
     if (kind === 'detailed') {
+      const integrity = assertDetailedExportMatchesDashboard(result, result.rows)
+      if (!integrity.ok) {
+        setError(integrity.message)
+        return
+      }
       downloadTextFile(
         jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
-        buildEvalDetailedCsv(result.rows),
+        buildEvalDetailedCsv(result.rows, detailedExportMeta),
         'text/csv;charset=utf-8'
       )
       return
@@ -495,9 +510,11 @@ export function JobMatcherEvaluationPanel({
   const exportFiltered = () => {
     if (!result) return
     setExportOpen(false)
+    // Filtered export is a subset — integrity is against the full dashboard only
+    // when exporting the full detailed set. Still stamp the display policy.
     downloadTextFile(
       jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
-      buildEvalDetailedCsv(filteredRows),
+      buildEvalDetailedCsv(filteredRows, detailedExportMeta),
       'text/csv;charset=utf-8'
     )
   }
@@ -532,7 +549,23 @@ export function JobMatcherEvaluationPanel({
         overflow: 'hidden',
       }}
     >
-      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/*
+        Config/metrics/comparison may grow tall (esp. after a full compare).
+        Allow this chrome to shrink + scroll so the Results pane is never
+        crushed below a usable height by overflow:hidden ancestors.
+      */}
+      <div
+        data-testid="job-matcher-eval-chrome"
+        style={{
+          flex: '0 1 auto',
+          maxHeight: '42%',
+          minHeight: 0,
+          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
         <div style={{ fontSize: 11, color: '#6b7280' }} title={groundTruthNotes}>
           Read-only evaluation · Ground truth quality: {groundTruthQuality}
         </div>
@@ -987,11 +1020,12 @@ export function JobMatcherEvaluationPanel({
         )}
       </div>
 
-      {/* Results | Inspector — remaining viewport */}
+      {/* Results | Inspector — remaining viewport (always keeps majority of height) */}
       <div
+        data-testid="job-matcher-results-split"
         style={{
-          flex: 1,
-          minHeight: 0,
+          flex: '1 1 0',
+          minHeight: 240,
           display: 'flex',
           flexDirection: wide ? 'row' : 'column',
           border: '1px solid #e5e7eb',
@@ -1002,11 +1036,12 @@ export function JobMatcherEvaluationPanel({
       >
         <div
           style={{
-            flex: wide ? '0 0 42%' : '1 1 45%',
+            flex: wide ? '0 0 42%' : '1 1 50%',
             minWidth: 0,
-            minHeight: 0,
+            minHeight: wide ? 0 : 180,
             display: 'flex',
             flexDirection: 'column',
+            overflow: 'hidden',
             borderRight: wide ? '1px solid #e5e7eb' : undefined,
             borderBottom: !wide ? '1px solid #e5e7eb' : undefined,
           }}
@@ -1141,30 +1176,58 @@ function ResultsPane(props: {
   return (
     <>
       <div
+        data-testid="job-matcher-results-header"
         style={{
           flexShrink: 0,
           padding: '6px 8px',
           borderBottom: '1px solid #e5e7eb',
           display: 'flex',
+          flexDirection: 'column',
           gap: 6,
-          flexWrap: 'wrap',
-          alignItems: 'center',
+          minWidth: 0,
         }}
       >
-        <strong style={{ fontSize: 12 }}>
-          Results{props.result ? ` (${props.filteredRows.length})` : ''}
-        </strong>
-        <Segmented
-          value={props.panelTab}
-          onChange={props.setPanelTab}
-          options={[
-            { value: 'emails', label: 'Emails' },
-            { value: 'jobs', label: 'Jobs' },
-            { value: 'diagnostics', label: 'Diagnostics' },
-          ]}
-        />
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            alignItems: 'center',
+            minWidth: 0,
+          }}
+        >
+          <strong style={{ fontSize: 12, flexShrink: 0 }}>
+            Results{props.result ? ` (${props.filteredRows.length})` : ''}
+          </strong>
+          <Segmented
+            value={props.panelTab}
+            onChange={props.setPanelTab}
+            options={[
+              { value: 'emails', label: 'Emails' },
+              { value: 'jobs', label: 'Jobs' },
+              { value: 'diagnostics', label: 'Diagnostics' },
+            ]}
+          />
+          {props.jobFilterId && (
+            <button type="button" onClick={() => props.setJobFilterId(null)} style={linkBtn}>
+              Clear Job filter
+            </button>
+          )}
+        </div>
         {props.panelTab === 'emails' && (
-          <>
+          <div
+            data-testid="job-matcher-results-filters"
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 6,
+              alignItems: 'center',
+              minWidth: 0,
+              // When wrap still overflows a narrow pane, allow horizontal reach.
+              overflowX: 'auto',
+              paddingBottom: 2,
+            }}
+          >
             {(
               [
                 ['ALL', 'All'],
@@ -1181,6 +1244,7 @@ function ResultsPane(props: {
                 onClick={() => props.setOutcomeFilter(value)}
                 style={{
                   ...chipBtn,
+                  flexShrink: 0,
                   background: props.outcomeFilter === value ? '#1a1a2e' : '#fff',
                   color: props.outcomeFilter === value ? '#fff' : '#111827',
                 }}
@@ -1193,7 +1257,7 @@ function ResultsPane(props: {
               onChange={(e) =>
                 props.setFailureFilter(e.target.value as JobMatcherEvalFailureCategory | 'ALL')
               }
-              style={{ ...selectStyle, minWidth: 140 }}
+              style={{ ...selectStyle, minWidth: 140, flexShrink: 0 }}
               aria-label="Failure type"
             >
               <option value="ALL">Failure: All</option>
@@ -1210,7 +1274,7 @@ function ResultsPane(props: {
                   e.target.value as 'ALL' | 'NAME' | 'CONTACT' | 'THREAD'
                 )
               }
-              style={{ ...selectStyle, minWidth: 120 }}
+              style={{ ...selectStyle, minWidth: 120, flexShrink: 0 }}
               aria-label="Resolving marker"
             >
               <option value="ALL">Marker: All</option>
@@ -1218,18 +1282,13 @@ function ResultsPane(props: {
               <option value="CONTACT">Marker 2</option>
               <option value="THREAD">Marker 3</option>
             </select>
-          </>
-        )}
-        {props.jobFilterId && (
-          <button type="button" onClick={() => props.setJobFilterId(null)} style={linkBtn}>
-            Clear Job filter
-          </button>
+          </div>
         )}
       </div>
       <div
         ref={props.scrollRef}
         onScroll={(e) => props.onScrollSave?.(e.currentTarget.scrollTop)}
-        style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+        style={{ flex: 1, minHeight: 0, overflow: 'auto', minWidth: 0 }}
       >
         {!props.result && (
           <div style={{ padding: 16, color: '#9ca3af', fontSize: 12 }}>No evaluation yet.</div>
@@ -1246,6 +1305,7 @@ function ResultsPane(props: {
           />
         )}
         {props.result && props.panelTab === 'jobs' && (
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={tableStyle}>
             <thead>
               <tr>
@@ -1285,8 +1345,10 @@ function ResultsPane(props: {
               ))}
             </tbody>
           </table>
+          </div>
         )}
         {props.result && props.panelTab === 'emails' && (
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={tableStyle}>
             <thead>
               <tr>
@@ -1340,6 +1402,7 @@ function ResultsPane(props: {
               })}
             </tbody>
           </table>
+          </div>
         )}
         {props.result && props.panelTab === 'emails' && props.filteredRows.length === 0 && (
           <div style={{ padding: 12, color: '#6b7280', fontSize: 12 }}>No rows for this filter.</div>
@@ -2074,12 +2137,30 @@ function ComparisonPanel({
           style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}
         >
           <div style={{ fontWeight: 650 }}>Policy diagnostics</div>
+          {diag.integrityError ? (
+            <div
+              data-testid="job-matcher-transition-integrity-error"
+              style={{
+                fontSize: 12,
+                color: '#991b1b',
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: 6,
+                padding: '8px 10px',
+              }}
+            >
+              {diag.integrityError}
+            </div>
+          ) : null}
           <div style={{ fontSize: 12, color: '#374151' }}>
-            Newly wrong: {diag.newlyWrong.totalNewlyWrong} (CORRECT→WRONG{' '}
-            {diag.newlyWrong.correctToWrong}, unresolved→WRONG{' '}
-            {diag.newlyWrong.unresolvedToWrong}, WRONG different Job{' '}
-            {diag.newlyWrong.wrongDifferentJob}). Wrong→Correct recovered:{' '}
-            {diag.newlyWrong.wrongToCorrect}. Regressions:{' '}
+            Newly wrong total {diag.newlyWrong.totalNewlyWrong} = CORRECT→WRONG{' '}
+            {diag.newlyWrong.correctToWrong} + unresolved→WRONG{' '}
+            {diag.newlyWrong.unresolvedToWrong} + WRONG→WRONG different Job{' '}
+            {diag.newlyWrong.wrongDifferentJob}. Safety regressions use the same
+            CORRECT→WRONG / unresolved→WRONG counts (not the total). Wrong→Correct
+            recovered: {diag.newlyWrong.wrongToCorrect}. Coverage-loss /
+            conflict regressions are listed separately in the decision matrix
+            (e.g. CORRECT→CONFLICT). Regressions:{' '}
             {diag.regressionEmailIds.length}. Improvements:{' '}
             {diag.improvementEmailIds.length}.
           </div>

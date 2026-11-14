@@ -76,7 +76,9 @@ UI: Results → **Diagnostics** (Failure / Marker Performance / Candidate / Conf
 
 ### Export (client, no rematch)
 
-From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodies**), Full JSON. Optional Detailed CSV of **current filtered** rows. When a paired comparison is present: **Comparison CSV** (one row/email with baseline + V1 decisions, identity evidence, transition). Export uses the viewed result only — matcher is not re-run.
+From a completed evaluation: Summary CSV, Detailed CSV (one row/email, **no bodies**), Full JSON. Optional Detailed CSV of **current filtered** rows. When a paired comparison is present: **Comparison CSV** (one row/email with baseline + proposed decisions, identity evidence, transition). Export uses the viewed result only — matcher is not re-run.
+
+**Integrity:** detailed rows always come from `displayIdentityPolicy` (the policy shown on metric cards), not compare-mode BASELINE scaffolding. CSV columns include `evaluation_run_id`, `identity_policy`, and `dataset_fingerprint`. Server and client refuse detailed export when row outcome aggregates disagree with dashboard metrics. Transition diagnostics must reconcile with both policies’ aggregates (`assertTransitionMetricsReconcile`); see [job-matcher-v2-v21-diagnostics.md](../architecture/job-matcher-v2-v21-diagnostics.md).
 
 ## Safety properties (verified)
 

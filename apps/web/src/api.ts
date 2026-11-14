@@ -5114,6 +5114,8 @@ export interface JobMatcherEvalRow {
     candidateJobIds: string[]
     candidateJobNames: string[]
   }>
+  /** Policy that produced this row (must match displayIdentityPolicy for list/export). */
+  identityPolicy?: JobMatcherIdentityPolicy
   diagnostics?: JobMatcherEvalRowDiagnostics
 }
 
@@ -5285,6 +5287,7 @@ export interface JobMatcherIdentityCompareReport {
     unresolvedRecoverability: Record<string, number>
     regressionEmailIds: string[]
     improvementEmailIds: string[]
+    integrityError?: string | null
   }
 }
 
@@ -5293,6 +5296,8 @@ export interface JobMatcherEvalResult {
   databaseWrites: 'NONE'
   autoAssignEnabled: boolean
   evaluationRunId?: string
+  /** Sorted selected email-id fingerprint for this run. */
+  datasetFingerprint?: string
   identityPolicy?: JobMatcherIdentityPolicy
   dataset: {
     spec: JobMatcherEvalDatasetSpec

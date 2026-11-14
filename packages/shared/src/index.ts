@@ -42,6 +42,7 @@ export * from "./jobs/job-name-identity-policy.js";
 export * from "./jobs/job-match-contact-policy.js";
 export * from "./jobs/job-match-identity-compare.js";
 export * from "./jobs/job-match-decision-transitions.js";
+export * from "./jobs/job-match-eval-export-integrity.js";
 export * from "./jobs/job-match-policy-registry.js";
 export * from "./jobs/job-match-pipeline.js";
 export * from "./jobs/job-contact-marker.js";
