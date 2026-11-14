@@ -13,6 +13,17 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/** Phase-2 fixture cases document BASELINE Marker 1 unless a policy is set. */
+function pipeline(
+  input: Parameters<typeof runJobMatchPipeline>[0]
+): ReturnType<typeof runJobMatchPipeline> {
+  return runJobMatchPipeline({
+    ...input,
+    identityPolicy: input.identityPolicy ?? "BASELINE",
+  });
+}
+
+
 const sm1: JobRecordForMatch = {
   id: "job-sm-1",
   jobNumber: "2191",
@@ -52,7 +63,7 @@ const pool = [sm1, sm2, sm3];
 
 describe("Marker 2 active exact contact", () => {
   it("1. active sender on one Job → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -65,7 +76,7 @@ describe("Marker 2 active exact contact", () => {
   });
 
   it("2. active sender on two Jobs → AMBIGUOUS", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -80,7 +91,7 @@ describe("Marker 2 active exact contact", () => {
   });
 
   it("3. sender absent → NO evidence", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       senderEmail: null,
@@ -292,7 +303,7 @@ describe("Marker 2 active exact contact", () => {
   });
 
   it("12. contact intersection narrows Marker 1 candidates", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -306,7 +317,7 @@ describe("Marker 2 active exact contact", () => {
   });
 
   it("13. empty contact set preserves Marker 1 candidates", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       senderEmail: "nobody@example.com",
@@ -329,7 +340,7 @@ describe("Marker 2 active exact contact", () => {
       normalizedName: "riverside tower",
       siteName: "Riverside",
     };
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: [...pool, other],
       senderEmail: "other@example.com",
@@ -350,7 +361,7 @@ describe("Marker 3 authoritative thread", () => {
   const thread = "outlook-thread-9";
 
   it("15. one authoritative thread Job → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       inboxConnectionId: conn,
@@ -362,7 +373,7 @@ describe("Marker 3 authoritative thread", () => {
   });
 
   it("16. multiple authoritative thread Jobs → AMBIGUOUS", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       inboxConnectionId: conn,
@@ -423,7 +434,7 @@ describe("Marker 3 authoritative thread", () => {
   });
 
   it("19. no providerThreadId → no evidence", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       inboxConnectionId: conn,
@@ -512,7 +523,7 @@ describe("Marker 3 authoritative thread", () => {
   });
 
   it("22. thread intersection narrows existing candidates", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       inboxConnectionId: conn,
@@ -528,7 +539,7 @@ describe("Marker 3 authoritative thread", () => {
   });
 
   it("23. empty thread evidence preserves candidates", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       inboxConnectionId: conn,
@@ -544,7 +555,7 @@ describe("Marker 3 authoritative thread", () => {
   });
 
   it("24. disjoint authoritative thread produces CONFLICT", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments Building 2 stair revisions",
       jobs: [sm2, { ...sm2, id: "job-2240", jobNumber: "2240", name: "Other Site" }],
       inboxConnectionId: conn,
@@ -565,7 +576,7 @@ describe("Marker 3 authoritative thread", () => {
       normalizedName: "riverside tower",
       siteName: "Riverside",
     };
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: [...pool, other],
       inboxConnectionId: conn,
@@ -585,7 +596,7 @@ describe("Marker 3 authoritative thread", () => {
 
 describe("Phase 2 pipeline", () => {
   it("25. Marker 1 strong MATCH stops", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments Building 2 stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -600,7 +611,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("26. Marker 1 ambiguous + Marker 2 unique → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -612,7 +623,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("27. Marker 1 ambiguous + Marker 2 ambiguous + Marker 3 unique → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -634,7 +645,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("28. Marker 1 no-match + Marker 2 unique → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -645,7 +656,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("29. Marker 1 no-match + Marker 2 ambiguous + Marker 3 unique → MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair revisions",
       jobs: pool,
       senderEmail: "connor@gc.com",
@@ -662,7 +673,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("30. unresolved candidates → AMBIGUOUS", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: pool,
     });
@@ -679,7 +690,7 @@ describe("Phase 2 pipeline", () => {
       normalizedName: "riverside tower",
       siteName: "Riverside",
     };
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       jobs: [...pool, other],
       inboxConnectionId: "conn-1",
@@ -691,7 +702,7 @@ describe("Phase 2 pipeline", () => {
   });
 
   it("32. no evidence → NO_MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Lunch next week?",
       jobs: pool,
     });
@@ -704,7 +715,7 @@ describe("Phase 2 pipeline", () => {
       "St Michael Apartments stair revisions",
       "Lunch next week?",
     ]) {
-      const result = runJobMatchPipeline({ subject, jobs: pool });
+      const result = pipeline({ subject, jobs: pool });
       if (result.decision !== "MATCH") {
         expect(result.selectedJobId).toBeNull();
       }
@@ -821,7 +832,7 @@ describe("Phase 2 evaluation harness", () => {
         subject: "x",
         senderEmail: "a@b.com",
         trueJobId: "job-sm-2",
-        result: runJobMatchPipeline({
+        result: pipeline({
           subject: "St Michael Apartments Building 2",
           jobs: pool,
         }),
@@ -831,7 +842,7 @@ describe("Phase 2 evaluation harness", () => {
         subject: "y",
         senderEmail: "a@b.com",
         trueJobId: "job-sm-1",
-        result: runJobMatchPipeline({
+        result: pipeline({
           subject: "St Michael Apartments Building 2",
           jobs: pool,
         }),

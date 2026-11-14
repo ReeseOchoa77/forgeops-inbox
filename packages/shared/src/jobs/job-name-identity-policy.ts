@@ -7,7 +7,7 @@
  *   weak candidates cleared so they cannot steer Marker 2.
  * CONTEXT_AWARE_V2_1: V2 identity gates + weak candidates preserved for later
  *   markers (multi-job contact gate still blocks steered wrong matches).
- * Production default remains BASELINE until explicitly approved.
+ * Production default is CONTEXT_AWARE_V2 (V2.1 remains shadow/eval-only).
  */
 
 import {
@@ -31,7 +31,7 @@ export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1;
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
-  JOB_MATCH_IDENTITY_POLICY_BASELINE;
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
 
 export type JobNameIdentityStrength =
   | "STRONG"

@@ -1,6 +1,7 @@
 /**
  * Canonical Job Matcher identity-policy registry and display ranking.
- * Higher rank = more advanced shadow policy. Production default remains BASELINE.
+ * Higher rank = more advanced shadow/eval policy.
+ * Production default is CONTEXT_AWARE_V2 (see productionDefault).
  */
 
 import type { HistoricalEvalMetrics } from "./job-match-historical-eval.js";
@@ -35,7 +36,7 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       id: JOB_MATCH_IDENTITY_POLICY_BASELINE,
       advanceRank: 0,
       label: "BASELINE",
-      productionDefault: true,
+      productionDefault: false,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
@@ -47,7 +48,7 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       advanceRank: 2,
       label: "CONTEXT_AWARE_V2",
-      productionDefault: false,
+      productionDefault: true,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
@@ -56,6 +57,12 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       productionDefault: false,
     },
   ] as const;
+
+/** Active production identity policy (exactly one registry entry). */
+export function getProductionJobMatchIdentityPolicy(): JobMatchIdentityPolicyId {
+  const entry = JOB_MATCH_POLICY_REGISTRY.find((e) => e.productionDefault);
+  return entry?.id ?? JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
+}
 
 const RANK = new Map(
   JOB_MATCH_POLICY_REGISTRY.map((e) => [e.id, e.advanceRank] as const)
@@ -97,7 +104,11 @@ export type PolicyMetricsBundle = {
 
 /**
  * Choose metrics for the primary Evaluation metric cards.
- * Prefers the most advanced policy that has metrics in the completed evaluation.
+ *
+ * - Single-policy runs: show that policy's metrics (primary).
+ * - Compare / multi-policy runs: prefer the active production policy when it
+ *   was scored, so V2.1 shadow results are not mistaken for production.
+ * - Otherwise fall back to the most advanced scored policy.
  */
 export function selectDisplayMetricsForEvaluation(input: {
   primaryPolicy: string | null | undefined;
@@ -116,6 +127,9 @@ export function selectDisplayMetricsForEvaluation(input: {
   } | null;
 }): PolicyMetricsBundle {
   const bundles: PolicyMetricsBundle[] = [];
+  const production = getProductionJobMatchIdentityPolicy();
+  const isCompare =
+    Boolean(input.comparison) || Boolean(input.threeWayComparison);
 
   if (
     input.primaryPolicy &&
@@ -127,7 +141,7 @@ export function selectDisplayMetricsForEvaluation(input: {
     });
   } else {
     bundles.push({
-      policy: JOB_MATCH_IDENTITY_POLICY_BASELINE,
+      policy: production,
       metrics: input.primaryMetrics,
     });
   }
@@ -168,11 +182,22 @@ export function selectDisplayMetricsForEvaluation(input: {
     }
   }
 
+  if (!isCompare) {
+    const primary =
+      input.primaryPolicy && isJobMatchIdentityPolicyId(input.primaryPolicy)
+        ? bundles.find((b) => b.policy === input.primaryPolicy)
+        : null;
+    if (primary) return primary;
+  }
+
+  const prodBundle = bundles.find((b) => b.policy === production);
+  if (prodBundle) return prodBundle;
+
   const advanced = selectMostAdvancedPolicy(bundles.map((b) => b.policy));
   const match = bundles.find((b) => b.policy === advanced);
   return (
     match ?? {
-      policy: JOB_MATCH_IDENTITY_POLICY_BASELINE,
+      policy: production,
       metrics: input.primaryMetrics,
     }
   );

@@ -172,6 +172,8 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('job-matcher-diagnostics')
     expect(src).toContain('Export')
     expect(src).toContain('job-matcher-eval-mode')
+    expect(src).toContain('CONTEXT_AWARE_V2')
+    expect(src).toContain('Production active: CONTEXT_AWARE_V2')
     expect(src).toContain('COMPARE_V1')
     expect(src).toContain('COMPARE_V2')
     expect(src).toContain('COMPARE_V2_1')

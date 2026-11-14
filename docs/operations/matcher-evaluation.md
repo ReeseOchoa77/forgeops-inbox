@@ -28,12 +28,12 @@ Body options on evaluate:
 
 | Field | Meaning |
 |-------|---------|
-| `identityPolicy` | `BASELINE` (default), `CONTEXT_AWARE_V1`, `CONTEXT_AWARE_V2`, or `CONTEXT_AWARE_V2_1` for a single-policy run |
+| `identityPolicy` | `CONTEXT_AWARE_V2` (production default), `BASELINE`, `CONTEXT_AWARE_V1`, or `CONTEXT_AWARE_V2_1` for a single-policy run |
 | `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), `CONTEXT_AWARE_V2_1` (V2 vs V2.1), or `ALL_THREE` (BASELINE+V1+V2+V2.1) |
 
-Production matcher default remains **BASELINE**. V1/V2 are not activated by running a comparison.
+Production matcher default is **CONTEXT_AWARE_V2**. V2.1 remains available for shadow comparison only. Running a comparison does not change production.
 
-UI: Evaluation mode → **Current matcher** | **Compare BASELINE vs V1** | **Compare V1 vs V2** | **Compare all three**. Shows metric deltas, transitions, ground-truth review flags, and paired/3-way Comparison CSV export.
+UI: Evaluation mode → **Current matcher (CONTEXT_AWARE_V2)** | **Compare BASELINE vs V1** | **Compare V1 vs V2** | **Compare V2 vs V2.1 (shadow)** | **Compare all**. Shows metric deltas, transitions, ground-truth review flags, and paired/3-way Comparison CSV export. Metric cards label production vs shadow.
 
 ### Dataset modes
 

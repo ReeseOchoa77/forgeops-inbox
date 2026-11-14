@@ -378,11 +378,15 @@ export function JobMatcherEvaluationPanel({
             : evaluationMode === 'COMPARE_ALL'
               ? ('ALL_THREE' as const)
               : null
+    // CURRENT = production policy (CONTEXT_AWARE_V2). Compare modes omit
+    // identityPolicy so the API can scaffold BASELINE primary + paired policies.
     const promise = api
       .evaluateJobMatcherIntelligence(workspaceId, {
         dataset,
         evaluationRunId,
-        ...(compareWith ? { compareWithIdentityPolicy: compareWith } : {}),
+        ...(compareWith
+          ? { compareWithIdentityPolicy: compareWith }
+          : { identityPolicy: 'CONTEXT_AWARE_V2' as const }),
       })
       .then((res) => res.evaluation)
     setJobMatcherEvalPending({ workspaceId, userId, promise })
@@ -700,11 +704,11 @@ export function JobMatcherEvaluationPanel({
               style={{ ...selectStyle, minWidth: 200 }}
               data-testid="job-matcher-eval-mode"
             >
-              <option value="CURRENT">Current matcher</option>
+              <option value="CURRENT">Current matcher (CONTEXT_AWARE_V2)</option>
               <option value="COMPARE_V1">Compare BASELINE vs V1</option>
               <option value="COMPARE_V2">Compare V1 vs V2</option>
-              <option value="COMPARE_V2_1">Compare V2 vs V2.1</option>
-              <option value="COMPARE_ALL">Compare all (incl. V2.1)</option>
+              <option value="COMPARE_V2_1">Compare V2 vs V2.1 (shadow)</option>
+              <option value="COMPARE_ALL">Compare all (incl. V2.1 shadow)</option>
             </select>
           </Control>
         </div>
@@ -970,7 +974,7 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {/* 12 bordered metric cards — most advanced policy in this evaluation */}
+        {/* Metric cards — production policy when present; else the evaluated policy */}
         {result && m && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
@@ -978,6 +982,12 @@ export function JobMatcherEvaluationPanel({
               style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}
             >
               Showing: {displayPolicy}
+              {displayPolicy === 'CONTEXT_AWARE_V2' ? ' (production)' : ''}
+              {displayPolicy === 'CONTEXT_AWARE_V2_1' ? ' (shadow eval)' : ''}
+              <span style={{ fontWeight: 500, color: '#6b7280' }}>
+                {' · '}
+                Production active: CONTEXT_AWARE_V2
+              </span>
             </div>
             <div
               data-testid="job-matcher-metric-cards"

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertDecisionCountsReconcile,
+  getProductionJobMatchIdentityPolicy,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
@@ -8,6 +9,7 @@ import {
   selectDisplayMetricsForEvaluation,
   selectMostAdvancedPolicy,
 } from "../jobs/job-match-policy-registry.js";
+import { DEFAULT_JOB_MATCH_IDENTITY_POLICY } from "../jobs/job-name-identity-policy.js";
 import type { HistoricalEvalMetrics } from "../jobs/job-match-historical-eval.js";
 
 function metrics(partial: Partial<HistoricalEvalMetrics>): HistoricalEvalMetrics {
@@ -45,6 +47,15 @@ function metrics(partial: Partial<HistoricalEvalMetrics>): HistoricalEvalMetrics
 }
 
 describe("job-match-policy-registry", () => {
+  it("production default is CONTEXT_AWARE_V2", () => {
+    expect(getProductionJobMatchIdentityPolicy()).toBe(
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
+    );
+    expect(DEFAULT_JOB_MATCH_IDENTITY_POLICY).toBe(
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
+    );
+  });
+
   it("selects most advanced policy by registry rank", () => {
     expect(
       selectMostAdvancedPolicy([
@@ -93,7 +104,7 @@ describe("job-match-policy-registry", () => {
     expect(assertDecisionCountsReconcile(display.metrics)).toBe(true);
   });
 
-  it("prefers V2.1 when present in multi-policy compare", () => {
+  it("prefers production V2 over V2.1 in multi-policy compare", () => {
     const display = selectDisplayMetricsForEvaluation({
       primaryPolicy: JOB_MATCH_IDENTITY_POLICY_BASELINE,
       primaryMetrics: metrics({ correctMatches: 824, wrongMatches: 80 }),
@@ -103,6 +114,22 @@ describe("job-match-policy-registry", () => {
         v2Metrics: metrics({ correctMatches: 747, wrongMatches: 11 }),
         v21Metrics: metrics({ correctMatches: 780, wrongMatches: 11 }),
       },
+    });
+    expect(display.policy).toBe(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2);
+    expect(display.metrics.correctMatches).toBe(747);
+  });
+
+  it("shows single-policy V2.1 when that is the primary evaluation", () => {
+    const v21 = metrics({
+      correctMatches: 780,
+      wrongMatches: 11,
+      ambiguous: 100,
+      conflict: 50,
+      noMatch: 2,
+    });
+    const display = selectDisplayMetricsForEvaluation({
+      primaryPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      primaryMetrics: v21,
     });
     expect(display.policy).toBe(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1);
     expect(display.metrics.correctMatches).toBe(780);
@@ -126,12 +153,12 @@ describe("job-match-policy-registry", () => {
 
   it("ignores missing/incomplete comparison bundles", () => {
     const display = selectDisplayMetricsForEvaluation({
-      primaryPolicy: JOB_MATCH_IDENTITY_POLICY_BASELINE,
+      primaryPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       primaryMetrics: metrics({ correctMatches: 100, wrongMatches: 0 }),
       comparison: null,
       threeWayComparison: null,
     });
-    expect(display.policy).toBe(JOB_MATCH_IDENTITY_POLICY_BASELINE);
+    expect(display.policy).toBe(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2);
   });
 
   it("guards metric denominators and reconciles decision counts", () => {

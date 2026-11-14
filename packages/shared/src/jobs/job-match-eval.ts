@@ -2,6 +2,7 @@ import type { JobAliasForMatch, JobMatchResult, JobRecordForMatch } from "./job-
 import type { JobContactHit } from "./job-contact-marker.js";
 import type { JobThreadHit } from "./job-thread-marker.js";
 import { runJobMatchPipeline } from "./job-match-pipeline.js";
+import type { JobMatchIdentityPolicy } from "./job-name-identity-policy.js";
 
 export type JobMatchEvalCase = {
   id: string;
@@ -12,6 +13,11 @@ export type JobMatchEvalCase = {
   senderEmail?: string | null;
   inboxConnectionId?: string | null;
   providerThreadId?: string | null;
+  /**
+   * Fixture harness default is BASELINE so historical Marker 1 cases stay
+   * stable. Production matching uses CONTEXT_AWARE_V2 via JobMatcherService.
+   */
+  identityPolicy?: JobMatchIdentityPolicy;
   expectedDecision: "MATCH" | "AMBIGUOUS" | "NO_MATCH" | "CONFLICT";
   expectedJobId?: string | null;
   expectedCandidateJobIds?: string[];
@@ -141,6 +147,7 @@ export function evaluateJobMatchCases(
       providerThreadId: row.providerThreadId ?? "thread-eval",
       contactHits,
       threadHits,
+      identityPolicy: row.identityPolicy ?? "BASELINE",
     });
 
     const nameIds = traceIds(result, "NAME") ?? [];

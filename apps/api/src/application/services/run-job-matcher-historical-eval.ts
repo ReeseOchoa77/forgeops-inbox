@@ -42,6 +42,7 @@ import {
   type JobMatchResult,
   JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
   assertExportRowsMatchMetrics,
+  DEFAULT_JOB_MATCH_IDENTITY_POLICY,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
 import { randomUUID } from "node:crypto";
@@ -391,7 +392,7 @@ export async function runJobMatcherHistoricalEval(input: {
   maxWrongDetails?: number;
   /**
    * Identity policy for the primary evaluation result.
-   * Default BASELINE — production matcher semantics.
+   * Default CONTEXT_AWARE_V2 — production matcher semantics.
    */
   identityPolicy?: JobMatchIdentityPolicy;
   /**
@@ -413,7 +414,7 @@ export async function runJobMatcherHistoricalEval(input: {
   const startedAt = Date.now();
   const evaluationRunId = input.evaluationRunId?.trim() || randomUUID();
   const identityPolicy: JobMatchIdentityPolicy =
-    input.identityPolicy ?? "BASELINE";
+    input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
   const compareWith = input.compareWithIdentityPolicy ?? null;
 
   const spec = normalizeSpec(
@@ -875,7 +876,7 @@ export async function runJobMatcherHistoricalEval(input: {
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. CONTEXT_AWARE_V1/V2/V2.1 are shadow-only until approved; production default remains BASELINE. Detailed rows/export always use displayIdentityPolicy (most advanced scored policy), not primary BASELINE compare scaffolding.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; BASELINE/V1/V2.1 remain available for evaluation. Detailed rows/export always use displayIdentityPolicy (production policy when present in compare runs).",
   };
   completeJobMatcherEvalProgress({
     workspaceId: input.workspaceId,

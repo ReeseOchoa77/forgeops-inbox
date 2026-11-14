@@ -1,7 +1,7 @@
 # Job Matcher — Internal Job number audit
 
 **Date:** 2026-11-14  
-**Production default:** unchanged (`BASELINE`). Shadow policies V1/V2/V2.1 share the same Marker 1 phrase index.
+**Production default:** `CONTEXT_AWARE_V2`. BASELINE / V1 / V2.1 remain eval/shadow options. All policies share the same Marker 1 phrase index (no internal `jobNumber`).
 
 ## Philosophy
 

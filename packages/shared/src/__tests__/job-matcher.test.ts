@@ -275,11 +275,24 @@ describe("JobMatcherService", () => {
       subject: "RE: Integer drawings",
       cleanBody: "Please review",
       senderEmail: "a@b.com",
-      n8nSelectedJobIdHint: "job-b", // weak hint — subject wins
+      n8nSelectedJobIdHint: "job-b", // weak hint — not authoritative
     });
-    expect(result.selectedJobId).toBe("job-a");
+    // Production default is CONTEXT_AWARE_V2: unique weak single-token "Integer" abstains.
+    expect(result.identityPolicy).toBe("CONTEXT_AWARE_V2");
+    expect(result.decision).toBe("AMBIGUOUS");
+    expect(result.selectedJobId).toBeNull();
     expect(result.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
     expect(result.matcherVersion).toBe(JOB_MATCH_PIPELINE_VERSION);
+
+    const baseline = await service.match({
+      workspaceId: "ws-1",
+      emailMessageId: "msg-1",
+      subject: "RE: Integer drawings",
+      cleanBody: "Please review",
+      senderEmail: "a@b.com",
+      identityPolicy: "BASELINE",
+    });
+    expect(baseline.selectedJobId).toBe("job-a");
   });
 
   it("AI resolver is unused; Marker 1 ambiguity does not pick a Job", async () => {

@@ -8,6 +8,7 @@ import {
 } from "./job-matcher.js";
 import type { JobContactHit } from "./job-contact-marker.js";
 import { jobMatchPipelineFromEmailInput } from "./job-match-pipeline.js";
+import { DEFAULT_JOB_MATCH_IDENTITY_POLICY } from "./job-name-identity-policy.js";
 import { runJobNameMarker } from "./job-name-marker.js";
 import type { JobThreadHit } from "./job-thread-marker.js";
 
@@ -61,19 +62,26 @@ export class JobMatcherService {
   ) {}
 
   async match(input: JobMatchInput): Promise<JobMatchResult> {
+    const identityPolicy =
+      input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
+    const resolvedInput: JobMatchInput = {
+      ...input,
+      identityPolicy,
+    };
+
     const [jobs, aliases] = await Promise.all([
       this.loader.loadActiveJobs(input.workspaceId),
       this.loader.loadJobAliases(input.workspaceId),
     ]);
 
     const namePreview = runJobNameMarker({
-      subject: input.subject,
-      bodyText: input.bodyText,
-      cleanBody: input.cleanBody,
+      subject: resolvedInput.subject,
+      bodyText: resolvedInput.bodyText,
+      cleanBody: resolvedInput.cleanBody,
       jobs,
       aliases,
-      eligibilityMode: input.eligibilityMode ?? "production",
-      ...(input.identityPolicy ? { identityPolicy: input.identityPolicy } : {}),
+      eligibilityMode: resolvedInput.eligibilityMode ?? "production",
+      identityPolicy,
     });
 
     let contactHits: JobContactHit[] | undefined;
@@ -81,16 +89,16 @@ export class JobMatcherService {
     if (!(namePreview.status === "MATCH" && namePreview.selectedJobId)) {
       const [contacts, threads] = await Promise.all([
         this.loader.loadActiveExactContactJobs({
-          workspaceId: input.workspaceId,
-          senderEmail: input.senderEmail,
-          excludeEmailMessageId: input.emailMessageId ?? null,
+          workspaceId: resolvedInput.workspaceId,
+          senderEmail: resolvedInput.senderEmail,
+          excludeEmailMessageId: resolvedInput.emailMessageId ?? null,
           eligibleJobs: jobs,
         }),
         this.loader.loadAuthoritativeThreadJobs({
-          workspaceId: input.workspaceId,
-          inboxConnectionId: input.inboxConnectionId ?? null,
-          providerThreadId: input.providerThreadId ?? null,
-          excludeEmailMessageId: input.emailMessageId ?? null,
+          workspaceId: resolvedInput.workspaceId,
+          inboxConnectionId: resolvedInput.inboxConnectionId ?? null,
+          providerThreadId: resolvedInput.providerThreadId ?? null,
+          excludeEmailMessageId: resolvedInput.emailMessageId ?? null,
           eligibleJobs: jobs,
         }),
       ]);
@@ -98,15 +106,21 @@ export class JobMatcherService {
       threadHits = threads;
     }
 
-    const result = jobMatchPipelineFromEmailInput(input, jobs, aliases, {
-      contactHits,
-      threadHits,
-    });
+    const result = jobMatchPipelineFromEmailInput(
+      resolvedInput,
+      jobs,
+      aliases,
+      {
+        contactHits,
+        threadHits,
+      }
+    );
 
     if (this.options?.logCompletions !== false) {
       console.info("job-match-completed", {
-        workspaceId: input.workspaceId,
-        emailMessageId: input.emailMessageId ?? null,
+        workspaceId: resolvedInput.workspaceId,
+        emailMessageId: resolvedInput.emailMessageId ?? null,
+        identityPolicy,
         candidateCount: result.candidateCount,
         selectedJobId: result.selectedJobId,
         decision: result.decision ?? null,

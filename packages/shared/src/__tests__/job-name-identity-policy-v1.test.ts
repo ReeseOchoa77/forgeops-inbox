@@ -354,13 +354,14 @@ describe("CONTEXT_AWARE_V1 identity policy scenarios", () => {
     expect(v1.identityDiagnostics.reason).toBe("DISTINCTIVE_SINGLE_TOKEN");
   });
 
-  it("production default remains BASELINE when policy omitted", () => {
+  it("production default is CONTEXT_AWARE_V2 when policy omitted", () => {
     const result = runJobNameMarker({
       subject: "Team follow up",
       cleanBody: "",
       jobs: [riseUp],
     });
-    expect(result.identityPolicy).toBe("BASELINE");
-    expect(result.status).toBe("MATCH");
+    expect(result.identityPolicy).toBe("CONTEXT_AWARE_V2");
+    // Weak unique OVERLAP abstains under V2 (BASELINE would MATCH).
+    expect(result.status).toBe("AMBIGUOUS");
   });
 });

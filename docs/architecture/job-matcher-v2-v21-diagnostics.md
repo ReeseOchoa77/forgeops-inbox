@@ -1,6 +1,6 @@
 # Job Matcher — V2 vs V2.1 diagnostic audit
 
-**Status:** V2 remains the preferred shadow reference. Production default remains `BASELINE`. V2.1 is **not** promoted. Do not implement a new policy until a re-run of the identical 2,474 email IDs verifies dashboard ↔ export ↔ transition matrix reconciliation.
+**Status:** Production default is `CONTEXT_AWARE_V2`. V2.1 remains shadow/eval-only and is **not** promoted.
 
 ## Pipeline (unchanged architecture)
 
@@ -143,4 +143,4 @@ Comparison CSV includes decision transition, change reason, candidate counts, an
 
 ## Production
 
-Unchanged: live matcher omits `identityPolicy` → `BASELINE`.
+Live matcher omits `identityPolicy` → `CONTEXT_AWARE_V2` (`DEFAULT_JOB_MATCH_IDENTITY_POLICY` / registry `productionDefault`).

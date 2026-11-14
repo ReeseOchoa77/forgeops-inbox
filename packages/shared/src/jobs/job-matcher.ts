@@ -56,8 +56,8 @@ export type JobMatchInput = {
    */
   eligibilityMode?: "production" | "evaluation";
   /**
-   * Marker 1 identity policy. Default BASELINE (production).
-   * CONTEXT_AWARE_V1 is opt-in for shadow evaluation only until approved.
+   * Marker 1 identity policy. Default CONTEXT_AWARE_V2 (production).
+   * BASELINE / V1 / V2.1 remain available for evaluation overrides.
    */
   identityPolicy?:
     | "BASELINE"
@@ -127,7 +127,7 @@ export type JobMatchResult = {
   assignmentSource: JobMatchAssignmentSource | null;
   candidateCount: number;
   matcherVersion: string;
-  /** Marker 1 identity policy used for this decision (default BASELINE). */
+  /** Marker 1 identity policy used for this decision (default CONTEXT_AWARE_V2). */
   identityPolicy?:
     | "BASELINE"
     | "CONTEXT_AWARE_V1"

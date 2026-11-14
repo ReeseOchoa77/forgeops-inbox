@@ -22,6 +22,26 @@ import type {
 
 const here = import.meta.dirname;
 
+/** Historical Marker 1 cases assume BASELINE unless a policy is specified. */
+function nameMarker(
+  input: Parameters<typeof runJobNameMarker>[0]
+): ReturnType<typeof runJobNameMarker> {
+  return runJobNameMarker({
+    ...input,
+    identityPolicy: input.identityPolicy ?? "BASELINE",
+  });
+}
+
+function pipeline(
+  input: Parameters<typeof runJobMatchPipeline>[0]
+): ReturnType<typeof runJobMatchPipeline> {
+  return runJobMatchPipeline({
+    ...input,
+    identityPolicy: input.identityPolicy ?? "BASELINE",
+  });
+}
+
+
 const alleghany: JobRecordForMatch = {
   id: "job-2191",
   jobNumber: "2191",
@@ -110,7 +130,7 @@ describe("canonicalizeJobNameTokens", () => {
 
 describe("runJobNameMarker", () => {
   it("exact Job name in subject", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "RE: Alleghany Apartments - Stair Rail RFI",
       cleanBody: "Please review.",
       jobs: pool,
@@ -121,7 +141,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("exact Job name in body", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Updated drawings",
       cleanBody: "Attached are the drawings for Alleghany Apartments.",
       jobs: pool,
@@ -131,7 +151,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("normalized capitalization", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "alleghany apartments rfi",
       cleanBody: "",
       jobs: pool,
@@ -141,7 +161,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Bldg vs Building", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Beltline Bldg #1 RFI",
       cleanBody: "",
       jobs: pool,
@@ -151,7 +171,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Apts vs Apartments", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Alleghany Apts RFI",
       cleanBody: "",
       jobs: pool,
@@ -161,7 +181,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("distinguishes #1 vs #2", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Beltline Building #1 RFI",
       cleanBody: "",
       jobs: pool,
@@ -172,7 +192,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("ambiguous common project prefix does not pick a Job", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Beltline RFI",
       cleanBody: "",
       jobs: pool,
@@ -183,7 +203,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("unrelated subject/body is NO_MATCH", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Stair Rail RFI",
       cleanBody: "Please send the latest shop drawings.",
       jobs: pool,
@@ -194,7 +214,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("quoted historical project name does not dominate", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "FW: follow up",
       cleanBody: [
         "Please see below.",
@@ -209,7 +229,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("unique distinctive token Alleghany matches the one Job", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Alleghany project drawings",
       cleanBody: "",
       jobs: pool,
@@ -219,7 +239,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("unique token in body matches", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Drawings",
       cleanBody:
         "Attached are the updated drawings for the Alleghany project...",
@@ -230,7 +250,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("multiple eligible Jobs still require distinction", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Beltline Building #2 shop drawings",
       cleanBody: "",
       jobs: pool,
@@ -240,7 +260,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("COMPLETE jobs are outside the Marker 1 pool", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Alleghany Apartments RFI",
       cleanBody: "",
       jobs: [{ ...alleghany, status: "COMPLETE" }, belt1],
@@ -250,13 +270,13 @@ describe("runJobNameMarker", () => {
   });
 
   it("evaluation eligibility includes COMPLETE historical Jobs without changing production", () => {
-    const production = runJobNameMarker({
+    const production = nameMarker({
       subject: "Alleghany Apartments RFI",
       cleanBody: "",
       jobs: [{ ...alleghany, status: "COMPLETE" }],
     });
     expect(production.status).toBe("NO_MATCH");
-    const evaluation = runJobNameMarker({
+    const evaluation = nameMarker({
       subject: "Alleghany Apartments RFI",
       cleanBody: "",
       jobs: [{ ...alleghany, status: "COMPLETE" }],
@@ -271,7 +291,7 @@ describe("runJobNameMarker", () => {
       ...alleghany,
       id: "other-ws-job",
     };
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Alleghany Apartments RFI",
       cleanBody: "",
       jobs: [belt1, belt2],
@@ -281,7 +301,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Addn vs Addition", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Mercy Hospital Addn RFI",
       cleanBody: "",
       jobs: pool,
@@ -291,7 +311,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("job alias in subject can match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Nova Academy drawings",
       cleanBody: "",
       jobs: [mercy],
@@ -313,7 +333,7 @@ describe("runJobNameMarker", () => {
       externalRef: null,
       status: "ACTIVE",
     };
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Mary Hospital RFI",
       cleanBody: "",
       jobs: [saint, mercy],
@@ -355,7 +375,7 @@ describe("runJobNameMarker", () => {
   const stMichaelPool = [stMichael1, stMichael2, stMichael3];
 
   it("shared campus name is AMBIGUOUS with the plausible candidate set", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments stair revisions",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -371,7 +391,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("unique strong identity MATCH for Building 2 and does not pick Building 1", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments Building 2 stair revisions",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -383,7 +403,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Beltline #1 is unique among Beltline buildings even without the word Building", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Beltline #1 RFI",
       cleanBody: "",
       jobs: pool,
@@ -393,7 +413,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Job.description is not Marker 1 identity", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "SecretCodename stair RFI",
       cleanBody: "",
       jobs: [{ ...mercy, description: "SecretCodename campus expansion" }],
@@ -403,7 +423,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("siteName alone can generate a shared candidate set", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments RFI",
       cleanBody: "",
       jobs: stMichaelPool.map((j) => ({
@@ -421,7 +441,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("externalRef uniquely identifies a Job", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "GC-4721 stair package",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -431,7 +451,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("internal Job number in a PO does not identify a Job", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "PO 2192 drawings",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -441,7 +461,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("Building 2 name is not overridden by a coincidental internal Job number", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments Building 2 PO 2191",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -469,7 +489,7 @@ describe("runJobNameMarker", () => {
       externalRef: null,
       status: "ACTIVE",
     };
-    const unique = runJobNameMarker({
+    const unique = nameMarker({
       subject: "Riverside North stair RFI",
       cleanBody: "",
       jobs: [north, south],
@@ -477,7 +497,7 @@ describe("runJobNameMarker", () => {
     expect(unique.status).toBe("MATCH");
     expect(unique.selectedJobId).toBe("job-north");
 
-    const shared = runJobNameMarker({
+    const shared = nameMarker({
       subject: "Riverside stair RFI",
       cleanBody: "",
       jobs: [north, south],
@@ -487,7 +507,7 @@ describe("runJobNameMarker", () => {
   });
 
   it("alias is reused as identity and does not need a second name store", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apts Bldg 2 RFI",
       cleanBody: "",
       jobs: stMichaelPool,
@@ -506,7 +526,7 @@ describe("runJobNameMarker", () => {
 
 describe("runJobMatchPipeline", () => {
   it("MATCH selects the Job and does not require review", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Alleghany Apartments RFI",
       cleanBody: "",
       jobs: pool,
@@ -518,7 +538,7 @@ describe("runJobMatchPipeline", () => {
   });
 
   it("AMBIGUOUS does not select the first Job", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Beltline RFI",
       cleanBody: "",
       jobs: pool,
@@ -530,7 +550,7 @@ describe("runJobMatchPipeline", () => {
   });
 
   it("NO_MATCH does not select a Job", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "Stair Rail RFI",
       cleanBody: "",
       jobs: pool,
@@ -541,7 +561,7 @@ describe("runJobMatchPipeline", () => {
   });
 
   it("internal Job number is not unique identity and never emits JOB_NUMBER_MATCH", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "PO 2191",
       cleanBody: "",
       jobs: pool,
@@ -553,7 +573,7 @@ describe("runJobMatchPipeline", () => {
   });
 
   it("unique strong Marker 1 MATCH stops the pipeline (Marker 2/3 are not consulted)", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments Building 2 stair revisions",
       cleanBody: "",
       jobs: [
@@ -590,7 +610,7 @@ describe("runJobMatchPipeline", () => {
   });
 
   it("AMBIGUOUS Marker 1 carries candidateJobIds for later markers", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "St Michael Apartments stair revisions",
       cleanBody: "",
       jobs: [
@@ -958,7 +978,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   const numberedJobs = [stMichael, riverside];
 
   it("1. Job.jobNumber exact text alone does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "2417",
       cleanBody: "",
       jobs: numberedJobs,
@@ -968,7 +988,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("2. #<jobNumber> does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "#2417 revised stair detail",
       cleanBody: "",
       jobs: numberedJobs,
@@ -977,7 +997,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("3. Job <jobNumber> does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Job 2417 drawings",
       cleanBody: "",
       jobs: numberedJobs,
@@ -986,7 +1006,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("4. Job #<jobNumber> does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Job #2417 drawings",
       cleanBody: "",
       jobs: numberedJobs,
@@ -995,7 +1015,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("5. Job number in subject does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "RFI 2417 - revised stair detail",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1005,7 +1025,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("6. Job number in body does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Updated drawings",
       cleanBody: "Please review job 2417 and send comments.",
       jobs: numberedJobs,
@@ -1014,7 +1034,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("7. unrelated RFI number equal to Job.jobNumber does not match", () => {
-    const result = runJobMatchPipeline({
+    const result = pipeline({
       subject: "RFI 2417 - Riverside steel revisions",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1025,7 +1045,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("8. unrelated PO number equal to Job.jobNumber does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "PO 2417 for millwork",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1034,7 +1054,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("9. arbitrary numeric text equal to Job.jobNumber does not match", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "Sheet 2417 / spec 2417 / invoice 2417",
       cleanBody: "Address 2417 Main St",
       jobs: numberedJobs,
@@ -1043,7 +1063,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("10. externalRef exact match can still produce identity evidence", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "GC-8801 steel package",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1056,7 +1076,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("11. explicit project alias containing a meaningful number still works", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Building 2 RFI",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1080,7 +1100,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
       name: "St Michael Apartments Building 1",
       normalizedName: "st michael apartments building 1",
     };
-    const unique = runJobNameMarker({
+    const unique = nameMarker({
       subject: "St Michael Apartments Building 2 stair RFI",
       cleanBody: "",
       jobs: [b1, stMichael],
@@ -1108,7 +1128,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
       externalRef: null,
       status: "ACTIVE",
     };
-    const unique = runJobNameMarker({
+    const unique = nameMarker({
       subject: "Harbor Phase 2 roof RFI",
       cleanBody: "",
       jobs: [p1, p2],
@@ -1118,7 +1138,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("14. Job.name containing a legitimate number still works as a NAME", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments Building 2 stair revisions",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1128,7 +1148,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("15. internal Job number is not silently generated as an alias", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "2417",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1147,7 +1167,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("17. new matcher never emits JOB_NUMBER_MATCH", () => {
-    const nameMatch = runJobMatchPipeline({
+    const nameMatch = pipeline({
       subject: "Riverside Medical Center RFI",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1156,7 +1176,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
     expect(nameMatch.assignmentSource).toBe("AI_AUTO_ASSIGNED");
     expect(nameMatch.assignmentSource).not.toBe("JOB_NUMBER_MATCH");
 
-    const numberOnly = runJobMatchPipeline({
+    const numberOnly = pipeline({
       subject: "Job #2417",
       cleanBody: "PO 2418",
       jobs: numberedJobs,
@@ -1165,7 +1185,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
   });
 
   it("name vs disjoint externalRef remains AMBIGUOUS", () => {
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "St Michael Apartments Building 2 GC-8801",
       cleanBody: "",
       jobs: numberedJobs,
@@ -1202,12 +1222,14 @@ describe("internal Job.jobNumber is never matching evidence", () => {
 
   it("21. removing internal Job number from email does not change prediction", () => {
     const policies = [
-      undefined,
+      undefined, // production default CONTEXT_AWARE_V2
+      "BASELINE",
       "CONTEXT_AWARE_V1",
       "CONTEXT_AWARE_V2",
       "CONTEXT_AWARE_V2_1",
     ] as const;
     for (const identityPolicy of policies) {
+      // Call production pipeline directly so omitted policy uses DEFAULT (V2).
       const withNumber = runJobMatchPipeline({
         subject: "Riverside Medical Center — Job #2418 / RFI 2418",
         cleanBody: "Please review job 2418 drawings.",
@@ -1229,6 +1251,9 @@ describe("internal Job.jobNumber is never matching evidence", () => {
             e.type === "SUBJECT_JOB_NUMBER" || e.type === "CONTENT_JOB_NUMBER"
         )
       ).toBe(false);
+      if (!identityPolicy) {
+        expect(withNumber.identityPolicy).toBe("CONTEXT_AWARE_V2");
+      }
     }
   });
 
@@ -1243,7 +1268,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
       siteName: "9999",
       status: "ACTIVE",
     };
-    const result = runJobNameMarker({
+    const result = nameMarker({
       subject: "9999",
       cleanBody: "Job #9999 please review",
       jobs: [contaminated, riverside],
