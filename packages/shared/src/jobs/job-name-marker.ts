@@ -166,6 +166,21 @@ function sameTokenSequence(a: string[], b: string[]): boolean {
   return a.every((t, i) => t === b[i]);
 }
 
+/**
+ * True when `label` is exactly the internal TEK/ForgeOps Job.jobNumber
+ * (not a project name that merely contains a distinguishing number like "Building 2").
+ */
+export function phraseEqualsInternalJobNumber(
+  label: string | null | undefined,
+  jobNumber: string | null | undefined
+): boolean {
+  if (!label?.trim() || !jobNumber?.trim()) return false;
+  const labelTokens = canonicalizeJobNameTokens(label);
+  const numberTokens = canonicalizeJobNameTokens(jobNumber);
+  if (numberTokens.length === 0 || labelTokens.length === 0) return false;
+  return sameTokenSequence(labelTokens, numberTokens);
+}
+
 function pushUniquePhrase(phrases: PreparedPhrase[], next: PreparedPhrase): void {
   if (next.tokens.length === 0) return;
   if (phrases.some((p) => sameTokenSequence(p.tokens, next.tokens))) return;
@@ -188,32 +203,29 @@ function prepareJobs(
   for (const job of jobs) {
     if (!isEligibleJob(job, mode)) continue;
     const phrases: PreparedPhrase[] = [];
-    pushUniquePhrase(phrases, {
-      label: job.name,
-      tokens: canonicalizeJobNameTokens(job.name),
-      source: "NAME",
-    });
+    /**
+     * Internal Job.jobNumber is never indexed as a phrase — including when a
+     * NAME/ALIAS/SITE/EXTERNAL_REF field is contaminated with the same value.
+     * Legitimate external identifiers must differ from the internal job number.
+     */
+    const pushIdentityPhrase = (
+      label: string | null | undefined,
+      source: JobNameIdentitySource
+    ) => {
+      if (!label?.trim()) return;
+      if (phraseEqualsInternalJobNumber(label, job.jobNumber)) return;
+      pushUniquePhrase(phrases, {
+        label,
+        tokens: canonicalizeJobNameTokens(label),
+        source,
+      });
+    };
+    pushIdentityPhrase(job.name, "NAME");
     for (const alias of aliasesByJob.get(job.id) ?? []) {
-      pushUniquePhrase(phrases, {
-        label: alias.alias,
-        tokens: canonicalizeJobNameTokens(alias.alias),
-        source: "ALIAS",
-      });
+      pushIdentityPhrase(alias.alias, "ALIAS");
     }
-    if (job.siteName?.trim()) {
-      pushUniquePhrase(phrases, {
-        label: job.siteName,
-        tokens: canonicalizeJobNameTokens(job.siteName),
-        source: "SITE",
-      });
-    }
-    if (job.externalRef?.trim()) {
-      pushUniquePhrase(phrases, {
-        label: job.externalRef,
-        tokens: canonicalizeJobNameTokens(job.externalRef),
-        source: "EXTERNAL_REF",
-      });
-    }
+    pushIdentityPhrase(job.siteName, "SITE");
+    pushIdentityPhrase(job.externalRef, "EXTERNAL_REF");
     if (phrases.length === 0) continue;
 
     const contentTokens = new Set<string>();

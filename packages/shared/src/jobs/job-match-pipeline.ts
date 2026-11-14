@@ -184,6 +184,11 @@ function assignmentSourceForNameMatch(
   return "AI_AUTO_ASSIGNED";
 }
 
+const FORBIDDEN_INTERNAL_JOB_NUMBER_EVIDENCE = new Set([
+  "SUBJECT_JOB_NUMBER",
+  "CONTENT_JOB_NUMBER",
+]);
+
 function toResult(input: {
   decision: JobMatchDecision;
   selectedJobId: string | null;
@@ -199,17 +204,25 @@ function toResult(input: {
 }): JobMatchResult {
   const requiresReview =
     input.decision === "AMBIGUOUS" || input.decision === "CONFLICT";
+  // Defense in depth: live pipeline must never surface internal job-number evidence.
+  const evidence = input.evidence.filter(
+    (row) => !FORBIDDEN_INTERNAL_JOB_NUMBER_EVIDENCE.has(row.type)
+  );
+  const assignmentSource =
+    input.assignmentSource === "JOB_NUMBER_MATCH"
+      ? "AI_AUTO_ASSIGNED"
+      : input.assignmentSource;
   return {
     selectedJobId: input.selectedJobId,
     confidence: input.confidence,
-    evidence: input.evidence,
+    evidence,
     ambiguousCandidateIds:
       requiresReview ? input.candidateJobIds : [],
     candidateJobIds: input.candidateJobIds,
     decision: input.decision,
     markerTrace: input.markerTrace,
     requiresReview,
-    assignmentSource: input.assignmentSource,
+    assignmentSource,
     candidateCount: input.eligibleJobCount,
     matcherVersion: JOB_MATCH_PIPELINE_VERSION,
     identityPolicy: input.identityPolicy,

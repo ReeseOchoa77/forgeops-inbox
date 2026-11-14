@@ -1199,5 +1199,57 @@ describe("internal Job.jobNumber is never matching evidence", () => {
     expect(isJobMatcherAutoAssignEnabled()).toBe(false);
     expect(JOB_NAME_MARKER_VERSION).toBe("job-name-marker-v3");
   });
+
+  it("21. removing internal Job number from email does not change prediction", () => {
+    const policies = [
+      undefined,
+      "CONTEXT_AWARE_V1",
+      "CONTEXT_AWARE_V2",
+      "CONTEXT_AWARE_V2_1",
+    ] as const;
+    for (const identityPolicy of policies) {
+      const withNumber = runJobMatchPipeline({
+        subject: "Riverside Medical Center — Job #2418 / RFI 2418",
+        cleanBody: "Please review job 2418 drawings.",
+        jobs: numberedJobs,
+        ...(identityPolicy ? { identityPolicy } : {}),
+      });
+      const withoutNumber = runJobMatchPipeline({
+        subject: "Riverside Medical Center",
+        cleanBody: "Please review drawings.",
+        jobs: numberedJobs,
+        ...(identityPolicy ? { identityPolicy } : {}),
+      });
+      expect(withNumber.decision).toBe(withoutNumber.decision);
+      expect(withNumber.selectedJobId).toBe(withoutNumber.selectedJobId);
+      expect(withNumber.selectedJobId).toBe("job-2418");
+      expect(
+        withNumber.evidence.some(
+          (e) =>
+            e.type === "SUBJECT_JOB_NUMBER" || e.type === "CONTENT_JOB_NUMBER"
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("22. Job.name equal to Job.jobNumber is not indexed as identity", () => {
+    const contaminated: JobRecordForMatch = {
+      id: "job-contam",
+      jobNumber: "9999",
+      name: "9999",
+      normalizedName: "9999",
+      customerId: null,
+      externalRef: "9999",
+      siteName: "9999",
+      status: "ACTIVE",
+    };
+    const result = runJobNameMarker({
+      subject: "9999",
+      cleanBody: "Job #9999 please review",
+      jobs: [contaminated, riverside],
+    });
+    expect(result.status).toBe("NO_MATCH");
+    expect(result.selectedJobId).toBeNull();
+  });
 });
 

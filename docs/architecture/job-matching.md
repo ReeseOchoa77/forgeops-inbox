@@ -106,15 +106,17 @@ Shadow compare: `compareWithIdentityPolicy` = `CONTEXT_AWARE_V1` | `CONTEXT_AWAR
 
 ### Internal Job number
 
-**Invariant (live matcher):** `Job.jobNumber` is the internal ForgeOps/company identifier. External senders generally do not know it. It is **not** matching evidence.
+**Invariant (live matcher):** `Job.jobNumber` is the internal ForgeOps/company (TEK STEEL) identifier. External senders generally do not know it. It is **not** matching evidence for candidate generation, scoring, filtering, or final assignment.
 
 | Identifier | Role |
 |------------|------|
-| `Job.jobNumber` | Internal. Never inferred from email text. Never used by Marker 1. |
-| `Job.externalRef` | Deliberate external identifier. Valid Marker 1 evidence. |
-| `Job.name` / aliases / `siteName` | Project identity evidence. |
+| `Job.jobNumber` | Internal. Never inferred from email text. Never indexed by Marker 1. OK for DB ids, UI labels, and ground-truth display. |
+| `Job.externalRef` | Deliberate external identifier. Valid Marker 1 evidence **only when it differs from** `Job.jobNumber`. |
+| `Job.name` / aliases / `siteName` | Project identity evidence. Phrases that are *exactly* equal to `Job.jobNumber` are skipped (data-quality contamination guard). |
 
-`JOB_NUMBER_MATCH` remains on `JobAssignmentSource` and `JobMatchAssignmentSource` for **historical rows**. Evidence types `SUBJECT_JOB_NUMBER` / `CONTENT_JOB_NUMBER` remain in the type union. The live pipeline must not emit them; the evaluator flags if they appear.
+Ground-truth `jobId` / job numbers / folder labels are never passed into `matcher.match` as prediction features.
+
+`JOB_NUMBER_MATCH` remains on `JobAssignmentSource` and `JobMatchAssignmentSource` for **historical rows**. Evidence types `SUBJECT_JOB_NUMBER` / `CONTENT_JOB_NUMBER` remain in the type union. The live pipeline strips them if present; the evaluator flags if they appear. Audit: [job-matcher-internal-job-number-audit.md](./job-matcher-internal-job-number-audit.md).
 
 ## Marker 2 — active exact contact
 
