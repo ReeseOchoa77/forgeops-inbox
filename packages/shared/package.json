@@ -29,6 +29,11 @@
       "types": "./src/reference/normalize.ts",
       "import": "./src/reference/normalize.ts",
       "default": "./src/reference/normalize.ts"
+    },
+    "./jobs/job-match-policy-registry": {
+      "types": "./src/jobs/job-match-policy-registry.ts",
+      "import": "./src/jobs/job-match-policy-registry.ts",
+      "default": "./src/jobs/job-match-policy-registry.ts"
     }
   },
   "scripts": {

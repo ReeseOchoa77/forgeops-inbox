@@ -6,7 +6,8 @@
 import {
   getProductionJobMatchIdentityPolicy,
   JOB_MATCH_POLICY_REGISTRY,
-} from '@forgeops/shared'
+  type JobMatchPolicyRegistryEntry,
+} from '@forgeops/shared/jobs/job-match-policy-registry'
 
 export type IntelligenceControlSection =
   | 'overview'
@@ -151,7 +152,9 @@ export function sectionLabel(section: IntelligenceControlSection): string {
 /** Real production policy label from the shared registry — never invent metrics. */
 export function jobMatcherProductionPolicyLabel(): string {
   const id = getProductionJobMatchIdentityPolicy()
-  const entry = JOB_MATCH_POLICY_REGISTRY.find((e) => e.id === id)
+  const entry = JOB_MATCH_POLICY_REGISTRY.find(
+    (e: JobMatchPolicyRegistryEntry) => e.id === id
+  )
   return entry?.label ?? id
 }
 
@@ -161,7 +164,7 @@ export function jobMatcherPolicyRows(): ReadonlyArray<{
   productionDefault: boolean
   experimental: boolean
 }> {
-  return JOB_MATCH_POLICY_REGISTRY.map((e) => ({
+  return JOB_MATCH_POLICY_REGISTRY.map((e: JobMatchPolicyRegistryEntry) => ({
     id: e.id,
     label: e.label,
     productionDefault: e.productionDefault,

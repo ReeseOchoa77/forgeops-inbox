@@ -837,7 +837,6 @@ function applyContextAwareV2IdentityPolicy(args: {
 
   let strength = assessed.strength;
   let reason = assessed.reason;
-  let strongAnchor = assessed.strongIdentityAnchor;
 
   // Re-validate contiguous multiword OVERLAP under V2.
   if (
@@ -858,7 +857,6 @@ function applyContextAwareV2IdentityPolicy(args: {
     if (!multi.ok) {
       strength = "WEAK";
       reason = multi.reason;
-      strongAnchor = false;
     }
   }
 

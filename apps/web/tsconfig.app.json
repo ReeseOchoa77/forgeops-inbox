@@ -28,6 +28,9 @@
       ],
       "@forgeops/shared/reference/normalize": [
         "../../packages/shared/src/reference/normalize.ts"
+      ],
+      "@forgeops/shared/jobs/job-match-policy-registry": [
+        "../../packages/shared/src/jobs/job-match-policy-registry.ts"
       ]
     },
 

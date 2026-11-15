@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import {
   BUSINESS_SUBTYPE_FILTER_OPTIONS,
   BUSINESS_SUBTYPE_KEYS,
-} from '@forgeops/shared'
+} from '@forgeops/shared/business-subtypes'
 import {
   api,
   type IntelligenceSafeDto,
