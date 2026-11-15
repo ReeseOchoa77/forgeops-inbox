@@ -4,7 +4,7 @@
 
 Code is the source of truth: `@forgeops/shared` → `intelligence/` (`INTELLIGENCE_CATALOG`, `listDiscoverableIntelligence`, `toIntelligenceSafeDto`).
 
-Manage → **Intelligence** (ADMIN/OWNER) loads safe DTOs from the registry via:
+Manage → **Intelligence Control Center** (ADMIN/OWNER) groups registry systems into Overview / Email Classification / Job Matcher / Document Intelligence / Workflow Intelligence, and loads safe DTOs via:
 
 - `GET /api/v1/workspaces/:workspaceId/intelligence`
 - `GET /api/v1/workspaces/:workspaceId/intelligence/:intelligenceId`
@@ -17,7 +17,7 @@ Job Matcher evaluation / Test One reuse the existing historical matcher evaluato
 - `GET .../intelligence/job-matcher/test-emails`
 - `POST .../intelligence/job-matcher/test-one`
 
-Related: [overview.md](overview.md), [email-classification.md](email-classification.md), [job-matching.md](job-matching.md), [bidding-active-bids.md](bidding-active-bids.md), [matcher-evaluation.md](../operations/matcher-evaluation.md).
+Related: [overview.md](overview.md), [email-classification.md](email-classification.md), [subtype-discovery.md](subtype-discovery.md), [job-matching.md](job-matching.md), [bidding-active-bids.md](bidding-active-bids.md), [matcher-evaluation.md](../operations/matcher-evaluation.md).
 
 ## Purpose
 

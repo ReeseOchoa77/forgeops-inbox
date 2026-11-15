@@ -43,9 +43,13 @@ Rules:
 | Mode | Eligible Job statuses |
 |------|------------------------|
 | `production` (live) | `ACTIVE`, `ON_HOLD`, `AWARDED` only |
-| `evaluation` | all statuses (historical holdout). **Must not** be used by the live path |
+| `evaluation` | production + `COMPLETE` / `COMPLETED` / `ARCHIVED` (historical awarded Jobs) |
 
-The Prisma loader (`createPrismaJobMatchLoader`) fetches non-archived Jobs excluding `ARCHIVED`/`CANCELLED`, then Marker 1/2/3 apply the production status filter. COMPLETE / BIDDING / LEAD are loaded but **not** live-matched.
+**Never eligible (any mode):** `LEAD`, `BIDDING` (active/pre-award bids), `CANCELLED` (canceled/lost), and any Job with `archivedAt != null` (removed from the directory).
+
+Shared helpers: `isJobMatcherEligibleStatus`, `isJobMatcherEligibleJob`, `filterJobsEligibleForMatching` in `job-name-marker.ts`. Applied before Marker 1/2/3 candidate generation for every identity policy (V2, V2.2, …).
+
+The Prisma loader (`createPrismaJobMatchLoader`) loads only live eligible statuses with `archivedAt IS NULL`. Historical eval snapshots still load all Jobs for ground-truth labels; matching filters via evaluation eligibility. Eval diagnostics set `trueJobEligibleAsCandidate` when the historical label is no longer in the candidate pool.
 
 ## Marker 1 — project identity
 

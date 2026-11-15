@@ -7,6 +7,12 @@ import {
   readUrlSearchParams,
   saveWorkspaceState,
 } from './storage'
+import {
+  defaultSubForSection,
+  isValidSubForSection,
+  type IntelligenceControlSection,
+  type IntelligenceControlSub,
+} from '../intelligence-control-center'
 
 export const INTEL_STATE_VERSION = 1
 export const INTEL_SURFACE = 'intelligence'
@@ -19,8 +25,14 @@ export type IntelligenceEvalMode =
   | 'COMPARE_V2_2'
   | 'COMPARE_ALL'
 
+export type { IntelligenceControlSection, IntelligenceControlSub }
+
 export type IntelligencePersistedState = {
   tab: 'overview' | 'pipeline' | 'instructions' | 'evaluation' | 'test'
+  /** Control Center primary section (Overview / Email / Job Matcher / …). */
+  controlSection: IntelligenceControlSection
+  /** Section subsection (e.g. evaluations); null on Overview. */
+  controlSub: IntelligenceControlSub | null
   /** Job Matcher evaluation draft / UI prefs — config only, never result bodies. */
   evalConfig: {
     jobsMode: 'ALL' | 'SPECIFIC' | 'SELECTED'
@@ -46,6 +58,13 @@ export type IntelligencePersistedState = {
 }
 
 const TABS = new Set(['overview', 'pipeline', 'instructions', 'evaluation', 'test'])
+const CONTROL_SECTIONS = new Set([
+  'overview',
+  'email-classification',
+  'job-matcher',
+  'document-intelligence',
+  'workflow-intelligence',
+])
 const JOBS_MODES = new Set(['ALL', 'SPECIFIC', 'SELECTED'])
 const SAMPLING = new Set(['TOTAL', 'PER_JOB', 'ALL_ELIGIBLE'])
 const LIFECYCLE = new Set(['ALL', 'CURRENT', 'ARCHIVED'])
@@ -65,6 +84,24 @@ const EVAL_MODES = new Set([
   'COMPARE_V2_2',
   'COMPARE_ALL',
 ])
+
+function parseControlSection(raw: unknown): IntelligenceControlSection {
+  if (typeof raw === 'string' && CONTROL_SECTIONS.has(raw)) {
+    return raw as IntelligenceControlSection
+  }
+  return 'overview'
+}
+
+function parseControlSub(
+  section: IntelligenceControlSection,
+  raw: unknown
+): IntelligenceControlSub | null {
+  if (section === 'overview') return null
+  if (typeof raw === 'string' && isValidSubForSection(section, raw)) {
+    return raw as IntelligenceControlSub
+  }
+  return defaultSubForSection(section)
+}
 
 export function validateIntelligenceState(raw: unknown): IntelligencePersistedState | null {
   if (!raw || typeof raw !== 'object') return null
@@ -97,8 +134,12 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
       ? null
       : asString(o.transitionFilter, 64)
   if (o.transitionFilter != null && transitionFilter == null) return null
+  const controlSection = parseControlSection(o.controlSection)
+  const controlSub = parseControlSub(controlSection, o.controlSub)
   return {
     tab: o.tab as IntelligencePersistedState['tab'],
+    controlSection,
+    controlSub,
     evalConfig: {
       jobsMode: ec.jobsMode as IntelligencePersistedState['evalConfig']['jobsMode'],
       jobIds,
@@ -117,6 +158,8 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
 
 export const DEFAULT_INTELLIGENCE_STATE: IntelligencePersistedState = {
   tab: 'overview',
+  controlSection: 'overview',
+  controlSub: null,
   evalConfig: {
     jobsMode: 'ALL',
     jobIds: [],
@@ -138,10 +181,41 @@ export function readIntelligenceTabFromUrl(): IntelligencePersistedState['tab'] 
   return null
 }
 
+export function readIntelligenceControlFromUrl(): {
+  controlSection?: IntelligenceControlSection
+  controlSub?: IntelligenceControlSub | null
+} {
+  const params = readUrlSearchParams()
+  const sectionRaw = params.get('intelSection')
+  if (!sectionRaw || !CONTROL_SECTIONS.has(sectionRaw)) return {}
+  const controlSection = sectionRaw as IntelligenceControlSection
+  const subRaw = params.get('intelSub')
+  if (controlSection === 'overview') {
+    return { controlSection, controlSub: null }
+  }
+  if (subRaw && isValidSubForSection(controlSection, subRaw)) {
+    return { controlSection, controlSub: subRaw as IntelligenceControlSub }
+  }
+  return { controlSection, controlSub: defaultSubForSection(controlSection) }
+}
+
 export function writeIntelligenceTabToUrl(
   tab: IntelligencePersistedState['tab']
 ): void {
   patchUrlSearchParams({ intelTab: tab }, 'replace')
+}
+
+export function writeIntelligenceControlToUrl(input: {
+  controlSection: IntelligenceControlSection
+  controlSub: IntelligenceControlSub | null
+}): void {
+  patchUrlSearchParams(
+    {
+      intelSection: input.controlSection,
+      intelSub: input.controlSub ?? '',
+    },
+    'replace'
+  )
 }
 
 export function loadIntelligenceState(input: {
@@ -156,10 +230,20 @@ export function loadIntelligenceState(input: {
     validate: validateIntelligenceState,
   })
   const urlTab = readIntelligenceTabFromUrl()
-  if (!stored && !urlTab) return null
+  const urlControl = readIntelligenceControlFromUrl()
+  if (!stored && !urlTab && !urlControl.controlSection) return null
   return {
     ...(stored ?? DEFAULT_INTELLIGENCE_STATE),
     ...(urlTab ? { tab: urlTab } : {}),
+    ...(urlControl.controlSection
+      ? {
+          controlSection: urlControl.controlSection,
+          controlSub:
+            urlControl.controlSub !== undefined
+              ? urlControl.controlSub
+              : defaultSubForSection(urlControl.controlSection),
+        }
+      : {}),
   }
 }
 
@@ -177,7 +261,13 @@ export function persistIntelligenceState(input: {
     version: INTEL_STATE_VERSION,
     data: input.state,
   })
-  if (input.syncUrl !== false) writeIntelligenceTabToUrl(input.state.tab)
+  if (input.syncUrl !== false) {
+    writeIntelligenceTabToUrl(input.state.tab)
+    writeIntelligenceControlToUrl({
+      controlSection: input.state.controlSection,
+      controlSub: input.state.controlSub,
+    })
+  }
 }
 
 export function clearIntelligenceState(input: {

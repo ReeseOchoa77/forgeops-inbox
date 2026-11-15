@@ -2,7 +2,7 @@ import { isAuthoritativeEmailJobAssignment } from "../project-folders/verified-f
 import { normalizeEmail } from "../reference/normalize.js";
 import type { JobMatchEvidence, JobRecordForMatch } from "./job-matcher.js";
 import {
-  isJobMatcherEligibleStatus,
+  isJobMatcherEligibleJob,
   type JobMatchEligibilityMode,
 } from "./job-name-marker.js";
 
@@ -56,7 +56,7 @@ function eligibleJobIdSet(
 ): Set<string> {
   const ids = new Set<string>();
   for (const job of jobs) {
-    if (isJobMatcherEligibleStatus(job.status, mode)) ids.add(job.id);
+    if (isJobMatcherEligibleJob(job, mode)) ids.add(job.id);
   }
   return ids;
 }

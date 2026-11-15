@@ -247,12 +247,15 @@ describe('URL precedence for nav / intelligence', () => {
     const state = {
       ...DEFAULT_INTELLIGENCE_STATE,
       tab: 'evaluation' as const,
+      controlSection: 'job-matcher' as const,
+      controlSub: 'evaluations' as const,
       evalConfig: {
         jobsMode: 'SPECIFIC' as const,
         jobIds: ['job_beltline'],
         sampling: 'TOTAL' as const,
         count: 50,
         lifecycle: 'CURRENT' as const,
+        evaluationMode: 'CURRENT' as const,
       },
       outcomeFilter: 'WRONG_MATCH' as const,
       resultsView: 'jobs' as const,

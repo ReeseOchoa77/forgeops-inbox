@@ -3108,6 +3108,160 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) }
     ),
 
+  previewSubtypeDiscovery: (
+    workspaceId: string,
+    body: SubtypeDiscoveryConfigInput
+  ) =>
+    request<{ preview: SubtypeDiscoveryPreview }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/preview`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  startSubtypeDiscoveryRun: (
+    workspaceId: string,
+    body: SubtypeDiscoveryConfigInput
+  ) =>
+    request<{ runId: string; jobId: string; config: SubtypeDiscoveryConfigInput }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listSubtypeDiscoveryRuns: (workspaceId: string) =>
+    request<{
+      runs: Array<{
+        id: string
+        status: string
+        createdAt: string
+        completedAt: string | null
+        summary: SubtypeDiscoverySummary | null
+        config: SubtypeDiscoveryConfigInput
+      }>
+    }>(`/workspaces/${workspaceId}/intelligence/subtype-discovery/runs`),
+
+  getSubtypeDiscoveryRun: (workspaceId: string, runId: string) =>
+    request<{ run: SubtypeDiscoveryRunDto }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}`
+    ),
+
+  cancelSubtypeDiscoveryRun: (workspaceId: string, runId: string) =>
+    request<{ status: string }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  listSubtypeRecommendationDecisions: (workspaceId: string, runId: string) =>
+    request<{ decisions: SubtypeRecommendationDecisionDto[] }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/decisions`
+    ),
+
+  setSubtypeRecommendationDecision: (
+    workspaceId: string,
+    runId: string,
+    recommendationId: string,
+    body: {
+      status: 'REJECTED' | 'MERGED' | 'DEFERRED' | 'PENDING'
+      editedPayload?: SubtypeRecommendationEditPayload | null
+      mergeTargetKey?: string | null
+      notes?: string | null
+    }
+  ) =>
+    request<{ decision: SubtypeRecommendationDecisionDto }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recommendationId)}/decision`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  previewSubtypeRecommendationApproval: (
+    workspaceId: string,
+    runId: string,
+    recommendationId: string,
+    body?: { editedPayload?: SubtypeRecommendationEditPayload | null }
+  ) =>
+    request<{ preview: SubtypeApprovalPreview }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recommendationId)}/preview-approval`,
+      { method: 'POST', body: JSON.stringify(body ?? {}) }
+    ),
+
+  approveSubtypeRecommendation: (
+    workspaceId: string,
+    runId: string,
+    recommendationId: string,
+    body: {
+      confirmApply: true
+      editedPayload?: SubtypeRecommendationEditPayload | null
+      notes?: string | null
+    }
+  ) =>
+    request<{
+      decision: SubtypeRecommendationDecisionDto
+      revision: TaxonomyRevisionDto
+      businessTypeId: string
+    }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recommendationId)}/approve`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listTaxonomyRevisions: (workspaceId: string) =>
+    request<{ revisions: TaxonomyRevisionDto[] }>(
+      `/workspaces/${workspaceId}/intelligence/taxonomy/revisions`
+    ),
+
+  rollbackTaxonomyRevision: (
+    workspaceId: string,
+    revisionId: string,
+    body: { confirmRollback: true }
+  ) =>
+    request<{ revision: TaxonomyRevisionDto; rollbackRevision: TaxonomyRevisionDto }>(
+      `/workspaces/${workspaceId}/intelligence/taxonomy/revisions/${encodeURIComponent(revisionId)}/rollback`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  runSubtypeTaxonomyEval: (
+    workspaceId: string,
+    runId: string,
+    body: { proposedRecommendationIds: string[] }
+  ) =>
+    request<{
+      evalRunId: string
+      metrics: SubtypeTaxonomyEvalMetrics
+      emailChangeCount: number
+    }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/runs/${encodeURIComponent(runId)}/taxonomy-eval`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listSubtypeTaxonomyEvals: (workspaceId: string, discoveryRunId?: string) => {
+    const q = discoveryRunId
+      ? `?discoveryRunId=${encodeURIComponent(discoveryRunId)}`
+      : ''
+    return request<{
+      evals: Array<{
+        id: string
+        label: string
+        discoveryRunId: string | null
+        groundTruthQuality: string
+        metrics: SubtypeTaxonomyEvalMetrics
+        createdAt: string
+      }>
+    }>(`/workspaces/${workspaceId}/intelligence/subtype-discovery/taxonomy-evals${q}`)
+  },
+
+  getSubtypeTaxonomyEval: (workspaceId: string, evalRunId: string) =>
+    request<{
+      eval: {
+        id: string
+        label: string
+        discoveryRunId: string | null
+        taxonomySnapshot: unknown
+        metrics: SubtypeTaxonomyEvalMetrics
+        emailChanges: unknown
+        groundTruthQuality: string
+        methodologyNotes: string
+        createdAt: string
+      }
+    }>(
+      `/workspaces/${workspaceId}/intelligence/subtype-discovery/taxonomy-evals/${encodeURIComponent(evalRunId)}`
+    ),
+
   getCustomers: (
     workspaceId: string,
     params?: { includeCounts?: boolean; search?: string }
@@ -5444,6 +5598,170 @@ export interface JobMatcherEvalEmailDetail {
     isInline: boolean
     uploadStatus: string
   }>
+}
+
+export type SubtypeDiscoveryConfigInput = {
+  samplePreset?: 'ALL_ELIGIBLE' | '500' | '2500' | '10000' | 'CUSTOM'
+  customCount?: number | null
+  mailboxCategory?: 'BUSINESS' | 'PERSONAL' | 'ALL'
+  inboxConnectionId?: string | null
+  receivedAfter?: string | null
+  receivedBefore?: string | null
+}
+
+export type SubtypeDiscoveryPreview = {
+  eligibleCount: number
+  requestedCount: number | null
+  willSample: number
+  capped: boolean
+  config: SubtypeDiscoveryConfigInput
+}
+
+export type SubtypeDiscoverySummary = {
+  emailsEligible: number
+  emailsSelected: number
+  emailsPrepared: number
+  emailsExcluded: number
+  emailsAnalyzed: number
+  clustersDiscovered: number
+  proposedNewSubtypes: number
+  existingSubtypeMatches: number
+  refinements: number
+  mergeCandidates: number
+  unresolvedClusters: number
+  durationMs: number
+  samplingMethod: string
+  embeddingModel: string
+  interpretModel: string
+  clusterAlgorithm: string
+  pipelineVersion: string
+}
+
+export type SubtypeDiscoveryRecommendation = {
+  id: string
+  clusterId: string
+  kind: string
+  suggestedSubtypeName: string | null
+  recommendedParentType: string | null
+  definition: string | null
+  inclusionCriteria: string | null
+  exclusionCriteria: string | null
+  supportingEmailCount: number
+  shareOfAnalyzed: number
+  similarExistingSubtypes: string[]
+  overlapNotes: string | null
+  rationale: string
+  examples: Array<{
+    emailMessageId: string
+    subject: string | null
+    snippet: string | null
+    mailboxCategory: string | null
+    businessTypeKey: string | null
+  }>
+  supportingEmailIds?: string[]
+  clusterCohesion: number
+}
+
+export type SubtypeRecommendationEditPayload = {
+  suggestedSubtypeName: string
+  systemKey: string
+  recommendedParentType: 'BUSINESS'
+  definition: string
+  inclusionCriteria: string
+  exclusionCriteria: string
+}
+
+export type SubtypeRecommendationDecisionDto = {
+  id: string
+  discoveryRunId: string
+  recommendationId: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'MERGED' | 'DEFERRED'
+  editedPayload: SubtypeRecommendationEditPayload | null
+  mergeTargetKey: string | null
+  notes: string | null
+  decidedByUserId: string | null
+  decidedAt: string | null
+  taxonomyRevisionId: string | null
+}
+
+export type SubtypeApprovalPreview = {
+  changeType: 'ADD_SUBTYPE'
+  parentType: 'BUSINESS'
+  systemKey: string
+  displayLabel: string
+  definition: string
+  inclusionCriteria: string
+  exclusionCriteria: string
+  duplicateOf: string | null
+  willCreateWorkspaceBusinessType: true
+  willReclassifyHistoricalEmails: false
+}
+
+export type TaxonomyRevisionDto = {
+  id: string
+  version: number
+  status: string
+  changeType: string
+  payload: Record<string, unknown>
+  businessTypeId: string | null
+  systemKey: string | null
+  discoveryRunId: string | null
+  recommendationId: string | null
+  approvedByUserId: string
+  createdAt: string
+  rolledBackAt: string | null
+  rolledBackByUserId: string | null
+  rollbackOfRevisionId: string | null
+}
+
+export type SubtypeTaxonomyEvalMetrics = {
+  current: {
+    emailsInDataset: number
+    labeledCount: number
+    unlabeledCount: number
+    coverage: number
+    otherBusinessCount: number
+    distribution: Record<string, number>
+    groundTruthPrecision: number | null
+    groundTruthLabeled: number
+    ambiguousOrNullVsGt: number
+    confusion: Array<{ actual: string; predicted: string; count: number }>
+  }
+  proposed: SubtypeTaxonomyEvalMetrics['current']
+  delta: {
+    coverage: number
+    otherBusinessCount: number
+    groundTruthPrecision: number | null
+    newlyMatchingGt: number
+    newlyMismatchingGt: number
+    assignmentChanges: number
+  }
+  methodologyNotes: string
+  groundTruthQuality: string
+}
+
+export type SubtypeDiscoveryRunDto = {
+  id: string
+  status: string
+  config: SubtypeDiscoveryConfigInput
+  progress: {
+    phase: string
+    emailsEligible: number
+    emailsSelected: number
+    emailsPrepared: number
+    emailsEmbedded: number
+    clustersFound: number
+    clustersInterpreted: number
+    message: string | null
+  }
+  summary: SubtypeDiscoverySummary | null
+  recommendations: SubtypeDiscoveryRecommendation[]
+  algorithmVersions: Record<string, string>
+  sampledEmailCount: number
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
 }
 
 export interface JobMatcherTestOneResult {

@@ -50,6 +50,28 @@ describe('intelligence discovery rendering', () => {
     expect(src).toContain('No intelligence systems are currently registered.')
   })
 
+  it('Control Center exposes section hierarchy without fictional metrics', () => {
+    const src = readFileSync(join(here, 'views/IntelligenceView.tsx'), 'utf8')
+    const nav = readFileSync(join(here, 'intelligence-control-center.ts'), 'utf8')
+    expect(src).toContain('Intelligence Control Center')
+    expect(src).toContain('intel-section-${s.id}')
+    expect(src).toContain('INTELLIGENCE_CONTROL_SECTIONS')
+    expect(nav).toContain("'email-classification'")
+    expect(nav).toContain("'job-matcher'")
+    expect(nav).toContain("'document-intelligence'")
+    expect(nav).toContain("'workflow-intelligence'")
+    expect(nav).toContain("'discovery'")
+    expect(nav).toContain('Subtype Discovery')
+    expect(src).toContain('SubtypeDiscoveryPanel')
+    const discovery = readFileSync(join(here, 'components/SubtypeDiscoveryPanel.tsx'), 'utf8')
+    expect(discovery).toContain('Subtype Discovery')
+    expect(discovery).toContain('Start discovery run')
+    expect(discovery).not.toContain('automatically create')
+    expect(src).toContain('JobMatcherEvaluationPanel')
+    expect(src).not.toContain('fakeAccuracy')
+    expect(src).not.toContain('99.9%')
+  })
+
   it('App wires Intelligence under Manage with ADMIN minRole', () => {
     const src = readFileSync(join(here, 'App.tsx'), 'utf8')
     expect(src).toContain("page: 'intelligence'")

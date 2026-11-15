@@ -138,6 +138,17 @@ export const WORKER_JOB_DEFINITIONS: Record<QueueName, WorkerJobDefinition> = {
     revert: false,
     revertReason: "Classifications are metadata. Removing the job does not change stored images.",
   },
+  [QueueNames.SUBTYPE_DISCOVERY]: {
+    queue: QueueNames.SUBTYPE_DISCOVERY,
+    displayName: "Subtype discovery",
+    purpose:
+      "Experimental read-only clustering of emails to recommend subtype taxonomy changes. Never mutates classifications or taxonomy.",
+    pause: false,
+    resume: false,
+    cancelActive: true,
+    revert: false,
+    revertReason: "Discovery runs are read-only; cancel stops work but does not reverse taxonomy (none applied).",
+  },
 };
 
 export function isKnownQueue(value: string): value is QueueName {

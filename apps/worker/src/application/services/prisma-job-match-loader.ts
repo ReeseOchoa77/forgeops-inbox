@@ -9,11 +9,12 @@ import {
   type JobMatchDataLoader,
 } from "@forgeops/shared";
 
-const EXCLUDED_JOB_STATUSES = ["ARCHIVED", "CANCELLED"] as const;
+/** Live candidate pool — matches JOB_NAME_MARKER_ELIGIBLE_STATUSES. */
+const LIVE_ELIGIBLE_JOB_STATUSES = ["ACTIVE", "ON_HOLD", "AWARDED"] as const;
 
 /**
  * Prisma-backed loader for JobMatcherService (API + worker).
- * Active jobs: archivedAt IS NULL and status not ARCHIVED/CANCELLED.
+ * Only non-archived awarded/operational Jobs (excludes bids + removed).
  */
 export function createPrismaJobMatchLoader(
   prisma: PrismaClient
@@ -24,7 +25,7 @@ export function createPrismaJobMatchLoader(
         where: {
           workspaceId,
           archivedAt: null,
-          status: { notIn: [...EXCLUDED_JOB_STATUSES] },
+          status: { in: [...LIVE_ELIGIBLE_JOB_STATUSES] },
         },
         select: {
           id: true,
@@ -36,6 +37,7 @@ export function createPrismaJobMatchLoader(
           siteName: true,
           description: true,
           status: true,
+          archivedAt: true,
         },
       });
       return jobs;
@@ -95,7 +97,7 @@ export function createPrismaJobMatchLoader(
         where: {
           workspaceId,
           archivedAt: null,
-          status: { notIn: [...EXCLUDED_JOB_STATUSES] },
+          status: { in: [...LIVE_ELIGIBLE_JOB_STATUSES] },
           customerId: { in: customers.map((c) => c.id) },
         },
         select: { id: true },

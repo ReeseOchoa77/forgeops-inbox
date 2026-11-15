@@ -183,6 +183,8 @@ export function JobMatcherEvaluationPanel({
     }
     onUiChange({
       tab: 'evaluation',
+      controlSection: initialUi.controlSection ?? 'overview',
+      controlSub: initialUi.controlSub ?? null,
       evalConfig: {
         jobsMode,
         jobIds: selectedJobs.map((j) => j.id),
@@ -199,6 +201,8 @@ export function JobMatcherEvaluationPanel({
     })
   }, [
     onUiChange,
+    initialUi.controlSection,
+    initialUi.controlSub,
     jobsMode,
     selectedJobs,
     sampling,

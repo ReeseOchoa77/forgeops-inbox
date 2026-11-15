@@ -51,7 +51,8 @@ export type JobMatchInput = {
   n8nSelectedJobIdHint?: string | null;
   /**
    * production (default): ACTIVE / ON_HOLD / AWARDED only.
-   * evaluation: historical eval may include completed/archived Jobs.
+   * evaluation: also COMPLETE / COMPLETED / ARCHIVED (historical awarded Jobs).
+   * LEAD / BIDDING / CANCELLED and archivedAt!=null are never candidates.
    * Must not be set by the live matcher path.
    */
   eligibilityMode?: "production" | "evaluation";
@@ -80,6 +81,11 @@ export type JobRecordForMatch = {
   description?: string | null;
   /** Used by Marker 1 to restrict the eligible pool. Omitted = eligible. */
   status?: string | null;
+  /**
+   * Soft-removal from the Job directory. Non-null → never a matcher candidate
+   * (even under evaluation mode).
+   */
+  archivedAt?: Date | string | null;
 };
 
 export type JobAliasForMatch = {

@@ -293,6 +293,7 @@ function runKey(queue: QueueName, data: Record<string, unknown>): string | null 
   if (queue === QueueNames.MAILBOX_RECLASSIFY) return str(data, "runId");
   if (queue === QueueNames.PROJECT_FOLDER_EMAIL_ANALYZE) return str(data, "runId");
   if (queue === QueueNames.BID_EMAIL_ANALYZE) return str(data, "runId");
+  if (queue === QueueNames.SUBTYPE_DISCOVERY) return str(data, "runId");
   return null;
 }
 
@@ -306,6 +307,7 @@ export function workerQueuesFromServices(services: {
   bidEmailAnalyzeQueue: WorkerQueueHandle;
   mailboxReclassifyQueue: WorkerQueueHandle;
   inlineImageRelevanceQueue: WorkerQueueHandle;
+  subtypeDiscoveryQueue: WorkerQueueHandle;
 }): WorkerQueueBundle[] {
   return [
     { name: QueueNames.INBOX_SYNC, queue: services.inboxSyncQueue },
@@ -317,6 +319,7 @@ export function workerQueuesFromServices(services: {
     { name: QueueNames.BID_EMAIL_ANALYZE, queue: services.bidEmailAnalyzeQueue },
     { name: QueueNames.MAILBOX_RECLASSIFY, queue: services.mailboxReclassifyQueue },
     { name: QueueNames.INLINE_IMAGE_RELEVANCE, queue: services.inlineImageRelevanceQueue },
+    { name: QueueNames.SUBTYPE_DISCOVERY, queue: services.subtypeDiscoveryQueue },
   ];
 }
 

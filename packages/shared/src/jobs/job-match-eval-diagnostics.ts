@@ -5,6 +5,7 @@
  */
 
 import type { HistoricalEvalOutcome, HistoricalEvalResolvingMarker } from "./job-match-historical-eval.js";
+import { isJobMatcherEligibleJob } from "./job-name-marker.js";
 
 export type EvalDiagRowInput = {
   emailMessageId: string;
@@ -13,6 +14,9 @@ export type EvalDiagRowInput = {
   trueJobId: string;
   trueJobName: string;
   trueJobNumber: string | null;
+  /** Snapshot status of the historical GT Job (for eligibility reporting). */
+  trueJobStatus?: string | null;
+  trueJobArchivedAt?: Date | string | null;
   jobAssignmentSource: string | null;
   predictedJobId: string | null;
   predictedJobName: string | null;
@@ -66,6 +70,12 @@ export type EvalRowDiagnostics = {
   marker1CandidateCount: number | null;
   marker2CandidateCount: number | null;
   marker3CandidateCount: number | null;
+  /**
+   * Whether the historical ground-truth Job is still in the evaluation
+   * candidate pool (awarded Job, not bid/canceled/soft-removed). Label is
+   * always preserved for reporting even when false.
+   */
+  trueJobEligibleAsCandidate?: boolean | null;
 };
 
 export type EvalCountPct = { count: number; pct: number };
@@ -315,6 +325,13 @@ export function buildEvalRowDiagnostics(row: EvalDiagRowInput): EvalRowDiagnosti
     marker1CandidateCount: traceFor(row, "NAME")?.candidateJobIds.length ?? null,
     marker2CandidateCount: traceFor(row, "CONTACT")?.candidateJobIds.length ?? null,
     marker3CandidateCount: traceFor(row, "THREAD")?.candidateJobIds.length ?? null,
+    trueJobEligibleAsCandidate: isJobMatcherEligibleJob(
+      {
+        status: row.trueJobStatus ?? null,
+        archivedAt: row.trueJobArchivedAt ?? null,
+      },
+      "evaluation"
+    ),
   };
 }
 

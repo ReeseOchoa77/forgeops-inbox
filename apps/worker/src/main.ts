@@ -23,6 +23,7 @@ import { startMailboxReclassifyWorker } from "./jobs/mailbox-reclassify.worker.j
 import { startInlineImageRelevanceWorker } from "./jobs/inline-image-relevance.worker.js";
 import { startProjectFolderEmailAnalyzeWorker } from "./jobs/project-folder-email-analyze.worker.js";
 import { startBidEmailAnalyzeWorker } from "./jobs/bid-email-analyze.worker.js";
+import { startSubtypeDiscoveryWorker } from "./jobs/subtype-discovery.worker.js";
 import { createBullMqConnection } from "./infrastructure/redis/connection.js";
 
 const env = loadWorkerEnv();
@@ -35,6 +36,7 @@ const bidEmailAnalyze = startBidEmailAnalyzeWorker(env);
 const mailboxClassify = startMailboxClassifyWorker(env);
 const mailboxReclassify = startMailboxReclassifyWorker(env);
 const inlineImageRelevance = startInlineImageRelevanceWorker(env);
+const subtypeDiscovery = startSubtypeDiscoveryWorker(env);
 
 /** Producer queue for safety-net re-enqueue (worker only consumes). */
 const mailboxClassifyQueue = new Queue<
@@ -290,7 +292,9 @@ console.info("worker-started", {
     "mailbox-classify",
     "mailbox-reclassify",
     "inline-image-relevance",
+    "subtype-discovery",
   ],
+  subtypeDiscoveryWorker: Boolean(subtypeDiscovery.worker),
 });
 
 // Safe OpenAI wiring check for native classification (no secrets).

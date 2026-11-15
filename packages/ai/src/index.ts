@@ -35,3 +35,4 @@ export * from "./inline-image-relevance/prompt.js";
 export * from "./inline-image-relevance/filters.js";
 export * from "./inline-image-relevance/analyze-batch.js";
 export * from "./inline-image-relevance/vision.js";
+export * from "./subtype-discovery/index.js";

@@ -9,6 +9,7 @@ export const QueueNames = {
   BID_EMAIL_ANALYZE: "bid-email-analyze",
   MAILBOX_RECLASSIFY: "mailbox-reclassify",
   INLINE_IMAGE_RELEVANCE: "inline-image-relevance",
+  SUBTYPE_DISCOVERY: "subtype-discovery",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -48,5 +49,10 @@ export function buildInlineImageRelevanceJobId(
   runId = "run"
 ): string {
   return `inline-image-relevance-${workspaceId}-${runId}-p${page}`;
+}
+
+/** Deterministic job id for a Subtype Discovery run. */
+export function buildSubtypeDiscoveryJobId(runId: string): string {
+  return `subtype-discovery-${runId}`;
 }
 

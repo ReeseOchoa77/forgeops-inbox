@@ -1,12 +1,23 @@
 # Manage → Intelligence
 
-ADMIN/OWNER surface for discovering ForgeOps automated decision systems.
+ADMIN/OWNER **Intelligence Control Center** for discovering and organizing ForgeOps automated decision systems.
 
-Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENCE_CATALOG` in `@forgeops/shared`). The page maps registry safe DTOs — it does not hard-code one card per system.
+Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENCE_CATALOG` in `@forgeops/shared`). Overview cards map registry safe DTOs — the Control Center groups them into product sections without inventing metrics.
+
+## Navigation hierarchy
+
+- **Overview** — registered systems by category (Email Classification, Job Matcher, Document Intelligence, Workflow Intelligence)
+- **Email Classification** — Overview · Type · Subtype · Subtype Taxonomy · Evaluations · Subtype Discovery (experimental read-only recommendations; async BullMQ run; no auto taxonomy changes)
+- **Job Matcher** — Overview · Matcher Policies · Historical Evaluations · Policy Comparisons · Evaluation History (session-only until server history exists)
+- **Document Intelligence** — registered document/attachment systems only
+- **Workflow Intelligence** — registered bidding/intake systems only
+
+Registry **detail** (pipeline / instructions / evaluation / test tabs) remains available via each system’s “Registry detail” link (`?intel=`).
 
 ## What you can do
 
 - Browse registered intelligence (type, status, version, evaluation / ground-truth summary)
+- Navigate by system category without losing existing tools
 - Open a system by stable registry id
 - Inspect pipeline metadata, read-only instructions/rules, and explainability notes
 - For **Job Matcher**:
@@ -18,6 +29,7 @@ Components are loaded from the canonical **Intelligence Registry** (`INTELLIGENC
   - Export Summary/Detailed CSV + Full JSON of the completed run (no rematch; no bodies in CSV)
   - Side-panel **Email Inspector** (Email | Match tabs; sanitized body + marker progression)
   - Test One on an existing authoritative email
+  - Switch among already-evaluated matcher policies without re-running
 
 ## Job Matcher evaluation guarantees
 

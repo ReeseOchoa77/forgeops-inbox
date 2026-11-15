@@ -20,6 +20,10 @@ import {
 } from "./job-name-identity-policy.js";
 import type { JobAliasForMatch, JobRecordForMatch } from "./job-matcher.js";
 import {
+  filterJobsEligibleForMatching,
+  type JobMatchEligibilityMode,
+} from "./job-name-marker.js";
+import {
   PROJECT_SCOPE_INFLECTIONS,
   hayHasProjectToken,
   matchedJobTokensInHay,
@@ -109,12 +113,20 @@ function extractContentPhrases(allTokens: string[]): string[][] {
 }
 
 /**
- * Build a fresh workspace project-identity index from the current eligible Jobs.
+ * Build a fresh workspace project-identity index from eligible Jobs only.
+ * Bids (LEAD/BIDDING), CANCELLED, and archivedAt!=null never affect uniqueness.
  */
 export function buildWorkspaceProjectIdentityIndex(input: {
   jobs: ReadonlyArray<JobRecordForMatch>;
   aliases?: ReadonlyArray<JobAliasForMatch>;
+  /** Default production — same candidate pool as Marker 1. */
+  eligibilityMode?: JobMatchEligibilityMode;
 }): WorkspaceProjectIdentityIndex {
+  const eligibilityMode = input.eligibilityMode ?? "production";
+  const eligibleJobs = filterJobsEligibleForMatching(
+    [...input.jobs],
+    eligibilityMode
+  );
   const aliasesByJob = new Map<string, JobAliasForMatch[]>();
   for (const a of input.aliases ?? []) {
     const list = aliasesByJob.get(a.jobId) ?? [];
@@ -127,7 +139,7 @@ export function buildWorkspaceProjectIdentityIndex(input: {
   const contentSets: Array<Set<string>> = [];
   const profiles: JobProjectIdentityProfile[] = [];
 
-  for (const job of input.jobs) {
+  for (const job of eligibleJobs) {
     const rawPhrases: string[] = [job.name];
     if (job.siteName) rawPhrases.push(job.siteName);
     if (job.externalRef) rawPhrases.push(job.externalRef);

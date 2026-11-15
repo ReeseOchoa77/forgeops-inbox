@@ -198,6 +198,7 @@ export async function loadJobMatchEvalSnapshot(
           siteName: true,
           description: true,
           status: true,
+          archivedAt: true,
         },
         orderBy: { id: "asc" },
         ...page,
@@ -301,11 +302,25 @@ export async function loadAuthoritativeEvalEmailIndex(
 export async function loadWorkspaceJobsForEval(
   db: JobMatchEvalReadDb,
   workspaceId: string
-): Promise<Array<{ id: string; status: string; name: string; jobNumber: string | null }>> {
+): Promise<
+  Array<{
+    id: string;
+    status: string;
+    name: string;
+    jobNumber: string | null;
+    archivedAt: Date | null;
+  }>
+> {
   return paginateById((page) =>
     db.job.findMany({
       where: { workspaceId },
-      select: { id: true, status: true, name: true, jobNumber: true },
+      select: {
+        id: true,
+        status: true,
+        name: true,
+        jobNumber: true,
+        archivedAt: true,
+      },
       orderBy: { id: "asc" },
       ...page,
     })

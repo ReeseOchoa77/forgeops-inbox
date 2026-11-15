@@ -844,4 +844,90 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
     featureFlags: [],
     discoverable: false,
   },
+
+  {
+    id: "subtype-discovery",
+    name: "Subtype Discovery",
+    description:
+      "Experimental read-only engine that clusters workspace emails and recommends subtype taxonomy changes. Never creates or modifies subtypes automatically.",
+    type: "HYBRID",
+    status: "EVALUATION_ONLY",
+    version: "subtype-discovery-v1",
+    purpose:
+      "Discover recurring communication patterns and propose new BUSINESS subtypes or refinements for human review.",
+    implementation: {
+      packages: ["@forgeops/shared", "@forgeops/ai", "apps/worker", "apps/api", "apps/web"],
+      entryPoints: [
+        "processSubtypeDiscoveryRun",
+        "enqueueSubtypeDiscoveryRun",
+        "subtype-discovery queue",
+      ],
+    },
+    inputs: "Sampled EmailMessage subject/clean body + existing Classification.businessTypeKey",
+    outputs:
+      "SubtypeDiscoveryRun with recommendation cards (NEW_SUBTYPE | EXISTING_MATCH | REFINEMENT | MERGE_CANDIDATE | UNCLEAR)",
+    pipeline: {
+      nodes: [
+        { id: "in", kind: "INPUT", label: "Eligible emails" },
+        { id: "sample", kind: "TRANSFORM", label: "Stratified sample" },
+        { id: "prep", kind: "TRANSFORM", label: "Prepare text" },
+        { id: "embed", kind: "MODEL", label: "Embeddings" },
+        { id: "cluster", kind: "RULE", label: "Cosine connected components" },
+        { id: "interpret", kind: "MODEL", label: "LLM cluster interpret" },
+        { id: "compare", kind: "VALIDATOR", label: "Taxonomy compare" },
+        { id: "out", kind: "OUTPUT", label: "Recommendations (read-only)" },
+      ],
+      edges: [
+        { from: "in", to: "sample" },
+        { from: "sample", to: "prep" },
+        { from: "prep", to: "embed" },
+        { from: "embed", to: "cluster" },
+        { from: "cluster", to: "interpret" },
+        { from: "interpret", to: "compare" },
+        { from: "compare", to: "out" },
+      ],
+    },
+    instructions: {
+      available: false,
+      reason: "Discovery interpret prompt is code-owned; not editable in Manage UI.",
+    },
+    rules: {
+      available: true,
+      summary:
+        "Read-only: no Classification writes, no taxonomy mutation, no attachment upload to models. Subtypes remain BUSINESS-parented.",
+      items: [
+        {
+          id: "read-only",
+          title: "No taxonomy mutation",
+          summary: "Recommendations only — approval / apply not implemented.",
+        },
+        {
+          id: "tenant",
+          title: "Workspace isolation",
+          summary: "All queries scoped by workspaceId; ADMIN/OWNER Intelligence access.",
+        },
+      ],
+    },
+    evaluation: {
+      supported: false,
+      metrics: ["clusterCohesion", "shareOfAnalyzed"],
+      groundTruthQuality: "WEAK",
+      groundTruthNotes:
+        "No gold discovery labels yet. clusterCohesion is mean internal cosine similarity; shareOfAnalyzed is supporting/analyzed counts.",
+      notes:
+        "MVP persists SubtypeDiscoveryRun for revisit. Human approval of recommendations is out of scope.",
+    },
+    explainability: {
+      available: true,
+      capabilities: [
+        "cluster cohesion",
+        "representative email snippets",
+        "similar existing subtypes",
+        "recommendation kind",
+      ],
+      notes: "Full email bodies are not stored on the run; snippets only.",
+    },
+    featureFlags: [],
+    discoverable: true,
+  },
 ];

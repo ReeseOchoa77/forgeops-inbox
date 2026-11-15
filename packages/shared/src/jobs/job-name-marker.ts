@@ -41,7 +41,10 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
 } from "./job-name-identity-policy.js";
 
-/** Marker 1 pool: live operational jobs. COMPLETE/BIDDING/LEAD are excluded. */
+/**
+ * Live operational Jobs — production Marker 1/2/3 candidate pool.
+ * COMPLETE remains eligible only under evaluation mode (see below).
+ */
 export const JOB_NAME_MARKER_ELIGIBLE_STATUSES = [
   "ACTIVE",
   "ON_HOLD",
@@ -49,9 +52,31 @@ export const JOB_NAME_MARKER_ELIGIBLE_STATUSES = [
 ] as const;
 
 /**
- * production: live matcher (ACTIVE / ON_HOLD / AWARDED).
- * evaluation: historical holdout eval may include COMPLETE / ARCHIVED / etc.
- * Evaluation mode must never be used by the production matcher path.
+ * Never matchable in any mode: unawarded bids and canceled/removed Jobs.
+ * BidCandidate records are a separate entity; Job.status LEAD/BIDDING are the
+ * Job-directory representation of active/pre-award bids.
+ */
+export const JOB_MATCHER_NEVER_ELIGIBLE_STATUSES = [
+  "LEAD",
+  "BIDDING",
+  "CANCELLED",
+] as const;
+
+/**
+ * Awarded Jobs that are no longer live but may still be correct historical
+ * ground-truth targets. Evaluation mode only — never live production.
+ */
+export const JOB_MATCHER_EVALUATION_EXTRA_STATUSES = [
+  "COMPLETE",
+  "COMPLETED",
+  "ARCHIVED",
+] as const;
+
+/**
+ * production: ACTIVE / ON_HOLD / AWARDED only.
+ * evaluation: production + COMPLETE / COMPLETED / ARCHIVED.
+ * LEAD / BIDDING / CANCELLED are never candidates in either mode.
+ * Evaluation mode must never be used by the live matcher path.
  */
 export type JobMatchEligibilityMode = "production" | "evaluation";
 
@@ -144,22 +169,63 @@ type JobHit = {
   matchedContentTokens: string[];
 };
 
+export function isJobMatcherNeverEligibleStatus(
+  status: string | null | undefined
+): boolean {
+  if (status == null || status === "") return false;
+  return (JOB_MATCHER_NEVER_ELIGIBLE_STATUSES as readonly string[]).includes(
+    status
+  );
+}
+
+/**
+ * Canonical status eligibility for Job Matcher candidates.
+ * Applies before candidate generation / scoring / final selection.
+ */
 export function isJobMatcherEligibleStatus(
   status: string | null | undefined,
   mode: JobMatchEligibilityMode = "production"
 ): boolean {
   if (status == null || status === "") return true;
-  if (mode === "evaluation") return true;
-  return (JOB_NAME_MARKER_ELIGIBLE_STATUSES as readonly string[]).includes(
-    status
-  );
+  if (isJobMatcherNeverEligibleStatus(status)) return false;
+  if (
+    (JOB_NAME_MARKER_ELIGIBLE_STATUSES as readonly string[]).includes(status)
+  ) {
+    return true;
+  }
+  if (mode === "evaluation") {
+    return (
+      JOB_MATCHER_EVALUATION_EXTRA_STATUSES as readonly string[]
+    ).includes(status);
+  }
+  return false;
+}
+
+/**
+ * Full record eligibility: status rules + soft-removal via archivedAt.
+ * archivedAt != null means removed from the active Job directory.
+ */
+export function isJobMatcherEligibleJob(
+  job: Pick<JobRecordForMatch, "status" | "archivedAt">,
+  mode: JobMatchEligibilityMode = "production"
+): boolean {
+  if (job.archivedAt != null) return false;
+  return isJobMatcherEligibleStatus(job.status, mode);
+}
+
+/** Filter Jobs to the matcher candidate pool (shared by all identity policies). */
+export function filterJobsEligibleForMatching(
+  jobs: readonly JobRecordForMatch[],
+  mode: JobMatchEligibilityMode = "production"
+): JobRecordForMatch[] {
+  return jobs.filter((job) => isJobMatcherEligibleJob(job, mode));
 }
 
 function isEligibleJob(
   job: JobRecordForMatch,
   mode: JobMatchEligibilityMode = "production"
 ): boolean {
-  return isJobMatcherEligibleStatus(job.status, mode);
+  return isJobMatcherEligibleJob(job, mode);
 }
 
 function sameTokenSequence(a: string[], b: string[]): boolean {

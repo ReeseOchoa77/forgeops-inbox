@@ -146,13 +146,15 @@ describe("ground truth filtering", () => {
 });
 
 describe("eligibility modes", () => {
-  it("production excludes COMPLETE; evaluation includes historical Jobs", () => {
+  it("production excludes COMPLETE; evaluation includes historical awarded Jobs but never bids/canceled", () => {
     expect(isJobMatcherEligibleStatus("COMPLETE")).toBe(false);
     expect(isJobMatcherEligibleStatus("ARCHIVED")).toBe(false);
     expect(isJobMatcherEligibleStatus("ACTIVE")).toBe(true);
     expect(isJobMatcherEligibleStatus("COMPLETE", "evaluation")).toBe(true);
     expect(isJobMatcherEligibleStatus("ARCHIVED", "evaluation")).toBe(true);
-    expect(isJobMatcherEligibleStatus("CANCELLED", "evaluation")).toBe(true);
+    expect(isJobMatcherEligibleStatus("CANCELLED", "evaluation")).toBe(false);
+    expect(isJobMatcherEligibleStatus("BIDDING", "evaluation")).toBe(false);
+    expect(isJobMatcherEligibleStatus("LEAD", "evaluation")).toBe(false);
   });
 });
 

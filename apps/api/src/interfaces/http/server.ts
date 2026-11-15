@@ -29,6 +29,8 @@ import {
   type MailboxReclassifyJobResult,
   type InlineImageRelevanceJobPayload,
   type InlineImageRelevanceJobResult,
+  type SubtypeDiscoveryJobPayload,
+  type SubtypeDiscoveryJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -195,6 +197,12 @@ export const buildServer = async () => {
     InlineImageRelevanceJobPayload,
     InlineImageRelevanceJobResult
   >(QueueNames.INLINE_IMAGE_RELEVANCE, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const subtypeDiscoveryQueue = new Queue<
+    SubtypeDiscoveryJobPayload,
+    SubtypeDiscoveryJobResult
+  >(QueueNames.SUBTYPE_DISCOVERY, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -366,6 +374,7 @@ export const buildServer = async () => {
       bidEmailAnalyzeQueue,
       mailboxReclassifyQueue,
       inlineImageRelevanceQueue,
+      subtypeDiscoveryQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -548,6 +557,7 @@ export const buildServer = async () => {
     await mailboxClassifyQueue.close();
     await projectFolderEmailAnalyzeQueue.close();
     await bidEmailAnalyzeQueue.close();
+    await subtypeDiscoveryQueue.close();
     await mailboxReclassifyQueue.close();
     await inlineImageRelevanceQueue.close();
     await attachmentIngestQueue.close();

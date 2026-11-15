@@ -14,6 +14,26 @@ import {
 import { getJobMatcherEvalProgress } from "../../../application/services/job-matcher-eval-progress.js";
 import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
 import { loadIntelligenceEvalEmail } from "../../../application/services/load-intelligence-eval-email.js";
+import {
+  enqueueSubtypeDiscoveryRun,
+  getSubtypeDiscoveryRun,
+  listSubtypeDiscoveryRuns,
+  previewSubtypeDiscoveryDataset,
+  requestCancelSubtypeDiscoveryRun,
+  SubtypeDiscoveryError,
+} from "../../../application/services/subtype-discovery.js";
+import {
+  approveAndApplyRecommendation,
+  getSubtypeTaxonomyEval,
+  listRecommendationDecisions,
+  listSubtypeTaxonomyEvals,
+  listTaxonomyRevisions,
+  previewApprovalChange,
+  rollbackTaxonomyRevision,
+  runSubtypeTaxonomyEval,
+  SubtypeRecommendationReviewError,
+  upsertRecommendationDecision,
+} from "../../../application/services/subtype-recommendation-review.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const datasetSpecSchema = z.object({
@@ -33,6 +53,16 @@ const idParams = z.object({
 
 function requireAdmin(role: string): boolean {
   return role === "OWNER" || role === "ADMIN";
+}
+
+function stripUndefined<T extends Record<string, unknown>>(
+  obj: T
+): Partial<{ [K in keyof T]: Exclude<T[K], undefined> }> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as Partial<{ [K in keyof T]: Exclude<T[K], undefined> }>;
 }
 
 async function requireIntelligenceAccess(
@@ -380,4 +410,372 @@ export const registerIntelligenceRoutes = async (
       }
     }
   );
+
+  const discoveryConfigSchema = z.object({
+    samplePreset: z
+      .enum(["ALL_ELIGIBLE", "500", "2500", "10000", "CUSTOM"])
+      .optional(),
+    customCount: z.number().int().min(1).max(10_000).nullable().optional(),
+    mailboxCategory: z.enum(["BUSINESS", "PERSONAL", "ALL"]).optional(),
+    inboxConnectionId: z.string().min(1).nullable().optional(),
+    receivedAfter: z.string().min(1).nullable().optional(),
+    receivedBefore: z.string().min(1).nullable().optional(),
+  });
+
+  /** Preview eligible/sample counts for Subtype Discovery (no job). */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/preview",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = discoveryConfigSchema.parse(request.body ?? {});
+      try {
+        const preview = await previewSubtypeDiscoveryDataset({
+          prisma: app.services.prisma,
+          workspaceId,
+          config: stripUndefined(body),
+        });
+        return reply.send({ preview });
+      } catch (e) {
+        if (e instanceof SubtypeDiscoveryError) {
+          return reply.code(400).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  /** Start an async Subtype Discovery run (BullMQ). Read-only — no taxonomy mutation. */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = discoveryConfigSchema.parse(request.body ?? {});
+      try {
+        const result = await enqueueSubtypeDiscoveryRun({
+          prisma: app.services.prisma,
+          queue: app.services.subtypeDiscoveryQueue,
+          workspaceId,
+          initiatedByUserId: auth.userId,
+          config: stripUndefined(body),
+        });
+        return reply.code(202).send(result);
+      } catch (e) {
+        if (e instanceof SubtypeDiscoveryError) {
+          const code = e.code === "ALREADY_RUNNING" ? 409 : 400;
+          return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const runs = await listSubtypeDiscoveryRuns({
+        prisma: app.services.prisma,
+        workspaceId,
+      });
+      return reply.send({ runs });
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId",
+    async (request, reply) => {
+      const { workspaceId, runId } = z
+        .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const run = await getSubtypeDiscoveryRun({
+        prisma: app.services.prisma,
+        workspaceId,
+        runId,
+      });
+      if (!run) return reply.code(404).send({ message: "Discovery run not found" });
+      return reply.send({ run });
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/cancel",
+    async (request, reply) => {
+      const { workspaceId, runId } = z
+        .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      try {
+        const result = await requestCancelSubtypeDiscoveryRun({
+          prisma: app.services.prisma,
+          workspaceId,
+          runId,
+        });
+        return reply.send(result);
+      } catch (e) {
+        if (e instanceof SubtypeDiscoveryError) {
+          const code = e.code === "NOT_FOUND" ? 404 : 400;
+          return reply.code(code).send({ message: e.message, code: e.code });
+        }
+        throw e;
+      }
+    }
+  );
+
+  const runRecParams = z.object({
+    workspaceId: z.string().min(1),
+    runId: z.string().min(1),
+    recommendationId: z.string().min(1),
+  });
+
+  const editPayloadSchema = z.object({
+    suggestedSubtypeName: z.string().min(1).max(120),
+    systemKey: z.string().min(2).max(48),
+    recommendedParentType: z.literal("BUSINESS"),
+    definition: z.string().max(4000),
+    inclusionCriteria: z.string().max(2000),
+    exclusionCriteria: z.string().max(2000),
+  });
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/decisions",
+    async (request, reply) => {
+      const { workspaceId, runId } = z
+        .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const decisions = await listRecommendationDecisions({
+        prisma: app.services.prisma,
+        workspaceId,
+        discoveryRunId: runId,
+      });
+      return reply.send({ decisions });
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/recommendations/:recommendationId/decision",
+    async (request, reply) => {
+      const { workspaceId, runId, recommendationId } = runRecParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          status: z.enum(["REJECTED", "MERGED", "DEFERRED", "PENDING"]),
+          editedPayload: editPayloadSchema.nullable().optional(),
+          mergeTargetKey: z.string().min(1).nullable().optional(),
+          notes: z.string().max(1000).nullable().optional(),
+        })
+        .parse(request.body ?? {});
+      try {
+        const decision = await upsertRecommendationDecision({
+          prisma: app.services.prisma,
+          workspaceId,
+          discoveryRunId: runId,
+          recommendationId,
+          status: body.status,
+          ...(body.editedPayload !== undefined
+            ? { editedPayload: body.editedPayload }
+            : {}),
+          ...(body.mergeTargetKey !== undefined
+            ? { mergeTargetKey: body.mergeTargetKey }
+            : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          userId: auth.userId,
+        });
+        return reply.send({ decision });
+      } catch (e) {
+        return replyReviewError(reply, e);
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/recommendations/:recommendationId/preview-approval",
+    async (request, reply) => {
+      const { workspaceId, runId, recommendationId } = runRecParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({ editedPayload: editPayloadSchema.nullable().optional() })
+        .parse(request.body ?? {});
+      try {
+        const preview = await previewApprovalChange({
+          prisma: app.services.prisma,
+          workspaceId,
+          discoveryRunId: runId,
+          recommendationId,
+          ...(body.editedPayload !== undefined
+            ? { editedPayload: body.editedPayload }
+            : {}),
+        });
+        return reply.send({ preview });
+      } catch (e) {
+        return replyReviewError(reply, e);
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/recommendations/:recommendationId/approve",
+    async (request, reply) => {
+      const { workspaceId, runId, recommendationId } = runRecParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          confirmApply: z.literal(true),
+          editedPayload: editPayloadSchema.nullable().optional(),
+          notes: z.string().max(1000).nullable().optional(),
+        })
+        .parse(request.body ?? {});
+      try {
+        const result = await approveAndApplyRecommendation({
+          prisma: app.services.prisma,
+          audit: app.services.auditEventLogger,
+          workspaceId,
+          discoveryRunId: runId,
+          recommendationId,
+          userId: auth.userId,
+          ...(body.editedPayload !== undefined
+            ? { editedPayload: body.editedPayload }
+            : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          confirmApply: body.confirmApply,
+        });
+        return reply.send(result);
+      } catch (e) {
+        return replyReviewError(reply, e);
+      }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/taxonomy/revisions",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const revisions = await listTaxonomyRevisions({
+        prisma: app.services.prisma,
+        workspaceId,
+      });
+      return reply.send({ revisions });
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/taxonomy/revisions/:revisionId/rollback",
+    async (request, reply) => {
+      const { workspaceId, revisionId } = z
+        .object({ workspaceId: z.string().min(1), revisionId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z.object({ confirmRollback: z.literal(true) }).parse(request.body ?? {});
+      try {
+        const result = await rollbackTaxonomyRevision({
+          prisma: app.services.prisma,
+          audit: app.services.auditEventLogger,
+          workspaceId,
+          revisionId,
+          userId: auth.userId,
+          confirmRollback: body.confirmRollback,
+        });
+        return reply.send(result);
+      } catch (e) {
+        return replyReviewError(reply, e);
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/runs/:runId/taxonomy-eval",
+    async (request, reply) => {
+      const { workspaceId, runId } = z
+        .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          proposedRecommendationIds: z.array(z.string().min(1)).max(40),
+        })
+        .parse(request.body ?? {});
+      try {
+        const result = await runSubtypeTaxonomyEval({
+          prisma: app.services.prisma,
+          workspaceId,
+          discoveryRunId: runId,
+          proposedRecommendationIds: body.proposedRecommendationIds,
+          userId: auth.userId,
+        });
+        return reply.send(result);
+      } catch (e) {
+        return replyReviewError(reply, e);
+      }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/taxonomy-evals",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const discoveryRunId = z
+        .object({ discoveryRunId: z.string().min(1).optional() })
+        .parse(request.query).discoveryRunId;
+      const evals = await listSubtypeTaxonomyEvals({
+        prisma: app.services.prisma,
+        workspaceId,
+        ...(discoveryRunId ? { discoveryRunId } : {}),
+      });
+      return reply.send({ evals });
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/subtype-discovery/taxonomy-evals/:evalRunId",
+    async (request, reply) => {
+      const { workspaceId, evalRunId } = z
+        .object({ workspaceId: z.string().min(1), evalRunId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const evalRun = await getSubtypeTaxonomyEval({
+        prisma: app.services.prisma,
+        workspaceId,
+        evalRunId,
+      });
+      if (!evalRun) return reply.code(404).send({ message: "Eval run not found" });
+      return reply.send({ eval: evalRun });
+    }
+  );
+
 };
+
+function replyReviewError(
+  reply: import("fastify").FastifyReply,
+  e: unknown
+) {
+  if (e instanceof SubtypeRecommendationReviewError) {
+    const code =
+      e.code === "NOT_FOUND"
+        ? 404
+        : e.code === "DUPLICATE" || e.code === "ALREADY_DECIDED"
+          ? 409
+          : 400;
+    return reply.code(code).send({ message: e.message, code: e.code });
+  }
+  throw e;
+}

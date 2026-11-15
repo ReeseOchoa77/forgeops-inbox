@@ -531,6 +531,10 @@ model Workspace {
   bidCandidates        BidCandidate[]
   bidQuoteStagings     BidQuoteStaging[]
   mailboxReclassifyRuns MailboxReclassifyRun[]
+  subtypeDiscoveryRuns SubtypeDiscoveryRun[]
+  taxonomyRevisions    TaxonomyRevision[]
+  subtypeRecommendationDecisions SubtypeRecommendationDecision[]
+  subtypeTaxonomyEvalRuns SubtypeTaxonomyEvalRun[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
@@ -2678,6 +2682,154 @@ model MailboxReclassifyRun {
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, inboxConnectionId, status])
+}
+
+/// Experimental Subtype Discovery Engine run (read-only recommendations).
+enum SubtypeDiscoveryRunStatus {
+  PENDING
+  RUNNING
+  CANCELLING
+  CANCELLED
+  COMPLETED
+  FAILED
+}
+
+model SubtypeDiscoveryRun {
+  id                String                     @id @default(cuid())
+  workspaceId       String
+  status            SubtypeDiscoveryRunStatus  @default(PENDING)
+  /// Sample size / filters snapshot (no email bodies).
+  config            Json
+  /// Deterministic sampled emailMessage ids (string[]).
+  sampledEmailIds   Json                       @default("[]")
+  /// Rolling progress JSON.
+  progress          Json                       @default("{}")
+  /// Summary metrics after completion.
+  summary           Json?
+  /// Recommendation cards (JSON array). Bodies omitted; ids + snippets only.
+  recommendations   Json?
+  /// Pipeline / embedding / cluster / interpret versions.
+  algorithmVersions Json                       @default("{}")
+  errorMessage      String?
+  initiatedByUserId String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  workspace         Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recommendationDecisions SubtypeRecommendationDecision[]
+  taxonomyRevisions TaxonomyRevision[]
+  taxonomyEvalRuns  SubtypeTaxonomyEvalRun[]
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+/// Review decision for one discovery recommendation (approve/reject/edit/merge/defer).
+enum SubtypeRecommendationDecisionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  MERGED
+  DEFERRED
+}
+
+model SubtypeRecommendationDecision {
+  id                 String                              @id @default(cuid())
+  workspaceId        String
+  discoveryRunId     String
+  recommendationId   String
+  status             SubtypeRecommendationDecisionStatus @default(PENDING)
+  /// Edited fields before approve/merge (name, definition, criteria, parentType, systemKey).
+  editedPayload      Json?
+  /// Existing taxonomy key when status=MERGED.
+  mergeTargetKey     String?
+  notes              String?
+  decidedByUserId    String?
+  decidedAt          DateTime?
+  /// Set when APPROVED and taxonomy change applied.
+  taxonomyRevisionId String?
+  createdAt          DateTime                            @default(now())
+  updatedAt          DateTime                            @updatedAt
+  workspace          Workspace                           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  discoveryRun       SubtypeDiscoveryRun                 @relation(fields: [discoveryRunId], references: [id], onDelete: Cascade)
+  taxonomyRevision   TaxonomyRevision?                   @relation(fields: [taxonomyRevisionId], references: [id], onDelete: SetNull)
+
+  @@unique([discoveryRunId, recommendationId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, discoveryRunId])
+}
+
+/// Simple sequential taxonomy revision log (not full VCS).
+enum TaxonomyRevisionChangeType {
+  ADD_SUBTYPE
+  EDIT_SUBTYPE
+  MERGE_SUBTYPE
+  DEACTIVATE_SUBTYPE
+  ROLLBACK
+}
+
+enum TaxonomyRevisionStatus {
+  ACTIVE
+  SUPERSEDED
+  ROLLED_BACK
+}
+
+model TaxonomyRevision {
+  id                   String                     @id @default(cuid())
+  workspaceId          String
+  /// Monotonic per workspace (1, 2, 3…).
+  version              Int
+  status               TaxonomyRevisionStatus     @default(ACTIVE)
+  changeType           TaxonomyRevisionChangeType
+  /// Snapshot of applied change (before/after).
+  payload              Json
+  businessTypeId       String?
+  systemKey            String?
+  discoveryRunId       String?
+  recommendationId     String?
+  previousRevisionId   String?
+  approvedByUserId     String
+  /// Populated when this revision is rolled back.
+  rolledBackAt         DateTime?
+  rolledBackByUserId   String?
+  rollbackOfRevisionId String?
+  createdAt            DateTime                   @default(now())
+  workspace            Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  discoveryRun         SubtypeDiscoveryRun?       @relation(fields: [discoveryRunId], references: [id], onDelete: SetNull)
+  decisions            SubtypeRecommendationDecision[]
+
+  @@unique([workspaceId, version])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+  @@index([businessTypeId])
+}
+
+/// Before/after taxonomy evaluation (descriptive + GT when available). Experimental.
+model SubtypeTaxonomyEvalRun {
+  id                String               @id @default(cuid())
+  workspaceId       String
+  discoveryRunId    String?
+  /// CURRENT | PROPOSED | label for display
+  label             String               @default("experimental")
+  /// Dataset identity (email ids used).
+  datasetEmailIds   Json                 @default("[]")
+  /// Taxonomy snapshot keys used for "current" and "proposed".
+  taxonomySnapshot  Json
+  /// Metrics JSON (coverage, GT precision if available, confusion, deltas).
+  metrics           Json
+  /// Per-email assignment changes (ids + keys only; no bodies).
+  emailChanges      Json?
+  groundTruthQuality String              @default("WEAK")
+  /// Explicit disclaimer stored with the run.
+  methodologyNotes  String
+  createdByUserId   String?
+  createdAt         DateTime             @default(now())
+  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  discoveryRun      SubtypeDiscoveryRun? @relation(fields: [discoveryRunId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, discoveryRunId])
 }
 
 enum SenderStatus {

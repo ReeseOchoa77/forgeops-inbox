@@ -347,7 +347,12 @@ function toEvalRows(input: {
   evaluated: HistoricalEvalEmail[];
   jobsById: Map<
     string,
-    { name: string; jobNumber: string | null; status?: string | null }
+    {
+      name: string;
+      jobNumber: string | null;
+      status?: string | null;
+      archivedAt?: Date | string | null;
+    }
   >;
   sourceById: Map<string, string | null>;
   identityPolicy: JobMatchIdentityPolicy;
@@ -365,6 +370,8 @@ function toEvalRows(input: {
       trueJobId: row.trueJobId,
       trueJobName: trueJob?.name ?? "(missing Job)",
       trueJobNumber: trueJob?.jobNumber ?? null,
+      trueJobStatus: trueJob?.status ?? null,
+      trueJobArchivedAt: trueJob?.archivedAt ?? null,
       jobAssignmentSource: input.sourceById.get(row.id) ?? null,
       predictedJobId: row.result.selectedJobId,
       predictedJobName: predicted?.name ?? null,
