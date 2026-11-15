@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { BUSINESS_SUBTYPE_FILTER_OPTIONS } from '@forgeops/shared/business-subtypes'
 import { api, type TaskListFilters, type TaskListItem } from '../api'
+import { SearchableFilterSelect } from '../components/SearchableFilterSelect'
 import { TaskListRow, taskFilterSelectStyle } from '../components/TaskListRow'
 import {
   getCachedTasksList,
@@ -72,10 +73,6 @@ export function TasksView({
       ? restored.ownershipView
       : 'MY'
   )
-  /** Email direction filter (Incoming / Sent) — separate from Requests. */
-  const [direction, setDirection] = useState<TaskListFilters['direction']>(
-    () => (restored?.direction as TaskListFilters['direction']) || 'ALL'
-  )
   /** Admin/Owner: ALL | UNASSIGNED | userId */
   const [tasksFor, setTasksFor] = useState<string>('ALL')
   const [jobId, setJobId] = useState(() => restored?.jobId ?? '')
@@ -126,7 +123,8 @@ export function TasksView({
         priority: priority ?? 'ALL',
         source: source ?? 'ALL',
         ownershipView,
-        direction: direction ?? 'ALL',
+        // Direction control removed from Tasks UI; persist ALL for state-schema compatibility.
+        direction: 'ALL',
         pinnedOnly,
         sort: sort ?? 'DUE_DATE',
         jobId,
@@ -140,7 +138,6 @@ export function TasksView({
     priority,
     source,
     ownershipView,
-    direction,
     pinnedOnly,
     sort,
     jobId,
@@ -165,7 +162,6 @@ export function TasksView({
       source,
       ...(businessTypeKey ? { businessTypeKey } : {}),
       ...(sender ? { sender } : {}),
-      direction,
       ...(jobId ? { jobId } : {}),
       sort,
       timezone: browserTimeZone,
@@ -180,13 +176,60 @@ export function TasksView({
       source,
       businessTypeKey,
       sender,
-      direction,
       jobId,
       sort,
       browserTimeZone,
       pinnedOnly,
     ]
   )
+
+  const jobFilterOptions = useMemo(
+    () => [
+      { value: 'NONE', label: 'No Job', searchText: 'none unassigned' },
+      ...jobs.map((j) => ({
+        value: j.id,
+        label: `${j.jobNumber ? `#${j.jobNumber} · ` : ''}${j.name}`,
+        searchText: `${j.jobNumber ?? ''} ${j.name}`,
+      })),
+    ],
+    [jobs]
+  )
+
+  const subtypeFilterOptions = useMemo(
+    () =>
+      BUSINESS_SUBTYPE_FILTER_OPTIONS.map((o) => ({
+        value: o.key,
+        label: o.label,
+        searchText: o.key,
+      })),
+    []
+  )
+
+  const clearFilters = () => {
+    setOwnershipView('MY')
+    setTasksFor('ALL')
+    setStatusFilter('OPEN')
+    setDue('ALL')
+    setPriority('ALL')
+    setSource('ALL')
+    setBusinessTypeKey('')
+    setSender('')
+    setSenderDraft('')
+    setJobId('')
+    setPinnedOnly(false)
+  }
+
+  const hasActiveFilters =
+    ownershipView !== 'MY' ||
+    tasksFor !== 'ALL' ||
+    statusFilter !== 'OPEN' ||
+    due !== 'ALL' ||
+    priority !== 'ALL' ||
+    source !== 'ALL' ||
+    Boolean(businessTypeKey) ||
+    Boolean(sender) ||
+    Boolean(jobId) ||
+    pinnedOnly
 
   useEffect(() => {
     api
@@ -724,15 +767,82 @@ export function TasksView({
           </div>
         )}
 
+        <form
+          data-testid="tasks-main-search"
+          onSubmit={(e) => {
+            e.preventDefault()
+            setSender(senderDraft.trim())
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 10,
+            maxWidth: 560,
+            width: '100%',
+          }}
+        >
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <span
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: 10,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                fontSize: 13,
+                color: '#9ca3af',
+                pointerEvents: 'none',
+              }}
+            >
+              ⌕
+            </span>
+            <input
+              aria-label="Search tasks"
+              placeholder="Search tasks..."
+              value={senderDraft}
+              onChange={(e) => setSenderDraft(e.target.value)}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                height: 36,
+                padding: '8px 12px 8px 32px',
+                fontSize: 13,
+                border: sender ? '1px solid #1a1a2e' : '1px solid #d0d5dd',
+                borderRadius: 8,
+                background: '#fff',
+                color: '#111827',
+              }}
+            />
+          </div>
+          <button type="submit" style={{ ...btnStyle(), height: 36 }}>
+            Search
+          </button>
+          {sender ? (
+            <button
+              type="button"
+              style={{ ...btnStyle(), height: 36 }}
+              onClick={() => {
+                setSender('')
+                setSenderDraft('')
+              }}
+            >
+              Clear search
+            </button>
+          ) : null}
+        </form>
+
         <div
           role="toolbar"
           aria-label="Task filters"
+          data-testid="tasks-filter-toolbar"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
             alignItems: 'center',
             gap: 8,
             marginBottom: 10,
+            paddingTop: 2,
           }}
         >
           <div
@@ -745,6 +855,7 @@ export function TasksView({
               borderRadius: 6,
               overflow: 'hidden',
               background: '#fff',
+              height: 32,
             }}
           >
             {(
@@ -764,7 +875,7 @@ export function TasksView({
                   aria-pressed={active}
                   onClick={() => setOwnershipView(key)}
                   style={{
-                    padding: '6px 12px',
+                    padding: '0 12px',
                     fontSize: 12,
                     fontWeight: active ? 600 : 500,
                     border: 'none',
@@ -772,6 +883,7 @@ export function TasksView({
                     background: active ? '#1a1a2e' : '#fff',
                     color: active ? '#fff' : '#374151',
                     cursor: 'pointer',
+                    height: 32,
                   }}
                 >
                   {label}
@@ -784,7 +896,7 @@ export function TasksView({
               aria-label="Tasks for"
               value={tasksFor}
               onChange={(e) => setTasksFor(e.target.value)}
-              style={{ ...selectStyle, maxWidth: 220 }}
+              style={{ ...selectStyle, maxWidth: 200, height: 32 }}
             >
               <option value="ALL">Tasks for: All users</option>
               <option value="UNASSIGNED">Tasks for: Unassigned</option>
@@ -795,28 +907,36 @@ export function TasksView({
               ))}
             </select>
           )}
-          <button
-            type="button"
-            data-testid="tasks-pinned-filter"
-            aria-pressed={pinnedOnly}
-            title="Show only pinned tasks (composes with other filters)"
-            onClick={() => setPinnedOnly((prev) => !prev)}
-            style={{
-              ...selectStyle,
-              fontWeight: pinnedOnly ? 600 : 500,
-              border: pinnedOnly ? '1px solid #e09400' : selectStyle.border,
-              background: pinnedOnly ? '#fff8e1' : '#fff',
-              color: pinnedOnly ? '#e09400' : '#374151',
-              cursor: 'pointer',
-            }}
-          >
-            Pinned
-          </button>
+          <SearchableFilterSelect
+            ariaLabel="Job"
+            testId="tasks-job-filter"
+            value={jobId}
+            onChange={setJobId}
+            options={jobFilterOptions}
+            emptyLabel="All Jobs"
+            searchPlaceholder="Search jobs…"
+            maxWidth={200}
+          />
+          <SearchableFilterSelect
+            ariaLabel="Business subtype"
+            testId="tasks-subtype-filter"
+            value={businessTypeKey}
+            onChange={setBusinessTypeKey}
+            options={subtypeFilterOptions}
+            emptyLabel="All subtypes"
+            searchPlaceholder="Search subtypes…"
+            maxWidth={200}
+          />
           <select
             aria-label="Status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-            style={selectStyle}
+            style={{
+              ...selectStyle,
+              height: 32,
+              fontWeight: statusFilter !== 'OPEN' ? 600 : 500,
+              background: statusFilter !== 'OPEN' ? '#f3f4f6' : '#fff',
+            }}
           >
             <option value="OPEN">Open</option>
             <option value="COMPLETED">Completed</option>
@@ -826,7 +946,12 @@ export function TasksView({
             aria-label="Due date"
             value={due}
             onChange={(e) => setDue(e.target.value as typeof due)}
-            style={selectStyle}
+            style={{
+              ...selectStyle,
+              height: 32,
+              fontWeight: due !== 'ALL' ? 600 : 500,
+              background: due !== 'ALL' ? '#f3f4f6' : '#fff',
+            }}
           >
             <option value="ALL">All dates</option>
             <option value="OVERDUE">Overdue</option>
@@ -839,7 +964,12 @@ export function TasksView({
             aria-label="Priority"
             value={priority}
             onChange={(e) => setPriority(e.target.value as typeof priority)}
-            style={selectStyle}
+            style={{
+              ...selectStyle,
+              height: 32,
+              fontWeight: priority !== 'ALL' ? 600 : 500,
+              background: priority !== 'ALL' ? '#f3f4f6' : '#fff',
+            }}
           >
             <option value="ALL">All priorities</option>
             <option value="LOW">Low</option>
@@ -848,94 +978,67 @@ export function TasksView({
             <option value="URGENT">Urgent</option>
           </select>
           <select
-            aria-label="Job"
-            value={jobId}
-            onChange={(e) => setJobId(e.target.value)}
-            style={{ ...selectStyle, maxWidth: 220 }}
-          >
-            <option value="">All Jobs</option>
-            <option value="NONE">No Job</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.jobNumber ? `#${j.jobNumber} · ` : ''}
-                {j.name}
-              </option>
-            ))}
-          </select>
-          <select
             aria-label="Source"
             value={source}
             onChange={(e) => setSource(e.target.value as typeof source)}
-            style={selectStyle}
+            style={{
+              ...selectStyle,
+              height: 32,
+              fontWeight: source !== 'ALL' ? 600 : 500,
+              background: source !== 'ALL' ? '#f3f4f6' : '#fff',
+            }}
           >
             <option value="ALL">All sources</option>
             <option value="EMAIL">Email-generated</option>
             <option value="MANUAL">Manual</option>
           </select>
-          <select
-            aria-label="Email direction"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value as typeof direction)}
-            style={selectStyle}
+          <button
+            type="button"
+            data-testid="tasks-pinned-filter"
+            aria-pressed={pinnedOnly}
+            title="Show only pinned tasks (composes with other filters)"
+            onClick={() => setPinnedOnly((prev) => !prev)}
+            style={{
+              ...selectStyle,
+              height: 32,
+              fontWeight: pinnedOnly ? 600 : 500,
+              border: pinnedOnly ? '1px solid #e09400' : selectStyle.border,
+              background: pinnedOnly ? '#fff8e1' : '#fff',
+              color: pinnedOnly ? '#e09400' : '#374151',
+              cursor: 'pointer',
+            }}
           >
-            <option value="ALL">Direction: All</option>
-            <option value="INCOMING">Incoming</option>
-            <option value="SENT">Sent</option>
-          </select>
-          <select
-            aria-label="Business subtype"
-            value={businessTypeKey}
-            onChange={(e) => setBusinessTypeKey(e.target.value)}
-            style={{ ...selectStyle, maxWidth: 220 }}
-          >
-            <option value="">All subtypes</option>
-            {BUSINESS_SUBTYPE_FILTER_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            Pinned
+          </button>
           <select
             aria-label="Sort"
             value={sort}
             onChange={(e) => setSort(e.target.value as typeof sort)}
-            style={selectStyle}
+            style={{ ...selectStyle, height: 32 }}
           >
             <option value="DUE_DATE">Sort: Due date</option>
             <option value="PRIORITY">Sort: Priority</option>
             <option value="NEWEST">Sort: Newest</option>
             <option value="OLDEST">Sort: Oldest</option>
           </select>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              setSender(senderDraft.trim())
-            }}
-            style={{ display: 'flex', gap: 4 }}
-          >
-            <input
-              aria-label="Sender"
-              placeholder="Sender…"
-              value={senderDraft}
-              onChange={(e) => setSenderDraft(e.target.value)}
-              style={{ ...selectStyle, width: 140 }}
-            />
-            <button type="submit" style={btnStyle()}>
-              Search
+          {hasActiveFilters && (
+            <button
+              type="button"
+              data-testid="tasks-clear-filters"
+              onClick={clearFilters}
+              style={{
+                ...selectStyle,
+                height: 32,
+                cursor: 'pointer',
+                color: '#1d4ed8',
+                borderColor: '#bfdbfe',
+                background: '#eff6ff',
+                fontWeight: 600,
+              }}
+            >
+              Clear Filters
             </button>
-            {sender ? (
-              <button
-                type="button"
-                style={btnStyle()}
-                onClick={() => {
-                  setSender('')
-                  setSenderDraft('')
-                }}
-              >
-                Clear
-              </button>
-            ) : null}
-          </form>
+          )}
         </div>
       </div>
 
