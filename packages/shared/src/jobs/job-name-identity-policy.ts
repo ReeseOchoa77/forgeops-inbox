@@ -1525,8 +1525,9 @@ export function tryProjectIdentityCoverageRecovery(args: {
     }
   }
 
-  // Case: unique authoritative project token (Example A — SAT alone).
-  // Short acronyms authorize only when they head a Job phrase; generics never.
+  // Feature A (V2.2 only): unique authoritative project token alone is STRONG.
+  // Exact normalized token + workspace df=1 + non-generic (+ phrase-head for
+  // short tokens). No second token required. Shared tokens do not use this path.
   const rareAlone = scores.filter((s) => s.authoritativeUnique.length > 0);
   if (rareAlone.length === 1 && pool.length === 1) {
     const w = rareAlone[0]!;

@@ -5356,9 +5356,14 @@ export interface JobMatcherEvalResult {
     predictedJobName: string | null
     resolvingMarker: string | null
   }>
-  /** Most advanced policy metrics for the primary 12 cards. */
+  /** Most advanced / production-preferred policy for default display. */
   displayIdentityPolicy?: JobMatcherIdentityPolicy
   displayMetrics?: JobMatcherEvalResult['metrics']
+  /**
+   * Per-policy metrics + email rows for every policy scored in this run.
+   * Dashboard matcher selector switches among these without re-evaluating.
+   */
+  policyResults?: JobMatcherEvalPolicyResultBundle[]
   comparison?: JobMatcherIdentityCompareReport | null
   threeWayComparison?: {
     policies:
@@ -5402,6 +5407,16 @@ export interface JobMatcherEvalResult {
   runtimeMs?: number
   groundTruthQuality: string
   groundTruthNotes: string
+}
+
+/** One scored policy's full metrics + rows within a completed evaluation run. */
+export interface JobMatcherEvalPolicyResultBundle {
+  identityPolicy: JobMatcherIdentityPolicy
+  metrics: JobMatcherEvalResult['metrics']
+  diagnostics?: JobMatcherEvalDiagnostics
+  jobBreakdown: JobMatcherEvalResult['jobBreakdown']
+  rows: JobMatcherEvalRow[]
+  wrongMatches: JobMatcherEvalResult['wrongMatches']
 }
 
 export interface JobMatcherEvalEmailDetail {

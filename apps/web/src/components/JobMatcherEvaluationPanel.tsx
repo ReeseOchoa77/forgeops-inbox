@@ -13,6 +13,7 @@ import {
   type JobMatcherEvalPreview,
   type JobMatcherEvalResult,
   type JobMatcherEvalRow,
+  type JobMatcherIdentityPolicy,
   type JobMatcherTransitionCategory,
   type JobLookup,
 } from '../api'
@@ -26,6 +27,12 @@ import {
   downloadTextFile,
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
+import {
+  availableEvalPolicies,
+  defaultSelectedPolicy,
+  policyLabelSuffix,
+  selectPolicyView,
+} from '../job-matcher-eval-policy-view'
 import {
   DEFAULT_INTELLIGENCE_STATE,
   getJobMatcherEvalPending,
@@ -101,6 +108,11 @@ export function JobMatcherEvaluationPanel({
   const [result, setResult] = useState<JobMatcherEvalResult | null>(
     () => sessionSeed?.result ?? null
   )
+  /** Matcher version for metrics + email rows (does not re-run evaluation). */
+  const [selectedViewPolicy, setSelectedViewPolicy] =
+    useState<JobMatcherIdentityPolicy | null>(() =>
+      sessionSeed?.result ? defaultSelectedPolicy(sessionSeed.result) : null
+    )
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>(() => initialUi.outcomeFilter)
   const [jobFilterId, setJobFilterId] = useState<string | null>(
     () => sessionSeed?.jobFilterId ?? null
@@ -395,6 +407,7 @@ export function JobMatcherEvaluationPanel({
     try {
       const evaluation = await promise
       setResult(evaluation)
+      setSelectedViewPolicy(defaultSelectedPolicy(evaluation))
       setJobMatcherEvalSession({
         workspaceId,
         userId,
@@ -412,12 +425,46 @@ export function JobMatcherEvaluationPanel({
     }
   }
 
+  const policyView = useMemo(
+    () => (result ? selectPolicyView(result, selectedViewPolicy) : null),
+    [result, selectedViewPolicy]
+  )
+
+  const viewRows = policyView?.available ? policyView.rows : []
+  const viewMetrics = policyView?.available ? policyView.metrics : null
+
+  /** Result shaped for list/diagnostics/jobs tabs under the selected matcher. */
+  const viewResult = useMemo((): JobMatcherEvalResult | null => {
+    if (!result || !policyView?.available) return result
+    return {
+      ...result,
+      rows: policyView.rows,
+      metrics: policyView.metrics,
+      displayMetrics: policyView.metrics,
+      displayIdentityPolicy: policyView.identityPolicy,
+      jobBreakdown: policyView.jobBreakdown,
+      diagnostics: policyView.diagnostics,
+      wrongMatches: policyView.wrongMatches,
+    }
+  }, [result, policyView])
+
+  // Keep inspector on the same email when switching matchers (update to that policy's row).
+  useEffect(() => {
+    if (!selectedRow || !policyView?.available) return
+    const next = policyView.rows.find(
+      (r) => r.emailMessageId === selectedRow.emailMessageId
+    )
+    if (next && next !== selectedRow) setSelectedRow(next)
+    if (!next) setSelectedRow(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when policy rows change
+  }, [policyView])
+
   const filteredRows = useMemo(() => {
-    if (!result) return []
+    if (!result || !policyView?.available) return []
     const compareById = new Map(
       (result.comparison?.rows ?? []).map((r) => [r.emailMessageId, r] as const)
     )
-    return result.rows.filter((row) => {
+    return viewRows.filter((row) => {
       if (outcomeFilter !== 'ALL' && row.outcome !== outcomeFilter) return false
       if (jobFilterId && row.trueJobId !== jobFilterId) return false
       if (failureFilter !== 'ALL' && row.diagnostics?.failureCategory !== failureFilter) {
@@ -437,6 +484,8 @@ export function JobMatcherEvaluationPanel({
     })
   }, [
     result,
+    policyView,
+    viewRows,
     outcomeFilter,
     jobFilterId,
     failureFilter,
@@ -444,11 +493,16 @@ export function JobMatcherEvaluationPanel({
     transitionFilter,
   ])
 
+  const viewingPolicy =
+    policyView?.identityPolicy ??
+    result?.displayIdentityPolicy ??
+    result?.identityPolicy ??
+    null
+
   const exportMeta = result
     ? {
-        policy:
-          result.displayIdentityPolicy ?? result.identityPolicy ?? null,
-        evaluated: result.dataset.actualEvaluated,
+        policy: viewingPolicy,
+        evaluated: viewMetrics?.totalEvaluated ?? result.dataset.actualEvaluated,
         runId: result.evaluationRunId ?? null,
       }
     : undefined
@@ -456,8 +510,7 @@ export function JobMatcherEvaluationPanel({
   const detailedExportMeta = result
     ? {
         evaluationRunId: result.evaluationRunId ?? null,
-        identityPolicy:
-          result.displayIdentityPolicy ?? result.identityPolicy ?? null,
+        identityPolicy: viewingPolicy,
         datasetFingerprint: result.datasetFingerprint ?? null,
       }
     : undefined
@@ -494,14 +547,30 @@ export function JobMatcherEvaluationPanel({
       return
     }
     if (kind === 'detailed') {
-      const integrity = assertDetailedExportMatchesDashboard(result, result.rows)
+      if (!policyView?.available) {
+        setError(
+          `Detailed export unavailable: no scored results for ${
+            viewingPolicy ?? 'selected matcher'
+          }.`
+        )
+        return
+      }
+      const integrity = assertDetailedExportMatchesDashboard(
+        {
+          ...result,
+          displayIdentityPolicy: policyView.identityPolicy,
+          displayMetrics: policyView.metrics,
+          metrics: policyView.metrics,
+        },
+        policyView.rows
+      )
       if (!integrity.ok) {
         setError(integrity.message)
         return
       }
       downloadTextFile(
         jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
-        buildEvalDetailedCsv(result.rows, detailedExportMeta),
+        buildEvalDetailedCsv(policyView.rows, detailedExportMeta),
         'text/csv;charset=utf-8'
       )
       return
@@ -535,13 +604,9 @@ export function JobMatcherEvaluationPanel({
   const countPresets: readonly number[] =
     sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
   const groundTruthParts = parseGroundTruthLabel(preview?.groundTruth ?? '')
-  /** Primary cards show the most advanced policy in the completed evaluation. */
-  const displayPolicy =
-    result?.displayIdentityPolicy ??
-    result?.comparison?.proposedPolicy ??
-    result?.identityPolicy ??
-    'BASELINE'
-  const m = result?.displayMetrics ?? result?.metrics
+  const availablePolicies = result ? availableEvalPolicies(result) : []
+  const displayPolicy = viewingPolicy ?? 'BASELINE'
+  const m = viewMetrics
 
   return (
     <div
@@ -979,51 +1044,140 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {/* Metric cards — production policy when present; else the evaluated policy */}
-        {result && m && (
+        {/* Matcher selector + metric cards for the selected policy only */}
+        {result && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
               data-testid="job-matcher-display-policy"
-              style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}
-            >
-              Showing: {displayPolicy}
-              {displayPolicy === 'CONTEXT_AWARE_V2' ? ' (production)' : ''}
-              {displayPolicy === 'CONTEXT_AWARE_V2_1' ? ' (shadow eval)' : ''}
-              {displayPolicy === 'CONTEXT_AWARE_V2_2' ? ' (experimental)' : ''}
-              <span style={{ fontWeight: 500, color: '#6b7280' }}>
-                {' · '}
-                Production active: CONTEXT_AWARE_V2
-              </span>
-            </div>
-            <div
-              data-testid="job-matcher-metric-cards"
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
                 gap: 8,
+                fontSize: 12,
+                color: '#374151',
+                fontWeight: 600,
               }}
             >
-              <Metric label="Evaluated" value={m.totalEvaluated} />
-              <Metric label="Correct" value={m.correctMatches} tone="positive" />
-              <Metric label="Wrong" value={m.wrongMatches} tone="negative" />
-              <Metric label="Ambiguous" value={m.ambiguous} tone="warning" />
-              <Metric label="Conflict" value={m.conflict} tone="warning" />
-              <Metric label="No Match" value={m.noMatch} />
-              <Metric
-                label="Precision"
-                value={m.precision == null ? '—' : `${(m.precision * 100).toFixed(2)}%`}
-                strong
-              />
-              <Metric
-                label="Coverage"
-                value={`${(m.correctCoverage * 100).toFixed(2)}%`}
-                strong
-              />
-              <Metric label="Wrong rate" value={`${(m.wrongMatchRate * 100).toFixed(2)}%`} />
-              <Metric label="Ambiguity" value={`${(m.ambiguityRate * 100).toFixed(2)}%`} />
-              <Metric label="Conflict rate" value={`${(m.conflictRate * 100).toFixed(2)}%`} />
-              <Metric label="No-match rate" value={`${(m.noMatchRate * 100).toFixed(2)}%`} />
+              <label
+                htmlFor="job-matcher-policy-select"
+                style={{ fontWeight: 600 }}
+              >
+                Matcher results
+              </label>
+              <select
+                id="job-matcher-policy-select"
+                data-testid="job-matcher-policy-select"
+                value={displayPolicy}
+                disabled={availablePolicies.length === 0}
+                onChange={(e) => {
+                  setSelectedViewPolicy(
+                    e.target.value as JobMatcherIdentityPolicy
+                  )
+                }}
+                style={{
+                  ...selectStyle,
+                  minWidth: 220,
+                  fontWeight: 600,
+                }}
+              >
+                {availablePolicies.length === 0 ? (
+                  <option value={displayPolicy}>
+                    {displayPolicy}
+                    {policyLabelSuffix(displayPolicy as JobMatcherIdentityPolicy)}
+                  </option>
+                ) : (
+                  availablePolicies.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                      {policyLabelSuffix(p)}
+                    </option>
+                  ))
+                )}
+              </select>
+              <span style={{ fontWeight: 500, color: '#6b7280' }}>
+                Production active: CONTEXT_AWARE_V2
+                {result.evaluationRunId
+                  ? ` · run ${result.evaluationRunId.slice(0, 8)}`
+                  : ''}
+              </span>
             </div>
+            {policyView && !policyView.available ? (
+              <div
+                data-testid="job-matcher-policy-unavailable"
+                role="status"
+                style={{
+                  padding: '8px 10px',
+                  border: '1px solid #fde68a',
+                  borderRadius: 8,
+                  background: '#fffbeb',
+                  color: '#92400e',
+                  fontSize: 12,
+                }}
+              >
+                Results for {policyView.identityPolicy} are unavailable in this
+                evaluation run. Select another matcher — metrics are not shown as
+                zero.
+              </div>
+            ) : m ? (
+              <div
+                data-testid="job-matcher-metric-cards"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+                  gap: 8,
+                }}
+              >
+                <Metric label="Evaluated" value={m.totalEvaluated} />
+                <Metric
+                  label="Correct"
+                  value={m.correctMatches}
+                  tone="positive"
+                />
+                <Metric
+                  label="Wrong"
+                  value={m.wrongMatches}
+                  tone="negative"
+                />
+                <Metric
+                  label="Ambiguous"
+                  value={m.ambiguous}
+                  tone="warning"
+                />
+                <Metric label="Conflict" value={m.conflict} tone="warning" />
+                <Metric label="No Match" value={m.noMatch} />
+                <Metric
+                  label="Precision"
+                  value={
+                    m.precision == null
+                      ? '—'
+                      : `${(m.precision * 100).toFixed(2)}%`
+                  }
+                  strong
+                />
+                <Metric
+                  label="Coverage"
+                  value={`${(m.correctCoverage * 100).toFixed(2)}%`}
+                  strong
+                />
+                <Metric
+                  label="Wrong rate"
+                  value={`${(m.wrongMatchRate * 100).toFixed(2)}%`}
+                />
+                <Metric
+                  label="Ambiguity"
+                  value={`${(m.ambiguityRate * 100).toFixed(2)}%`}
+                />
+                <Metric
+                  label="Conflict rate"
+                  value={`${(m.conflictRate * 100).toFixed(2)}%`}
+                />
+                <Metric
+                  label="No-match rate"
+                  value={`${(m.noMatchRate * 100).toFixed(2)}%`}
+                />
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -1063,7 +1217,14 @@ export function JobMatcherEvaluationPanel({
           }}
         >
           <ResultsPane
-            result={result}
+            result={
+              policyView && !policyView.available ? null : viewResult
+            }
+            policyUnavailable={
+              policyView && !policyView.available
+                ? policyView.identityPolicy
+                : null
+            }
             filteredRows={filteredRows}
             outcomeFilter={outcomeFilter}
             setOutcomeFilter={setOutcomeFilter}
@@ -1108,7 +1269,7 @@ export function JobMatcherEvaluationPanel({
               setFailureFilter('ALL')
               setPanelTab('emails')
               setResultsView('emails')
-              const row = result?.rows.find(
+              const row = viewRows.find(
                 (r) =>
                   r.outcome === 'WRONG_MATCH' &&
                   r.trueJobId === actualId &&
@@ -1171,6 +1332,8 @@ export function JobMatcherEvaluationPanel({
 
 function ResultsPane(props: {
   result: JobMatcherEvalResult | null
+  /** When set, show unavailable instead of empty/zero rows for a missing policy. */
+  policyUnavailable?: JobMatcherIdentityPolicy | null
   filteredRows: JobMatcherEvalRow[]
   outcomeFilter: OutcomeFilter
   setOutcomeFilter: (f: OutcomeFilter) => void
@@ -1306,7 +1469,16 @@ function ResultsPane(props: {
         onScroll={(e) => props.onScrollSave?.(e.currentTarget.scrollTop)}
         style={{ flex: 1, minHeight: 0, overflow: 'auto', minWidth: 0 }}
       >
-        {!props.result && (
+        {props.policyUnavailable && (
+          <div
+            data-testid="job-matcher-results-unavailable"
+            style={{ padding: 16, color: '#92400e', fontSize: 12 }}
+          >
+            Email results for {props.policyUnavailable} are unavailable in this
+            run. Choose another matcher above.
+          </div>
+        )}
+        {!props.result && !props.policyUnavailable && (
           <div style={{ padding: 16, color: '#9ca3af', fontSize: 12 }}>No evaluation yet.</div>
         )}
         {props.result && props.panelTab === 'diagnostics' && (

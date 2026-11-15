@@ -43,6 +43,7 @@ import {
   JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
   assertExportRowsMatchMetrics,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  jobMatchPolicyAdvanceRank,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
 import { randomUUID } from "node:crypto";
@@ -89,6 +90,15 @@ export type JobMatcherEvalRow = {
   diagnostics: EvalRowDiagnostics;
 };
 
+export type JobMatcherEvalPolicyResultBundle = {
+  identityPolicy: JobMatchIdentityPolicy;
+  metrics: HistoricalEvalMetrics;
+  diagnostics: JobMatcherEvalDiagnostics;
+  jobBreakdown: JobMatcherEvalJobBreakdown[];
+  rows: JobMatcherEvalRow[];
+  wrongMatches: HistoricalEvalWrongDetail[];
+};
+
 export type JobMatcherHistoricalEvalResult = {
   intelligenceId: "job-matcher";
   databaseWrites: "NONE";
@@ -125,6 +135,12 @@ export type JobMatcherHistoricalEvalResult = {
    */
   displayIdentityPolicy: JobMatchIdentityPolicy;
   displayMetrics: HistoricalEvalMetrics;
+  /**
+   * Full per-policy metrics + email rows for every policy scored in this run.
+   * Powers the evaluation dashboard matcher selector without re-running eval.
+   * Same email IDs / snapshot for every entry.
+   */
+  policyResults: JobMatcherEvalPolicyResultBundle[];
   /** Same evaluation run fingerprint (sorted selected email ids). */
   datasetFingerprint: string;
   runtimeMs: number;
@@ -866,6 +882,47 @@ export async function runJobMatcherHistoricalEval(input: {
     throw new Error(integrity.message);
   }
 
+  /** One bundle per scored policy — same email IDs, no rematch on UI switch. */
+  const policyResults: JobMatcherEvalPolicyResultBundle[] = [
+    ...evaluatedByPolicy.entries(),
+  ]
+    .sort(
+      ([a], [b]) =>
+        jobMatchPolicyAdvanceRank(a) - jobMatchPolicyAdvanceRank(b)
+    )
+    .map(([policy, policyEvaluated]) => {
+      const policyMetrics = aggregateHistoricalEvalResults(policyEvaluated);
+      const { rows: policyRows, diagnostics: policyDiagnostics } = toEvalRows({
+        evaluated: policyEvaluated,
+        jobsById,
+        sourceById,
+        identityPolicy: policy,
+      });
+      const policyIntegrity = assertExportRowsMatchMetrics({
+        rows: policyRows,
+        metrics: policyMetrics,
+        policyLabel: policy,
+      });
+      if (!policyIntegrity.ok) {
+        throw new Error(policyIntegrity.message);
+      }
+      return {
+        identityPolicy: policy,
+        metrics: policyMetrics,
+        diagnostics: policyDiagnostics,
+        jobBreakdown: buildJobMatcherEvalJobBreakdown(
+          policyEvaluated,
+          jobsById
+        ),
+        rows: policyRows,
+        wrongMatches: buildWrongMatchDetails({
+          rows: policyEvaluated,
+          jobsById,
+          maxWrongDetails: input.maxWrongDetails ?? 50,
+        }).details,
+      };
+    });
+
   const datasetFingerprint = selection.selectedIds.slice().sort().join(",");
 
   const result: JobMatcherHistoricalEvalResult = {
@@ -890,6 +947,7 @@ export async function runJobMatcherHistoricalEval(input: {
     metrics,
     displayIdentityPolicy: display.policy,
     displayMetrics,
+    policyResults,
     datasetFingerprint,
     diagnostics,
     jobBreakdown,
@@ -900,7 +958,7 @@ export async function runJobMatcherHistoricalEval(input: {
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; BASELINE/V1/V2.1 remain available for evaluation. Detailed rows/export always use displayIdentityPolicy (production policy when present in compare runs).",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; BASELINE/V1/V2.1/V2.2 remain available for evaluation. Dashboard matcher selector switches among policyResults without re-running. Default display uses displayIdentityPolicy.",
   };
   completeJobMatcherEvalProgress({
     workspaceId: input.workspaceId,
