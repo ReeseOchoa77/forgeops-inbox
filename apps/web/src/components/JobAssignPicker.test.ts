@@ -43,13 +43,14 @@ describe("job assign label helpers", () => {
     expect(picker).toContain("fontWeight: 600");
     const messages = readFileSync(join(here, "../views/MessagesView.tsx"), "utf8");
     expect(messages).toContain("InboxJobTag");
-    expect(messages).toContain('emphasis="secondary"');
-    // Job column/header before Type in desktop table.
+    expect(messages).toContain('emphasis="medium"');
+    // Job column/header before Subtype in desktop table.
     const jobTh = messages.indexOf(">Job</th>");
-    const typeTh = messages.indexOf(">Type</th>");
+    const subtypeTh = messages.indexOf(">Subtype</th>");
     expect(jobTh).toBeGreaterThan(-1);
-    expect(typeTh).toBeGreaterThan(jobTh);
+    expect(subtypeTh).toBeGreaterThan(jobTh);
     const badges = readFileSync(join(here, "Badges.tsx"), "utf8");
-    expect(badges).toContain("emphasis === 'secondary'");
+    expect(badges).toContain("emphasis === 'medium'");
+    expect(badges).toContain("fontSize: 12");
   });
 });

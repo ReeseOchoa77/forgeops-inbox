@@ -1201,16 +1201,16 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <TypeBadge
               type={m.classification.emailType}
               businessTypeKey={m.classification.businessTypeKey}
-              emphasis="secondary"
+              emphasis="medium"
             />
           )}
           {showBusinessChrome && !m.classification && (
             <span
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 500,
-                padding: '1px 6px',
-                borderRadius: 4,
+                padding: '4px 9px',
+                borderRadius: 6,
                 background: '#fff8e1',
                 color: '#f57f17',
                 whiteSpace: 'nowrap',
@@ -1407,15 +1407,15 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
             <TypeBadge
               type={m.classification.emailType}
               businessTypeKey={m.classification.businessTypeKey}
-              emphasis="secondary"
+              emphasis="medium"
             />
           ) : (
             <span
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 500,
-                padding: '1px 6px',
-                borderRadius: 4,
+                padding: '4px 9px',
+                borderRadius: 6,
                 background: '#fff8e1',
                 color: '#f57f17',
                 whiteSpace: 'nowrap',
@@ -1870,7 +1870,7 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                     <th style={{ padding: '8px 12px', fontWeight: 600, minWidth: 140 }}>Job</th>
                   )}
                   {showBusinessChrome && !isTablet && (
-                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subtype</th>
                   )}
                   {showUnclassifiedChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Status</th>}
                   {showBusinessChrome && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}

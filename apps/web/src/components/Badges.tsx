@@ -52,25 +52,44 @@ export function TypeBadge({
 }: {
   type: string
   businessTypeKey?: string | null
-  /** Inbox list uses secondary so Job tags stay visually primary. */
-  emphasis?: 'primary' | 'secondary'
+  /**
+   * Visual hierarchy helper for the inbox list:
+   * - primary: default badge weight
+   * - medium: subtype chip (below Job, above Type)
+   * - secondary: most subtle (legacy / fallback type labels)
+   */
+  emphasis?: 'primary' | 'medium' | 'secondary'
 }) {
-  const secondary = emphasis === 'secondary'
-  const style: React.CSSProperties = secondary
-    ? {
-        ...badgeBase,
-        fontSize: 10,
-        fontWeight: 500,
-        padding: '1px 6px',
-        borderRadius: 4,
-        opacity: 0.92,
-      }
-    : badgeBase
+  const style: React.CSSProperties =
+    emphasis === 'medium'
+      ? {
+          ...badgeBase,
+          fontSize: 12,
+          fontWeight: 600,
+          padding: '4px 9px',
+          borderRadius: 6,
+          maxWidth: 200,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          verticalAlign: 'middle',
+        }
+      : emphasis === 'secondary'
+        ? {
+            ...badgeBase,
+            fontSize: 10,
+            fontWeight: 500,
+            padding: '1px 6px',
+            borderRadius: 4,
+            opacity: 0.9,
+          }
+        : badgeBase
   if (businessTypeKey && businessTypeLabels[businessTypeKey]) {
     const c = businessTypeColors[businessTypeKey] ?? { bg: '#eee', fg: '#333' }
+    const label = businessTypeLabels[businessTypeKey]
     return (
-      <span style={{ ...style, background: c.bg, color: c.fg }}>
-        {businessTypeLabels[businessTypeKey]}
+      <span style={{ ...style, background: c.bg, color: c.fg }} title={label}>
+        {label}
       </span>
     )
   }
@@ -78,7 +97,11 @@ export function TypeBadge({
   if (!type || type === 'NEEDS_REVIEW') return null
   const label = businessTypeLabels[type] ?? actionLabels[type] ?? type.replace(/_/g, ' ')
   const c = businessTypeColors[type] ?? { bg: '#eee', fg: '#333' }
-  return <span style={{ ...style, background: c.bg, color: c.fg }}>{label}</span>
+  return (
+    <span style={{ ...style, background: c.bg, color: c.fg }} title={label}>
+      {label}
+    </span>
+  )
 }
 
 export function ActionBadge({ emailType, requiresReview: _requiresReview }: { emailType: string; requiresReview: boolean }) {
