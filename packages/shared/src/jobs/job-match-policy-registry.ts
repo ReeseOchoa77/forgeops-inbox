@@ -10,6 +10,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   type JobMatchIdentityPolicy,
 } from "./job-name-identity-policy.js";
 
@@ -18,6 +19,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
 };
 
 export type JobMatchIdentityPolicyId = JobMatchIdentityPolicy;
@@ -54,6 +56,12 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
       advanceRank: 3,
       label: "CONTEXT_AWARE_V2_1",
+      productionDefault: false,
+    },
+    {
+      id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+      advanceRank: 4,
+      label: "CONTEXT_AWARE_V2_2",
       productionDefault: false,
     },
   ] as const;

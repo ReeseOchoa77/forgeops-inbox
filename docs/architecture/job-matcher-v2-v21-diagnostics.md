@@ -1,6 +1,6 @@
 # Job Matcher — V2 vs V2.1 diagnostic audit
 
-**Status:** Production default is `CONTEXT_AWARE_V2`. V2.1 remains shadow/eval-only and is **not** promoted.
+**Status:** Production default is `CONTEXT_AWARE_V2`. V2.1 remains shadow/eval-only and is **not** promoted. Experimental `CONTEXT_AWARE_V2_2` (project-identity coverage recovery) is documented in [`job-matcher-v2-2-project-identity.md`](./job-matcher-v2-2-project-identity.md) and is also **not** production.
 
 ## Pipeline (unchanged architecture)
 

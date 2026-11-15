@@ -3039,10 +3039,12 @@ export const api = {
         | 'CONTEXT_AWARE_V1'
         | 'CONTEXT_AWARE_V2'
         | 'CONTEXT_AWARE_V2_1'
+        | 'CONTEXT_AWARE_V2_2'
       compareWithIdentityPolicy?:
         | 'CONTEXT_AWARE_V1'
         | 'CONTEXT_AWARE_V2'
         | 'CONTEXT_AWARE_V2_1'
+        | 'CONTEXT_AWARE_V2_2'
         | 'ALL_THREE'
       evaluationRunId?: string
     }
@@ -5187,6 +5189,7 @@ export type JobMatcherIdentityPolicy =
   | 'CONTEXT_AWARE_V1'
   | 'CONTEXT_AWARE_V2'
   | 'CONTEXT_AWARE_V2_1'
+  | 'CONTEXT_AWARE_V2_2'
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'

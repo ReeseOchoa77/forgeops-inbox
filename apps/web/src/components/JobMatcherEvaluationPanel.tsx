@@ -375,9 +375,11 @@ export function JobMatcherEvaluationPanel({
           ? ('CONTEXT_AWARE_V2' as const)
           : evaluationMode === 'COMPARE_V2_1'
             ? ('CONTEXT_AWARE_V2_1' as const)
-            : evaluationMode === 'COMPARE_ALL'
-              ? ('ALL_THREE' as const)
-              : null
+            : evaluationMode === 'COMPARE_V2_2'
+              ? ('CONTEXT_AWARE_V2_2' as const)
+              : evaluationMode === 'COMPARE_ALL'
+                ? ('ALL_THREE' as const)
+                : null
     // CURRENT = production policy (CONTEXT_AWARE_V2). Compare modes omit
     // identityPolicy so the API can scaffold BASELINE primary + paired policies.
     const promise = api
@@ -708,6 +710,9 @@ export function JobMatcherEvaluationPanel({
               <option value="COMPARE_V1">Compare BASELINE vs V1</option>
               <option value="COMPARE_V2">Compare V1 vs V2</option>
               <option value="COMPARE_V2_1">Compare V2 vs V2.1 (shadow)</option>
+              <option value="COMPARE_V2_2">
+                Compare V2 vs V2.2 project-identity (experimental)
+              </option>
               <option value="COMPARE_ALL">Compare all (incl. V2.1 shadow)</option>
             </select>
           </Control>
@@ -984,6 +989,7 @@ export function JobMatcherEvaluationPanel({
               Showing: {displayPolicy}
               {displayPolicy === 'CONTEXT_AWARE_V2' ? ' (production)' : ''}
               {displayPolicy === 'CONTEXT_AWARE_V2_1' ? ' (shadow eval)' : ''}
+              {displayPolicy === 'CONTEXT_AWARE_V2_2' ? ' (experimental)' : ''}
               <span style={{ fontWeight: 500, color: '#6b7280' }}>
                 {' · '}
                 Production active: CONTEXT_AWARE_V2

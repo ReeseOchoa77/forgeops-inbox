@@ -9,6 +9,7 @@ import type { JobMatchIdentityPolicy } from "./job-name-identity-policy.js";
 import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
 } from "./job-name-identity-policy.js";
 
 export type JobContactAssociationClass =
@@ -132,7 +133,8 @@ function supportingEmailIds(hits: JobContactHit[]): string[] {
 function isContextAwareV2Family(policy: JobMatchIdentityPolicy): boolean {
   return (
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
   );
 }
 

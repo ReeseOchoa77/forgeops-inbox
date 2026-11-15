@@ -39,6 +39,8 @@ export * from "./jobs/job-matcher-service.js";
 export * from "./jobs/job-name-normalize.js";
 export * from "./jobs/job-name-marker.js";
 export * from "./jobs/job-name-identity-policy.js";
+export * from "./jobs/job-project-identity-index.js";
+export * from "./jobs/job-project-token-utils.js";
 export * from "./jobs/job-match-contact-policy.js";
 export * from "./jobs/job-match-identity-compare.js";
 export * from "./jobs/job-match-decision-transitions.js";

@@ -179,17 +179,19 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V1",
               "CONTEXT_AWARE_V2",
               "CONTEXT_AWARE_V2_1",
+              "CONTEXT_AWARE_V2_2",
             ])
             .optional(),
           /**
            * Shadow comparison on the same emails/snapshot.
-           * Does not change production matcher default (BASELINE).
+           * Does not change production matcher default (CONTEXT_AWARE_V2).
            */
           compareWithIdentityPolicy: z
             .enum([
               "CONTEXT_AWARE_V1",
               "CONTEXT_AWARE_V2",
               "CONTEXT_AWARE_V2_1",
+              "CONTEXT_AWARE_V2_2",
               "ALL_THREE",
             ])
             .optional(),

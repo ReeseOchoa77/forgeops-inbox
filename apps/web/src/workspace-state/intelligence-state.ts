@@ -16,6 +16,7 @@ export type IntelligenceEvalMode =
   | 'COMPARE_V1'
   | 'COMPARE_V2'
   | 'COMPARE_V2_1'
+  | 'COMPARE_V2_2'
   | 'COMPARE_ALL'
 
 export type IntelligencePersistedState = {
@@ -61,6 +62,7 @@ const EVAL_MODES = new Set([
   'COMPARE_V1',
   'COMPARE_V2',
   'COMPARE_V2_1',
+  'COMPARE_V2_2',
   'COMPARE_ALL',
 ])
 

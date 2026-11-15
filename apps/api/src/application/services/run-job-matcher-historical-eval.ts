@@ -400,13 +400,15 @@ export async function runJobMatcherHistoricalEval(input: {
    * - CONTEXT_AWARE_V1: BASELINE vs V1
    * - CONTEXT_AWARE_V2: V1 vs V2 (paired)
    * - CONTEXT_AWARE_V2_1: V2 vs V2.1 (paired)
+   * - CONTEXT_AWARE_V2_2: V2 vs V2.2 experimental (paired)
    * - ALL_THREE: BASELINE + V1 + V2 + V2.1
-   * Production default remains BASELINE; V1/V2/V2.1 are never auto-activated.
+   * Production default remains CONTEXT_AWARE_V2; experimental policies are never auto-activated.
    */
   compareWithIdentityPolicy?:
     | "CONTEXT_AWARE_V1"
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
+    | "CONTEXT_AWARE_V2_2"
     | "ALL_THREE";
   /** Optional client-supplied run id for progress polling. */
   evaluationRunId?: string;
@@ -432,7 +434,8 @@ export async function runJobMatcherHistoricalEval(input: {
     compareWith === "ALL_THREE"
       ? 4
       : compareWith === "CONTEXT_AWARE_V2" ||
-          compareWith === "CONTEXT_AWARE_V2_1"
+          compareWith === "CONTEXT_AWARE_V2_1" ||
+          compareWith === "CONTEXT_AWARE_V2_2"
         ? 3
         : compareWith === "CONTEXT_AWARE_V1"
           ? 2
@@ -685,6 +688,27 @@ export async function runJobMatcherHistoricalEval(input: {
     if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
       throw new Error(
         `V2→V2.1 transition counts do not equal evaluated (${compareRows.length})`
+      );
+    }
+    comparison = report;
+  } else if (compareWith === "CONTEXT_AWARE_V2_2") {
+    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
+    const v22 = await scoreEmails("CONTEXT_AWARE_V2_2");
+    const compareRows = pairedRows(v2.evaluated, v22.evaluated, false);
+    const report = buildIdentityCompareReport({
+      baselinePolicy: "CONTEXT_AWARE_V2",
+      proposedPolicy: "CONTEXT_AWARE_V2_2",
+      baselineMetrics: aggregateHistoricalEvalResults(v2.evaluated),
+      proposedMetrics: aggregateHistoricalEvalResults(v22.evaluated),
+      rows: compareRows,
+      runtimeMs: {
+        baseline: v2.runtimeMs,
+        proposed: v22.runtimeMs,
+      },
+    });
+    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
+      throw new Error(
+        `V2→V2.2 transition counts do not equal evaluated (${compareRows.length})`
       );
     }
     comparison = report;

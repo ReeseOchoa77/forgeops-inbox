@@ -57,13 +57,14 @@ export type JobMatchInput = {
   eligibilityMode?: "production" | "evaluation";
   /**
    * Marker 1 identity policy. Default CONTEXT_AWARE_V2 (production).
-   * BASELINE / V1 / V2.1 remain available for evaluation overrides.
+   * BASELINE / V1 / V2.1 / V2.2 remain available for evaluation overrides.
    */
   identityPolicy?:
     | "BASELINE"
     | "CONTEXT_AWARE_V1"
     | "CONTEXT_AWARE_V2"
-    | "CONTEXT_AWARE_V2_1";
+    | "CONTEXT_AWARE_V2_1"
+    | "CONTEXT_AWARE_V2_2";
 };
 
 export type JobRecordForMatch = {
@@ -132,7 +133,8 @@ export type JobMatchResult = {
     | "BASELINE"
     | "CONTEXT_AWARE_V1"
     | "CONTEXT_AWARE_V2"
-    | "CONTEXT_AWARE_V2_1";
+    | "CONTEXT_AWARE_V2_1"
+    | "CONTEXT_AWARE_V2_2";
   /** Structured Marker 1 identity diagnostics when available. */
   identityDiagnostics?: {
     marker: "NAME";
@@ -140,7 +142,8 @@ export type JobMatchResult = {
       | "BASELINE"
       | "CONTEXT_AWARE_V1"
       | "CONTEXT_AWARE_V2"
-      | "CONTEXT_AWARE_V2_1";
+      | "CONTEXT_AWARE_V2_1"
+      | "CONTEXT_AWARE_V2_2";
     identityStrength: string;
     matchedPhrase: string | null;
     matchedTerms: string[];

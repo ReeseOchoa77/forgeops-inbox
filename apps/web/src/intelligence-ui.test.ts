@@ -177,6 +177,7 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('COMPARE_V1')
     expect(src).toContain('COMPARE_V2')
     expect(src).toContain('COMPARE_V2_1')
+    expect(src).toContain('COMPARE_V2_2')
     expect(src).toContain('COMPARE_ALL')
     expect(src).toContain('job-matcher-comparison')
     expect(src).toContain('job-matcher-display-policy')
