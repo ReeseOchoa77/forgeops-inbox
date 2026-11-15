@@ -45,16 +45,40 @@ const actionLabels: Record<string, string> = {
   FYI_UPDATE: 'FYI / Update',
 }
 
-export function TypeBadge({ type, businessTypeKey }: { type: string; businessTypeKey?: string | null }) {
+export function TypeBadge({
+  type,
+  businessTypeKey,
+  emphasis = 'primary',
+}: {
+  type: string
+  businessTypeKey?: string | null
+  /** Inbox list uses secondary so Job tags stay visually primary. */
+  emphasis?: 'primary' | 'secondary'
+}) {
+  const secondary = emphasis === 'secondary'
+  const style: React.CSSProperties = secondary
+    ? {
+        ...badgeBase,
+        fontSize: 10,
+        fontWeight: 500,
+        padding: '1px 6px',
+        borderRadius: 4,
+        opacity: 0.92,
+      }
+    : badgeBase
   if (businessTypeKey && businessTypeLabels[businessTypeKey]) {
     const c = businessTypeColors[businessTypeKey] ?? { bg: '#eee', fg: '#333' }
-    return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{businessTypeLabels[businessTypeKey]}</span>
+    return (
+      <span style={{ ...style, background: c.bg, color: c.fg }}>
+        {businessTypeLabels[businessTypeKey]}
+      </span>
+    )
   }
   // Do not surface NEEDS_REVIEW as a type label — show real classification subtypes only.
   if (!type || type === 'NEEDS_REVIEW') return null
   const label = businessTypeLabels[type] ?? actionLabels[type] ?? type.replace(/_/g, ' ')
   const c = businessTypeColors[type] ?? { bg: '#eee', fg: '#333' }
-  return <span style={{ ...badgeBase, background: c.bg, color: c.fg }}>{label}</span>
+  return <span style={{ ...style, background: c.bg, color: c.fg }}>{label}</span>
 }
 
 export function ActionBadge({ emailType, requiresReview: _requiresReview }: { emailType: string; requiresReview: boolean }) {

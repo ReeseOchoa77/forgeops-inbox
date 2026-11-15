@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { api, type JobLookup } from '../api'
 
 export function formatJobPrimaryLabel(job: Pick<JobLookup, 'name' | 'jobNumber'>, maxLen = 28): string {
@@ -25,6 +31,65 @@ export function formatJobTooltip(
   if (job.status) bits.push(job.status)
   if (job.customerName) bits.push(job.customerName)
   return bits.filter(Boolean).join(' — ')
+}
+
+/** Default truncation for prominent inbox Job tags (name-first). */
+export const INBOX_JOB_TAG_MAX_LEN = 40
+
+type InboxJobTagProps = {
+  job?:
+    | (Pick<JobLookup, 'name' | 'jobNumber' | 'customerName'> & {
+        status?: string | null
+      })
+    | null
+  disabled?: boolean
+  onClick: (e: ReactMouseEvent<HTMLButtonElement>) => void
+  /** Wider on desktop table; slightly tighter on mobile cards. */
+  maxWidth?: number
+  maxLen?: number
+}
+
+/**
+ * Prominent inbox Job assignment chip — name-first, tooltip for full name.
+ * Presentation only; assignment logic stays in the parent.
+ */
+export function InboxJobTag({
+  job,
+  disabled,
+  onClick,
+  maxWidth = 260,
+  maxLen = INBOX_JOB_TAG_MAX_LEN,
+}: InboxJobTagProps) {
+  const assigned = Boolean(job)
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-label={assigned ? 'Change Job assignment' : 'Assign email to Job'}
+      onClick={onClick}
+      title={job ? formatJobTooltip(job) : 'Assign email to Job'}
+      style={{
+        fontSize: 13,
+        fontWeight: 600,
+        padding: '5px 11px',
+        borderRadius: 8,
+        border: assigned ? '1px solid #b2dfdb' : '1px solid #e5e7eb',
+        background: assigned ? '#e0f2f1' : '#f3f4f6',
+        color: assigned ? '#004d40' : '#6b7280',
+        whiteSpace: 'nowrap',
+        cursor: disabled ? 'default' : 'pointer',
+        maxWidth,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        display: 'inline-block',
+        lineHeight: 1.25,
+        textAlign: 'left',
+        verticalAlign: 'middle',
+      }}
+    >
+      {job ? formatJobPrimaryLabel(job, maxLen) : 'Unassigned'}
+    </button>
+  )
 }
 
 type Props = {
@@ -92,7 +157,7 @@ export function JobAssignPicker({
     return () => clearTimeout(handle)
   }, [workspaceId, query])
 
-  const shellStyle: React.CSSProperties =
+  const shellStyle: CSSProperties =
     variant === 'dropdown'
       ? {
           position: 'absolute',

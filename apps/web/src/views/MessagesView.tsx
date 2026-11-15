@@ -22,8 +22,7 @@ import {
 } from '../file-preview'
 import {
   JobFilterSelect,
-  formatJobPrimaryLabel,
-  formatJobTooltip,
+  InboxJobTag,
 } from '../components/JobAssignPicker'
 import { EmailJobAssignmentDialog } from '../components/EmailJobAssignmentDialog'
 import { InboxSmartSearch } from '../components/InboxSmartSearch'
@@ -1185,16 +1184,33 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          {showBusinessChrome && (
+            <InboxJobTag
+              job={m.job}
+              disabled={isViewer}
+              maxWidth={220}
+              maxLen={32}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (isViewer) return
+                setAssignmentTarget(m)
+              }}
+            />
+          )}
           {showBusinessChrome && m.classification && (
-            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+            <TypeBadge
+              type={m.classification.emailType}
+              businessTypeKey={m.classification.businessTypeKey}
+              emphasis="secondary"
+            />
           )}
           {showBusinessChrome && !m.classification && (
             <span
               style={{
                 fontSize: 10,
-                fontWeight: 600,
-                padding: '1px 7px',
-                borderRadius: 10,
+                fontWeight: 500,
+                padding: '1px 6px',
+                borderRadius: 4,
                 background: '#fff8e1',
                 color: '#f57f17',
                 whiteSpace: 'nowrap',
@@ -1210,9 +1226,9 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 600,
-                  padding: '1px 7px',
-                  borderRadius: 10,
+                  fontWeight: 500,
+                  padding: '1px 6px',
+                  borderRadius: 4,
                   background: badge.bg,
                   color: badge.color,
                   whiteSpace: 'nowrap',
@@ -1225,30 +1241,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
           })()}
           {showBusinessChrome && m.classification && !isSentEmail(m) && (
             <PriorityBadge priority={m.classification.priority} />
-          )}
-          {showBusinessChrome && (
-            <button
-              type="button"
-              disabled={isViewer}
-              aria-label={m.job ? 'Change Job assignment' : 'Assign email to Job'}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (isViewer) return
-                setAssignmentTarget(m)
-              }}
-              title={m.job ? formatJobTooltip(m.job) : 'Assign email to Job'}
-              style={{
-                fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
-                border: 'none',
-                background: m.job ? '#e0f2f1' : '#f0f0f0',
-                color: m.job ? '#00695c' : '#999',
-                whiteSpace: 'nowrap',
-                cursor: isViewer ? 'default' : 'pointer',
-                maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
-              }}
-            >
-              {m.job ? formatJobPrimaryLabel(m.job, 22) : 'Unassigned'}
-            </button>
           )}
         </div>
 
@@ -1392,16 +1384,38 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
         })()}
       </td>
       {showBusinessChrome && !isTablet && (
+        <td
+          style={{ padding: '7px 12px', maxWidth: 280, minWidth: 140 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <InboxJobTag
+            job={m.job}
+            disabled={isViewer}
+            maxWidth={260}
+            maxLen={40}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (isViewer) return
+              setAssignmentTarget(m)
+            }}
+          />
+        </td>
+      )}
+      {showBusinessChrome && !isTablet && (
         <td style={{ padding: '7px 12px' }}>
           {m.classification ? (
-            <TypeBadge type={m.classification.emailType} businessTypeKey={m.classification.businessTypeKey} />
+            <TypeBadge
+              type={m.classification.emailType}
+              businessTypeKey={m.classification.businessTypeKey}
+              emphasis="secondary"
+            />
           ) : (
             <span
               style={{
                 fontSize: 10,
-                fontWeight: 600,
-                padding: '1px 7px',
-                borderRadius: 10,
+                fontWeight: 500,
+                padding: '1px 6px',
+                borderRadius: 4,
                 background: '#fff8e1',
                 color: '#f57f17',
                 whiteSpace: 'nowrap',
@@ -1411,31 +1425,6 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
               Unclassified
             </span>
           )}
-        </td>
-      )}
-      {showBusinessChrome && !isTablet && (
-        <td style={{ padding: '7px 12px' }} onClick={e => e.stopPropagation()}>
-          <button
-            type="button"
-            disabled={isViewer}
-            aria-label={m.job ? 'Change Job assignment' : 'Assign email to Job'}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (isViewer) return
-              setAssignmentTarget(m)
-            }}
-            title={m.job ? formatJobTooltip(m.job) : 'Assign email to Job'}
-            style={{
-              fontSize: 10, fontWeight: m.job ? 600 : 500, padding: '1px 7px', borderRadius: 10,
-              border: 'none',
-              background: m.job ? '#e0f2f1' : '#f0f0f0',
-              color: m.job ? '#00695c' : '#999',
-              whiteSpace: 'nowrap', cursor: isViewer ? 'default' : 'pointer',
-              maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block',
-            }}
-          >
-            {m.job ? formatJobPrimaryLabel(m.job, 24) : 'Unassigned'}
-          </button>
         </td>
       )}
       {showUnclassifiedChrome && !isTablet && (
@@ -1877,8 +1866,12 @@ export function MessagesView({ workspaceId, connectionId, onSelectMessage, userR
                   {showBusinessChrome && <th style={{ padding: '8px 6px', width: 28 }}></th>}
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>From</th>
                   <th style={{ padding: '8px 12px', fontWeight: 600 }}>Subject</th>
-                  {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>}
-                  {showBusinessChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Job</th>}
+                  {showBusinessChrome && !isTablet && (
+                    <th style={{ padding: '8px 12px', fontWeight: 600, minWidth: 140 }}>Job</th>
+                  )}
+                  {showBusinessChrome && !isTablet && (
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>Type</th>
+                  )}
                   {showUnclassifiedChrome && !isTablet && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Status</th>}
                   {showBusinessChrome && <th style={{ padding: '8px 12px', fontWeight: 600 }}>Priority</th>}
                   <th style={{ padding: '8px 14px 8px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>Date</th>
