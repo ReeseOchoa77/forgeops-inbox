@@ -1227,6 +1227,7 @@ describe("internal Job.jobNumber is never matching evidence", () => {
       "CONTEXT_AWARE_V1",
       "CONTEXT_AWARE_V2",
       "CONTEXT_AWARE_V2_1",
+      "CONTEXT_AWARE_V2_2",
     ] as const;
     for (const identityPolicy of policies) {
       // Call production pipeline directly so omitted policy uses DEFAULT (V2).

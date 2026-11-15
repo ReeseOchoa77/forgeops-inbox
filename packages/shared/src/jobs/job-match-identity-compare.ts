@@ -121,11 +121,13 @@ export type IdentityCompareMetricsDelta = {
   noMatchRate: { baseline: number; proposed: number; delta: number };
 };
 
+/** Policies valid in paired historical-eval comparisons (incl. experimental V2.2). */
 export type IdentityComparePolicyId =
   | "BASELINE"
   | "CONTEXT_AWARE_V1"
   | "CONTEXT_AWARE_V2"
-  | "CONTEXT_AWARE_V2_1";
+  | "CONTEXT_AWARE_V2_1"
+  | "CONTEXT_AWARE_V2_2";
 
 export type IdentityCompareMarkerBreakdown = {
   marker: "NAME" | "CONTACT" | "THREAD" | "NONE";
