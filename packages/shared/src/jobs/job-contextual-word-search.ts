@@ -10,12 +10,21 @@ import {
   isJobNameContentToken,
   isDistinguishingJobNameToken,
   isNumericJobNameToken,
+  canonicalizeJobNameTokens,
 } from "./job-name-normalize.js";
 import {
   normalizeProjectScopeToken,
   projectTokensEquivalent,
 } from "./job-project-token-utils.js";
 import type { IdentityPeerJob } from "./job-name-identity-policy.js";
+import {
+  extractCompoundNumericIdentities,
+  extractPeerCompoundNumericIdentities,
+  findNumericIdentityConflicts,
+  hayContainsCompoundNumeric,
+  isCompoundNumericKey,
+  resolveCompoundDescriptor,
+} from "./job-contextual-compound-numeric.js";
 
 /** Generic construction / email vocabulary that is never strong alone. */
 export const CONTEXTUAL_WEAK_DISTINGUISHING_TOKENS = new Set([
@@ -147,17 +156,17 @@ export function extractContextualIdentityTerms(
   const seen = new Set<string>();
   for (const t of phrase) {
     if (!t) continue;
+    // Standalone numbers are never identity terms — only compound keys.
+    if (isNumericJobNameToken(t)) continue;
     const c = canonicalizeContextualToken(t);
     if (seen.has(c)) continue;
-    if (isContextualWeakDistinguishingToken(c) && !isNumericJobNameToken(c)) {
-      // Keep weak terms only if they are the sole content after shared id — handled later.
+    if (isContextualWeakDistinguishingToken(c)) {
+      // Descriptor words alone stay out; compounds added below.
       continue;
     }
     if (
       !isJobNameContentToken(t) &&
       !isDistinguishingJobNameToken(t) &&
-      !isNumericJobNameToken(t) &&
-      c !== "building" &&
       c !== "exterior"
     ) {
       continue;
@@ -165,13 +174,11 @@ export function extractContextualIdentityTerms(
     seen.add(c);
     out.push(c);
   }
-  // Always retain numeric distinguishers from the peer.
-  for (const t of peer.distinguishingTokens) {
-    const c = canonicalizeContextualToken(t);
-    if (!seen.has(c)) {
-      seen.add(c);
-      out.push(c);
-    }
+  // Compound numeric identifiers (building:3) — never bare "3".
+  for (const compound of extractPeerCompoundNumericIdentities(peer)) {
+    if (seen.has(compound.key)) continue;
+    seen.add(compound.key);
+    out.push(compound.key);
   }
   return out;
 }
@@ -189,8 +196,13 @@ export function extractContextualDistinguishingTerms(input: {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const t of peerTerms) {
-    if (isContextualWeakDistinguishingToken(t)) continue;
+    // Never promote a bare number.
+    if (isNumericJobNameToken(t)) continue;
+    if (!isCompoundNumericKey(t) && isContextualWeakDistinguishingToken(t)) {
+      continue;
+    }
     if (
+      !isCompoundNumericKey(t) &&
       input.sharedIdentifiers.some((s) => contextualTokensEquivalent(s, t))
     ) {
       continue;
@@ -199,11 +211,13 @@ export function extractContextualDistinguishingTerms(input: {
       (c) =>
         c.jobId !== input.peer.jobId &&
         extractContextualIdentityTerms(c).some((ct) =>
-          contextualTokensEquivalent(ct, t)
+          isCompoundNumericKey(t) || isCompoundNumericKey(ct)
+            ? ct === t
+            : contextualTokensEquivalent(ct, t)
         )
     );
     if (onOther) continue;
-    const key = canonicalizeContextualToken(t);
+    const key = isCompoundNumericKey(t) ? t : canonicalizeContextualToken(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);
@@ -308,8 +322,46 @@ export function findContextualDistinguishingHits(input: {
   const terms = extractContextualDistinguishingTerms(input);
   const hits: ContextualTermHit[] = [];
   for (const term of terms) {
+    // Standalone numbers never hit.
+    if (isNumericJobNameToken(term)) continue;
+
+    if (isCompoundNumericKey(term)) {
+      const subj = hayContainsCompoundNumeric(input.subjectTokens, term);
+      if (subj.found) {
+        hits.push({
+          peerJobId: input.peer.jobId,
+          term,
+          field: "subject",
+          negated: isTokenNegatedInContextualHay(
+            input.subjectTokens,
+            subj.startIndex
+          ),
+          incidental: false,
+        });
+      }
+      const body = hayContainsCompoundNumeric(input.bodyTokens, term);
+      if (body.found) {
+        hits.push({
+          peerJobId: input.peer.jobId,
+          term,
+          field: "body",
+          negated: isTokenNegatedInContextualHay(
+            input.bodyTokens,
+            body.startIndex
+          ),
+          incidental: isTokenIncidentalInContextualHay(
+            input.bodyTokens,
+            body.startIndex
+          ),
+        });
+      }
+      continue;
+    }
+
     for (let i = 0; i < input.subjectTokens.length; i += 1) {
-      if (!contextualTokensEquivalent(input.subjectTokens[i]!, term)) continue;
+      const tok = input.subjectTokens[i]!;
+      if (isNumericJobNameToken(tok)) continue;
+      if (!contextualTokensEquivalent(tok, term)) continue;
       hits.push({
         peerJobId: input.peer.jobId,
         term,
@@ -320,7 +372,9 @@ export function findContextualDistinguishingHits(input: {
       break;
     }
     for (let i = 0; i < input.bodyTokens.length; i += 1) {
-      if (!contextualTokensEquivalent(input.bodyTokens[i]!, term)) continue;
+      const tok = input.bodyTokens[i]!;
+      if (isNumericJobNameToken(tok)) continue;
+      if (!contextualTokensEquivalent(tok, term)) continue;
       hits.push({
         peerJobId: input.peer.jobId,
         term,
@@ -358,6 +412,8 @@ export function validateContextualWordSearchAiDecision(input: {
   candidateJobIds: readonly string[];
   subject: string;
   body: string;
+  /** Optional peer compounds for numeric contradiction checks. */
+  peerCompoundsByJob?: Record<string, string[]>;
 }): { ok: true; decision: ContextualWordSearchAiDecision } | { ok: false; reason: string } {
   const allowed = new Set(input.candidateJobIds);
   const d = input.decision;
@@ -379,6 +435,42 @@ export function validateContextualWordSearchAiDecision(input: {
       return { ok: false, reason: "EVIDENCE_NOT_IN_TEXT" };
     }
   }
+  // AI must not promote standalone digits into identity evidence.
+  const evidenceLooksNumericOnly = (d.supportingEvidence ?? []).every((e) =>
+    /^\s*\d+\s*$/.test(e)
+  );
+  if (
+    d.decision === "MATCH" &&
+    (d.supportingEvidence ?? []).length > 0 &&
+    evidenceLooksNumericOnly
+  ) {
+    return { ok: false, reason: "STANDALONE_NUMBER_EVIDENCE" };
+  }
+  if (d.decision === "MATCH" && d.selectedJobId && input.peerCompoundsByJob) {
+    const hayCompounds = extractCompoundNumericIdentities(
+      canonicalizeJobNameTokens(`${input.subject} ${input.body}`)
+    );
+    const peerKeys = input.peerCompoundsByJob[d.selectedJobId] ?? [];
+    const peerCompounds = peerKeys
+      .filter(isCompoundNumericKey)
+      .map((key) => {
+        const [descriptor, value] = key.split(":");
+        return {
+          key,
+          descriptor: descriptor ?? "",
+          value: value ?? "",
+          rawTokens: [] as string[],
+          startIndex: 0,
+        };
+      });
+    const conflicts = findNumericIdentityConflicts({
+      hayCompounds,
+      peerCompounds,
+    });
+    if (conflicts.length > 0) {
+      return { ok: false, reason: "NUMERIC_IDENTITY_CONFLICT" };
+    }
+  }
   if (d.decision === "MATCH") {
     if (!d.selectedJobId) return { ok: false, reason: "MATCH_WITHOUT_JOB" };
     if ((d.supportingEvidence ?? []).length === 0) {
@@ -398,6 +490,22 @@ export function validateContextualWordSearchAiDecision(input: {
   return { ok: true, decision: d };
 }
 
+export type CompoundNumericDiagnostic = {
+  code:
+    | "COMPOUND_NUMERIC_IDENTITY"
+    | "STANDALONE_NUMBER_IGNORED"
+    | "NUMERIC_IDENTITY_CONFLICT"
+    | "NUMERIC_DESCRIPTOR_NORMALIZED";
+  rawText: string;
+  normalizedKey: string | null;
+  descriptor: string | null;
+  numericValue: string | null;
+  evidenceSource: "subject" | "body" | "attachment" | "mixed";
+  candidateJobId: string | null;
+  conflictingKeys: string[];
+  contributedToResolution: boolean;
+};
+
 export type ContextualResolution = {
   status: "MATCH" | "AMBIGUOUS" | "CONFLICT" | null;
   selectedJobId: string | null;
@@ -412,6 +520,7 @@ export type ContextualResolution = {
     | "EXPLICIT_PROJECT_CORRECTION"
     | "SHARED_PROJECT_IDENTIFIER"
     | "FULL_BODY_PROJECT_IDENTITY"
+    | "NUMERIC_IDENTITY_CONFLICT"
     | null;
   sharedIdentifiers: string[];
   familyJobIds: string[];
@@ -421,6 +530,7 @@ export type ContextualResolution = {
   competingJobIds: string[];
   aiInvoked: boolean;
   changedBaseline: boolean;
+  compoundNumericDiagnostics?: CompoundNumericDiagnostic[];
 };
 
 /**
@@ -477,6 +587,10 @@ export function resolveFullBodyProjectIdentity(input: {
             isNumericJobNameToken(t)
         );
         if (content.length === 0) continue;
+        // Standalone numbers never identify a Job via full-body search.
+        if (content.length === 1 && isNumericJobNameToken(content[0]!)) {
+          continue;
+        }
         if (
           content.length === 1 &&
           isContextualWeakDistinguishingToken(content[0]!)
@@ -493,7 +607,26 @@ export function resolveFullBodyProjectIdentity(input: {
         for (let i = 0; i <= hay.length - content.length; i += 1) {
           let ok = true;
           for (let j = 0; j < content.length; j += 1) {
-            if (!contextualTokensEquivalent(hay[i + j]!, content[j]!)) {
+            const needle = content[j]!;
+            const hayTok = hay[i + j]!;
+            // Bare numeric tokens only match inside a descriptor+number span.
+            if (isNumericJobNameToken(needle)) {
+              if (!isNumericJobNameToken(hayTok) || hayTok !== needle) {
+                ok = false;
+                break;
+              }
+              const prev = j > 0 ? content[j - 1]! : null;
+              if (
+                !prev ||
+                !resolveCompoundDescriptor(prev) ||
+                !resolveCompoundDescriptor(hay[i + j - 1]!)
+              ) {
+                ok = false;
+                break;
+              }
+              continue;
+            }
+            if (!contextualTokensEquivalent(hayTok, needle)) {
               ok = false;
               break;
             }
@@ -575,13 +708,41 @@ export function resolveContextualWordSearch(input: {
     competingJobIds: [],
     aiInvoked: false,
     changedBaseline: false,
+    compoundNumericDiagnostics: [],
   };
+
+  const hayTokens = [...input.subjectTokens, ...input.bodyTokens];
+  const hayCompounds = extractCompoundNumericIdentities(hayTokens);
+  const standaloneIgnored: CompoundNumericDiagnostic[] = [];
+  for (let i = 0; i < hayTokens.length; i += 1) {
+    const t = hayTokens[i]!;
+    if (!isNumericJobNameToken(t)) continue;
+    const covered = hayCompounds.some(
+      (c) => c.startIndex === i - 1 || c.startIndex + 1 === i
+    );
+    if (covered) continue;
+    // Only record when a peer has a same-value compound (would have been false evidence).
+    const peersWithValue = input.peers.filter((p) =>
+      extractPeerCompoundNumericIdentities(p).some((c) => c.value === t)
+    );
+    if (peersWithValue.length === 0) continue;
+    standaloneIgnored.push({
+      code: "STANDALONE_NUMBER_IGNORED",
+      rawText: t,
+      normalizedKey: null,
+      descriptor: null,
+      numericValue: t,
+      evidenceSource:
+        i < input.subjectTokens.length ? "subject" : "body",
+      candidateJobId: peersWithValue[0]?.jobId ?? null,
+      conflictingKeys: [],
+      contributedToResolution: false,
+    });
+  }
 
   const index = buildContextualFamilyIndex(input.peers);
   const familyInHay = index.families.filter((f) =>
-    [...input.subjectTokens, ...input.bodyTokens].some((t) =>
-      contextualTokensEquivalent(t, f.sharedId)
-    )
+    hayTokens.some((t) => contextualTokensEquivalent(t, f.sharedId))
   );
 
   if (familyInHay.length > 0) {
@@ -603,6 +764,62 @@ export function resolveContextualWordSearch(input: {
       });
     }
 
+    const compoundDiags: CompoundNumericDiagnostic[] = [...standaloneIgnored];
+    for (const c of hayCompounds) {
+      const matchingPeers = competitors.filter((p) =>
+        extractPeerCompoundNumericIdentities(p).some((pc) => pc.key === c.key)
+      );
+      const evidenceSource: "subject" | "body" =
+        c.startIndex < input.subjectTokens.length ? "subject" : "body";
+      compoundDiags.push({
+        code: "COMPOUND_NUMERIC_IDENTITY",
+        rawText: c.rawTokens.join(" "),
+        normalizedKey: c.key,
+        descriptor: c.descriptor,
+        numericValue: c.value,
+        evidenceSource,
+        candidateJobId: matchingPeers[0]?.jobId ?? null,
+        conflictingKeys: [],
+        contributedToResolution: matchingPeers.length === 1,
+      });
+      compoundDiags.push({
+        code: "NUMERIC_DESCRIPTOR_NORMALIZED",
+        rawText: c.rawTokens[0] ?? c.descriptor,
+        normalizedKey: c.key,
+        descriptor: c.descriptor,
+        numericValue: c.value,
+        evidenceSource,
+        candidateJobId: matchingPeers[0]?.jobId ?? null,
+        conflictingKeys: [],
+        contributedToResolution: false,
+      });
+    }
+
+    // Peer-relative numeric contradictions: hay building:2 vs peer building:1.
+    const conflictPeers: string[] = [];
+    for (const peer of competitors) {
+      const peerCompounds = extractPeerCompoundNumericIdentities(peer);
+      const conflicts = findNumericIdentityConflicts({
+        hayCompounds,
+        peerCompounds,
+      });
+      if (conflicts.length === 0) continue;
+      conflictPeers.push(peer.jobId);
+      for (const conf of conflicts) {
+        compoundDiags.push({
+          code: "NUMERIC_IDENTITY_CONFLICT",
+          rawText: conf.hayKey,
+          normalizedKey: conf.hayKey,
+          descriptor: conf.descriptor,
+          numericValue: conf.hayValue,
+          evidenceSource: "mixed",
+          candidateJobId: peer.jobId,
+          conflictingKeys: [conf.peerKey],
+          contributedToResolution: true,
+        });
+      }
+    }
+
     const allHits = competitors.flatMap((peer) =>
       findContextualDistinguishingHits({
         peer,
@@ -613,7 +830,18 @@ export function resolveContextualWordSearch(input: {
       })
     );
 
-    const positiveHits = allHits.filter((h) => !h.negated && !h.incidental);
+    // Drop hits for peers with contradictory numeric identity in hay.
+    const conflictPeerSet = new Set(conflictPeers);
+    const filteredHits = allHits.filter(
+      (h) =>
+        !conflictPeerSet.has(h.peerJobId) ||
+        (isCompoundNumericKey(h.term) &&
+          hayCompounds.some((c) => c.key === h.term))
+    );
+
+    const positiveHits = filteredHits.filter(
+      (h) => !h.negated && !h.incidental
+    );
     const subjectPositive = positiveHits.filter((h) => h.field === "subject");
     const bodyPositive = positiveHits.filter((h) => h.field === "body");
 
@@ -627,7 +855,29 @@ export function resolveContextualWordSearch(input: {
       distinguishingByJob,
       aiInvoked: false,
       changedBaseline: true,
+      compoundNumericDiagnostics: compoundDiags,
     };
+
+    // Explicit numeric conflict without a matching compound winner → CONFLICT.
+    if (conflictPeers.length > 0) {
+      const compoundWinners = uniqueJobIds(
+        positiveHits.filter((h) => isCompoundNumericKey(h.term))
+      );
+      const nonConflictWinners = compoundWinners.filter(
+        (id) => !conflictPeerSet.has(id)
+      );
+      if (nonConflictWinners.length !== 1) {
+        return {
+          ...empty,
+          ...baseMeta,
+          status: "CONFLICT",
+          reason: "NUMERIC_IDENTITY_CONFLICT",
+          matchedTerms: hayCompounds.map((c) => c.key),
+          competingJobIds: competitors.map((c) => c.jobId),
+          evidenceField: "mixed",
+        };
+      }
+    }
 
     // Explicit correction across subject/body → conservative abstain.
     if (
@@ -636,7 +886,8 @@ export function resolveContextualWordSearch(input: {
         ...input.bodyTokens,
       ]) &&
       uniqueJobIds(positiveHits).length >= 1 &&
-      (allHits.some((h) => h.negated) || uniqueJobIds(positiveHits).length > 1)
+      (filteredHits.some((h) => h.negated) ||
+        uniqueJobIds(positiveHits).length > 1)
     ) {
       return {
         ...empty,
@@ -644,7 +895,7 @@ export function resolveContextualWordSearch(input: {
         status: "AMBIGUOUS",
         reason: "EXPLICIT_PROJECT_CORRECTION",
         matchedTerms: positiveHits.map((h) => h.term),
-        competingJobIds: uniqueJobIds(allHits),
+        competingJobIds: uniqueJobIds(filteredHits),
         evidenceField: "mixed",
       };
     }
@@ -653,6 +904,17 @@ export function resolveContextualWordSearch(input: {
     const subjectWinners = uniqueJobIds(subjectPositive);
     if (subjectWinners.length === 1) {
       const winnerId = subjectWinners[0]!;
+      if (conflictPeerSet.has(winnerId) && !subjectPositive.some((h) => isCompoundNumericKey(h.term) && hayCompounds.some((c) => c.key === h.term))) {
+        return {
+          ...empty,
+          ...baseMeta,
+          status: "CONFLICT",
+          reason: "NUMERIC_IDENTITY_CONFLICT",
+          matchedTerms: subjectPositive.map((h) => h.term),
+          competingJobIds: competitors.map((c) => c.jobId),
+          evidenceField: "subject",
+        };
+      }
       return {
         ...empty,
         ...baseMeta,
@@ -688,6 +950,25 @@ export function resolveContextualWordSearch(input: {
       const bodyWinners = uniqueJobIds(bodyPositive);
       if (bodyWinners.length === 1) {
         const winnerId = bodyWinners[0]!;
+        if (
+          conflictPeerSet.has(winnerId) &&
+          !bodyPositive.some(
+            (h) =>
+              h.peerJobId === winnerId &&
+              isCompoundNumericKey(h.term) &&
+              hayCompounds.some((c) => c.key === h.term)
+          )
+        ) {
+          return {
+            ...empty,
+            ...baseMeta,
+            status: "CONFLICT",
+            reason: "NUMERIC_IDENTITY_CONFLICT",
+            matchedTerms: bodyPositive.map((h) => h.term),
+            competingJobIds: competitors.map((c) => c.jobId),
+            evidenceField: "body",
+          };
+        }
         return {
           ...empty,
           ...baseMeta,
@@ -705,11 +986,18 @@ export function resolveContextualWordSearch(input: {
       }
       if (bodyWinners.length > 1) {
         if (input.aiDecision) {
+          const peerCompoundsByJob: Record<string, string[]> = {};
+          for (const peer of competitors) {
+            peerCompoundsByJob[peer.jobId] = extractPeerCompoundNumericIdentities(
+              peer
+            ).map((c) => c.key);
+          }
           const validated = validateContextualWordSearchAiDecision({
             decision: input.aiDecision,
             candidateJobIds: competitors.map((c) => c.jobId),
             subject: input.subjectTokens.join(" "),
             body: input.bodyTokens.join(" "),
+            peerCompoundsByJob,
           });
           if (validated.ok && validated.decision.decision === "MATCH") {
             return {

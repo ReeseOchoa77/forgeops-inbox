@@ -40,6 +40,7 @@ export * from "./jobs/job-name-normalize.js";
 export * from "./jobs/job-name-marker.js";
 export * from "./jobs/job-name-identity-policy.js";
 export * from "./jobs/job-contextual-word-search.js";
+export * from "./jobs/job-contextual-compound-numeric.js";
 export * from "./jobs/job-attachment-identity.js";
 export * from "./jobs/job-project-identity-index.js";
 export * from "./jobs/job-project-token-utils.js";

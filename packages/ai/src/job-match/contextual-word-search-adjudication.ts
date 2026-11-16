@@ -20,9 +20,12 @@ export type ContextualWordSearchAdjudicationInput = {
     name: string;
     aliases?: string[];
     distinguishingTerms: string[];
+    compoundNumericIdentities?: string[];
   }>;
   matchedTerms: string[];
   deterministicEvidence: string;
+  /** Deterministic compound keys already extracted (e.g. building:3). */
+  compoundNumericIdentities?: string[];
   /** Hard cap — never send the full Job directory. */
   maxCandidates?: number;
 };
@@ -48,6 +51,9 @@ Rules:
 - Explicit corrections → CONFLICT or AMBIGUOUS unless clearly resolved.
 - supportingEvidence must be exact excerpts from the subject or body.
 - Do not invent Jobs or override eligibility.
+- Standalone numbers (e.g. "3", "three") are NEVER project identity evidence.
+- Compound numeric identifiers are pre-normalized (Building 3 / Bldg #3 → building:3). Trust those keys; do not re-decide whether #3 equals 3.
+- Contradictory compounds (building:1 vs building:2) → CONFLICT, not score accumulation.
 
 json`;
 
@@ -65,6 +71,9 @@ function buildUserPrompt(input: ContextualWordSearchAdjudicationInput): string {
     "",
     "Matched distinguishing terms:",
     JSON.stringify(input.matchedTerms),
+    "",
+    "Deterministic compound numeric identities:",
+    JSON.stringify(input.compoundNumericIdentities ?? []),
     "",
     "Deterministic evidence:",
     input.deterministicEvidence,

@@ -21,6 +21,12 @@ import {
   isTokenIncidentalInContextualHay,
   isTokenNegatedInContextualHay,
 } from "./job-contextual-word-search.js";
+import {
+  extractCompoundNumericIdentities,
+  extractPeerCompoundNumericIdentities,
+  findNumericIdentityConflicts,
+  resolveCompoundDescriptor,
+} from "./job-contextual-compound-numeric.js";
 import type { IdentityPeerJob } from "./job-name-identity-policy.js";
 
 export const JOB_ATTACHMENT_IDENTITY_MARKER_VERSION =
@@ -132,6 +138,10 @@ function phraseIsAuthoritative(tokens: string[]): boolean {
       isNumericJobNameToken(t)
   );
   if (content.length === 0) return false;
+  // Standalone numbers are never attachment identity by themselves.
+  if (content.length === 1 && isNumericJobNameToken(content[0]!)) {
+    return false;
+  }
   if (
     content.length === 1 &&
     isContextualWeakDistinguishingToken(content[0]!)
@@ -155,7 +165,25 @@ function findPhraseInTokens(
   for (let i = 0; i <= hay.length - content.length; i += 1) {
     let ok = true;
     for (let j = 0; j < content.length; j += 1) {
-      if (!contextualTokensEquivalent(hay[i + j]!, content[j]!)) {
+      const needle = content[j]!;
+      const hayTok = hay[i + j]!;
+      if (isNumericJobNameToken(needle)) {
+        if (!isNumericJobNameToken(hayTok) || hayTok !== needle) {
+          ok = false;
+          break;
+        }
+        const prev = j > 0 ? content[j - 1]! : null;
+        if (
+          !prev ||
+          !resolveCompoundDescriptor(prev) ||
+          !resolveCompoundDescriptor(hay[i + j - 1]!)
+        ) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+      if (!contextualTokensEquivalent(hayTok, needle)) {
         ok = false;
         break;
       }
@@ -198,8 +226,10 @@ function matchPeersInText(input: {
 }): AttachmentIdentityHit[] {
   const tokens = canonicalizeJobNameTokens(input.text);
   if (tokens.length === 0) return [];
+  const hayCompounds = extractCompoundNumericIdentities(tokens);
   const hits: AttachmentIdentityHit[] = [];
   for (const peer of input.peers) {
+    let hitForPeer = false;
     for (const phrase of peerPhrases(peer)) {
       const found = findPhraseInTokens(tokens, phrase);
       if (!found) continue;
@@ -228,6 +258,52 @@ function matchPeersInText(input: {
         supportingExcerpt: excerptAround(input.text, matchedPhrase),
         pageNumber: input.pageNumber,
         strength,
+      });
+      hitForPeer = true;
+      break;
+    }
+    if (hitForPeer) continue;
+
+    // Compound numeric identity (Building 3 → building:3) when family word also present.
+    const peerCompounds = extractPeerCompoundNumericIdentities(peer);
+    if (peerCompounds.length === 0) continue;
+    const conflicts = findNumericIdentityConflicts({
+      hayCompounds,
+      peerCompounds,
+    });
+    if (conflicts.length > 0) continue;
+    const familyTokens = peer.contentTokens.filter(
+      (t) =>
+        !isNumericJobNameToken(t) &&
+        !resolveCompoundDescriptor(t) &&
+        !isContextualWeakDistinguishingToken(t)
+    );
+    const familyPresent = familyTokens.some((ft) =>
+      tokens.some((t) => contextualTokensEquivalent(t, ft))
+    );
+    for (const compound of peerCompounds) {
+      const inHay = hayCompounds.find((c) => c.key === compound.key);
+      if (!inHay) continue;
+      // Require family token OR unique compound among peers.
+      const uniqueCompound =
+        input.peers.filter((p) =>
+          extractPeerCompoundNumericIdentities(p).some(
+            (c) => c.key === compound.key
+          )
+        ).length === 1;
+      if (!familyPresent && !uniqueCompound) continue;
+      hits.push({
+        jobId: peer.jobId,
+        attachmentId: input.attachmentId,
+        filename: input.filename,
+        category: input.category,
+        matchedPhrase: compound.key,
+        supportingExcerpt: excerptAround(
+          input.text,
+          inHay.rawTokens.join(" ")
+        ),
+        pageNumber: input.pageNumber,
+        strength: input.strength,
       });
       break;
     }

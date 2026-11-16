@@ -90,6 +90,10 @@ export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
  * be reinterpreted with the new full-body + attachment semantics.
  */
 export const JOB_MATCH_V2_4_IMPLEMENTATION_REVISION =
+  "V2_4_COMPOUND_NUMERIC_IDENTITY_R1" as const;
+
+/** Prior V2.4 full-body + attachment identity revision (historical). */
+export const JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION =
   "V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1" as const;
 
 /** First V2.4 contextual-word-search-only revision (historical). */
@@ -227,7 +231,31 @@ export type JobNameIdentityReasonCode =
   /** V2.4: subject/body vs attachment project conflict. */
   | "ATTACHMENT_IDENTITY_CONFLICT"
   /** V2.4: attachments present but extraction pending/unavailable. */
-  | "ATTACHMENT_EXTRACTION_UNAVAILABLE";
+  | "ATTACHMENT_EXTRACTION_UNAVAILABLE"
+  /** V2.4: contradictory compound numeric identities (e.g. Building 1 vs Building 2). */
+  | "NUMERIC_IDENTITY_CONFLICT"
+  /** V2.4: compound numeric identifier contributed to the match. */
+  | "COMPOUND_NUMERIC_IDENTITY"
+  /** V2.4: standalone number ignored as identity evidence. */
+  | "STANDALONE_NUMBER_IGNORED"
+  /** V2.4: descriptor alias normalized into a compound key. */
+  | "NUMERIC_DESCRIPTOR_NORMALIZED";
+
+export type CompoundNumericIdentityDiagnostic = {
+  code:
+    | "COMPOUND_NUMERIC_IDENTITY"
+    | "STANDALONE_NUMBER_IGNORED"
+    | "NUMERIC_IDENTITY_CONFLICT"
+    | "NUMERIC_DESCRIPTOR_NORMALIZED";
+  rawText: string;
+  normalizedKey: string | null;
+  descriptor: string | null;
+  numericValue: string | null;
+  evidenceSource: "subject" | "body" | "attachment" | "mixed";
+  candidateJobId: string | null;
+  conflictingKeys: string[];
+  contributedToResolution: boolean;
+};
 
 export type JobNameIdentityDiagnostics = {
   marker: "NAME";
@@ -261,6 +289,8 @@ export type JobNameIdentityDiagnostics = {
   contextualAiInvoked?: boolean;
   /** V2.4: whether contextual layer changed the V2 baseline decision. */
   contextualChangedBaseline?: boolean;
+  /** V2.4: compound numeric identity diagnostics (not every unrelated digit). */
+  compoundNumericDiagnostics?: CompoundNumericIdentityDiagnostic[];
 };
 
 /**
@@ -2124,6 +2154,12 @@ export function tryContextualWordSearchRecovery(args: {
             resolved.sharedIdentifiers.length > 0 ? "shared" : "unique",
           contextualAiInvoked: resolved.aiInvoked,
           contextualChangedBaseline: resolved.changedBaseline,
+          ...(resolved.compoundNumericDiagnostics?.length
+            ? {
+                compoundNumericDiagnostics:
+                  resolved.compoundNumericDiagnostics,
+              }
+            : {}),
         }
       ),
     };
@@ -2145,7 +2181,8 @@ export function tryContextualWordSearchRecovery(args: {
         : resolved.familyJobIds,
       {
         identityStrength:
-          resolved.reason === "CONTEXTUAL_WORD_SEARCH_CONFLICT"
+          resolved.reason === "CONTEXTUAL_WORD_SEARCH_CONFLICT" ||
+          resolved.reason === "NUMERIC_IDENTITY_CONFLICT"
             ? "CONFLICTING"
             : "AMBIGUOUS",
         strongIdentityAnchor: false,
@@ -2164,6 +2201,12 @@ export function tryContextualWordSearchRecovery(args: {
         projectTokenUniqueness: "shared",
         contextualAiInvoked: resolved.aiInvoked,
         contextualChangedBaseline: resolved.changedBaseline,
+        ...(resolved.compoundNumericDiagnostics?.length
+          ? {
+              compoundNumericDiagnostics:
+                resolved.compoundNumericDiagnostics,
+            }
+          : {}),
       }
     ),
   };
