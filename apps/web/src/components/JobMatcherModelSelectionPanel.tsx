@@ -41,11 +41,7 @@ export function modelSelectionFromLegacyEvalMode(
     case 'COMPARE_ALL':
       return {
         mode: 'COMPARE',
-        selectedPolicyIds: [
-          production,
-          'CONTEXT_AWARE_V2_1',
-          'CONTEXT_AWARE_V2_2',
-        ],
+        selectedPolicyIds: listEvaluationSelectablePolicies().map((e) => e.id),
       }
     case 'COMPARE_V1':
       return {

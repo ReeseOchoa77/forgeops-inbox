@@ -127,7 +127,8 @@ export type IdentityComparePolicyId =
   | "CONTEXT_AWARE_V1"
   | "CONTEXT_AWARE_V2"
   | "CONTEXT_AWARE_V2_1"
-  | "CONTEXT_AWARE_V2_2";
+  | "CONTEXT_AWARE_V2_2"
+  | "CONTEXT_AWARE_V2_3";
 
 export type IdentityCompareMarkerBreakdown = {
   marker: "NAME" | "CONTACT" | "THREAD" | "NONE";

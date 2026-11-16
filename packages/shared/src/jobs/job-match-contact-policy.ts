@@ -10,6 +10,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
 } from "./job-name-identity-policy.js";
 
 export type JobContactAssociationClass =
@@ -134,7 +135,8 @@ function isContextAwareV2Family(policy: JobMatchIdentityPolicy): boolean {
   return (
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
   );
 }
 

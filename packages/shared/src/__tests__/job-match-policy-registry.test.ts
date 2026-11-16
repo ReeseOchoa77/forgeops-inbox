@@ -7,6 +7,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   selectDisplayMetricsForEvaluation,
   selectMostAdvancedPolicy,
 } from "../jobs/job-match-policy-registry.js";
@@ -77,6 +78,12 @@ describe("job-match-policy-registry", () => {
         JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
       ])
     ).toBe(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2);
+    expect(
+      selectMostAdvancedPolicy([
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+      ])
+    ).toBe(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3);
   });
 
   it("primary display metrics prefer V2 over BASELINE in V1→V2 compare", () => {

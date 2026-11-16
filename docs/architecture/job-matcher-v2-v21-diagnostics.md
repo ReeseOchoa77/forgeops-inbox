@@ -2,7 +2,9 @@
 
 **Status:** Production default is `CONTEXT_AWARE_V2`. V2.1 remains experimental / eval-only and is **not** promoted.
 
-**Current revision:** `independent-v21-title-gap-body-disambiguation-r3`
+**Current revision:** `independent-v23-normalized-subject-identity-r1`
+
+Note: V2.3 (`CONTEXT_AWARE_V2_3` — Normalized Subject Identity) is a separate independent experiment registered alongside V2.1/V2.2. It does not change V2.1/V2.2 semantics; the shared `experimentRevision` stamp was bumped when V2.3 shipped.
 
 ## Current V2.1 definition
 

@@ -1,5 +1,5 @@
 /**
- * Marker 1 identity policy — BASELINE / V1 / V2 / V2.1 / V2.2 (experimental).
+ * Marker 1 identity policy — BASELINE / V1 / V2 / V2.1 / V2.2 / V2.3 (experimental).
  *
  * BASELINE: unique OVERLAP may MATCH (historical behavior).
  * CONTEXT_AWARE_V1: unique weak identity must abstain (AMBIGUOUS), not MATCH.
@@ -11,8 +11,11 @@
  *   preserve, or AUTH contact recovery.
  * CONTEXT_AWARE_V2_2: independent experiment = current V2 + unique project token
  *   rule ONLY. Does NOT include title-gap matching or V2.1-only contact deltas.
+ * CONTEXT_AWARE_V2_3: independent experiment = current V2 + normalized subject
+ *   identity ONLY (abbreviations, controlled compounds, subject>body precedence).
+ *   Does NOT inherit V2.1 title-gap or V2.2 unique-token promotion.
  *
- * V2.1 and V2.2 both branch from V2 independently (not cumulative).
+ * V2.1 / V2.2 / V2.3 each branch from V2 independently (not cumulative).
  * Revision stamp: JOB_MATCH_IDENTITY_EXPERIMENT_REVISION — bump when experiment
  * semantics change so historical eval runs are not confused with older algorithms
  * that reused the same policy id strings.
@@ -23,6 +26,14 @@ import {
   isJobNameContentToken,
   phraseContained,
 } from "./job-name-normalize.js";
+import {
+  buildProjectIdentityVocabulary,
+  distinctiveProjectIdentityTermsInHay,
+  extractProjectIdentityTerms,
+  hayContainsAllProjectIdentityTerms,
+  joinPoolAwareCompoundTokens,
+  projectIdentityTokensEquivalent,
+} from "./job-project-identity-normalize.js";
 import {
   findGapTolerantHayMatch,
   hayHasProjectToken,
@@ -40,24 +51,27 @@ export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 =
   "CONTEXT_AWARE_V2_1" as const;
 export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 =
   "CONTEXT_AWARE_V2_2" as const;
+export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 =
+  "CONTEXT_AWARE_V2_3" as const;
 
 export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_BASELINE
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
-  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2;
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
 
 /**
- * Implementation revision for experimental V2.1 / V2.2 semantics.
+ * Implementation revision for experimental V2.1 / V2.2 / V2.3 semantics.
  * Older eval payloads without this field used prior algorithms under the same
- * CONTEXT_AWARE_V2_1 / CONTEXT_AWARE_V2_2 labels — treat those as legacy.
+ * CONTEXT_AWARE_V2_* labels — treat those as legacy.
  */
 export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
-  "independent-v21-title-gap-body-disambiguation-r3" as const;
+  "independent-v23-normalized-subject-identity-r1" as const;
 
 export type JobMatchIdentityExperimentRevision =
   typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION;
@@ -120,7 +134,25 @@ export type JobNameIdentityReasonCode =
    * V2.1: shared project identifier in subject; unique distinguishing Job term
    * found in the current message body (not quoted history).
    */
-  | "UNIQUE_BODY_DISAMBIGUATION";
+  | "UNIQUE_BODY_DISAMBIGUATION"
+  /**
+   * V2.3: normalized subject fully identifies one eligible Job.
+   */
+  | "NORMALIZED_SUBJECT_IDENTITY"
+  /** V2.3: controlled abbreviation equivalence contributed to the match. */
+  | "ABBREVIATION_EQUIVALENCE"
+  /** V2.3: controlled compound / alias normalization contributed to the match. */
+  | "PROJECT_ALIAS_NORMALIZATION"
+  /** V2.3: multiple Jobs remain plausible after normalized subject analysis. */
+  | "COMPETING_PROJECT_CANDIDATES"
+  /** V2.3: body mention existed but was treated as incidental vs subject. */
+  | "INCIDENTAL_BODY_REFERENCE"
+  /** V2.3: body explicitly contradicts the subject identity. */
+  | "EXPLICIT_BODY_CONTRADICTION"
+  /** V2.3: shared family without enough distinguishing subject evidence. */
+  | "INSUFFICIENT_DISTINGUISHING_EVIDENCE"
+  /** V2.3: subject carries distinctive terms that uniquely identify one Job. */
+  | "DISTINCTIVE_SUBJECT_TERMS";
 
 export type JobNameIdentityDiagnostics = {
   marker: "NAME";
@@ -733,11 +765,21 @@ export function applyJobNameIdentityPolicy(
   const { policy, status, selectedJobIds } = input;
 
   if (status === "NO_MATCH") {
-    return {
+    const noMatchResult: ApplyIdentityPolicyResult = {
       status: "NO_MATCH",
       preserveCandidates: false,
       diagnostics: emptyDiagnostics(policy, status, selectedJobIds),
     };
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3) {
+      const recovered = tryNormalizedSubjectIdentityRecovery({
+        input,
+        assessed: null,
+        selectedJobIds,
+        priorReason: "NO_IDENTITY",
+      });
+      if (recovered) return recovered;
+    }
+    return noMatchResult;
   }
 
   if (status === "AMBIGUOUS") {
@@ -772,6 +814,16 @@ export function applyJobNameIdentityPolicy(
     }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2) {
       const recovered = tryUniqueProjectTokenRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: ambiguousResult.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(ambiguousResult, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3) {
+      const recovered = tryNormalizedSubjectIdentityRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -843,12 +895,13 @@ export function applyJobNameIdentityPolicy(
     };
   }
 
-  // CONTEXT_AWARE_V2 / V2.1 / V2.2 — shared V2 gates; experiments add one rule each.
-  // Both experiments clear weak candidates (identical to production V2).
+  // CONTEXT_AWARE_V2 / V2.1 / V2.2 / V2.3 — shared V2 gates; experiments add one rule each.
+  // Experiments clear weak candidates (identical to production V2).
   if (
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
   ) {
     const v2Result = applyContextAwareV2IdentityPolicy({
       input,
@@ -872,6 +925,16 @@ export function applyJobNameIdentityPolicy(
     }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2) {
       const recovered = tryUniqueProjectTokenRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: v2Result.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(v2Result, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3) {
+      const recovered = tryNormalizedSubjectIdentityRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -907,7 +970,8 @@ function applyContextAwareV2IdentityPolicy(args: {
   policyId:
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
-    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2;
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
 }): ApplyIdentityPolicyResult {
   const { input, assessed, selectedJobIds, preserveWeakCandidates, policyId } =
     args;
@@ -1783,6 +1847,353 @@ function titleGapAmbiguousResult(
       }
     ),
   };
+}
+
+/**
+ * Lightweight explicit contradiction: body negates subject-winner distinctive
+ * terms while positively naming a competing Job's exclusive terms.
+ */
+function hasExplicitNormalizedBodyContradiction(input: {
+  subjectWinnerTerms: readonly string[];
+  distinctiveWinnerTerms: readonly string[];
+  bodyTokens: readonly string[];
+  competingPeerTerms: readonly string[];
+}): boolean {
+  const body = input.bodyTokens;
+  if (body.length === 0) return false;
+  const competingInBody = input.competingPeerTerms.filter((t) =>
+    body.some((h) => projectIdentityTokensEquivalent(h, t))
+  );
+  if (competingInBody.length === 0) return false;
+  // Require negation near at least one distinctive winner term.
+  let negatedWinner = false;
+  for (let i = 0; i < body.length; i += 1) {
+    const tok = body[i]!;
+    if (
+      !input.distinctiveWinnerTerms.some((t) =>
+        projectIdentityTokensEquivalent(t, tok)
+      )
+    ) {
+      continue;
+    }
+    if (isTokenNegatedInHay(body, i)) {
+      negatedWinner = true;
+      break;
+    }
+  }
+  if (!negatedWinner) return false;
+  // Soft cue words often accompany corrections.
+  const correctionCue = body.some((t) =>
+    ["correction", "actually", "instead", "wrong"].includes(t)
+  );
+  return correctionCue || competingInBody.length > 0;
+}
+
+/**
+ * CONTEXT_AWARE_V2_3 — normalized subject identity recovery ONLY.
+ * Does not apply V2.1 title-gap or V2.2 unique-token promotion.
+ * Subject evidence outranks incidental body mentions; explicit contradictions abstain.
+ */
+export function tryNormalizedSubjectIdentityRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+}): ApplyIdentityPolicyResult | null {
+  const peers = args.input.peerJobs ?? [];
+  if (peers.length === 0) return null;
+
+  const vocab = buildProjectIdentityVocabulary(
+    peers.flatMap((p) => p.phraseTokenLists)
+  );
+  const subjectRaw = args.input.subjectTokens ?? [];
+  const bodyRaw = args.input.bodyTokens ?? [];
+  const subjectNorm = joinPoolAwareCompoundTokens(subjectRaw, vocab);
+  const bodyNorm = joinPoolAwareCompoundTokens(bodyRaw, vocab);
+  const subjectHay = subjectNorm.tokens;
+  const bodyHay = bodyNorm.tokens;
+  if (subjectHay.length === 0 && bodyHay.length === 0) return null;
+
+  type PeerCoverage = {
+    peer: IdentityPeerJob;
+    identityTerms: string[];
+    subjectComplete: boolean;
+    bodyComplete: boolean;
+    distinctiveInSubject: string[];
+    distinctiveInBody: string[];
+  };
+
+  const coverages: PeerCoverage[] = peers.map((peer) => {
+    const phrase =
+      peer.phraseTokenLists.find((p) => p.length > 0) ?? peer.contentTokens;
+    const identityTerms = extractProjectIdentityTerms(phrase);
+    const competitorTerms = peers
+      .filter((p) => p.jobId !== peer.jobId)
+      .map((p) =>
+        extractProjectIdentityTerms(
+          p.phraseTokenLists.find((x) => x.length > 0) ?? p.contentTokens
+        )
+      );
+    return {
+      peer,
+      identityTerms,
+      subjectComplete: hayContainsAllProjectIdentityTerms(
+        subjectHay,
+        identityTerms
+      ),
+      bodyComplete: hayContainsAllProjectIdentityTerms(bodyHay, identityTerms),
+      distinctiveInSubject: distinctiveProjectIdentityTermsInHay({
+        peerTerms: identityTerms,
+        competitorTerms,
+        hay: subjectHay,
+      }),
+      distinctiveInBody: distinctiveProjectIdentityTermsInHay({
+        peerTerms: identityTerms,
+        competitorTerms,
+        hay: bodyHay,
+      }),
+    };
+  });
+
+  const subjectWinners = coverages.filter(
+    (c) => c.subjectComplete && c.identityTerms.length >= 2
+  );
+
+  const normalizationApplied = [
+    ...subjectNorm.compoundsJoined.map((c) => `compound:${c}`),
+    ...bodyNorm.compoundsJoined.map((c) => `compound:${c}`),
+  ];
+
+  const sharedIdentityTerms = (() => {
+    const freq = new Map<string, number>();
+    for (const c of coverages) {
+      const seen = new Set<string>();
+      for (const t of c.identityTerms) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        freq.set(t, (freq.get(t) ?? 0) + 1);
+      }
+    }
+    return [...freq.entries()].filter(([, n]) => n >= 2).map(([t]) => t);
+  })();
+
+  const familyJobIds = coverages
+    .filter((c) =>
+      c.identityTerms.some((t) =>
+        sharedIdentityTerms.some((s) => projectIdentityTokensEquivalent(s, t))
+      )
+    )
+    .map((c) => c.peer.jobId);
+
+  const finishAmbiguous = (
+    reason: JobNameIdentityReasonCode,
+    extras: Partial<JobNameIdentityDiagnostics>
+  ): ApplyIdentityPolicyResult => ({
+    status: "AMBIGUOUS",
+    preserveCandidates: true,
+    candidateJobIdsOverride:
+      extras.competingJobIds ??
+      (familyJobIds.length > 0 ? familyJobIds : peers.map((p) => p.jobId)),
+    diagnostics: diagBase(
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+      args.input.hit,
+      args.assessed,
+      extras.competingJobIds ??
+        (familyJobIds.length > 0 ? familyJobIds : peers.map((p) => p.jobId)),
+      {
+        identityStrength: "AMBIGUOUS",
+        strongIdentityAnchor: false,
+        resolutionAllowed: false,
+        reason,
+        sharedIdentityTerms,
+        identityFamilyJobIds: familyJobIds,
+        evidenceField: "subject",
+        ...(normalizationApplied.length > 0
+          ? { normalizationApplied }
+          : {}),
+        ...extras,
+      }
+    ),
+  });
+
+  if (subjectWinners.length > 1) {
+    return finishAmbiguous("COMPETING_PROJECT_CANDIDATES", {
+      competingJobIds: subjectWinners.map((c) => c.peer.jobId),
+      distinguishingIdentityTerms: subjectWinners.flatMap(
+        (c) => c.distinctiveInSubject
+      ),
+      matchedTerms: subjectWinners.flatMap((c) => c.identityTerms),
+    });
+  }
+
+  if (subjectWinners.length === 1) {
+    const winner = subjectWinners[0]!;
+    const bodyCompetitors = coverages.filter(
+      (c) =>
+        c.peer.jobId !== winner.peer.jobId &&
+        (c.bodyComplete || c.distinctiveInBody.length > 0)
+    );
+    const contradiction = bodyCompetitors.some((comp) =>
+      hasExplicitNormalizedBodyContradiction({
+        subjectWinnerTerms: winner.identityTerms,
+        distinctiveWinnerTerms: winner.distinctiveInSubject,
+        bodyTokens: bodyHay,
+        competingPeerTerms: comp.distinctiveInBody.length
+          ? comp.distinctiveInBody
+          : comp.identityTerms.filter(
+              (t) =>
+                !sharedIdentityTerms.some((s) =>
+                  projectIdentityTokensEquivalent(s, t)
+                )
+            ),
+      })
+    );
+    if (contradiction) {
+      return finishAmbiguous("EXPLICIT_BODY_CONTRADICTION", {
+        competingJobIds: [
+          winner.peer.jobId,
+          ...bodyCompetitors.map((c) => c.peer.jobId),
+        ],
+        distinguishingIdentityTerms: winner.distinctiveInSubject,
+        matchedTerms: winner.identityTerms,
+        evidenceField: "mixed",
+      });
+    }
+
+    const incidentalBody = bodyCompetitors.length > 0;
+    const usedCompound = subjectNorm.compoundsJoined.length > 0;
+    const usedAbbrev = winner.identityTerms.some((t) => t === "building");
+    let reason: JobNameIdentityReasonCode = "NORMALIZED_SUBJECT_IDENTITY";
+    if (incidentalBody) reason = "INCIDENTAL_BODY_REFERENCE";
+    else if (usedCompound) reason = "PROJECT_ALIAS_NORMALIZATION";
+    else if (usedAbbrev && winner.distinctiveInSubject.includes("building")) {
+      reason = "ABBREVIATION_EQUIVALENCE";
+    } else if (winner.distinctiveInSubject.length > 0) {
+      reason = "DISTINCTIVE_SUBJECT_TERMS";
+    }
+
+    return {
+      status: "MATCH",
+      preserveCandidates: true,
+      selectedJobIdOverride: winner.peer.jobId,
+      candidateJobIdsOverride: [winner.peer.jobId],
+      diagnostics: diagBase(
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+        args.input.hit,
+        args.assessed,
+        [winner.peer.jobId],
+        {
+          identityStrength: "STRONG",
+          strongIdentityAnchor: true,
+          resolutionAllowed: true,
+          reason,
+          matchedTerms: winner.identityTerms,
+          distinctiveTerms: winner.distinctiveInSubject,
+          distinguishingIdentityTerms: winner.distinctiveInSubject,
+          sharedIdentityTerms,
+          identityFamilyJobIds: familyJobIds,
+          competingJobIds: peers
+            .map((p) => p.jobId)
+            .filter((id) => id !== winner.peer.jobId),
+          evidenceType: incidentalBody
+            ? "normalized_subject_over_incidental_body"
+            : usedCompound
+              ? "normalized_subject_compound"
+              : "normalized_subject_identity",
+          evidenceField: incidentalBody ? "mixed" : "subject",
+          projectTokenUniqueness:
+            sharedIdentityTerms.length > 0 ? "shared" : "unique",
+          ...(normalizationApplied.length > 0
+            ? { normalizationApplied }
+            : {}),
+        }
+      ),
+    };
+  }
+
+  // No complete subject winner — require shared family in subject + unique
+  // distinctive subject terms for exactly one peer (partial subject path).
+  const familyInSubject = sharedIdentityTerms.some((s) =>
+    subjectHay.some((h) => projectIdentityTokensEquivalent(h, s))
+  );
+  if (familyInSubject) {
+    const partial = coverages.filter(
+      (c) =>
+        c.distinctiveInSubject.length > 0 &&
+        c.identityTerms.some((t) =>
+          sharedIdentityTerms.some((s) =>
+            projectIdentityTokensEquivalent(s, t)
+          )
+        ) &&
+        // Every distinctive term for this peer that appears in its identity
+        // must be present; shared family alone is not enough.
+        c.identityTerms
+          .filter(
+            (t) =>
+              !sharedIdentityTerms.some((s) =>
+                projectIdentityTokensEquivalent(s, t)
+              )
+          )
+          .every((t) =>
+            subjectHay.some((h) => projectIdentityTokensEquivalent(h, t))
+          )
+    );
+    if (partial.length === 1) {
+      const winner = partial[0]!;
+      return {
+        status: "MATCH",
+        preserveCandidates: true,
+        selectedJobIdOverride: winner.peer.jobId,
+        candidateJobIdsOverride: [winner.peer.jobId],
+        diagnostics: diagBase(
+          JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+          args.input.hit,
+          args.assessed,
+          [winner.peer.jobId],
+          {
+            identityStrength: "STRONG",
+            strongIdentityAnchor: true,
+            resolutionAllowed: true,
+            reason: "DISTINCTIVE_SUBJECT_TERMS",
+            matchedTerms: [
+              ...sharedIdentityTerms.filter((s) =>
+                subjectHay.some((h) => projectIdentityTokensEquivalent(h, s))
+              ),
+              ...winner.distinctiveInSubject,
+            ],
+            distinguishingIdentityTerms: winner.distinctiveInSubject,
+            sharedIdentityTerms,
+            identityFamilyJobIds: familyJobIds,
+            competingJobIds: familyJobIds.filter(
+              (id) => id !== winner.peer.jobId
+            ),
+            evidenceType: "distinctive_subject_terms",
+            evidenceField: "subject",
+            projectTokenUniqueness: "shared",
+            ...(normalizationApplied.length > 0
+              ? { normalizationApplied }
+              : {}),
+          }
+        ),
+      };
+    }
+    if (partial.length > 1) {
+      return finishAmbiguous("COMPETING_PROJECT_CANDIDATES", {
+        competingJobIds: partial.map((c) => c.peer.jobId),
+        distinguishingIdentityTerms: partial.flatMap(
+          (c) => c.distinctiveInSubject
+        ),
+      });
+    }
+    return finishAmbiguous("INSUFFICIENT_DISTINGUISHING_EVIDENCE", {
+      competingJobIds: familyJobIds,
+      matchedTerms: sharedIdentityTerms,
+    });
+  }
+
+  // No recoverable normalized subject identity.
+  void args.priorReason;
+  return null;
 }
 
 /**

@@ -53,6 +53,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   jobMatchPolicyAdvanceRank,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
@@ -469,6 +470,7 @@ export async function runJobMatcherHistoricalEval(input: {
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
+    | "CONTEXT_AWARE_V2_3"
     | "ALL_THREE";
   /** Optional client-supplied run id for progress polling. */
   evaluationRunId?: string;
@@ -894,7 +896,8 @@ export async function runJobMatcherHistoricalEval(input: {
       }
       const isExperiment =
         policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
-        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2;
+        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
+        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
       return {
         identityPolicy: policy,
         experimentRevision: isExperiment
@@ -984,6 +987,7 @@ function resolveSelectedEvalPolicies(input: {
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
+    | "CONTEXT_AWARE_V2_3"
     | "ALL_THREE"
     | null;
 }): JobMatchIdentityPolicy[] {
@@ -1015,6 +1019,12 @@ function resolveSelectedEvalPolicies(input: {
     return normalizeEvalIdentityPolicies([
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+    ]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V2_3") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
     ]);
   }
   if (compareWith === "ALL_THREE") {

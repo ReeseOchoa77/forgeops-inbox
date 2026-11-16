@@ -12,6 +12,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
 } from "./job-name-identity-policy.js";
@@ -23,6 +24,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
 };
 
 export type { JobMatchIdentityExperimentRevision };
@@ -109,6 +111,18 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       experimental: true,
       availableForEvaluation: true,
       experimentSummary: `V2 + unique-token only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
+    },
+    {
+      id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+      advanceRank: 5,
+      label: "CONTEXT_AWARE_V2_3",
+      displayName: "V2.3 — Normalized Subject Identity",
+      description:
+        "V2 plus independent normalized subject identity (abbreviations, compounds, subject>body).",
+      productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
+      experimentSummary: `V2 + normalized subject identity (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
   ] as const;
 

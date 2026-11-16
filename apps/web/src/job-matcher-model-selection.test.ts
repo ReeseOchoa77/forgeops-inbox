@@ -28,13 +28,14 @@ describe('Job Matcher model selection', () => {
     ).toBe(true)
   })
 
-  it('maps legacy COMPARE_ALL onto three policies', () => {
+  it('maps legacy COMPARE_ALL onto all evaluation-selectable policies', () => {
     const s = modelSelectionFromLegacyEvalMode('COMPARE_ALL')
     expect(s.mode).toBe('COMPARE')
     expect(s.selectedPolicyIds).toEqual([
       'CONTEXT_AWARE_V2',
       'CONTEXT_AWARE_V2_1',
       'CONTEXT_AWARE_V2_2',
+      'CONTEXT_AWARE_V2_3',
     ])
   })
 })

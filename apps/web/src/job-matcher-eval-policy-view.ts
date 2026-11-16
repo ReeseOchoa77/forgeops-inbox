@@ -11,6 +11,8 @@ export function policyLabelSuffix(policy: JobMatcherIdentityPolicy): string {
   if (policy === 'CONTEXT_AWARE_V2') return ' (production)'
   if (policy === 'CONTEXT_AWARE_V2_1') return ' (title-gap experiment)'
   if (policy === 'CONTEXT_AWARE_V2_2') return ' (unique-token experiment)'
+  if (policy === 'CONTEXT_AWARE_V2_3')
+    return ' (normalized subject identity experiment)'
   return ''
 }
 
@@ -21,7 +23,8 @@ export function isCurrentExperimentRevision(
 ): boolean {
   if (
     bundle.identityPolicy !== 'CONTEXT_AWARE_V2_1' &&
-    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_2'
+    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_2' &&
+    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_3'
   ) {
     return true
   }
