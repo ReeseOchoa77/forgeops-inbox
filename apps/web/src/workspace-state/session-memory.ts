@@ -52,6 +52,8 @@ export type JobMatcherEvalSession = {
   userId: string
   result: import('../api').JobMatcherEvalResult
   jobFilterId: string | null
+  /** Results pane collapse preference for this session. */
+  resultsCollapsed?: boolean
   updatedAt: number
 }
 
@@ -82,14 +84,18 @@ export function setJobMatcherEvalSession(input: {
   userId: string
   result: import('../api').JobMatcherEvalResult
   jobFilterId?: string | null
+  resultsCollapsed?: boolean
 }): void {
   if (!input.workspaceId || !input.userId) return
   const key = evalKey(input.workspaceId, input.userId)
+  const existing = evalResults.get(key)
   evalResults.set(key, {
     workspaceId: input.workspaceId,
     userId: input.userId,
     result: input.result,
     jobFilterId: input.jobFilterId ?? null,
+    resultsCollapsed:
+      input.resultsCollapsed ?? existing?.resultsCollapsed ?? true,
     updatedAt: Date.now(),
   })
   evalPending.delete(key)
@@ -110,13 +116,19 @@ export function setJobMatcherEvalSession(input: {
 export function patchJobMatcherEvalSessionUi(input: {
   workspaceId: string
   userId: string
-  jobFilterId: string | null
+  jobFilterId?: string | null
+  resultsCollapsed?: boolean
 }): void {
   const existing = getJobMatcherEvalSession(input.workspaceId, input.userId)
   if (!existing) return
   evalResults.set(evalKey(input.workspaceId, input.userId), {
     ...existing,
-    jobFilterId: input.jobFilterId,
+    ...(input.jobFilterId !== undefined
+      ? { jobFilterId: input.jobFilterId }
+      : {}),
+    ...(input.resultsCollapsed !== undefined
+      ? { resultsCollapsed: input.resultsCollapsed }
+      : {}),
     updatedAt: Date.now(),
   })
 }

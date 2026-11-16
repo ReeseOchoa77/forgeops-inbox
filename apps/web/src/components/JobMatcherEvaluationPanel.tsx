@@ -49,9 +49,21 @@ import {
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
 import {
+  adjustedPolicyBundles,
   selectAdjustedPolicyView,
   type JobMatcherEvalExclusion,
 } from '../job-matcher-eval-exclusions'
+import {
+  areMetricSetsComparable,
+  computeMetricDelta,
+  defaultDeltaBaseline,
+  deltaArrow,
+  deltaToneColor,
+  type MetricDeltaKey,
+  type MetricDeltaKind,
+  type MetricDeltaDirection,
+} from '../job-matcher-eval-metric-deltas'
+import type { EvalOutcomeMetricsLite } from '@forgeops/shared/jobs/job-match-eval-exclusions'
 import {
   availableEvalPolicies,
   defaultSelectedPolicy,
@@ -173,6 +185,17 @@ export function JobMatcherEvaluationPanel({
   })
   const [resultsView, setResultsView] = useState<ResultsView>(() => initialUi.resultsView)
   const [panelTab, setPanelTab] = useState<PanelTab>(() => initialUi.resultsView)
+  const [resultsCollapsed, setResultsCollapsed] = useState(() => {
+    if (typeof sessionSeed?.resultsCollapsed === 'boolean') {
+      return sessionSeed.resultsCollapsed
+    }
+    if (typeof initialUi.resultsCollapsed === 'boolean') {
+      return initialUi.resultsCollapsed
+    }
+    return true
+  })
+  const [deltaBaselinePolicy, setDeltaBaselinePolicy] =
+    useState<JobMatcherIdentityPolicy | null>(null)
   const [failureFilter, setFailureFilter] = useState<JobMatcherEvalFailureCategory | 'ALL'>('ALL')
   const [resolvingMarkerFilter, setResolvingMarkerFilter] = useState<
     'ALL' | 'NAME' | 'CONTACT' | 'THREAD'
@@ -250,6 +273,7 @@ export function JobMatcherEvaluationPanel({
       resultsView,
       selectedEmailMessageId: selectedRow?.emailMessageId ?? null,
       inspectorTab,
+      resultsCollapsed,
     })
   }, [
     onUiChange,
@@ -266,6 +290,7 @@ export function JobMatcherEvaluationPanel({
     resultsView,
     selectedRow?.emailMessageId,
     inspectorTab,
+    resultsCollapsed,
   ])
 
   // selectedEmailMessageId is restored only while in-memory `result` exists (results are not durable).
@@ -329,13 +354,19 @@ export function JobMatcherEvaluationPanel({
       userId,
       result,
       jobFilterId,
+      resultsCollapsed,
     })
-  }, [workspaceId, userId, result, jobFilterId])
+  }, [workspaceId, userId, result, jobFilterId, resultsCollapsed])
 
   useEffect(() => {
     if (!userId || !result) return
-    patchJobMatcherEvalSessionUi({ workspaceId, userId, jobFilterId })
-  }, [workspaceId, userId, result, jobFilterId])
+    patchJobMatcherEvalSessionUi({
+      workspaceId,
+      userId,
+      jobFilterId,
+      resultsCollapsed,
+    })
+  }, [workspaceId, userId, result, jobFilterId, resultsCollapsed])
 
   // Restore results list scroll after remount when rows are present.
   useEffect(() => {
@@ -473,6 +504,7 @@ export function JobMatcherEvaluationPanel({
       const evaluation = await promise
       setResult(evaluation)
       setExclusions([])
+      setResultsCollapsed(true)
       const scored = availableEvalPolicies(evaluation)
       const preferCompare =
         (evaluation.multiPolicyComparison?.policies.length ?? 0) >= 2 ||
@@ -480,12 +512,14 @@ export function JobMatcherEvaluationPanel({
         (evaluation.comparison != null)
       setResultTab(preferCompare ? 'comparison' : (scored[0] ?? 'CONTEXT_AWARE_V2'))
       setSelectedViewPolicy(defaultSelectedPolicy(evaluation))
+      setDeltaBaselinePolicy(defaultDeltaBaseline(scored))
       setEmailCompareFilter('ALL')
       setJobMatcherEvalSession({
         workspaceId,
         userId,
         result: evaluation,
         jobFilterId: null,
+        resultsCollapsed: true,
       })
       // Persist may race slightly; load exclusions (empty) after run is saved.
       if (evaluation.evaluationRunId) {
@@ -865,6 +899,80 @@ export function JobMatcherEvaluationPanel({
     multiCompare || result?.comparison || result?.v2FamilyComparison
   )
   const showingComparison = resultTab === 'comparison' && hasComparisonTab
+
+  const adjustedMetricsByPolicy = useMemo(() => {
+    if (!result || availablePolicies.length < 2) {
+      return {} as Partial<Record<JobMatcherIdentityPolicy, EvalOutcomeMetricsLite>>
+    }
+    const bundles = adjustedPolicyBundles(result, exclusions)
+    const out: Partial<Record<JobMatcherIdentityPolicy, EvalOutcomeMetricsLite>> =
+      {}
+    for (const b of bundles) {
+      out[b.identityPolicy] = {
+        totalEvaluated: b.metrics.totalEvaluated,
+        correctMatches: b.metrics.correctMatches,
+        wrongMatches: b.metrics.wrongMatches,
+        ambiguous: b.metrics.ambiguous,
+        conflict: b.metrics.conflict,
+        noMatch: b.metrics.noMatch,
+        precision: b.metrics.precision,
+        correctCoverage: b.metrics.correctCoverage,
+        wrongMatchRate: b.metrics.wrongMatchRate,
+        ambiguityRate: b.metrics.ambiguityRate,
+        conflictRate: b.metrics.conflictRate,
+        noMatchRate: b.metrics.noMatchRate,
+      }
+    }
+    return out
+  }, [result, exclusions, availablePolicies.length])
+
+  const effectiveDeltaBaseline =
+    deltaBaselinePolicy && availablePolicies.includes(deltaBaselinePolicy)
+      ? deltaBaselinePolicy
+      : defaultDeltaBaseline(availablePolicies)
+
+  useEffect(() => {
+    if (availablePolicies.length < 2) return
+    if (
+      deltaBaselinePolicy &&
+      availablePolicies.includes(deltaBaselinePolicy)
+    ) {
+      return
+    }
+    setDeltaBaselinePolicy(defaultDeltaBaseline(availablePolicies))
+  }, [availablePolicies, deltaBaselinePolicy])
+
+  const metricComparability = useMemo(
+    () =>
+      areMetricSetsComparable(adjustedMetricsByPolicy, availablePolicies),
+    [adjustedMetricsByPolicy, availablePolicies]
+  )
+
+  const activeModelDelta = useMemo(() => {
+    if (
+      !m ||
+      !effectiveDeltaBaseline ||
+      availablePolicies.length < 2 ||
+      !metricComparability.comparable ||
+      showingComparison
+    ) {
+      return null
+    }
+    const baseline = adjustedMetricsByPolicy[effectiveDeltaBaseline]
+    const isBaseline = selectedViewPolicy === effectiveDeltaBaseline
+    return {
+      baseline,
+      isBaseline,
+    }
+  }, [
+    m,
+    effectiveDeltaBaseline,
+    availablePolicies.length,
+    metricComparability.comparable,
+    showingComparison,
+    adjustedMetricsByPolicy,
+    selectedViewPolicy,
+  ])
 
   const selectResultTab = (tab: 'comparison' | JobMatcherIdentityPolicy) => {
     setResultTab(tab)
@@ -1369,7 +1477,14 @@ export function JobMatcherEvaluationPanel({
               </span>
             </div>
             {showingComparison && multiCompare ? (
-              <MultiPolicyComparisonPanel comparison={multiCompare} />
+              <MultiPolicyComparisonPanel
+                comparison={multiCompare}
+                metricsByPolicy={adjustedMetricsByPolicy}
+                baselinePolicy={effectiveDeltaBaseline}
+                onBaselinePolicyChange={setDeltaBaselinePolicy}
+                comparable={metricComparability.comparable}
+                notComparableReason={metricComparability.reason}
+              />
             ) : null}
             {showingComparison && !multiCompare && result.comparison ? (
               <ComparisonPanel
@@ -1419,6 +1534,18 @@ export function JobMatcherEvaluationPanel({
                   title={JMPS_TOOLTIP}
                   tone="positive"
                   bar={jmps.clampedForDisplay}
+                  delta={
+                    activeModelDelta
+                      ? computeMetricDelta({
+                          key: 'jmps',
+                          kind: 'jmps',
+                          direction: 'higherBetter',
+                          baseline: activeModelDelta.baseline,
+                          comparison: m,
+                          isBaseline: activeModelDelta.isBaseline,
+                        })
+                      : null
+                  }
                 />
                 <Metric label="Evaluated" value={m.totalEvaluated} />
                 <Metric
@@ -1430,19 +1557,31 @@ export function JobMatcherEvaluationPanel({
                   label="Correct"
                   value={m.correctMatches}
                   tone="positive"
+                  delta={cardDelta(activeModelDelta, m, 'correctMatches', 'count', 'higherBetter')}
                 />
                 <Metric
                   label="Wrong"
                   value={m.wrongMatches}
                   tone="negative"
+                  delta={cardDelta(activeModelDelta, m, 'wrongMatches', 'count', 'lowerBetter')}
                 />
                 <Metric
                   label="Ambiguous"
                   value={m.ambiguous}
                   tone="warning"
+                  delta={cardDelta(activeModelDelta, m, 'ambiguous', 'count', 'lowerBetter')}
                 />
-                <Metric label="Conflict" value={m.conflict} tone="warning" />
-                <Metric label="No Match" value={m.noMatch} />
+                <Metric
+                  label="Conflict"
+                  value={m.conflict}
+                  tone="warning"
+                  delta={cardDelta(activeModelDelta, m, 'conflict', 'count', 'lowerBetter')}
+                />
+                <Metric
+                  label="No Match"
+                  value={m.noMatch}
+                  delta={cardDelta(activeModelDelta, m, 'noMatch', 'count', 'lowerBetter')}
+                />
                 <Metric
                   label="Precision"
                   value={
@@ -1451,27 +1590,33 @@ export function JobMatcherEvaluationPanel({
                       : `${(m.precision * 100).toFixed(2)}%`
                   }
                   strong
+                  delta={cardDelta(activeModelDelta, m, 'precision', 'rate', 'higherBetter')}
                 />
                 <Metric
                   label="Coverage"
                   value={`${(m.correctCoverage * 100).toFixed(2)}%`}
                   strong
+                  delta={cardDelta(activeModelDelta, m, 'correctCoverage', 'rate', 'higherBetter')}
                 />
                 <Metric
                   label="Wrong rate"
                   value={`${(m.wrongMatchRate * 100).toFixed(2)}%`}
+                  delta={cardDelta(activeModelDelta, m, 'wrongMatchRate', 'rate', 'lowerBetter')}
                 />
                 <Metric
                   label="Ambiguity"
                   value={`${(m.ambiguityRate * 100).toFixed(2)}%`}
+                  delta={cardDelta(activeModelDelta, m, 'ambiguityRate', 'rate', 'lowerBetter')}
                 />
                 <Metric
                   label="Conflict rate"
                   value={`${(m.conflictRate * 100).toFixed(2)}%`}
+                  delta={cardDelta(activeModelDelta, m, 'conflictRate', 'rate', 'lowerBetter')}
                 />
                 <Metric
                   label="No-match rate"
                   value={`${(m.noMatchRate * 100).toFixed(2)}%`}
+                  delta={cardDelta(activeModelDelta, m, 'noMatchRate', 'rate', 'lowerBetter')}
                 />
               </div>
             {rawMetrics && excludedCount > 0 ? (
@@ -1548,16 +1693,65 @@ export function JobMatcherEvaluationPanel({
         ) : null}
       </div>
 
-      {/* Results | Inspector — remaining viewport (always keeps majority of height) */}
+      {/* Results | Inspector — collapsible; remaining viewport when expanded */}
       <div
+        data-testid="job-matcher-results-section"
+        style={{
+          flex: resultsCollapsed ? '0 0 auto' : '1 1 0',
+          minHeight: resultsCollapsed ? undefined : 240,
+          display: 'flex',
+          flexDirection: 'column',
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          overflow: 'hidden',
+          background: '#fff',
+        }}
+      >
+        <button
+          type="button"
+          data-testid="job-matcher-results-collapse-toggle"
+          aria-expanded={!resultsCollapsed}
+          aria-controls="job-matcher-results-body"
+          onClick={() => setResultsCollapsed((c) => !c)}
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            padding: '8px 10px',
+            border: 'none',
+            borderBottom: resultsCollapsed ? 'none' : '1px solid #e5e7eb',
+            background: '#f9fafb',
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontSize: 13,
+            fontWeight: 650,
+            color: '#111827',
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 11, color: '#6b7280' }}>
+            {resultsCollapsed ? '▸' : '▾'}
+          </span>
+          <span>
+            Evaluation Results
+            {result
+              ? ` (${(policyView?.available
+                  ? filteredRows.length
+                  : result.metrics.totalEvaluated
+                ).toLocaleString()})`
+              : ''}
+          </span>
+        </button>
+        {!resultsCollapsed ? (
+      <div
+        id="job-matcher-results-body"
         data-testid="job-matcher-results-split"
         style={{
           flex: '1 1 0',
-          minHeight: 240,
+          minHeight: 0,
           display: 'flex',
           flexDirection: wide ? 'row' : 'column',
-          border: '1px solid #e5e7eb',
-          borderRadius: 8,
           overflow: 'hidden',
           background: '#fff',
         }}
@@ -1698,8 +1892,31 @@ export function JobMatcherEvaluationPanel({
           )}
         </div>
       </div>
+        ) : null}
+      </div>
     </div>
   )
+}
+
+function cardDelta(
+  active: {
+    baseline: EvalOutcomeMetricsLite | null | undefined
+    isBaseline: boolean
+  } | null,
+  comparison: EvalOutcomeMetricsLite,
+  key: MetricDeltaKey,
+  kind: MetricDeltaKind,
+  direction: MetricDeltaDirection
+) {
+  if (!active) return null
+  return computeMetricDelta({
+    key,
+    kind,
+    direction,
+    baseline: active.baseline,
+    comparison,
+    isBaseline: active.isBaseline,
+  })
 }
 
 function ResultsPane(props: {
@@ -2782,11 +2999,29 @@ function legacyV2FamilyAsMulti(
 
 function MultiPolicyComparisonPanel({
   comparison,
+  metricsByPolicy,
+  baselinePolicy,
+  onBaselinePolicyChange,
+  comparable,
+  notComparableReason,
 }: {
   comparison: JobMatcherMultiPolicyCompareReport
+  metricsByPolicy: Partial<
+    Record<JobMatcherIdentityPolicy, EvalOutcomeMetricsLite | null | undefined>
+  >
+  baselinePolicy: JobMatcherIdentityPolicy | null
+  onBaselinePolicyChange: (p: JobMatcherIdentityPolicy) => void
+  comparable: boolean
+  notComparableReason: string | null
 }) {
+  const baseline = baselinePolicy ?? comparison.baselinePolicy
   const cols = comparison.policies.map((policy) => {
     const entry = getJobMatchPolicyRegistryEntry(policy)
+    const metrics = metricsByPolicy[policy] ?? comparison.metricsByPolicy[policy]
+    const score =
+      metrics != null
+        ? computeJobMatcherPerformanceScore(metrics).score
+        : (comparison.performanceScores[policy] ?? null)
     return {
       policy,
       label:
@@ -2794,72 +3029,116 @@ function MultiPolicyComparisonPanel({
         policy.replace('CONTEXT_AWARE_', ''),
       prod: entry?.productionDefault ?? false,
       exp: entry?.experimental ?? false,
-      metrics: comparison.metricsByPolicy[policy],
-      score: comparison.performanceScores[policy] ?? null,
+      metrics,
+      score,
+      isBaseline: policy === baseline,
     }
   })
 
-  const metricRows: Array<{
+  type CmpRow = {
     label: string
-    values: Array<string | number>
     emphasize?: boolean
-  }> = [
+    key: MetricDeltaKey | 'evaluated'
+    kind?: MetricDeltaKind
+    direction?: MetricDeltaDirection
+    primary: Array<string | number>
+  }
+
+  const metricRows: CmpRow[] = [
     {
       label: 'Performance Score',
-      values: cols.map((c) => fmtJmps(c.score)),
+      key: 'jmps',
+      kind: 'jmps',
+      direction: 'higherBetter',
+      primary: cols.map((c) => fmtJmps(c.score)),
       emphasize: true,
     },
     {
       label: 'Evaluated',
-      values: cols.map((c) => c.metrics?.totalEvaluated ?? 'Not evaluated'),
+      key: 'evaluated',
+      primary: cols.map((c) => c.metrics?.totalEvaluated ?? 'Not evaluated'),
     },
     {
       label: 'Correct',
-      values: cols.map((c) => c.metrics?.correctMatches ?? '—'),
+      key: 'correctMatches',
+      kind: 'count',
+      direction: 'higherBetter',
+      primary: cols.map((c) => c.metrics?.correctMatches ?? '—'),
     },
     {
       label: 'Wrong',
-      values: cols.map((c) => c.metrics?.wrongMatches ?? '—'),
+      key: 'wrongMatches',
+      kind: 'count',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => c.metrics?.wrongMatches ?? '—'),
     },
     {
       label: 'Ambiguous',
-      values: cols.map((c) => c.metrics?.ambiguous ?? '—'),
+      key: 'ambiguous',
+      kind: 'count',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => c.metrics?.ambiguous ?? '—'),
     },
     {
       label: 'Conflict',
-      values: cols.map((c) => c.metrics?.conflict ?? '—'),
+      key: 'conflict',
+      kind: 'count',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => c.metrics?.conflict ?? '—'),
     },
     {
       label: 'No Match',
-      values: cols.map((c) => c.metrics?.noMatch ?? '—'),
+      key: 'noMatch',
+      kind: 'count',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => c.metrics?.noMatch ?? '—'),
     },
     {
       label: 'Precision',
-      values: cols.map((c) => fmtRate(c.metrics?.precision)),
+      key: 'precision',
+      kind: 'rate',
+      direction: 'higherBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.precision)),
     },
     {
       label: 'Coverage',
-      values: cols.map((c) => fmtRate(c.metrics?.correctCoverage)),
+      key: 'correctCoverage',
+      kind: 'rate',
+      direction: 'higherBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.correctCoverage)),
     },
     {
       label: 'Wrong rate',
-      values: cols.map((c) => fmtRate(c.metrics?.wrongMatchRate)),
+      key: 'wrongMatchRate',
+      kind: 'rate',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.wrongMatchRate)),
     },
     {
       label: 'Ambiguity rate',
-      values: cols.map((c) => fmtRate(c.metrics?.ambiguityRate)),
+      key: 'ambiguityRate',
+      kind: 'rate',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.ambiguityRate)),
     },
     {
       label: 'Conflict rate',
-      values: cols.map((c) => fmtRate(c.metrics?.conflictRate)),
+      key: 'conflictRate',
+      kind: 'rate',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.conflictRate)),
     },
     {
       label: 'No-match rate',
-      values: cols.map((c) => fmtRate(c.metrics?.noMatchRate)),
+      key: 'noMatchRate',
+      kind: 'rate',
+      direction: 'lowerBetter',
+      primary: cols.map((c) => fmtRate(c.metrics?.noMatchRate)),
     },
   ]
 
   const heading = cols.map((c) => c.label).join(' vs ')
+  const baselineMetrics = metricsByPolicy[baseline] ?? null
 
   return (
     <div
@@ -2872,9 +3151,66 @@ function MultiPolicyComparisonPanel({
         fontSize: 12,
       }}
     >
-      <div style={{ fontWeight: 650, marginBottom: 8 }}>
-        Matcher Comparison — {heading}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 8,
+          alignItems: 'center',
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ fontWeight: 650 }}>Matcher Comparison — {heading}</div>
+        <label
+          data-testid="job-matcher-delta-baseline-select"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            marginLeft: 'auto',
+            fontSize: 11,
+            color: '#374151',
+            fontWeight: 500,
+          }}
+        >
+          Delta baseline
+          <select
+            value={baseline}
+            onChange={(e) =>
+              onBaselinePolicyChange(e.target.value as JobMatcherIdentityPolicy)
+            }
+            style={{ ...selectStyle, padding: '3px 6px', fontSize: 11 }}
+          >
+            {comparison.policies.map((p) => {
+              const entry = getJobMatchPolicyRegistryEntry(p)
+              const short = policyTabShortLabel(p, entry?.displayName)
+              return (
+                <option key={p} value={p}>
+                  {short}
+                  {p === getProductionJobMatchIdentityPolicy() ? ' (prod)' : ''}
+                </option>
+              )
+            })}
+          </select>
+        </label>
       </div>
+      {!comparable && notComparableReason ? (
+        <div
+          data-testid="job-matcher-deltas-not-comparable"
+          role="status"
+          style={{
+            marginBottom: 8,
+            padding: '6px 8px',
+            borderRadius: 6,
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            color: '#92400e',
+            fontSize: 11,
+          }}
+        >
+          {notComparableReason}
+        </div>
+      ) : null}
       <div style={{ overflowX: 'auto', marginBottom: 8 }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
           <thead>
@@ -2884,6 +3220,7 @@ function MultiPolicyComparisonPanel({
                 <th key={c.policy} style={{ ...cmpTh, textAlign: 'right' }}>
                   {c.label}
                   {c.prod ? ' (prod)' : c.exp ? ' (exp)' : ''}
+                  {c.isBaseline ? ' · baseline' : ''}
                 </th>
               ))}
             </tr>
@@ -2902,19 +3239,54 @@ function MultiPolicyComparisonPanel({
                 >
                   {row.label}
                 </td>
-                {row.values.map((v, i) => (
-                  <td
-                    key={`${row.label}-${i}`}
-                    style={{
-                      ...cmpTd,
-                      textAlign: 'right',
-                      fontWeight: row.emphasize ? 700 : 400,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {typeof v === 'number' ? v.toLocaleString() : v}
-                  </td>
-                ))}
+                {row.primary.map((v, i) => {
+                  const col = cols[i]!
+                  const delta =
+                    comparable &&
+                    row.key !== 'evaluated' &&
+                    row.kind &&
+                    row.direction
+                      ? computeMetricDelta({
+                          key: row.key,
+                          kind: row.kind,
+                          direction: row.direction,
+                          baseline: baselineMetrics,
+                          comparison: col.metrics,
+                          isBaseline: col.isBaseline,
+                        })
+                      : null
+                  return (
+                    <td
+                      key={`${row.label}-${col.policy}`}
+                      style={{
+                        ...cmpTd,
+                        textAlign: 'right',
+                        fontWeight: row.emphasize ? 700 : 400,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      <div>
+                        {typeof v === 'number' ? v.toLocaleString() : v}
+                      </div>
+                      {delta ? (
+                        <div
+                          data-testid={`job-matcher-delta-${row.key}-${col.policy}`}
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: deltaToneColor(delta.tone),
+                            marginTop: 2,
+                          }}
+                        >
+                          <span aria-hidden="true">
+                            {deltaArrow(delta.tone, delta.delta)}{' '}
+                          </span>
+                          {delta.display}
+                        </div>
+                      ) : null}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>
@@ -2922,8 +3294,9 @@ function MultiPolicyComparisonPanel({
       </div>
       <div style={{ color: '#6b7280', fontSize: 11 }}>
         Same dataset / ground truth / eligibility for every selected policy.
-        Baseline for improve/regress filters: {comparison.baselinePolicy}.
-        Performance Score is a weighted operator metric (not precision).
+        Delta baseline: {baseline}. Percentage deltas are percentage points
+        (pp); JMPS deltas are score points. Performance Score is a weighted
+        operator metric (not precision).
       </div>
     </div>
   )
@@ -3279,6 +3652,7 @@ function Metric({
   strong,
   title,
   bar,
+  delta,
 }: {
   label: string
   value: string | number
@@ -3287,6 +3661,7 @@ function Metric({
   title?: string
   /** Optional 0–100 visual bar (clamped display only). */
   bar?: number | null
+  delta?: ReturnType<typeof computeMetricDelta> | null
 }) {
   const valueColor =
     tone === 'positive'
@@ -3318,6 +3693,21 @@ function Metric({
       >
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
+      {delta ? (
+        <div
+          data-testid={`job-matcher-metric-delta-${label}`}
+          style={{
+            marginTop: 2,
+            fontSize: 10,
+            fontWeight: 650,
+            color: deltaToneColor(delta.tone),
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          <span aria-hidden="true">{deltaArrow(delta.tone, delta.delta)} </span>
+          {delta.display}
+        </div>
+      ) : null}
       {bar != null ? (
         <div
           style={{

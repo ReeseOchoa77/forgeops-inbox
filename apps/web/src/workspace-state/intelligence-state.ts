@@ -62,6 +62,8 @@ export type IntelligencePersistedState = {
   resultsView: 'emails' | 'jobs'
   selectedEmailMessageId: string | null
   inspectorTab: 'email' | 'match'
+  /** Job Matcher Results pane collapsed (emails/jobs/diagnostics + inspector). */
+  resultsCollapsed?: boolean
 }
 
 const TABS = new Set(['overview', 'pipeline', 'instructions', 'evaluation', 'test'])
@@ -152,6 +154,8 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
   if (o.transitionFilter != null && transitionFilter == null) return null
   const controlSection = parseControlSection(o.controlSection)
   const controlSub = parseControlSub(controlSection, o.controlSub)
+  const resultsCollapsed =
+    typeof o.resultsCollapsed === 'boolean' ? o.resultsCollapsed : undefined
   return {
     tab: o.tab as IntelligencePersistedState['tab'],
     controlSection,
@@ -173,6 +177,7 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
     resultsView: o.resultsView,
     selectedEmailMessageId,
     inspectorTab: o.inspectorTab,
+    ...(resultsCollapsed !== undefined ? { resultsCollapsed } : {}),
   }
 }
 
@@ -195,6 +200,7 @@ export const DEFAULT_INTELLIGENCE_STATE: IntelligencePersistedState = {
   resultsView: 'emails',
   selectedEmailMessageId: null,
   inspectorTab: 'email',
+  resultsCollapsed: true,
 }
 
 export function readIntelligenceTabFromUrl(): IntelligencePersistedState['tab'] | null {
