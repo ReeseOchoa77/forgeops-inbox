@@ -6,8 +6,9 @@
  * CONTEXT_AWARE_V2: V1 + shared-family / generic multiword disambiguation;
  *   weak candidates cleared so they cannot steer Marker 2. Production default.
  * CONTEXT_AWARE_V2_1: independent experiment = current V2 + title-gap rule ONLY
- *   (gap-tolerant ordered project-title matching). Does NOT include unique-token
- *   promotion, weak-candidate preserve, or AUTH contact recovery.
+ *   (gap-tolerant ordered project-title matching + shared-id subject/body
+ *   disambiguation). Does NOT include unique-token promotion, weak-candidate
+ *   preserve, or AUTH contact recovery.
  * CONTEXT_AWARE_V2_2: independent experiment = current V2 + unique project token
  *   rule ONLY. Does NOT include title-gap matching or V2.1-only contact deltas.
  *
@@ -56,7 +57,7 @@ export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
  * CONTEXT_AWARE_V2_1 / CONTEXT_AWARE_V2_2 labels — treat those as legacy.
  */
 export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
-  "independent-v21-title-gap-v22-unique-token-r1" as const;
+  "independent-v21-title-gap-body-disambiguation-r3" as const;
 
 export type JobMatchIdentityExperimentRevision =
   typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION;
@@ -99,7 +100,27 @@ export type JobNameIdentityReasonCode =
   /** V2.2: short acronym alone is ambiguous (shared or non-authoritative). */
   | "ACRONYM_AMBIGUITY"
   /** V2.2: distinct project signals point at different Jobs. */
-  | "CONTRADICTORY_PROJECT_EVIDENCE";
+  | "CONTRADICTORY_PROJECT_EVIDENCE"
+  /**
+   * V2.1: title-gap match authorized by title terms that distinguish one Job
+   * among peers sharing a project identifier.
+   */
+  | "DISTINGUISHING_TITLE_EVIDENCE"
+  /**
+   * V2.1: shared project identifier present without sufficient distinguishing
+   * title evidence for a confident assignment.
+   */
+  | "INSUFFICIENT_DISAMBIGUATION"
+  /**
+   * V2.1: email contains distinguishing title evidence for multiple competing
+   * Jobs that share a project identifier.
+   */
+  | "COMPETING_TITLE_EVIDENCE"
+  /**
+   * V2.1: shared project identifier in subject; unique distinguishing Job term
+   * found in the current message body (not quoted history).
+   */
+  | "UNIQUE_BODY_DISAMBIGUATION";
 
 export type JobNameIdentityDiagnostics = {
   marker: "NAME";
@@ -224,6 +245,37 @@ export function buildWorkspaceIdentityTokenStats(
 
 export function isCommonConstructionIdentityToken(token: string): boolean {
   return COMMON_CONSTRUCTION_IDENTITY_TOKENS.has(token);
+}
+
+/**
+ * Tokens that must not independently resolve competing Jobs that share a
+ * project identifier (V2.1 title-gap disambiguation). Scope words like
+ * "stairs" / "concessions" are intentionally excluded — they can distinguish
+ * sibling Jobs even when they are common construction vocabulary.
+ */
+export const WEAK_TITLE_DISAMBIGUATION_TOKENS = new Set([
+  "steel",
+  "project",
+  "update",
+  "updates",
+  "drawing",
+  "drawings",
+  "fabrication",
+  "construction",
+  "status",
+  "delivery",
+  "revised",
+  "revision",
+  "revisions",
+  "structural",
+]);
+
+export function isWeakTitleDisambiguationToken(token: string): boolean {
+  const norm = normalizeProjectScopeToken(token);
+  return (
+    WEAK_TITLE_DISAMBIGUATION_TOKENS.has(token) ||
+    WEAK_TITLE_DISAMBIGUATION_TOKENS.has(norm)
+  );
 }
 
 /**
@@ -1534,8 +1586,211 @@ function experimentalMatchResult(
 }
 
 /**
+ * Project identifiers shared by ≥2 pool peers (non-construction, non-weak).
+ */
+function sharedProjectIdentifiersAmongPeers(
+  peers: readonly IdentityPeerJob[]
+): string[] {
+  const freq = new Map<string, { token: string; count: number }>();
+  for (const peer of peers) {
+    const seen = new Set<string>();
+    for (const t of peer.contentTokens) {
+      if (!isJobNameContentToken(t)) continue;
+      if (isCommonConstructionIdentityToken(t)) continue;
+      if (isWeakTitleDisambiguationToken(t)) continue;
+      const key = normalizeProjectScopeToken(t);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const prev = freq.get(key);
+      if (prev) prev.count += 1;
+      else freq.set(key, { token: t, count: 1 });
+    }
+  }
+  return [...freq.values()].filter((v) => v.count > 1).map((v) => v.token);
+}
+
+/**
+ * Job content tokens that distinguish `peer` from other competitors sharing a
+ * project identifier. Weak generics never count — even when unique to one Job.
+ */
+export function distinguishingTermsForPeer(input: {
+  peer: IdentityPeerJob;
+  competitors: readonly IdentityPeerJob[];
+  sharedIdentifiers: readonly string[];
+}): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of input.peer.contentTokens) {
+    if (!isJobNameContentToken(t)) continue;
+    if (isWeakTitleDisambiguationToken(t)) continue;
+    if (
+      input.sharedIdentifiers.some((s) => projectTokensEquivalent(s, t))
+    ) {
+      continue;
+    }
+    const onOther = input.competitors.some(
+      (c) =>
+        c.jobId !== input.peer.jobId &&
+        c.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
+    );
+    if (onOther) continue;
+    const key = normalizeProjectScopeToken(t);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Title terms in a gap run that distinguish `peer` from other competitors
+ * sharing a project identifier. Weak generics (steel, project, update, …)
+ * never count — even when unique to one Job.
+ */
+export function distinguishingTitleEvidenceInRun(input: {
+  run: readonly string[];
+  peer: IdentityPeerJob;
+  competitors: readonly IdentityPeerJob[];
+  sharedIdentifiers: readonly string[];
+}): string[] {
+  const allowed = new Set(
+    distinguishingTermsForPeer({
+      peer: input.peer,
+      competitors: input.competitors,
+      sharedIdentifiers: input.sharedIdentifiers,
+    }).map((t) => normalizeProjectScopeToken(t))
+  );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of input.run) {
+    const key = normalizeProjectScopeToken(t);
+    if (!allowed.has(key)) continue;
+    if (seen.has(key)) continue;
+    // Retain the surface form from the run when equivalent.
+    if (
+      !input.peer.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
+    ) {
+      continue;
+    }
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Lightweight negation check: "not … concessions" / "no concessions" within a
+ * short left window. Intentionally narrow — abstain rather than over-parse.
+ */
+export function isTokenNegatedInHay(
+  hay: readonly string[],
+  tokenIndex: number
+): boolean {
+  if (tokenIndex < 0 || tokenIndex >= hay.length) return false;
+  const start = Math.max(0, tokenIndex - 4);
+  const window = hay.slice(start, tokenIndex);
+  if (window.some((t) => t === "not" || t === "no")) return true;
+  // "aren't" / "isnt" style tokens after normalization may appear as "arent" /
+  // "isnt" depending on tokenizer — treat common forms as negation cues.
+  if (window.some((t) => t === "arent" || t === "isnt" || t === "wasnt")) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Locate distinguishing peer terms in subject and/or body (whole-token,
+ * inflection-aware). Negated body hits are ignored.
+ */
+export function findDistinguishingEvidenceInFields(input: {
+  peer: IdentityPeerJob;
+  competitors: readonly IdentityPeerJob[];
+  sharedIdentifiers: readonly string[];
+  subjectTokens: readonly string[];
+  bodyTokens: readonly string[];
+}): {
+  terms: string[];
+  subjectTerms: string[];
+  bodyTerms: string[];
+  evidenceField: "subject" | "body" | "mixed" | null;
+} {
+  const candidates = distinguishingTermsForPeer({
+    peer: input.peer,
+    competitors: input.competitors,
+    sharedIdentifiers: input.sharedIdentifiers,
+  });
+  const subjectTerms: string[] = [];
+  const bodyTerms: string[] = [];
+  const seenSubject = new Set<string>();
+  const seenBody = new Set<string>();
+
+  for (const term of candidates) {
+    for (let i = 0; i < input.subjectTokens.length; i += 1) {
+      if (!projectTokensEquivalent(input.subjectTokens[i]!, term)) continue;
+      const key = normalizeProjectScopeToken(term);
+      if (seenSubject.has(key)) continue;
+      seenSubject.add(key);
+      subjectTerms.push(term);
+      break;
+    }
+    for (let i = 0; i < input.bodyTokens.length; i += 1) {
+      if (!projectTokensEquivalent(input.bodyTokens[i]!, term)) continue;
+      if (isTokenNegatedInHay(input.bodyTokens, i)) continue;
+      const key = normalizeProjectScopeToken(term);
+      if (seenBody.has(key)) continue;
+      seenBody.add(key);
+      bodyTerms.push(term);
+      break;
+    }
+  }
+
+  const terms = [...new Set([...subjectTerms, ...bodyTerms])];
+  let evidenceField: "subject" | "body" | "mixed" | null = null;
+  if (subjectTerms.length > 0 && bodyTerms.length > 0) evidenceField = "mixed";
+  else if (subjectTerms.length > 0) evidenceField = "subject";
+  else if (bodyTerms.length > 0) evidenceField = "body";
+
+  return { terms, subjectTerms, bodyTerms, evidenceField };
+}
+
+function titleGapAmbiguousResult(
+  ctx: ProjectIdentityRecoveryContext,
+  reason: JobNameIdentityReasonCode,
+  extras: Partial<JobNameIdentityDiagnostics>
+): ApplyIdentityPolicyResult {
+  const assessed = ctx.assessed ?? assessIdentityHitStrength(ctx.hit);
+  const competing =
+    extras.competingJobIds ??
+    ctx.pool.map((p) => p.jobId);
+  return {
+    status: "AMBIGUOUS",
+    preserveCandidates: true,
+    candidateJobIdsOverride: competing,
+    diagnostics: diagBase(
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      ctx.hit,
+      assessed,
+      competing,
+      {
+        identityStrength:
+          reason === "COMPETING_TITLE_EVIDENCE" ? "CONFLICTING" : "AMBIGUOUS",
+        strongIdentityAnchor: false,
+        resolutionAllowed: false,
+        reason,
+        competingJobIds: competing,
+        projectTokenUniqueness: "shared",
+        ...extras,
+      }
+    ),
+  };
+}
+
+/**
  * CONTEXT_AWARE_V2_1 — title-gap / ordered project-phrase recovery ONLY.
  * Does not promote unique single tokens. Never preserves weak candidates.
+ * When multiple eligible Jobs share a project identifier present in the email,
+ * requires distinguishing title or current-body evidence (not weak generics)
+ * before MATCH. Body hits ignore lightweight negation windows.
  */
 export function tryTitleGapProjectRecovery(args: {
   input: ApplyIdentityPolicyInput;
@@ -1555,27 +1810,181 @@ export function tryTitleGapProjectRecovery(args: {
   const ctx = buildProjectIdentityRecoveryContext(args);
   if (!ctx) return null;
 
+  const { scores, subjectTokens, bodyTokens, pool } = ctx;
+  const phraseCandidates = scores.filter((s) => {
+    if (!s.gap || s.gap.run.length < 2) return false;
+    return s.gap.run.some((t) => !isCommonConstructionIdentityToken(t));
+  });
+
+  // Prefer subject-established project family (body may supply disambiguation).
+  // Runs before rare-token contradiction so lightweight negation can drop false
+  // competing hits (e.g. "not for concessions … exterior stairs").
+  const sharedInSubject = sharedProjectIdentifiersAmongPeers(pool).filter((id) =>
+    hayHasProjectToken(subjectTokens, [], id)
+  );
+  const sharedIdentifiers =
+    sharedInSubject.length > 0
+      ? sharedInSubject
+      : sharedProjectIdentifiersAmongPeers(pool).filter((id) =>
+          hayHasProjectToken(subjectTokens, bodyTokens, id)
+        );
+
+  if (sharedIdentifiers.length > 0) {
+    const competitors = pool.filter((p) =>
+      sharedIdentifiers.some((id) =>
+        p.contentTokens.some((ct) => projectTokensEquivalent(ct, id))
+      )
+    );
+    if (competitors.length >= 2) {
+      // Path A: ordered gap/title phrase already carries distinguishing terms.
+      const withPhraseDistinguishing = phraseCandidates
+        .map((s) => ({
+          score: s,
+          distinguishingInRun: distinguishingTitleEvidenceInRun({
+            run: s.gap!.run,
+            peer: s.peer,
+            competitors,
+            sharedIdentifiers,
+          }),
+        }))
+        .filter((row) => row.distinguishingInRun.length > 0);
+
+      if (withPhraseDistinguishing.length === 1) {
+        const winner = withPhraseDistinguishing[0]!;
+        const w = winner.score;
+        const contiguous = w.gap!.contiguous;
+        return experimentalMatchResult(
+          ctx,
+          JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+          w.peer.jobId,
+          "DISTINGUISHING_TITLE_EVIDENCE",
+          {
+            matchedTerms: w.gap!.run,
+            distinctiveTerms: w.uniqueProject,
+            weakTerms: w.scopeTokens.filter((t) =>
+              isWeakTitleDisambiguationToken(t)
+            ),
+            sharedIdentityTerms: sharedIdentifiers,
+            distinguishingIdentityTerms: winner.distinguishingInRun,
+            identityFamilyJobIds: competitors.map((c) => c.jobId),
+            competingJobIds: competitors
+              .map((c) => c.jobId)
+              .filter((id) => id !== w.peer.jobId),
+            evidenceType: contiguous
+              ? "distinguishing_title_phrase"
+              : "gap_tolerant_distinguishing_phrase",
+            evidenceField: w.gap!.field,
+            tokenDistance: w.gap!.intervening,
+            projectTokenUniqueness: "shared",
+            normalizationApplied: collectNormalizationApplied(
+              w.gap!.run,
+              subjectTokens,
+              bodyTokens
+            ),
+          }
+        );
+      }
+
+      if (withPhraseDistinguishing.length > 1) {
+        return titleGapAmbiguousResult(ctx, "COMPETING_TITLE_EVIDENCE", {
+          sharedIdentityTerms: sharedIdentifiers,
+          distinguishingIdentityTerms: withPhraseDistinguishing.flatMap(
+            (r) => r.distinguishingInRun
+          ),
+          competingJobIds: withPhraseDistinguishing.map(
+            (r) => r.score.peer.jobId
+          ),
+          identityFamilyJobIds: competitors.map((c) => c.jobId),
+          matchedTerms: withPhraseDistinguishing.flatMap(
+            (r) => r.score.gap!.run
+          ),
+        });
+      }
+
+      // Path B: subject established the shared family; search subject + body
+      // for candidate-specific distinguishing terms (body-only is allowed).
+      const fieldHits = competitors.map((peer) => {
+        const found = findDistinguishingEvidenceInFields({
+          peer,
+          competitors,
+          sharedIdentifiers,
+          subjectTokens,
+          bodyTokens,
+        });
+        return { peer, ...found };
+      });
+      const withFieldEvidence = fieldHits.filter((h) => h.terms.length > 0);
+
+      if (withFieldEvidence.length === 0) {
+        return titleGapAmbiguousResult(ctx, "INSUFFICIENT_DISAMBIGUATION", {
+          sharedIdentityTerms: sharedIdentifiers,
+          distinguishingIdentityTerms: [],
+          competingJobIds: competitors.map((c) => c.jobId),
+          identityFamilyJobIds: competitors.map((c) => c.jobId),
+          matchedTerms: sharedIdentifiers,
+          evidenceField: null,
+        });
+      }
+
+      if (withFieldEvidence.length > 1) {
+        return titleGapAmbiguousResult(ctx, "COMPETING_TITLE_EVIDENCE", {
+          sharedIdentityTerms: sharedIdentifiers,
+          distinguishingIdentityTerms: withFieldEvidence.flatMap((h) => h.terms),
+          competingJobIds: withFieldEvidence.map((h) => h.peer.jobId),
+          identityFamilyJobIds: competitors.map((c) => c.jobId),
+          matchedTerms: withFieldEvidence.flatMap((h) => h.terms),
+          evidenceField: "mixed",
+        });
+      }
+
+      const hit = withFieldEvidence[0]!;
+      const bodyOnly =
+        hit.evidenceField === "body" && hit.subjectTerms.length === 0;
+      return experimentalMatchResult(
+        ctx,
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+        hit.peer.jobId,
+        bodyOnly ? "UNIQUE_BODY_DISAMBIGUATION" : "DISTINGUISHING_TITLE_EVIDENCE",
+        {
+          matchedTerms: [...sharedIdentifiers, ...hit.terms],
+          sharedIdentityTerms: sharedIdentifiers,
+          distinguishingIdentityTerms: hit.terms,
+          identityFamilyJobIds: competitors.map((c) => c.jobId),
+          competingJobIds: competitors
+            .map((c) => c.jobId)
+            .filter((id) => id !== hit.peer.jobId),
+          evidenceType: bodyOnly
+            ? "unique_body_disambiguation"
+            : "distinguishing_title_term",
+          evidenceField: hit.evidenceField,
+          projectTokenUniqueness: "shared",
+          normalizationApplied: collectNormalizationApplied(
+            hit.terms,
+            subjectTokens,
+            bodyTokens
+          ),
+        }
+      );
+    }
+  }
+
   const contradiction = contradictoryProjectEvidenceResult(
     ctx,
     JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
   );
   if (contradiction) return contradiction;
 
-  const { scores, subjectTokens, bodyTokens } = ctx;
-  const phraseWinners = scores.filter((s) => {
-    if (!s.gap || s.gap.run.length < 2) return false;
-    return s.gap.run.some((t) => !isCommonConstructionIdentityToken(t));
-  });
-  if (phraseWinners.length !== 1) return null;
-  const w = phraseWinners[0]!;
-  const competitors = scores.filter(
+  // No shared-identifier competition among eligible peers — prior sole-winner path.
+  if (phraseCandidates.length !== 1) return null;
+  const w = phraseCandidates[0]!;
+  const fullRunCompetitors = scores.filter(
     (s) =>
       s.peer.jobId !== w.peer.jobId &&
       w.gap!.run.every((t) =>
         s.peer.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
       )
   );
-  if (competitors.length > 0) return null;
+  if (fullRunCompetitors.length > 0) return null;
 
   const contiguous = w.gap!.contiguous;
   const reason: JobNameIdentityReasonCode = contiguous

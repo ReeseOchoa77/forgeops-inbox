@@ -53,7 +53,7 @@ describe("independent V2.1 / V2.2 experiments", () => {
 
   it("stamps the independent-experiment revision", () => {
     expect(JOB_MATCH_IDENTITY_EXPERIMENT_REVISION).toBe(
-      "independent-v21-title-gap-v22-unique-token-r1"
+      "independent-v21-title-gap-body-disambiguation-r3"
     );
   });
 

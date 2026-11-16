@@ -2,11 +2,11 @@
 
 **Status:** Production default is `CONTEXT_AWARE_V2`. V2.1 remains experimental / eval-only and is **not** promoted.
 
-**Current revision:** `independent-v21-title-gap-v22-unique-token-r1`
+**Current revision:** `independent-v21-title-gap-body-disambiguation-r3`
 
 ## Current V2.1 definition
 
-`CONTEXT_AWARE_V2_1` = current V2 + **title-gap rule ONLY**.
+`CONTEXT_AWARE_V2_1` = current V2 + **title-gap rule ONLY** (shared-id subject/body disambiguation included).
 
 Inactive (legacy algorithms that reused this policy id):
 
@@ -22,6 +22,7 @@ Inactive (legacy algorithms that reused this policy id):
 | Weak candidates | Cleared | Cleared (same as V2) |
 | Contact AUTH-only | Abstain | Abstain (same as V2) |
 | Gap-tolerant ordered title matching | No | Yes |
+| Shared-id body distinguishing evidence | No | Yes (`UNIQUE_BODY_DISAMBIGUATION`) |
 | Unique single-token promotion | No | No |
 
 ## Historical eval caution

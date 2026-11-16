@@ -92,11 +92,12 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       advanceRank: 3,
       label: "CONTEXT_AWARE_V2_1",
       displayName: "V2.1 — Title Gap Rule",
-      description: "V2 plus independent title-gap experiment only.",
+      description:
+        "V2 plus independent title-gap experiment (shared-id subject/body disambiguation).",
       productionDefault: false,
       experimental: true,
       availableForEvaluation: true,
-      experimentSummary: `V2 + title-gap only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
+      experimentSummary: `V2 + title-gap shared-id subject/body disambiguation (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,

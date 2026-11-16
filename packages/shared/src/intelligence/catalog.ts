@@ -190,7 +190,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
           id: "marker-1",
           title: "Marker 1 — Project identity",
           summary:
-            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Production identityPolicy CONTEXT_AWARE_V2 (family disambiguation + contact safety). BASELINE/V1/V2.1/V2.2 remain available for evaluation; V2.1 = V2 + title-gap only; V2.2 = V2 + unique-token only (independent experiments, not production). experimentRevision distinguishes current semantics from older algorithms that reused the same policy ids.",
+            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Production identityPolicy CONTEXT_AWARE_V2 (family disambiguation + contact safety). BASELINE/V1/V2.1/V2.2 remain available for evaluation; V2.1 = V2 + title-gap with shared-identifier distinguishing evidence (subject/body; UNIQUE_BODY_DISAMBIGUATION when body supplies the unique term); V2.2 = V2 + unique-token only (independent experiments, not production). experimentRevision distinguishes current semantics from older algorithms that reused the same policy ids.",
           version: JOB_NAME_MARKER_VERSION,
         },
         {
