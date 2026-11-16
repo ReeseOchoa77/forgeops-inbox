@@ -14,12 +14,14 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
-  JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION,
+  JOB_MATCH_V2_4_PRIOR_DYNAMIC_WORD_IMPORTANCE_REVISION,
   JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION,
   JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
+  JOB_MATCH_V3_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
   type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
@@ -28,11 +30,12 @@ import {
 export {
   JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
-  JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION,
+  JOB_MATCH_V2_4_PRIOR_DYNAMIC_WORD_IMPORTANCE_REVISION,
   JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION,
   JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
+  JOB_MATCH_V3_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
@@ -41,6 +44,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
 };
 
 export type { JobMatchIdentityExperimentRevision };
@@ -146,11 +150,23 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       label: "CONTEXT_AWARE_V2_4",
       displayName: "V2.4 — Contextual Word Search",
       description:
-        "V2 plus full-body project identity, contextual word search, and Attachment Identity (optional AI).",
+        "V2 plus full-body project identity, contextual word search, Attachment Identity, and descriptor compound numerics (frozen).",
       productionDefault: false,
       experimental: true,
       availableForEvaluation: true,
-      experimentSummary: `V2 + contextual word search + dynamic word importance + family numeric (${JOB_MATCH_V2_4_IMPLEMENTATION_REVISION})`,
+      experimentSummary: `V2 + full-body + attachment + compound numeric (${JOB_MATCH_V2_4_IMPLEMENTATION_REVISION})`,
+    },
+    {
+      id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+      advanceRank: 7,
+      label: "CONTEXT_AWARE_V3",
+      displayName: "V3 — Dynamic Word Importance",
+      description:
+        "V2.4 baseline plus unique title-term identity and family-scoped numeric matching (Beltline #3).",
+      productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
+      experimentSummary: `V2.4 + dynamic word importance + family numeric (${JOB_MATCH_V3_IMPLEMENTATION_REVISION})`,
     },
   ] as const;
 

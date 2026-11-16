@@ -584,6 +584,13 @@ export type ContextualResolution = {
   wordImportanceDiagnostics?: WordImportanceDiagnostic[];
 };
 
+export type ContextualWordSearchFeatures = {
+  /** V3: unique title terms (Nova → Nova Classical). */
+  enableUniqueProjectTerms?: boolean;
+  /** V3: family word + bare number (Beltline #3). */
+  enableFamilyScopedNumeric?: boolean;
+};
+
 /**
  * Unique eligible project name/alias phrases in subject and/or current body.
  * Does not require a shared family identifier.
@@ -592,6 +599,7 @@ export function resolveFullBodyProjectIdentity(input: {
   peers: readonly IdentityPeerJob[];
   subjectTokens: readonly string[];
   bodyTokens: readonly string[];
+  features?: ContextualWordSearchFeatures;
 }): ContextualResolution {
   const empty: ContextualResolution = {
     status: null,
@@ -817,7 +825,8 @@ export function resolveFullBodyProjectIdentity(input: {
   };
 
   // Prefer full-phrase hits; only use unique terms when phrases did not resolve.
-  if (hits.length === 0) {
+  // Unique-term promotion is V3-only (frozen V2.4 keeps phrase/compound behavior).
+  if (hits.length === 0 && input.features?.enableUniqueProjectTerms) {
     scanUniqueTerms("subject", input.subjectTokens);
     scanUniqueTerms("body", input.bodyTokens);
   }
@@ -908,6 +917,7 @@ export function resolveContextualWordSearch(input: {
   bodyTokens: readonly string[];
   /** Optional validated AI decision for AI-worthy cases. */
   aiDecision?: ContextualWordSearchAiDecision | null;
+  features?: ContextualWordSearchFeatures;
 }): ContextualResolution {
   const empty: ContextualResolution = {
     status: null,
@@ -1043,7 +1053,7 @@ export function resolveContextualWordSearch(input: {
       })
     );
 
-    // Family-scoped numeric: "Beltline #3" → unique peer with component 3.
+    // Family-scoped numeric: "Beltline #3" → unique peer with component 3 (V3).
     const familyScopedHits: ContextualTermHit[] = [];
     const scanFamilyNumeric = (
       field: "subject" | "body",
@@ -1131,8 +1141,10 @@ export function resolveContextualWordSearch(input: {
         }
       }
     };
-    scanFamilyNumeric("subject", input.subjectTokens);
-    scanFamilyNumeric("body", input.bodyTokens);
+    if (input.features?.enableFamilyScopedNumeric) {
+      scanFamilyNumeric("subject", input.subjectTokens);
+      scanFamilyNumeric("body", input.bodyTokens);
+    }
 
     const mergedHits = [...allHits, ...familyScopedHits];
 

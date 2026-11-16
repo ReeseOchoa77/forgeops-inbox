@@ -16,6 +16,8 @@ export function policyLabelSuffix(policy: JobMatcherIdentityPolicy): string {
     return ' (normalized subject identity experiment)'
   if (policy === 'CONTEXT_AWARE_V2_4')
     return ' (contextual word search experiment)'
+  if (policy === 'CONTEXT_AWARE_V3')
+    return ' (dynamic word importance experiment)'
   return ''
 }
 

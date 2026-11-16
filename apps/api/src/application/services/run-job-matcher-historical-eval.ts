@@ -55,6 +55,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
   experimentRevisionForIdentityPolicy,
   jobMatchPolicyAdvanceRank,
   selectDisplayMetricsForEvaluation,
@@ -475,6 +476,7 @@ export async function runJobMatcherHistoricalEval(input: {
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
     | "CONTEXT_AWARE_V2_4"
+    | "CONTEXT_AWARE_V3"
     | "ALL_THREE";
   /** Optional client-supplied run id for progress polling. */
   evaluationRunId?: string;
@@ -545,9 +547,9 @@ export async function runJobMatcherHistoricalEval(input: {
   );
   const jobsById = new Map(snapshot.jobs.map((job) => [job.id, job]));
 
-  const needsAttachmentIdentity = selectedPolicies.includes(
-    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
-  );
+  const needsAttachmentIdentity =
+    selectedPolicies.includes(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) ||
+    selectedPolicies.includes(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3);
 
   const emailRecords = await loadHistoricalEvalEmailsByIds(input.prisma, {
     workspaceId: input.workspaceId,
@@ -612,7 +614,8 @@ export async function runJobMatcherHistoricalEval(input: {
           providerThreadId: email.providerThreadId,
           eligibilityMode: "evaluation",
           identityPolicy: policy,
-          ...(policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
+          ...(policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
+          policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
             ? {
                 attachmentsForMatch: attachments,
                 ...(email.hasAttachments && attachments.length === 0
@@ -1009,6 +1012,7 @@ function resolveSelectedEvalPolicies(input: {
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
     | "CONTEXT_AWARE_V2_4"
+    | "CONTEXT_AWARE_V3"
     | "ALL_THREE"
     | null;
 }): JobMatchIdentityPolicy[] {
@@ -1052,6 +1056,12 @@ function resolveSelectedEvalPolicies(input: {
     return normalizeEvalIdentityPolicies([
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+    ]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V3") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     ]);
   }
   if (compareWith === "ALL_THREE") {

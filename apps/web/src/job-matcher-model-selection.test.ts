@@ -37,6 +37,7 @@ describe('Job Matcher model selection', () => {
       'CONTEXT_AWARE_V2_2',
       'CONTEXT_AWARE_V2_3',
       'CONTEXT_AWARE_V2_4',
+      'CONTEXT_AWARE_V3',
     ])
   })
 })

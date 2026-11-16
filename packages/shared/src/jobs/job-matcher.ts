@@ -75,9 +75,10 @@ export type JobMatchInput = {
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
-    | "CONTEXT_AWARE_V2_4";
+    | "CONTEXT_AWARE_V2_4"
+    | "CONTEXT_AWARE_V3";
   /**
-   * Preloaded attachment payloads for V2.4 Attachment Identity.
+   * Preloaded attachment payloads for V2.4 / V3 Attachment Identity.
    * Production V2 ignores this field.
    */
   attachmentsForMatch?: Array<{
@@ -174,7 +175,8 @@ export type JobMatchResult = {
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
-    | "CONTEXT_AWARE_V2_4";
+    | "CONTEXT_AWARE_V2_4"
+    | "CONTEXT_AWARE_V3";
   /** Structured Marker 1 identity diagnostics when available. */
   identityDiagnostics?: {
     marker: "NAME";
@@ -185,7 +187,8 @@ export type JobMatchResult = {
       | "CONTEXT_AWARE_V2_1"
       | "CONTEXT_AWARE_V2_2"
       | "CONTEXT_AWARE_V2_3"
-      | "CONTEXT_AWARE_V2_4";
+      | "CONTEXT_AWARE_V2_4"
+      | "CONTEXT_AWARE_V3";
     identityStrength: string;
     matchedPhrase: string | null;
     matchedTerms: string[];

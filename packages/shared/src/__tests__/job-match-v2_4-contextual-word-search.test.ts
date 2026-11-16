@@ -77,13 +77,13 @@ describe("CONTEXT_AWARE_V2_4 contextual word search", () => {
     expect(entry?.productionDefault).toBe(false);
   });
 
-  it("stamps V2_4_DYNAMIC_WORD_IMPORTANCE_R1 revision (not legacy)", () => {
+  it("stamps V2_4_COMPOUND_NUMERIC_IDENTITY_R1 revision (not legacy)", () => {
     expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
-      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
+      "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
     );
     expect(JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION).toBe("V2_4_LEGACY");
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_4")).toBe(
-      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
+      "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
     );
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_3")).toBe(
       "independent-v23-normalized-subject-identity-r1"
@@ -445,7 +445,7 @@ describe("CONTEXT_AWARE_V2_4 contextual word search", () => {
     );
   });
 
-  it("25. Multi-model registry includes V2.4 alongside V2–V2.3", () => {
+  it("25. Multi-model registry includes V2.4 and V3 alongside V2–V2.3", () => {
     const ids = listEvaluationSelectablePolicies().map((e) => e.id);
     expect(ids).toEqual(
       expect.arrayContaining([
@@ -454,8 +454,36 @@ describe("CONTEXT_AWARE_V2_4 contextual word search", () => {
         "CONTEXT_AWARE_V2_2",
         "CONTEXT_AWARE_V2_3",
         "CONTEXT_AWARE_V2_4",
+        "CONTEXT_AWARE_V3",
       ])
     );
+    const v3 = listEvaluationSelectablePolicies().find(
+      (e) => e.id === "CONTEXT_AWARE_V3"
+    );
+    expect(v3?.displayName).toBe("V3 — Dynamic Word Importance");
+  });
+
+  it("frozen V2.4 does not promote unique Nova or Beltline #3", () => {
+    const nova = job("job-nova", "Nova Classical");
+    const other = job("job-other", "Riverside Parking", {
+      customerId: "cust-b",
+    });
+    const rNova = runJobNameMarker({
+      subject: "Nova shop drawing revisions",
+      cleanBody: "",
+      jobs: [nova, other],
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+    });
+    expect(rNova.selectedJobId).not.toBe("job-nova");
+
+    const rBelt = runJobNameMarker({
+      subject: "Beltline #3 shops",
+      cleanBody: "",
+      jobs: [beltRamp, beltB1, beltB2],
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+    });
+    // beltB1/B2 only in this pool — #3 with no matching peer stays ambiguous
+    expect(rBelt.selectedJobId).toBeNull();
   });
 
   it("26. Tenant isolation — jobs from other workspaces are not in the pool", () => {

@@ -228,6 +228,10 @@ function matchPeersInText(input: {
   category: AttachmentIdentityEvidenceCategory;
   pageNumber: number | null;
   strength: "STRONG" | "WEAK";
+  features?: {
+    enableUniqueProjectTerms?: boolean;
+    enableFamilyScopedNumeric?: boolean;
+  };
 }): AttachmentIdentityHit[] {
   const tokens = canonicalizeJobNameTokens(input.text);
   if (tokens.length === 0) return [];
@@ -314,80 +318,85 @@ function matchPeersInText(input: {
     }
   }
 
-  // Family-scoped numeric in attachment text: "Beltline #3".
   const alreadyHit = new Set(hits.map((h) => h.jobId));
   const familyIndex = buildContextualFamilyIndex(input.peers);
-  for (const family of familyIndex.families) {
-    const scoped = extractFamilyScopedNumericIdentities(
-      tokens,
-      [family.sharedId],
-      contextualTokensEquivalent
+
+  // Family-scoped numeric in attachment text: "Beltline #3" (V3).
+  if (input.features?.enableFamilyScopedNumeric) {
+    for (const family of familyIndex.families) {
+      const scoped = extractFamilyScopedNumericIdentities(
+        tokens,
+        [family.sharedId],
+        contextualTokensEquivalent
+      );
+      for (const fn of scoped) {
+        const resolved = resolveFamilyScopedNumericPeer({
+          value: fn.value,
+          familyPeers: family.peers,
+        });
+        if (!resolved) continue;
+        if (alreadyHit.has(resolved.peer.jobId)) continue;
+        if (isTokenNegatedInContextualHay(tokens, fn.startIndex)) continue;
+        if (
+          isTokenIncidentalInContextualHay(tokens, fn.startIndex) ||
+          isAttachmentExampleReference(tokens, fn.startIndex)
+        ) {
+          continue;
+        }
+        hits.push({
+          jobId: resolved.peer.jobId,
+          attachmentId: input.attachmentId,
+          filename: input.filename,
+          category: input.category,
+          matchedPhrase: resolved.compound.key,
+          supportingExcerpt: excerptAround(input.text, fn.rawTokens.join(" ")),
+          pageNumber: input.pageNumber,
+          strength: input.strength,
+        });
+        alreadyHit.add(resolved.peer.jobId);
+      }
+    }
+  }
+
+  // Unique project-title terms (e.g. Nova → Nova Classical) (V3).
+  if (input.features?.enableUniqueProjectTerms) {
+    const sharedKeys = new Set(
+      familyIndex.sharedIdentifiers.map((s) => canonicalizeContextualToken(s))
     );
-    for (const fn of scoped) {
-      const resolved = resolveFamilyScopedNumericPeer({
-        value: fn.value,
-        familyPeers: family.peers,
-      });
-      if (!resolved) continue;
-      if (alreadyHit.has(resolved.peer.jobId)) continue;
-      if (isTokenNegatedInContextualHay(tokens, fn.startIndex)) continue;
+    for (let i = 0; i < tokens.length; i += 1) {
+      const tok = tokens[i]!;
+      if (isNumericJobNameToken(tok)) continue;
+      if (resolveCompoundDescriptor(tok)) continue;
+      if (isContextualWeakDistinguishingToken(tok)) continue;
+      const key = canonicalizeContextualToken(tok);
+      if (sharedKeys.has(key)) continue;
+      const holders = input.peers.filter((p) =>
+        extractContextualIdentityTerms(p).some(
+          (t) =>
+            !isCompoundNumericKey(t) && contextualTokensEquivalent(t, tok)
+        )
+      );
+      if (holders.length !== 1) continue;
+      if (alreadyHit.has(holders[0]!.jobId)) continue;
+      if (isTokenNegatedInContextualHay(tokens, i)) continue;
       if (
-        isTokenIncidentalInContextualHay(tokens, fn.startIndex) ||
-        isAttachmentExampleReference(tokens, fn.startIndex)
+        isTokenIncidentalInContextualHay(tokens, i) ||
+        isAttachmentExampleReference(tokens, i)
       ) {
         continue;
       }
       hits.push({
-        jobId: resolved.peer.jobId,
+        jobId: holders[0]!.jobId,
         attachmentId: input.attachmentId,
         filename: input.filename,
         category: input.category,
-        matchedPhrase: resolved.compound.key,
-        supportingExcerpt: excerptAround(input.text, fn.rawTokens.join(" ")),
+        matchedPhrase: key,
+        supportingExcerpt: excerptAround(input.text, tok),
         pageNumber: input.pageNumber,
         strength: input.strength,
       });
-      alreadyHit.add(resolved.peer.jobId);
+      alreadyHit.add(holders[0]!.jobId);
     }
-  }
-
-  // Unique project-title terms (e.g. Nova → Nova Classical).
-  const sharedKeys = new Set(
-    familyIndex.sharedIdentifiers.map((s) => canonicalizeContextualToken(s))
-  );
-  for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i]!;
-    if (isNumericJobNameToken(tok)) continue;
-    if (resolveCompoundDescriptor(tok)) continue;
-    if (isContextualWeakDistinguishingToken(tok)) continue;
-    const key = canonicalizeContextualToken(tok);
-    if (sharedKeys.has(key)) continue;
-    const holders = input.peers.filter((p) =>
-      extractContextualIdentityTerms(p).some(
-        (t) =>
-          !isCompoundNumericKey(t) && contextualTokensEquivalent(t, tok)
-      )
-    );
-    if (holders.length !== 1) continue;
-    if (alreadyHit.has(holders[0]!.jobId)) continue;
-    if (isTokenNegatedInContextualHay(tokens, i)) continue;
-    if (
-      isTokenIncidentalInContextualHay(tokens, i) ||
-      isAttachmentExampleReference(tokens, i)
-    ) {
-      continue;
-    }
-    hits.push({
-      jobId: holders[0]!.jobId,
-      attachmentId: input.attachmentId,
-      filename: input.filename,
-      category: input.category,
-      matchedPhrase: key,
-      supportingExcerpt: excerptAround(input.text, tok),
-      pageNumber: input.pageNumber,
-      strength: input.strength,
-    });
-    alreadyHit.add(holders[0]!.jobId);
   }
   return hits;
 }
@@ -396,6 +405,10 @@ function matchFilename(input: {
   filename: string;
   peers: readonly IdentityPeerJob[];
   attachmentId: string;
+  features?: {
+    enableUniqueProjectTerms?: boolean;
+    enableFamilyScopedNumeric?: boolean;
+  };
 }): AttachmentIdentityHit[] {
   const base = input.filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
   return matchPeersInText({
@@ -406,6 +419,7 @@ function matchFilename(input: {
     category: "ATTACHMENT_FILENAME_PROJECT",
     pageNumber: null,
     strength: "WEAK",
+    ...(input.features ? { features: input.features } : {}),
   });
 }
 
@@ -433,6 +447,11 @@ export function runJobAttachmentIdentityMarker(input: {
   peers: readonly IdentityPeerJob[];
   /** When true, attachments exist on the email but were not loaded. */
   attachmentsPresentButNotLoaded?: boolean;
+  /** V3 features; frozen V2.4 omits unique-term / family-scoped numeric. */
+  features?: {
+    enableUniqueProjectTerms?: boolean;
+    enableFamilyScopedNumeric?: boolean;
+  };
 }): AttachmentIdentityMarkerResult {
   const emptyDiag = (
     reason: AttachmentIdentityDiagnostics["reason"],
@@ -513,12 +532,15 @@ export function runJobAttachmentIdentityMarker(input: {
         unavailable += 1;
     }
 
+    const featureOpts = input.features ? { features: input.features } : {};
+
     // Filename always inspected (cheap).
     hits.push(
       ...matchFilename({
         filename: att.filename,
         peers: input.peers,
         attachmentId: att.attachmentId,
+        ...featureOpts,
       })
     );
 
@@ -532,6 +554,7 @@ export function runJobAttachmentIdentityMarker(input: {
           category: "ATTACHMENT_METADATA_PROJECT",
           pageNumber: null,
           strength: "STRONG",
+          ...featureOpts,
         })
       );
     }
@@ -549,6 +572,7 @@ export function runJobAttachmentIdentityMarker(input: {
           category: "ATTACHMENT_TITLE_BLOCK_PROJECT",
           pageNumber: null,
           strength: "STRONG",
+          ...featureOpts,
         })
       );
     }
@@ -562,6 +586,7 @@ export function runJobAttachmentIdentityMarker(input: {
           category: "ATTACHMENT_DOCUMENT_HEADER_PROJECT",
           pageNumber: null,
           strength: "STRONG",
+          ...featureOpts,
         })
       );
     }
@@ -581,6 +606,7 @@ export function runJobAttachmentIdentityMarker(input: {
             category: "ATTACHMENT_TITLE_BLOCK_PROJECT",
             pageNumber: page.pageNumber,
             strength: "STRONG",
+            ...featureOpts,
           })
         );
       }
@@ -596,6 +622,7 @@ export function runJobAttachmentIdentityMarker(input: {
         category: "ATTACHMENT_BODY_PROJECT_REFERENCE",
         pageNumber: null,
         strength: "WEAK",
+        ...featureOpts,
       })
     );
   }

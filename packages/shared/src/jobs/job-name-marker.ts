@@ -19,7 +19,7 @@ import {
   applyJobNameIdentityPolicy,
   buildWorkspaceIdentityTokenStats,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
-  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  isContextualWordSearchPolicy,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
   type WorkspaceIdentityTokenStats,
@@ -43,14 +43,17 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
   JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
-  JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION,
+  JOB_MATCH_V2_4_PRIOR_DYNAMIC_WORD_IMPORTANCE_REVISION,
   JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION,
   JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
+  JOB_MATCH_V3_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
+  isContextualWordSearchPolicy,
 } from "./job-name-identity-policy.js";
 
 /**
@@ -697,12 +700,9 @@ export function runJobNameMarker(input: {
   const subjectTokens = canonicalizeJobNameTokens(subject);
   // Scoring uses full cleaned body; V2.4 identity recovery drops signatures.
   const bodyForScoring = canonicalizeJobNameTokens(body);
-  const bodyTokens =
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
-      ? canonicalizeJobNameTokens(
-          stripEmailSignatureForContextualSearch(body)
-        )
-      : bodyForScoring;
+  const bodyTokens = isContextualWordSearchPolicy(identityPolicy)
+    ? canonicalizeJobNameTokens(stripEmailSignatureForContextualSearch(body))
+    : bodyForScoring;
 
   const hits = prepared.map((job) =>
     scoreJob({

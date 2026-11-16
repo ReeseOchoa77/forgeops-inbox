@@ -1,5 +1,5 @@
 /**
- * CONTEXT_AWARE_V2_4 — dynamic word importance + family-scoped numeric.
+ * CONTEXT_AWARE_V3 — dynamic word importance + family-scoped numeric.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -7,9 +7,9 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
-  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+  JOB_MATCH_V3_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
-  JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION,
   JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION,
   JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
@@ -80,12 +80,12 @@ const satSteel = job("job-sat-steel", "SAT - Structural Steel", {
 });
 const satPool = [satStairs, satConc, satSteel];
 
-describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
-  it("stamps V2_4_DYNAMIC_WORD_IMPORTANCE_R1 and preserves prior revisions", () => {
-    expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
-      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
+describe("CONTEXT_AWARE_V3 dynamic word importance + family numeric", () => {
+  it("stamps V3_DYNAMIC_WORD_IMPORTANCE_R1 and preserves prior revisions", () => {
+    expect(JOB_MATCH_V3_IMPLEMENTATION_REVISION).toBe(
+      "V3_DYNAMIC_WORD_IMPORTANCE_R1"
     );
-    expect(JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION).toBe(
+    expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
       "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
     );
     expect(JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION).toBe(
@@ -95,8 +95,8 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       "V2_4_CONTEXTUAL_WORD_SEARCH"
     );
     expect(JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION).toBe("V2_4_LEGACY");
-    expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_4")).toBe(
-      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
+    expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V3")).toBe(
+      "V3_DYNAMIC_WORD_IMPORTANCE_R1"
     );
     expect(getProductionJobMatchIdentityPolicy()).toBe(
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
@@ -108,7 +108,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Nova shop drawing revisions",
       cleanBody: "",
       jobs: [nova, other],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-nova");
     expect(r.identityDiagnostics.reason).toBe("SINGLE_WORD_PROJECT_IDENTITY");
@@ -119,7 +119,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Hourly summary",
       cleanBody: "These drawings are for the Nova project.",
       jobs: [nova, other],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-nova");
   });
@@ -130,7 +130,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       cleanBody:
         "Nova was mentioned as an example from another project. Please review Riverside Parking shops.",
       jobs: [nova, other],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).not.toBe("job-nova");
   });
@@ -145,7 +145,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
         subject,
         cleanBody: "",
         jobs: beltPool,
-        identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+        identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
       });
       expect(r.selectedJobId).toBe(id);
     }
@@ -160,7 +160,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
         subject,
         cleanBody: "",
         jobs: beltPool,
-        identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+        identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
       });
       expect(r.selectedJobId).toBe("job-belt-b3");
     }
@@ -171,7 +171,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Beltline 3 shops",
       cleanBody: "",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-belt-b3");
   });
@@ -181,7 +181,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Beltline project update",
       cleanBody: "",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBeNull();
     expect(r.status).toBe("AMBIGUOUS");
@@ -192,7 +192,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Bldg shop drawings",
       cleanBody: "",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBeNull();
   });
@@ -202,7 +202,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Beltline project update",
       cleanBody: "We attached 3 drawings.",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r1.selectedJobId).not.toBe("job-belt-b3");
 
@@ -210,7 +210,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Beltline status",
       cleanBody: "Beltline has 3 open RFIs.",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r2.selectedJobId).not.toBe("job-belt-b3");
   });
@@ -220,7 +220,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Beltline #2 shops",
       cleanBody: "",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-belt-b2");
     expect(r.selectedJobId).not.toBe("job-belt-b1");
@@ -231,7 +231,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "SAT shop drawing revisions",
       cleanBody: "",
       jobs: satPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.status).toBe("AMBIGUOUS");
     expect(r.selectedJobId).toBeNull();
@@ -242,7 +242,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "SAT concessions update",
       cleanBody: "",
       jobs: satPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-sat-conc");
   });
@@ -252,7 +252,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Structural steel shop drawings",
       cleanBody: "",
       jobs: satPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBeNull();
   });
@@ -262,7 +262,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Hourly summary: 1 item requiring your attention",
       cleanBody: "Frana Companies, Inc • Beltline – Bldg #2",
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-belt-b2");
   });
@@ -275,7 +275,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
         "Please review the package.",
       ].join("\n"),
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-belt-b1");
   });
@@ -291,6 +291,10 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
         },
       ],
       peers: beltPool.map(peerFromName),
+      features: {
+        enableUniqueProjectTerms: true,
+        enableFamilyScopedNumeric: true,
+      },
     });
     expect(marker.selectedJobId).toBe("job-belt-b2");
   });
@@ -305,7 +309,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
         "> Regarding Beltline #1 from last month",
       ].join("\n"),
       jobs: beltPool,
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).toBe("job-belt-b2");
   });
@@ -318,7 +322,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Nova update",
       cleanBody: "",
       jobs: [nova, removed],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).not.toBe("job-nova-removed");
   });
@@ -331,7 +335,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Nova update",
       cleanBody: "",
       jobs: [nova, bidding],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).not.toBe("job-nova-bid");
   });
@@ -344,7 +348,7 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       subject: "Regarding 77441",
       cleanBody: "Please advise.",
       jobs: [withNum, other],
-      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      identityPolicy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
     });
     expect(r.selectedJobId).not.toBe("job-nova-num");
   });
@@ -360,20 +364,20 @@ describe("CONTEXT_AWARE_V2_4 dynamic word importance + family numeric", () => {
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
     ] as const) {
       expect(experimentRevisionForIdentityPolicy(p)).not.toBe(
-        JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
+        JOB_MATCH_V3_IMPLEMENTATION_REVISION
       );
     }
   });
 
   it("27. Historical V2.4 revision labels remain accessible", () => {
-    expect(JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION).not.toBe(
-      JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
+    expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).not.toBe(
+      JOB_MATCH_V3_IMPLEMENTATION_REVISION
     );
     expect(JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION).not.toBe(
-      JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
+      JOB_MATCH_V3_IMPLEMENTATION_REVISION
     );
     expect(JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION).not.toBe(
-      JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
+      JOB_MATCH_V3_IMPLEMENTATION_REVISION
     );
   });
 });
