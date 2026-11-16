@@ -49,6 +49,11 @@
       "types": "./src/jobs/job-match-multi-policy-compare.ts",
       "import": "./src/jobs/job-match-multi-policy-compare.ts",
       "default": "./src/jobs/job-match-multi-policy-compare.ts"
+    },
+    "./jobs/job-name-identity-policy": {
+      "types": "./src/jobs/job-name-identity-policy.ts",
+      "import": "./src/jobs/job-name-identity-policy.ts",
+      "default": "./src/jobs/job-name-identity-policy.ts"
     }
   },
   "scripts": {

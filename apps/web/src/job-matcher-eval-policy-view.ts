@@ -1,6 +1,7 @@
 /**
  * Helpers for switching among per-policy evaluation results without rematching.
  */
+import { experimentRevisionForIdentityPolicy } from '@forgeops/shared/jobs/job-name-identity-policy'
 import type {
   JobMatcherEvalPolicyResultBundle,
   JobMatcherEvalResult,
@@ -13,6 +14,8 @@ export function policyLabelSuffix(policy: JobMatcherIdentityPolicy): string {
   if (policy === 'CONTEXT_AWARE_V2_2') return ' (unique-token experiment)'
   if (policy === 'CONTEXT_AWARE_V2_3')
     return ' (normalized subject identity experiment)'
+  if (policy === 'CONTEXT_AWARE_V2_4')
+    return ' (contextual word search experiment)'
   return ''
 }
 
@@ -39,16 +42,14 @@ export function shouldShowResultModelTabs(
 /** True when a scored policy bundle uses the current independent experiment revision. */
 export function isCurrentExperimentRevision(
   bundle: Pick<JobMatcherEvalPolicyResultBundle, 'identityPolicy' | 'experimentRevision'>,
-  currentRevision: string
+  currentRevision?: string
 ): boolean {
-  if (
-    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_1' &&
-    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_2' &&
-    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_3'
-  ) {
-    return true
-  }
-  return bundle.experimentRevision === currentRevision
+  const expected =
+    experimentRevisionForIdentityPolicy(bundle.identityPolicy) ??
+    currentRevision ??
+    null
+  if (expected == null) return true
+  return bundle.experimentRevision === expected
 }
 
 /** Policies available in this completed run (from policyResults, else legacy single). */

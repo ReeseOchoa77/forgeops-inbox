@@ -54,6 +54,8 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  experimentRevisionForIdentityPolicy,
   jobMatchPolicyAdvanceRank,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
@@ -471,6 +473,7 @@ export async function runJobMatcherHistoricalEval(input: {
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
+    | "CONTEXT_AWARE_V2_4"
     | "ALL_THREE";
   /** Optional client-supplied run id for progress polling. */
   evaluationRunId?: string;
@@ -894,15 +897,9 @@ export async function runJobMatcherHistoricalEval(input: {
       if (!policyIntegrity.ok) {
         throw new Error(policyIntegrity.message);
       }
-      const isExperiment =
-        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
-        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
-        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
       return {
         identityPolicy: policy,
-        experimentRevision: isExperiment
-          ? JOB_MATCH_IDENTITY_EXPERIMENT_REVISION
-          : null,
+        experimentRevision: experimentRevisionForIdentityPolicy(policy),
         metrics: policyMetrics,
         diagnostics: policyDiagnostics,
         jobBreakdown: buildJobMatcherEvalJobBreakdown(
@@ -926,7 +923,9 @@ export async function runJobMatcherHistoricalEval(input: {
     autoAssignEnabled: isJobMatcherAutoAssignEnabled(),
     evaluationRunId,
     identityPolicy: primaryPolicy,
-    experimentRevision: JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
+    experimentRevision:
+      experimentRevisionForIdentityPolicy(primaryPolicy) ??
+      JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
     dataset: {
       spec,
       summaryLabel: summarizeDatasetSpec(spec),
@@ -988,6 +987,7 @@ function resolveSelectedEvalPolicies(input: {
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
+    | "CONTEXT_AWARE_V2_4"
     | "ALL_THREE"
     | null;
 }): JobMatchIdentityPolicy[] {
@@ -1025,6 +1025,12 @@ function resolveSelectedEvalPolicies(input: {
     return normalizeEvalIdentityPolicies([
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+    ]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V2_4") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
     ]);
   }
   if (compareWith === "ALL_THREE") {

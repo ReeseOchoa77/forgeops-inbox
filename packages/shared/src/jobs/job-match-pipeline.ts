@@ -16,6 +16,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   type JobMatchEligibilityMode,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
@@ -407,7 +408,8 @@ export function runJobMatchPipeline(input: {
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 ||
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4;
 
   // V2 / V2.1 conflict veto: strong name family evidence vs disjoint authoritative thread.
   if (

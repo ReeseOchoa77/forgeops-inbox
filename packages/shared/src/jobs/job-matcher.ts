@@ -66,7 +66,8 @@ export type JobMatchInput = {
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
-    | "CONTEXT_AWARE_V2_3";
+    | "CONTEXT_AWARE_V2_3"
+  | "CONTEXT_AWARE_V2_4";
 };
 
 export type JobRecordForMatch = {
@@ -142,7 +143,8 @@ export type JobMatchResult = {
     | "CONTEXT_AWARE_V2"
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
-    | "CONTEXT_AWARE_V2_3";
+    | "CONTEXT_AWARE_V2_3"
+    | "CONTEXT_AWARE_V2_4";
   /** Structured Marker 1 identity diagnostics when available. */
   identityDiagnostics?: {
     marker: "NAME";
@@ -152,7 +154,8 @@ export type JobMatchResult = {
       | "CONTEXT_AWARE_V2"
       | "CONTEXT_AWARE_V2_1"
       | "CONTEXT_AWARE_V2_2"
-      | "CONTEXT_AWARE_V2_3";
+      | "CONTEXT_AWARE_V2_3"
+      | "CONTEXT_AWARE_V2_4";
     identityStrength: string;
     matchedPhrase: string | null;
     matchedTerms: string[];

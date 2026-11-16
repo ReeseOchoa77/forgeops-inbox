@@ -3041,6 +3041,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_1'
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
+        | 'CONTEXT_AWARE_V2_4'
       /** Preferred: one or more policies to evaluate / compare. */
       identityPolicies?: Array<
         | 'BASELINE'
@@ -3049,6 +3050,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_1'
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
+        | 'CONTEXT_AWARE_V2_4'
       >
       compareWithIdentityPolicy?:
         | 'CONTEXT_AWARE_V1'
@@ -3056,6 +3058,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_1'
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
+        | 'CONTEXT_AWARE_V2_4'
         | 'ALL_THREE'
       evaluationRunId?: string
     }
@@ -5389,6 +5392,7 @@ export type JobMatcherIdentityPolicy =
   | 'CONTEXT_AWARE_V2_1'
   | 'CONTEXT_AWARE_V2_2'
   | 'CONTEXT_AWARE_V2_3'
+  | 'CONTEXT_AWARE_V2_4'
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'

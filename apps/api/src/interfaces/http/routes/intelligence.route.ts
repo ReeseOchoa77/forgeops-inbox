@@ -218,6 +218,7 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_1",
               "CONTEXT_AWARE_V2_2",
               "CONTEXT_AWARE_V2_3",
+              "CONTEXT_AWARE_V2_4",
             ])
             .optional(),
           /**
@@ -233,6 +234,7 @@ export const registerIntelligenceRoutes = async (
                 "CONTEXT_AWARE_V2_1",
                 "CONTEXT_AWARE_V2_2",
                 "CONTEXT_AWARE_V2_3",
+                "CONTEXT_AWARE_V2_4",
               ])
             )
             .min(1)
@@ -249,6 +251,7 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_1",
               "CONTEXT_AWARE_V2_2",
               "CONTEXT_AWARE_V2_3",
+              "CONTEXT_AWARE_V2_4",
               "ALL_THREE",
             ])
             .optional(),

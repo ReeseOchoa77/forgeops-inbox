@@ -1,5 +1,5 @@
 /**
- * Marker 1 identity policy — BASELINE / V1 / V2 / V2.1 / V2.2 / V2.3 (experimental).
+ * Marker 1 identity policy — BASELINE / V1 / V2 / V2.1–V2.4 (experimental).
  *
  * BASELINE: unique OVERLAP may MATCH (historical behavior).
  * CONTEXT_AWARE_V1: unique weak identity must abstain (AMBIGUOUS), not MATCH.
@@ -14,8 +14,11 @@
  * CONTEXT_AWARE_V2_3: independent experiment = current V2 + normalized subject
  *   identity ONLY (abbreviations, controlled compounds, subject>body precedence).
  *   Does NOT inherit V2.1 title-gap or V2.2 unique-token promotion.
+ * CONTEXT_AWARE_V2_4: independent experiment = current V2 + contextual word
+ *   search ONLY (shared-id + distinguishing terms across subject/body, optional
+ *   AI). Does NOT inherit V2.1/V2.2/V2.3 recoveries.
  *
- * V2.1 / V2.2 / V2.3 each branch from V2 independently (not cumulative).
+ * V2.1 / V2.2 / V2.3 / V2.4 each branch from V2 independently (not cumulative).
  * Revision stamp: JOB_MATCH_IDENTITY_EXPERIMENT_REVISION — bump when experiment
  * semantics change so historical eval runs are not confused with older algorithms
  * that reused the same policy id strings.
@@ -26,6 +29,10 @@ import {
   isJobNameContentToken,
   phraseContained,
 } from "./job-name-normalize.js";
+import {
+  resolveContextualWordSearch,
+  type ContextualWordSearchAiDecision,
+} from "./job-contextual-word-search.js";
 import {
   buildProjectIdentityVocabulary,
   distinctiveProjectIdentityTermsInHay,
@@ -53,6 +60,8 @@ export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 =
   "CONTEXT_AWARE_V2_2" as const;
 export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 =
   "CONTEXT_AWARE_V2_3" as const;
+export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 =
+  "CONTEXT_AWARE_V2_4" as const;
 
 export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_BASELINE
@@ -60,21 +69,53 @@ export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
-  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4;
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
 
 /**
- * Implementation revision for experimental V2.1 / V2.2 / V2.3 semantics.
+ * Implementation revision for experimental V2.1–V2.3 semantics.
  * Older eval payloads without this field used prior algorithms under the same
  * CONTEXT_AWARE_V2_* labels — treat those as legacy.
+ * V2.4 uses JOB_MATCH_V2_4_IMPLEMENTATION_REVISION separately so V2.1–V2.3
+ * historical stamps remain valid when only V2.4 changes.
  */
 export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
   "independent-v23-normalized-subject-identity-r1" as const;
 
+/**
+ * Current V2.4 algorithm revision. Historical V2.4 runs (if any) under a prior
+ * implementation should be stamped V2_4_LEGACY — never reinterpret those rows.
+ */
+export const JOB_MATCH_V2_4_IMPLEMENTATION_REVISION =
+  "V2_4_CONTEXTUAL_WORD_SEARCH" as const;
+
+/** Label for any prior V2.4 implementation stored under the same policy id. */
+export const JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION =
+  "V2_4_LEGACY" as const;
+
 export type JobMatchIdentityExperimentRevision =
-  typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION;
+  | typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION
+  | typeof JOB_MATCH_V2_4_IMPLEMENTATION_REVISION;
+
+/** Experiment revision stamped on eval bundles for a given policy. */
+export function experimentRevisionForIdentityPolicy(
+  policy: JobMatchIdentityPolicy
+): string | null {
+  if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+    return JOB_MATCH_V2_4_IMPLEMENTATION_REVISION;
+  }
+  if (
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
+  ) {
+    return JOB_MATCH_IDENTITY_EXPERIMENT_REVISION;
+  }
+  return null;
+}
 
 export type JobNameIdentityStrength =
   | "STRONG"
@@ -152,7 +193,23 @@ export type JobNameIdentityReasonCode =
   /** V2.3: shared family without enough distinguishing subject evidence. */
   | "INSUFFICIENT_DISTINGUISHING_EVIDENCE"
   /** V2.3: subject carries distinctive terms that uniquely identify one Job. */
-  | "DISTINCTIVE_SUBJECT_TERMS";
+  | "DISTINCTIVE_SUBJECT_TERMS"
+  /** V2.4: contextual word search uniquely resolved a shared-family Job. */
+  | "CONTEXTUAL_WORD_SEARCH_MATCH"
+  /** V2.4: contextual word search found competing distinguishing references. */
+  | "CONTEXTUAL_WORD_SEARCH_AMBIGUOUS"
+  /** V2.4: contextual word search found conflicting project references. */
+  | "CONTEXTUAL_WORD_SEARCH_CONFLICT"
+  /** V2.4: validated AI contextual disambiguation selected a candidate. */
+  | "AI_CONTEXTUAL_DISAMBIGUATION"
+  /** V2.4: AI abstained or validation rejected the AI decision. */
+  | "AI_CONTEXTUAL_ABSTENTION"
+  /** V2.4: distinguishing term was negated in context. */
+  | "NEGATED_PROJECT_REFERENCE"
+  /** V2.4: body mention treated as incidental vs stronger subject/current work. */
+  | "INCIDENTAL_PROJECT_REFERENCE"
+  /** V2.4: explicit correction language triggered conservative abstention. */
+  | "EXPLICIT_PROJECT_CORRECTION";
 
 export type JobNameIdentityDiagnostics = {
   marker: "NAME";
@@ -182,6 +239,10 @@ export type JobNameIdentityDiagnostics = {
   evidenceField?: "subject" | "body" | "mixed" | null;
   /** V2.2: uniqueness of the primary project identifier vs the workspace. */
   projectTokenUniqueness?: "unique" | "shared" | "none" | null;
+  /** V2.4: whether contextual AI was invoked for this decision. */
+  contextualAiInvoked?: boolean;
+  /** V2.4: whether contextual layer changed the V2 baseline decision. */
+  contextualChangedBaseline?: boolean;
 };
 
 /**
@@ -515,6 +576,11 @@ export type ApplyIdentityPolicyInput = {
   peerJobs?: IdentityPeerJob[];
   subjectTokens?: string[];
   bodyTokens?: string[];
+  /**
+   * Optional pre-validated AI decision for V2.4 contextual word search.
+   * Produced outside @forgeops/shared (API / AI package); never invents Jobs.
+   */
+  contextualAiDecision?: ContextualWordSearchAiDecision | null;
 };
 
 export type ApplyIdentityPolicyResult = {
@@ -779,6 +845,15 @@ export function applyJobNameIdentityPolicy(
       });
       if (recovered) return recovered;
     }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+      const recovered = tryContextualWordSearchRecovery({
+        input,
+        assessed: null,
+        selectedJobIds,
+        priorReason: "NO_IDENTITY",
+      });
+      if (recovered) return recovered;
+    }
     return noMatchResult;
   }
 
@@ -824,6 +899,16 @@ export function applyJobNameIdentityPolicy(
     }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3) {
       const recovered = tryNormalizedSubjectIdentityRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: ambiguousResult.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(ambiguousResult, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+      const recovered = tryContextualWordSearchRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -895,13 +980,14 @@ export function applyJobNameIdentityPolicy(
     };
   }
 
-  // CONTEXT_AWARE_V2 / V2.1 / V2.2 / V2.3 — shared V2 gates; experiments add one rule each.
+  // CONTEXT_AWARE_V2 / V2.1–V2.4 — shared V2 gates; experiments add one rule each.
   // Experiments clear weak candidates (identical to production V2).
   if (
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
   ) {
     const v2Result = applyContextAwareV2IdentityPolicy({
       input,
@@ -911,6 +997,10 @@ export function applyJobNameIdentityPolicy(
       policyId: policy,
     });
     if (v2Result.status === "MATCH") {
+      // V2.4: preserve strong V2 identity; shadow contextual diagnostics only.
+      if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+        return annotateContextualShadowOnStrongV2Match(v2Result, input);
+      }
       return v2Result;
     }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1) {
@@ -935,6 +1025,16 @@ export function applyJobNameIdentityPolicy(
     }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3) {
       const recovered = tryNormalizedSubjectIdentityRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: v2Result.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(v2Result, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+      const recovered = tryContextualWordSearchRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -971,7 +1071,8 @@ function applyContextAwareV2IdentityPolicy(args: {
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
-    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3;
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4;
 }): ApplyIdentityPolicyResult {
   const { input, assessed, selectedJobIds, preserveWeakCandidates, policyId } =
     args;
@@ -1887,6 +1988,167 @@ function hasExplicitNormalizedBodyContradiction(input: {
     ["correction", "actually", "instead", "wrong"].includes(t)
   );
   return correctionCue || competingInBody.length > 0;
+}
+
+/**
+ * Strong V2 MATCH under V2.4: keep the V2 decision; attach shadow contextual
+ * diagnostics when the word-search layer sees competing/shared family signals.
+ */
+function annotateContextualShadowOnStrongV2Match(
+  v2Result: ApplyIdentityPolicyResult,
+  input: ApplyIdentityPolicyInput
+): ApplyIdentityPolicyResult {
+  const peers = input.peerJobs ?? [];
+  const subjectTokens = input.subjectTokens ?? [];
+  const bodyTokens = input.bodyTokens ?? [];
+  if (peers.length === 0 || (subjectTokens.length === 0 && bodyTokens.length === 0)) {
+    return {
+      ...v2Result,
+      diagnostics: {
+        ...v2Result.diagnostics,
+        contextualAiInvoked: false,
+        contextualChangedBaseline: false,
+      },
+    };
+  }
+  const shadow = resolveContextualWordSearch({
+    peers,
+    subjectTokens,
+    bodyTokens,
+    aiDecision: input.contextualAiDecision ?? null,
+  });
+  const competingShadow =
+    shadow.status === "AMBIGUOUS" ||
+    shadow.status === "CONFLICT" ||
+    (shadow.status === "MATCH" &&
+      shadow.selectedJobId != null &&
+      shadow.selectedJobId !== v2Result.selectedJobIdOverride &&
+      shadow.selectedJobId !== input.selectedJobIds[0]);
+  return {
+    ...v2Result,
+    diagnostics: {
+      ...v2Result.diagnostics,
+      sharedIdentityTerms:
+        shadow.sharedIdentifiers.length > 0
+          ? shadow.sharedIdentifiers
+          : v2Result.diagnostics.sharedIdentityTerms,
+      identityFamilyJobIds:
+        shadow.familyJobIds.length > 0
+          ? shadow.familyJobIds
+          : v2Result.diagnostics.identityFamilyJobIds,
+      contextualAiInvoked: shadow.aiInvoked,
+      contextualChangedBaseline: false,
+      ...(competingShadow
+        ? {
+            evidenceType:
+              v2Result.diagnostics.evidenceType ?? "contextual_word_search_shadow",
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * CONTEXT_AWARE_V2_4 — contextual word search recovery ONLY.
+ * Does not inherit V2.1 title-gap, V2.2 unique-token, or V2.3 normalized-subject.
+ * Optional AI decisions must be pre-validated and candidate-bound.
+ */
+export function tryContextualWordSearchRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+}): ApplyIdentityPolicyResult | null {
+  const peers = args.input.peerJobs ?? [];
+  if (peers.length === 0) return null;
+  const subjectTokens = args.input.subjectTokens ?? [];
+  const bodyTokens = args.input.bodyTokens ?? [];
+  if (subjectTokens.length === 0 && bodyTokens.length === 0) return null;
+
+  const resolved = resolveContextualWordSearch({
+    peers,
+    subjectTokens,
+    bodyTokens,
+    aiDecision: args.input.contextualAiDecision ?? null,
+  });
+  if (!resolved.status || !resolved.reason) return null;
+
+  const distinguishingFlat = Object.values(resolved.distinguishingByJob).flat();
+
+  if (resolved.status === "MATCH" && resolved.selectedJobId) {
+    return {
+      status: "MATCH",
+      preserveCandidates: true,
+      selectedJobIdOverride: resolved.selectedJobId,
+      candidateJobIdsOverride: [resolved.selectedJobId],
+      diagnostics: diagBase(
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+        args.input.hit,
+        args.assessed,
+        [resolved.selectedJobId],
+        {
+          identityStrength: "STRONG",
+          strongIdentityAnchor: true,
+          resolutionAllowed: true,
+          reason: resolved.reason,
+          matchedTerms: resolved.matchedTerms,
+          distinguishingIdentityTerms: distinguishingFlat.filter((t) =>
+            resolved.matchedTerms.some((m) =>
+              projectTokensEquivalent(m, t) || m === t
+            )
+          ),
+          sharedIdentityTerms: resolved.sharedIdentifiers,
+          identityFamilyJobIds: resolved.familyJobIds,
+          competingJobIds: resolved.competingJobIds,
+          evidenceType: "contextual_word_search",
+          evidenceField: resolved.evidenceField,
+          projectTokenUniqueness:
+            resolved.sharedIdentifiers.length > 0 ? "shared" : "unique",
+          contextualAiInvoked: resolved.aiInvoked,
+          contextualChangedBaseline: resolved.changedBaseline,
+        }
+      ),
+    };
+  }
+
+  return {
+    status: "AMBIGUOUS",
+    preserveCandidates: true,
+    candidateJobIdsOverride:
+      resolved.competingJobIds.length > 0
+        ? resolved.competingJobIds
+        : resolved.familyJobIds,
+    diagnostics: diagBase(
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      args.input.hit,
+      args.assessed,
+      resolved.competingJobIds.length > 0
+        ? resolved.competingJobIds
+        : resolved.familyJobIds,
+      {
+        identityStrength:
+          resolved.reason === "CONTEXTUAL_WORD_SEARCH_CONFLICT"
+            ? "CONFLICTING"
+            : "AMBIGUOUS",
+        strongIdentityAnchor: false,
+        resolutionAllowed: false,
+        reason: resolved.reason,
+        matchedTerms: resolved.matchedTerms,
+        sharedIdentityTerms: resolved.sharedIdentifiers,
+        distinguishingIdentityTerms: distinguishingFlat,
+        identityFamilyJobIds: resolved.familyJobIds,
+        competingJobIds:
+          resolved.competingJobIds.length > 0
+            ? resolved.competingJobIds
+            : resolved.familyJobIds,
+        evidenceType: "contextual_word_search",
+        evidenceField: resolved.evidenceField,
+        projectTokenUniqueness: "shared",
+        contextualAiInvoked: resolved.aiInvoked,
+        contextualChangedBaseline: resolved.changedBaseline,
+      }
+    ),
+  };
 }
 
 /**

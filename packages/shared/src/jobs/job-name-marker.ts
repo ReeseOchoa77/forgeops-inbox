@@ -19,10 +19,12 @@ import {
   applyJobNameIdentityPolicy,
   buildWorkspaceIdentityTokenStats,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
   type WorkspaceIdentityTokenStats,
 } from "./job-name-identity-policy.js";
+import { stripEmailSignatureForContextualSearch } from "./job-contextual-word-search.js";
 
 export const JOB_NAME_MARKER_VERSION = "job-name-marker-v3";
 
@@ -40,6 +42,11 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
+  JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
+  experimentRevisionForIdentityPolicy,
 } from "./job-name-identity-policy.js";
 
 /**
@@ -640,6 +647,11 @@ export function runJobNameMarker(input: {
    * CONTEXT_AWARE_V1: weak unique identity abstains (AMBIGUOUS); not production default.
    */
   identityPolicy?: JobMatchIdentityPolicy;
+  /**
+   * Optional prevalidated V2.4 AI decision (injected by API/eval).
+   * Shared package never calls the LLM.
+   */
+  contextualAiDecision?: import("./job-contextual-word-search.js").ContextualWordSearchAiDecision | null;
 }): JobNameMarkerResult {
   const identityPolicy =
     input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
@@ -679,13 +691,20 @@ export function runJobNameMarker(input: {
   const rawBody = input.cleanBody ?? input.bodyText ?? "";
   const body = stripQuotedHistory(rawBody).slice(0, 8000);
   const subjectTokens = canonicalizeJobNameTokens(subject);
-  const bodyTokens = canonicalizeJobNameTokens(body);
+  // Scoring uses full cleaned body; V2.4 identity recovery drops signatures.
+  const bodyForScoring = canonicalizeJobNameTokens(body);
+  const bodyTokens =
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
+      ? canonicalizeJobNameTokens(
+          stripEmailSignatureForContextualSearch(body)
+        )
+      : bodyForScoring;
 
   const hits = prepared.map((job) =>
     scoreJob({
       job,
       subjectTokens,
-      bodyTokens,
+      bodyTokens: bodyForScoring,
     })
   );
 
@@ -737,6 +756,9 @@ export function runJobNameMarker(input: {
     peerJobs,
     subjectTokens,
     bodyTokens,
+    ...(input.contextualAiDecision != null
+      ? { contextualAiDecision: input.contextualAiDecision }
+      : {}),
   });
 
   const finalStatus = gated.status;

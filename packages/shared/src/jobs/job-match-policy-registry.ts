@@ -13,18 +13,26 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+  JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
+  experimentRevisionForIdentityPolicy,
   type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
 } from "./job-name-identity-policy.js";
 
 export {
   JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
+  JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
+  experimentRevisionForIdentityPolicy,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
 };
 
 export type { JobMatchIdentityExperimentRevision };
@@ -123,6 +131,18 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       experimental: true,
       availableForEvaluation: true,
       experimentSummary: `V2 + normalized subject identity (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
+    },
+    {
+      id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
+      advanceRank: 6,
+      label: "CONTEXT_AWARE_V2_4",
+      displayName: "V2.4 — Contextual Word Search",
+      description:
+        "V2 plus contextual word search across subject/body (optional AI disambiguation).",
+      productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
+      experimentSummary: `V2 + contextual word search (${JOB_MATCH_V2_4_IMPLEMENTATION_REVISION})`,
     },
   ] as const;
 
