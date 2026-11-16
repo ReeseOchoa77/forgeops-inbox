@@ -81,7 +81,7 @@ function sameIdSet(a: string[] | undefined, b: string[]): boolean {
 
 function traceIds(
   result: JobMatchResult,
-  marker: "NAME" | "CONTACT" | "THREAD"
+  marker: "NAME" | "ATTACHMENT" | "CONTACT" | "THREAD"
 ): string[] | null {
   const row = result.markerTrace?.find((t) => t.marker === marker);
   return row ? row.candidateJobIds : null;
