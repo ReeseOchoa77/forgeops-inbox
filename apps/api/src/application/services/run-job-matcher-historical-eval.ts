@@ -43,6 +43,9 @@ import {
   JOB_MATCHER_EVAL_LOAD_BATCH_SIZE,
   assertExportRowsMatchMetrics,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
   jobMatchPolicyAdvanceRank,
   selectDisplayMetricsForEvaluation,
 } from "@forgeops/shared";
@@ -92,6 +95,11 @@ export type JobMatcherEvalRow = {
 
 export type JobMatcherEvalPolicyResultBundle = {
   identityPolicy: JobMatchIdentityPolicy;
+  /**
+   * Experiment implementation revision when this policy was scored.
+   * Absent/undefined on legacy runs that used older V2.1/V2.2 algorithms.
+   */
+  experimentRevision: string | null;
   metrics: HistoricalEvalMetrics;
   diagnostics: JobMatcherEvalDiagnostics;
   jobBreakdown: JobMatcherEvalJobBreakdown[];
@@ -106,6 +114,12 @@ export type JobMatcherHistoricalEvalResult = {
   /** Stable id for this evaluation run (exports / progress). */
   evaluationRunId: string;
   identityPolicy: JobMatchIdentityPolicy;
+  /**
+   * Current experiment implementation revision stamped on this run.
+   * Legacy persisted/cached results may omit this — do not treat those V2.1/V2.2
+   * rows as the independent title-gap / unique-token experiments.
+   */
+  experimentRevision: string;
   dataset: {
     spec: JobMatcherEvalDatasetSpec;
     summaryLabel: string;
@@ -913,8 +927,14 @@ export async function runJobMatcherHistoricalEval(input: {
       if (!policyIntegrity.ok) {
         throw new Error(policyIntegrity.message);
       }
+      const isExperiment =
+        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
+        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2;
       return {
         identityPolicy: policy,
+        experimentRevision: isExperiment
+          ? JOB_MATCH_IDENTITY_EXPERIMENT_REVISION
+          : null,
         metrics: policyMetrics,
         diagnostics: policyDiagnostics,
         jobBreakdown: buildJobMatcherEvalJobBreakdown(
@@ -938,6 +958,7 @@ export async function runJobMatcherHistoricalEval(input: {
     autoAssignEnabled: isJobMatcherAutoAssignEnabled(),
     evaluationRunId,
     identityPolicy: primaryPolicy,
+    experimentRevision: JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
     dataset: {
       spec,
       summaryLabel: summarizeDatasetSpec(spec),
@@ -965,7 +986,7 @@ export async function runJobMatcherHistoricalEval(input: {
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; BASELINE/V1/V2.1/V2.2 remain available for evaluation. Dashboard matcher selector switches among policyResults without re-running. Default display uses displayIdentityPolicy.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; V2.1 = V2 + title-gap only; V2.2 = V2 + unique-token only (independent experiments). experimentRevision stamps the implementation; older runs without it used prior V2.1/V2.2 algorithms. Dashboard matcher selector switches among policyResults without re-running.",
   };
   completeJobMatcherEvalProgress({
     workspaceId: input.workspaceId,

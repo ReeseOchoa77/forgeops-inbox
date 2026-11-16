@@ -139,11 +139,12 @@ function isContextAwareV2Family(policy: JobMatchIdentityPolicy): boolean {
 }
 
 /**
- * V2 / V2.1 contact safety gate applied after WEAK contact narrowing.
+ * V2-family contact safety gate applied after WEAK contact narrowing.
  * Non-V2-family policies: pass-through with diagnostics only.
  *
- * V2.1 narrowly recovers verified single-Job AUTH contacts when evidence is
- * independent of the thread — without weakening multi-job / broad / weak-name gates.
+ * V2 / V2.1 / V2.2 share identical contact behavior: MANUAL single-Job may
+ * resolve; AUTH-only contacts abstain (INSUFFICIENT_CONTACT_AUTHORITY).
+ * Experimental V2.1/V2.2 differ only in Marker 1 identity recovery rules.
  */
 export function applyJobContactSafetyPolicy(
   input: ApplyContactSafetyInput
@@ -250,8 +251,8 @@ export function applyJobContactSafetyPolicy(
     };
   }
 
-  // Contact unique resolve: MANUAL always OK; V2.1 also allows single-Job AUTH
-  // when independent of thread evidence.
+  // Contact unique resolve: MANUAL always OK for all V2-family policies.
+  // AUTH-only contacts abstain (same for V2 / V2.1 / V2.2).
   if (input.status === "MATCH" && input.selectedJobId) {
     const selectedManual = classified.manualJobIds.includes(input.selectedJobId);
     if (selectedManual) {
@@ -262,28 +263,6 @@ export function applyJobContactSafetyPolicy(
         evidence: input.evidence,
         diagnostics: baseDiag({
           reason: "VERIFIED_SINGLE_JOB_CONTACT",
-          resolutionAllowed: true,
-        }),
-      };
-    }
-
-    const selectedAuth = classified.authoritativeEmailJobIds.includes(
-      input.selectedJobId
-    );
-    const allowAuthSingleJob =
-      input.policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 &&
-      classified.associationClass === "SINGLE_JOB" &&
-      selectedAuth &&
-      evidenceIndependentFromThread !== false;
-
-    if (allowAuthSingleJob) {
-      return {
-        status: "MATCH",
-        selectedJobId: input.selectedJobId,
-        candidateJobIds: [input.selectedJobId],
-        evidence: input.evidence,
-        diagnostics: baseDiag({
-          reason: "VERIFIED_AUTHORITATIVE_SINGLE_JOB_CONTACT",
           resolutionAllowed: true,
         }),
       };

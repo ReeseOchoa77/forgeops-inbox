@@ -6,21 +6,26 @@
 
 import type { HistoricalEvalMetrics } from "./job-match-historical-eval.js";
 import {
+  JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
 } from "./job-name-identity-policy.js";
 
 export {
+  JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
 };
+
+export type { JobMatchIdentityExperimentRevision };
 
 export type JobMatchIdentityPolicyId = JobMatchIdentityPolicy;
 
@@ -30,6 +35,11 @@ export type JobMatchPolicyRegistryEntry = {
   advanceRank: number;
   label: string;
   productionDefault: boolean;
+  /**
+   * Human-readable experiment summary. Null for production/stable policies.
+   * Does not change the policy id — use with JOB_MATCH_IDENTITY_EXPERIMENT_REVISION.
+   */
+  experimentSummary: string | null;
 };
 
 export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
@@ -39,30 +49,35 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       advanceRank: 0,
       label: "BASELINE",
       productionDefault: false,
+      experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
       advanceRank: 1,
       label: "CONTEXT_AWARE_V1",
       productionDefault: false,
+      experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       advanceRank: 2,
       label: "CONTEXT_AWARE_V2",
       productionDefault: true,
+      experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
       advanceRank: 3,
       label: "CONTEXT_AWARE_V2_1",
       productionDefault: false,
+      experimentSummary: `V2 + title-gap only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
       advanceRank: 4,
       label: "CONTEXT_AWARE_V2_2",
       productionDefault: false,
+      experimentSummary: `V2 + unique-token only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
   ] as const;
 

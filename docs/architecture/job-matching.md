@@ -75,8 +75,8 @@ Match kinds: `EXACT` (phrase contained) > `ALL_TOKENS` > `OVERLAP` (any shared c
 | `BASELINE` | Unique OVERLAP may `MATCH` (historical Marker 1). | No — eval only |
 | `CONTEXT_AWARE_V1` | Unique weak identity → `AMBIGUOUS` (candidates preserved for Marker 2/3). Strong multiword / rare single-token / externalRef may still `MATCH`. | No — eval only |
 | `CONTEXT_AWARE_V2` | V1 + shared customer/family disambiguation + generic multiword rejection; weak clears candidates; contact safety (multi-job / AUTH-email-only abstain; MANUAL single-job may resolve). | **Yes** |
-| `CONTEXT_AWARE_V2_1` | V2 identity gates + weak candidates preserved for later markers; verified single-Job AUTH contact may resolve when independent of thread. Multi-job / broad / weak-name gates unchanged. | No — shadow/eval only |
-| `CONTEXT_AWARE_V2_2` | V2 gates (weak candidates cleared — **not** V2.1 preserve) + workspace-aware gap-tolerant project phrases, scope inflection, and distinguishing-token recovery. | No — experimental / eval only |
+| `CONTEXT_AWARE_V2_1` | Independent experiment = current V2 + **title-gap only** (gap-tolerant ordered project-title matching). Does not include unique-token promotion, weak-candidate preserve, or AUTH contact recovery. | No — experimental / eval only |
+| `CONTEXT_AWARE_V2_2` | Independent experiment = current V2 + **unique project token only**. Does not include title-gap matching. | No — experimental / eval only |
 
 Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPipeline`. Live `JobMatcherService` omits the field → `CONTEXT_AWARE_V2` (`DEFAULT_JOB_MATCH_IDENTITY_POLICY`).
 
@@ -99,22 +99,23 @@ Wire-up: `JobMatchInput.identityPolicy` → `runJobNameMarker` / `runJobMatchPip
 - Contact: multi-job / broad (≥4) cannot unique-resolve; AUTH-email-only insufficient; MANUAL single-job may resolve; weak-name∩contact intersection abstains.
 - Marker 3 largely unchanged; holdout unchanged; internal `jobNumber` still never evidence.
 
-**CONTEXT_AWARE_V2_1 additions (deterministic):**
+**CONTEXT_AWARE_V2_1 additions (deterministic, independent of V2.2):**
 
-- Same family / generic / conflict gates as V2.
-- Weak unique identity **preserves** candidates (V2 cleared them) so Marker 2/3 can still narrow; multi-job contact safety still blocks steered wrong unique MATCH.
-- Contact: verified single-Job `CURRENT_AUTHORITATIVE_EMAIL` may resolve when evidence is independent of the thread (`VERIFIED_AUTHORITATIVE_SINGLE_JOB_CONTACT`). Shared-origin / multi-job / broad still abstain.
+- Same V2 identity + contact gates (weak candidates **cleared**; AUTH-only contacts still abstain).
+- Gap-tolerant / contiguous ordered project-title recovery only (`GAP_TOLERANT_PROJECT_MATCH` / `UNIQUE_PROJECT_PHRASE`).
+- Does **not** promote unique single tokens.
+- Preserves V2 family/umbrella abstentions (`SHARED_CUSTOMER_IDENTITY` is not overridden by title-gap).
 
-**CONTEXT_AWARE_V2_2 additions (deterministic, experimental):**
+**CONTEXT_AWARE_V2_2 additions (deterministic, independent of V2.1):**
 
-- Same V2 identity + contact gates (weak candidates **cleared**; no V2.1 AUTH recovery).
-- Workspace project-identity index over Job names/aliases (unique vs shared tokens/phrases; scope vs project terms).
+- Same V2 identity + contact gates (weak candidates **cleared**).
 - **Unique authoritative project token alone** may `MATCH` (`UNIQUE_PROJECT_TOKEN`) when workspace df=1 and the token heads a Job phrase (e.g. unique `SAT`); generics never authorize alone.
-- Unique token + scope → `UNIQUE_TOKEN_SCOPE_MATCH`; ordered terms across a controlled gap → `GAP_TOLERANT_PROJECT_MATCH`.
-- Shared family disambiguation via exclusive scope / building / area (`PROJECT_SCOPE_DISAMBIGUATION`).
-- Distinguishing-token recovery when `decideFromHits` already selected a sibling (e.g. Beltline Building #2) but content strength was weak.
+- Unique token + optional scope decoration → `UNIQUE_TOKEN_SCOPE_MATCH`.
+- Does **not** apply title-gap phrase matching.
+- Shared tokens never promote; removed / non-eligible Jobs are not in the live pool and do not affect uniqueness.
 - Diagnostics: `tokenDistance`, `normalizationApplied`, `evidenceField`, `projectTokenUniqueness`.
-- See `docs/architecture/job-matcher-v2-2-project-identity.md`.
+
+Revision stamp: `JOB_MATCH_IDENTITY_EXPERIMENT_REVISION` on historical eval payloads. Older V2.1/V2.2 eval runs without this stamp used prior algorithms under the same policy ids — do not treat them as the current independent experiments.
 
 Diagnostics: `identityDiagnostics` + `contactDiagnostics` on pipeline results.
 

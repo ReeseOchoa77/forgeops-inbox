@@ -9,9 +9,23 @@ import type {
 
 export function policyLabelSuffix(policy: JobMatcherIdentityPolicy): string {
   if (policy === 'CONTEXT_AWARE_V2') return ' (production)'
-  if (policy === 'CONTEXT_AWARE_V2_1') return ' (shadow)'
-  if (policy === 'CONTEXT_AWARE_V2_2') return ' (experimental)'
+  if (policy === 'CONTEXT_AWARE_V2_1') return ' (title-gap experiment)'
+  if (policy === 'CONTEXT_AWARE_V2_2') return ' (unique-token experiment)'
   return ''
+}
+
+/** True when a scored policy bundle uses the current independent experiment revision. */
+export function isCurrentExperimentRevision(
+  bundle: Pick<JobMatcherEvalPolicyResultBundle, 'identityPolicy' | 'experimentRevision'>,
+  currentRevision: string
+): boolean {
+  if (
+    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_1' &&
+    bundle.identityPolicy !== 'CONTEXT_AWARE_V2_2'
+  ) {
+    return true
+  }
+  return bundle.experimentRevision === currentRevision
 }
 
 /** Policies available in this completed run (from policyResults, else legacy single). */

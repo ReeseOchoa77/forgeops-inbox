@@ -778,11 +778,11 @@ export function JobMatcherEvaluationPanel({
               <option value="CURRENT">Current matcher (CONTEXT_AWARE_V2)</option>
               <option value="COMPARE_V1">Compare BASELINE vs V1</option>
               <option value="COMPARE_V2">Compare V1 vs V2</option>
-              <option value="COMPARE_V2_1">Compare V2 vs V2.1 (shadow)</option>
+              <option value="COMPARE_V2_1">Compare V2 vs V2.1 (title-gap)</option>
               <option value="COMPARE_V2_2">
-                Compare V2 vs V2.2 project-identity (experimental)
+                Compare V2 vs V2.2 (unique-token)
               </option>
-              <option value="COMPARE_ALL">Compare all (incl. V2.1 shadow)</option>
+              <option value="COMPARE_ALL">Compare all (incl. V2.1/V2.2 experiments)</option>
             </select>
           </Control>
         </div>

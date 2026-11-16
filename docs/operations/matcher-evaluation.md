@@ -28,12 +28,12 @@ Body options on evaluate:
 
 | Field | Meaning |
 |-------|---------|
-| `identityPolicy` | `CONTEXT_AWARE_V2` (production default), `BASELINE`, `CONTEXT_AWARE_V1`, or `CONTEXT_AWARE_V2_1` for a single-policy run |
-| `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), `CONTEXT_AWARE_V2_1` (V2 vs V2.1), or `ALL_THREE` (BASELINE+V1+V2+V2.1) |
+| `identityPolicy` | `CONTEXT_AWARE_V2` (production default), `BASELINE`, `CONTEXT_AWARE_V1`, `CONTEXT_AWARE_V2_1` (title-gap), or `CONTEXT_AWARE_V2_2` (unique-token) for a single-policy run |
+| `compareWithIdentityPolicy` | `CONTEXT_AWARE_V1` (BASELINE vs V1), `CONTEXT_AWARE_V2` (V1 vs V2), `CONTEXT_AWARE_V2_1` (V2 vs title-gap), `CONTEXT_AWARE_V2_2` (V2 vs unique-token), or `ALL_THREE` |
 
-Production matcher default is **CONTEXT_AWARE_V2**. V2.1 remains available for shadow comparison only. Running a comparison does not change production.
+Production matcher default is **CONTEXT_AWARE_V2**. V2.1 / V2.2 are independent experiments (title-gap / unique-token). Running a comparison does not change production. New eval payloads stamp `experimentRevision`; older V2.1/V2.2 runs without it used prior algorithms.
 
-UI: Evaluation mode → **Current matcher (CONTEXT_AWARE_V2)** | **Compare BASELINE vs V1** | **Compare V1 vs V2** | **Compare V2 vs V2.1 (shadow)** | **Compare all**. Shows metric deltas, transitions, ground-truth review flags, and paired/3-way Comparison CSV export. Metric cards label production vs shadow.
+UI: Evaluation mode → **Current matcher (CONTEXT_AWARE_V2)** | **Compare BASELINE vs V1** | **Compare V1 vs V2** | **Compare V2 vs V2.1 (title-gap)** | **Compare V2 vs V2.2 (unique-token)** | **Compare all**. Shows metric deltas, transitions, ground-truth review flags, and paired/3-way Comparison CSV export. Metric cards label production vs experiments.
 
 ### Dataset modes
 

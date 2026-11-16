@@ -5456,6 +5456,8 @@ export interface JobMatcherEvalResult {
   /** Sorted selected email-id fingerprint for this run. */
   datasetFingerprint?: string
   identityPolicy?: JobMatcherIdentityPolicy
+  /** Current experiment revision stamped on this run (legacy results may omit). */
+  experimentRevision?: string
   dataset: {
     spec: JobMatcherEvalDatasetSpec
     summaryLabel: string
@@ -5566,6 +5568,8 @@ export interface JobMatcherEvalResult {
 /** One scored policy's full metrics + rows within a completed evaluation run. */
 export interface JobMatcherEvalPolicyResultBundle {
   identityPolicy: JobMatcherIdentityPolicy
+  /** Present on new independent V2.1/V2.2 experiments; null/absent = legacy algorithm. */
+  experimentRevision?: string | null
   metrics: JobMatcherEvalResult['metrics']
   diagnostics?: JobMatcherEvalDiagnostics
   jobBreakdown: JobMatcherEvalResult['jobBreakdown']

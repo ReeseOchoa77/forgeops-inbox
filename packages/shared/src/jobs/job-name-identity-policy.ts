@@ -4,12 +4,17 @@
  * BASELINE: unique OVERLAP may MATCH (historical behavior).
  * CONTEXT_AWARE_V1: unique weak identity must abstain (AMBIGUOUS), not MATCH.
  * CONTEXT_AWARE_V2: V1 + shared-family / generic multiword disambiguation;
- *   weak candidates cleared so they cannot steer Marker 2.
- * CONTEXT_AWARE_V2_1: V2 identity gates + weak candidates preserved for later
- *   markers (multi-job contact gate still blocks steered wrong matches).
- * CONTEXT_AWARE_V2_2: V2 gates (weak candidates cleared — not V2.1 preserve) +
- *   workspace-aware project-phrase / scope / distinguishing recovery.
- * Production default is CONTEXT_AWARE_V2 (V2.1 / V2.2 remain shadow/eval-only).
+ *   weak candidates cleared so they cannot steer Marker 2. Production default.
+ * CONTEXT_AWARE_V2_1: independent experiment = current V2 + title-gap rule ONLY
+ *   (gap-tolerant ordered project-title matching). Does NOT include unique-token
+ *   promotion, weak-candidate preserve, or AUTH contact recovery.
+ * CONTEXT_AWARE_V2_2: independent experiment = current V2 + unique project token
+ *   rule ONLY. Does NOT include title-gap matching or V2.1-only contact deltas.
+ *
+ * V2.1 and V2.2 both branch from V2 independently (not cumulative).
+ * Revision stamp: JOB_MATCH_IDENTITY_EXPERIMENT_REVISION — bump when experiment
+ * semantics change so historical eval runs are not confused with older algorithms
+ * that reused the same policy id strings.
  */
 
 import {
@@ -44,6 +49,17 @@ export type JobMatchIdentityPolicy =
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
+
+/**
+ * Implementation revision for experimental V2.1 / V2.2 semantics.
+ * Older eval payloads without this field used prior algorithms under the same
+ * CONTEXT_AWARE_V2_1 / CONTEXT_AWARE_V2_2 labels — treat those as legacy.
+ */
+export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
+  "independent-v21-title-gap-v22-unique-token-r1" as const;
+
+export type JobMatchIdentityExperimentRevision =
+  typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION;
 
 export type JobNameIdentityStrength =
   | "STRONG"
@@ -692,8 +708,18 @@ export function applyJobNameIdentityPolicy(
             : "AMBIGUOUS_CANDIDATES",
       }),
     };
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1) {
+      const recovered = tryTitleGapProjectRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: ambiguousResult.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(ambiguousResult, input);
+    }
     if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2) {
-      const recovered = tryProjectIdentityCoverageRecovery({
+      const recovered = tryUniqueProjectTokenRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -765,7 +791,8 @@ export function applyJobNameIdentityPolicy(
     };
   }
 
-  // CONTEXT_AWARE_V2 / V2.1 / V2.2 (shared identity gates; weak/recovery differs)
+  // CONTEXT_AWARE_V2 / V2.1 / V2.2 — shared V2 gates; experiments add one rule each.
+  // Both experiments clear weak candidates (identical to production V2).
   if (
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1 ||
@@ -775,21 +802,24 @@ export function applyJobNameIdentityPolicy(
       input,
       assessed,
       selectedJobIds,
-      /**
-       * V2 / V2.2 clear weak candidates (prevents steering).
-       * V2.1 preserves them so Marker 2/3 can narrow; multi-job contact
-       * safety still blocks unique MATCH from multi-job contacts.
-       * V2.2 must NOT reintroduce V2.1 weak-preserve behavior.
-       */
-      preserveWeakCandidates:
-        policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      preserveWeakCandidates: false,
       policyId: policy,
     });
-    if (
-      policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 &&
-      v2Result.status !== "MATCH"
-    ) {
-      const recovered = tryProjectIdentityCoverageRecovery({
+    if (v2Result.status === "MATCH") {
+      return v2Result;
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1) {
+      const recovered = tryTitleGapProjectRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: v2Result.diagnostics.reason,
+      });
+      if (recovered) return recovered;
+      return annotateSharedProjectIdentifier(v2Result, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2) {
+      const recovered = tryUniqueProjectTokenRecovery({
         input,
         assessed,
         selectedJobIds,
@@ -1287,17 +1317,41 @@ function annotateSharedProjectIdentifier(
   return result;
 }
 
-/**
- * CONTEXT_AWARE_V2_2 coverage recovery — deterministic, no GT labels.
- * Never preserves weak candidates (unlike V2.1). Only returns MATCH when
- * evidence uniquely identifies one Job.
- */
-export function tryProjectIdentityCoverageRecovery(args: {
+type ProjectIdentityGapInfo = {
+  run: string[];
+  intervening: number;
+  contiguous: boolean;
+  field: "subject" | "body" | null;
+};
+
+type ProjectIdentityScore = {
+  peer: IdentityPeerJob;
+  matchedContent: string[];
+  projectTokens: string[];
+  scopeTokens: string[];
+  distinguishing: string[];
+  gap: ProjectIdentityGapInfo | null;
+  uniqueProject: string[];
+  authoritativeUnique: string[];
+};
+
+type ProjectIdentityRecoveryContext = {
   input: ApplyIdentityPolicyInput;
   assessed: ReturnType<typeof assessIdentityHitStrength> | null;
   selectedJobIds: string[];
-  priorReason: JobNameIdentityReasonCode;
-}): ApplyIdentityPolicyResult | null {
+  hit: NonNullable<ApplyIdentityPolicyInput["hit"]>;
+  peers: IdentityPeerJob[];
+  subjectTokens: string[];
+  bodyTokens: string[];
+  pool: IdentityPeerJob[];
+  scores: ProjectIdentityScore[];
+};
+
+function buildProjectIdentityRecoveryContext(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+}): ProjectIdentityRecoveryContext | null {
   const { input, assessed, selectedJobIds } = args;
   const hit = input.hit;
   if (!hit) return null;
@@ -1305,81 +1359,8 @@ export function tryProjectIdentityCoverageRecovery(args: {
   const peers = input.peerJobs ?? [];
   const subjectTokens = input.subjectTokens ?? hit.subjectTokens;
   const bodyTokens = input.bodyTokens ?? hit.bodyTokens;
-  const haySet = new Set([...subjectTokens, ...bodyTokens]);
   const workspaceStats = hit.workspaceStats;
 
-  const matchResult = (
-    jobId: string,
-    reason: JobNameIdentityReasonCode,
-    extras: Partial<JobNameIdentityDiagnostics>
-  ): ApplyIdentityPolicyResult => ({
-    status: "MATCH",
-    preserveCandidates: true,
-    selectedJobIdOverride: jobId,
-    candidateJobIdsOverride: [jobId],
-    diagnostics: diagBase(
-      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
-      hit,
-      assessed ??
-        assessIdentityHitStrength(hit),
-      [jobId],
-      {
-        identityStrength: "STRONG",
-        strongIdentityAnchor: true,
-        resolutionAllowed: true,
-        reason,
-        ...extras,
-      }
-    ),
-  });
-
-  // --- Contradictory strong project tokens across different Jobs ---
-  const projectTokensInHay = [...haySet].filter(
-    (t) =>
-      isJobNameContentToken(t) &&
-      !isCommonConstructionIdentityToken(t) &&
-      isWorkspaceRareIdentityToken(normalizeProjectScopeToken(t), workspaceStats)
-  );
-  // Deduplicate by normalized form; count distinct rare project tokens that
-  // map to disjoint Jobs.
-  const rareTokenJobs = new Map<string, Set<string>>();
-  for (const t of projectTokensInHay) {
-    const holders = peers.filter((p) =>
-      p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-    );
-    if (holders.length !== 1) continue;
-    const key = normalizeProjectScopeToken(t);
-    const set = rareTokenJobs.get(key) ?? new Set();
-    set.add(holders[0]!.jobId);
-    rareTokenJobs.set(key, set);
-  }
-  const distinctRareJobs = new Set<string>();
-  for (const set of rareTokenJobs.values()) {
-    for (const id of set) distinctRareJobs.add(id);
-  }
-  if (distinctRareJobs.size > 1) {
-    return {
-      status: "AMBIGUOUS",
-      preserveCandidates: true,
-      candidateJobIdsOverride: [...distinctRareJobs],
-      diagnostics: diagBase(
-        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
-        hit,
-        assessed,
-        [...distinctRareJobs],
-        {
-          identityStrength: "CONFLICTING",
-          strongIdentityAnchor: false,
-          competingJobIds: [...distinctRareJobs],
-          resolutionAllowed: false,
-          reason: "CONTRADICTORY_PROJECT_EVIDENCE",
-          matchedTerms: projectTokensInHay,
-        }
-      ),
-    };
-  }
-
-  // Candidate pool: selected hits, else peers with any hay overlap.
   let poolIds =
     selectedJobIds.length > 0
       ? selectedJobIds
@@ -1394,7 +1375,6 @@ export function tryProjectIdentityCoverageRecovery(args: {
           )
           .map((p) => p.jobId);
 
-  // Also include same-customer / shared-token family of any pool member.
   const poolPeers = peers.filter((p) => poolIds.includes(p.jobId));
   const expanded = new Set(poolIds);
   for (const seed of poolPeers) {
@@ -1414,24 +1394,7 @@ export function tryProjectIdentityCoverageRecovery(args: {
   const pool = peers.filter((p) => poolIds.includes(p.jobId));
   if (pool.length === 0) return null;
 
-  // Score each pool Job.
-  type GapInfo = {
-    run: string[];
-    intervening: number;
-    contiguous: boolean;
-    field: "subject" | "body" | null;
-  };
-  type Score = {
-    peer: IdentityPeerJob;
-    matchedContent: string[];
-    projectTokens: string[];
-    scopeTokens: string[];
-    distinguishing: string[];
-    gap: GapInfo | null;
-    uniqueProject: string[];
-    authoritativeUnique: string[];
-  };
-  const scores: Score[] = pool.map((peer) => {
+  const scores: ProjectIdentityScore[] = pool.map((peer) => {
     const matchedContent = matchedJobTokensInHay(
       peer.contentTokens,
       subjectTokens,
@@ -1446,7 +1409,7 @@ export function tryProjectIdentityCoverageRecovery(args: {
     const distinguishing = peer.distinguishingTokens.filter((t) =>
       hayHasProjectToken(subjectTokens, bodyTokens, t)
     );
-    let gap: GapInfo | null = null;
+    let gap: ProjectIdentityGapInfo | null = null;
     for (const phrase of peer.phraseTokenLists) {
       const g = hasGapTolerantProjectPhraseOverlap({
         matchedContentTokens: matchedContent,
@@ -1486,294 +1449,253 @@ export function tryProjectIdentityCoverageRecovery(args: {
     };
   });
 
-  // Case: unique gap-tolerant / contiguous project phrase → one Job.
+  return {
+    input,
+    assessed,
+    selectedJobIds,
+    hit,
+    peers,
+    subjectTokens,
+    bodyTokens,
+    pool,
+    scores,
+  };
+}
+
+function contradictoryProjectEvidenceResult(
+  ctx: ProjectIdentityRecoveryContext,
+  policyId:
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+): ApplyIdentityPolicyResult | null {
+  const { hit, assessed, peers, subjectTokens, bodyTokens } = ctx;
+  const haySet = new Set([...subjectTokens, ...bodyTokens]);
+  const workspaceStats = hit.workspaceStats;
+  const projectTokensInHay = [...haySet].filter(
+    (t) =>
+      isJobNameContentToken(t) &&
+      !isCommonConstructionIdentityToken(t) &&
+      isWorkspaceRareIdentityToken(normalizeProjectScopeToken(t), workspaceStats)
+  );
+  const rareTokenJobs = new Map<string, Set<string>>();
+  for (const t of projectTokensInHay) {
+    const holders = peers.filter((p) =>
+      p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
+    );
+    if (holders.length !== 1) continue;
+    const key = normalizeProjectScopeToken(t);
+    const set = rareTokenJobs.get(key) ?? new Set();
+    set.add(holders[0]!.jobId);
+    rareTokenJobs.set(key, set);
+  }
+  const distinctRareJobs = new Set<string>();
+  for (const set of rareTokenJobs.values()) {
+    for (const id of set) distinctRareJobs.add(id);
+  }
+  if (distinctRareJobs.size <= 1) return null;
+  return {
+    status: "AMBIGUOUS",
+    preserveCandidates: true,
+    candidateJobIdsOverride: [...distinctRareJobs],
+    diagnostics: diagBase(policyId, hit, assessed, [...distinctRareJobs], {
+      identityStrength: "CONFLICTING",
+      strongIdentityAnchor: false,
+      competingJobIds: [...distinctRareJobs],
+      resolutionAllowed: false,
+      reason: "CONTRADICTORY_PROJECT_EVIDENCE",
+      matchedTerms: projectTokensInHay,
+    }),
+  };
+}
+
+function experimentalMatchResult(
+  ctx: ProjectIdentityRecoveryContext,
+  policyId:
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+  jobId: string,
+  reason: JobNameIdentityReasonCode,
+  extras: Partial<JobNameIdentityDiagnostics>
+): ApplyIdentityPolicyResult {
+  const assessed = ctx.assessed ?? assessIdentityHitStrength(ctx.hit);
+  return {
+    status: "MATCH",
+    preserveCandidates: true,
+    selectedJobIdOverride: jobId,
+    candidateJobIdsOverride: [jobId],
+    diagnostics: diagBase(policyId, ctx.hit, assessed, [jobId], {
+      identityStrength: "STRONG",
+      strongIdentityAnchor: true,
+      resolutionAllowed: true,
+      reason,
+      ...extras,
+    }),
+  };
+}
+
+/**
+ * CONTEXT_AWARE_V2_1 — title-gap / ordered project-phrase recovery ONLY.
+ * Does not promote unique single tokens. Never preserves weak candidates.
+ */
+export function tryTitleGapProjectRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+}): ApplyIdentityPolicyResult | null {
+  // Preserve V2 family / umbrella abstentions — title-gap must not promote a
+  // customer-only name when sibling Jobs exist under the same customer.
+  if (
+    args.priorReason === "SHARED_CUSTOMER_IDENTITY" ||
+    args.priorReason === "INSUFFICIENT_PROJECT_DISAMBIGUATION"
+  ) {
+    return null;
+  }
+
+  const ctx = buildProjectIdentityRecoveryContext(args);
+  if (!ctx) return null;
+
+  const contradiction = contradictoryProjectEvidenceResult(
+    ctx,
+    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+  );
+  if (contradiction) return contradiction;
+
+  const { scores, subjectTokens, bodyTokens } = ctx;
   const phraseWinners = scores.filter((s) => {
     if (!s.gap || s.gap.run.length < 2) return false;
     return s.gap.run.some((t) => !isCommonConstructionIdentityToken(t));
   });
-  if (phraseWinners.length === 1) {
-    const w = phraseWinners[0]!;
-    const competitors = scores.filter(
-      (s) =>
-        s.peer.jobId !== w.peer.jobId &&
-        w.gap!.run.every((t) =>
-          s.peer.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-        )
-    );
-    if (competitors.length === 0) {
-      const contiguous = w.gap!.contiguous;
-      const reason: JobNameIdentityReasonCode = contiguous
-        ? "UNIQUE_PROJECT_PHRASE"
-        : "GAP_TOLERANT_PROJECT_MATCH";
-      return matchResult(w.peer.jobId, reason, {
-        matchedTerms: w.gap!.run,
-        distinctiveTerms: w.uniqueProject,
-        weakTerms: w.scopeTokens,
-        distinguishingIdentityTerms: w.distinguishing,
-        evidenceType: contiguous ? "project_phrase" : "gap_tolerant_phrase",
-        evidenceField: w.gap!.field,
-        tokenDistance: w.gap!.intervening,
-        projectTokenUniqueness: "unique",
-        normalizationApplied: collectNormalizationApplied(
-          w.gap!.run,
-          subjectTokens,
-          bodyTokens
-        ),
-      });
-    }
-  }
+  if (phraseWinners.length !== 1) return null;
+  const w = phraseWinners[0]!;
+  const competitors = scores.filter(
+    (s) =>
+      s.peer.jobId !== w.peer.jobId &&
+      w.gap!.run.every((t) =>
+        s.peer.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
+      )
+  );
+  if (competitors.length > 0) return null;
 
-  // Feature A (V2.2 only): unique authoritative project token alone is STRONG.
-  // Exact normalized token + workspace df=1 + non-generic (+ phrase-head for
-  // short tokens). No second token required. Shared tokens do not use this path.
+  const contiguous = w.gap!.contiguous;
+  const reason: JobNameIdentityReasonCode = contiguous
+    ? "UNIQUE_PROJECT_PHRASE"
+    : "GAP_TOLERANT_PROJECT_MATCH";
+  return experimentalMatchResult(
+    ctx,
+    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+    w.peer.jobId,
+    reason,
+    {
+      matchedTerms: w.gap!.run,
+      distinctiveTerms: w.uniqueProject,
+      weakTerms: w.scopeTokens,
+      distinguishingIdentityTerms: w.distinguishing,
+      evidenceType: contiguous ? "project_phrase" : "gap_tolerant_phrase",
+      evidenceField: w.gap!.field,
+      tokenDistance: w.gap!.intervening,
+      projectTokenUniqueness: "unique",
+      normalizationApplied: collectNormalizationApplied(
+        w.gap!.run,
+        subjectTokens,
+        bodyTokens
+      ),
+    }
+  );
+}
+
+/**
+ * CONTEXT_AWARE_V2_2 — unique authoritative project-token recovery ONLY.
+ * Does not apply title-gap phrase matching. Never preserves weak candidates.
+ */
+export function tryUniqueProjectTokenRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+}): ApplyIdentityPolicyResult | null {
+  const ctx = buildProjectIdentityRecoveryContext(args);
+  if (!ctx) return null;
+
+  const contradiction = contradictoryProjectEvidenceResult(
+    ctx,
+    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+  );
+  if (contradiction) return contradiction;
+
+  const { scores, pool, subjectTokens, bodyTokens } = ctx;
+  // Unique token alone: exactly one pool Job with authoritative unique tokens.
   const rareAlone = scores.filter((s) => s.authoritativeUnique.length > 0);
-  if (rareAlone.length === 1 && pool.length === 1) {
-    const w = rareAlone[0]!;
-    const uniqueInHay = w.authoritativeUnique.filter((t) =>
-      hayHasProjectToken(subjectTokens, bodyTokens, t)
-    );
-    if (uniqueInHay.length > 0) {
-      const uniqueInSubject = uniqueInHay.filter((t) =>
-        hayHasProjectToken(subjectTokens, [], t)
-      );
-      const primaryUnique =
-        uniqueInSubject.length > 0 ? uniqueInSubject : uniqueInHay;
-      const hasScopeSupport =
-        w.scopeTokens.length > 0 ||
-        (w.gap != null && w.gap.run.length >= 2) ||
-        w.distinguishing.length > 0;
-      const reason: JobNameIdentityReasonCode = hasScopeSupport
-        ? "UNIQUE_TOKEN_SCOPE_MATCH"
-        : "UNIQUE_PROJECT_TOKEN";
-      let tokenDistance: number | null = null;
-      let evidenceField: "subject" | "body" | "mixed" | null =
-        uniqueInSubject.length > 0 ? "subject" : "body";
-      if (hasScopeSupport && primaryUnique[0] && w.scopeTokens[0]) {
-        const span = findGapTolerantHayMatch({
-          needles: [primaryUnique[0], w.scopeTokens[0]],
-          subjectTokens,
-          bodyTokens,
-        });
-        if (span) {
-          tokenDistance = span.intervening;
-          evidenceField = span.field;
-        }
-      }
-      return matchResult(w.peer.jobId, reason, {
-        matchedTerms: [
-          ...primaryUnique,
-          ...w.scopeTokens,
-          ...w.distinguishing,
-        ],
-        distinctiveTerms: primaryUnique,
-        weakTerms: w.scopeTokens,
-        distinguishingIdentityTerms: w.distinguishing,
-        evidenceType: "project_token",
-        evidenceField,
-        tokenDistance,
-        projectTokenUniqueness: "unique",
-        normalizationApplied: collectNormalizationApplied(
-          [...primaryUnique, ...w.scopeTokens],
-          subjectTokens,
-          bodyTokens
-        ),
-      });
-    }
-  }
+  if (rareAlone.length !== 1 || pool.length !== 1) return null;
+  const w = rareAlone[0]!;
+  const uniqueInHay = w.authoritativeUnique.filter((t) =>
+    hayHasProjectToken(subjectTokens, bodyTokens, t)
+  );
+  if (uniqueInHay.length === 0) return null;
 
-  // Case: shared project identifier + unique scope / distinguishing among family.
-  const withProject = scores.filter((s) => s.projectTokens.length > 0);
-  if (withProject.length >= 1) {
-    const sharedProjectTerms = new Set<string>();
-    for (const s of withProject) {
-      for (const t of s.projectTokens) {
-        const holders = pool.filter((p) =>
-          p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-        );
-        if (holders.length > 1) sharedProjectTerms.add(t);
-      }
-    }
-
-    const disambiguated = scores.filter((s) => {
-      const hasShared =
-        s.projectTokens.some((t) => sharedProjectTerms.has(t)) ||
-        // Same-customer family without shared matched token still counts when
-        // multiple pool members share a customer.
-        (s.peer.customerId != null &&
-          pool.filter((p) => p.customerId === s.peer.customerId).length > 1);
-      if (!hasShared && pool.length > 1) {
-        // Also allow: unique project among pool + scope
-        const uniqueInPool = s.projectTokens.filter(
-          (t) =>
-            pool.filter((p) =>
-              p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-            ).length === 1
-        );
-        if (uniqueInPool.length === 0 && s.distinguishing.length === 0) {
-          return false;
-        }
-      }
-      const scopeUnique =
-        s.scopeTokens.length > 0 &&
-        s.scopeTokens.every(
-          (t) =>
-            pool.filter((p) =>
-              p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-            ).length === 1
-        );
-      const distinguishingUnique =
-        s.distinguishing.length > 0 &&
-        s.distinguishing.every(
-          (t) =>
-            pool.filter((p) => p.distinguishingTokens.includes(t)).length === 1
-        );
-      const uniqueProjectInPool = s.projectTokens.some(
-        (t) =>
-          isAuthoritativeUniqueProjectToken(t, s.peer) &&
-          pool.filter((p) =>
-            p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-          ).length === 1
-      );
-      return scopeUnique || distinguishingUnique || uniqueProjectInPool;
+  const uniqueInSubject = uniqueInHay.filter((t) =>
+    hayHasProjectToken(subjectTokens, [], t)
+  );
+  const primaryUnique =
+    uniqueInSubject.length > 0 ? uniqueInSubject : uniqueInHay;
+  // Optional scope/distinguishing decoration — does not invoke title-gap MATCH.
+  const hasScopeSupport =
+    w.scopeTokens.length > 0 || w.distinguishing.length > 0;
+  const reason: JobNameIdentityReasonCode = hasScopeSupport
+    ? "UNIQUE_TOKEN_SCOPE_MATCH"
+    : "UNIQUE_PROJECT_TOKEN";
+  let tokenDistance: number | null = null;
+  let evidenceField: "subject" | "body" | "mixed" | null =
+    uniqueInSubject.length > 0 ? "subject" : "body";
+  if (hasScopeSupport && primaryUnique[0] && w.scopeTokens[0]) {
+    const span = findGapTolerantHayMatch({
+      needles: [primaryUnique[0], w.scopeTokens[0]],
+      subjectTokens,
+      bodyTokens,
     });
-
-    if (disambiguated.length === 1) {
-      const w = disambiguated[0]!;
-      // Must not be scope-only with zero project signal.
-      if (w.projectTokens.length === 0 && w.distinguishing.length === 0) {
-        return null;
-      }
-      // Reject generic-term-only: need project token or distinguishing.
-      if (
-        w.projectTokens.every((t) => isCommonConstructionIdentityToken(t)) &&
-        w.distinguishing.length === 0
-      ) {
-        return null;
-      }
-      // Non-authoritative unique mid-phrase tokens (e.g. "ext") cannot resolve alone.
-      const hasAuthoritative =
-        w.authoritativeUnique.length > 0 ||
-        w.distinguishing.length > 0 ||
-        (w.scopeTokens.length > 0 &&
-          w.projectTokens.some((t) => sharedProjectTerms.has(t)));
-      if (!hasAuthoritative) {
-        return null;
-      }
-      let tokenDistance: number | null = null;
-      let evidenceField: "subject" | "body" | "mixed" | null = null;
-      const sharedLead = [...sharedProjectTerms][0];
-      const scopeLead = w.scopeTokens[0] ?? w.distinguishing[0];
-      if (sharedLead && scopeLead) {
-        const span = findGapTolerantHayMatch({
-          needles: [sharedLead, scopeLead],
-          subjectTokens,
-          bodyTokens,
-        });
-        if (span) {
-          tokenDistance = span.intervening;
-          evidenceField = span.field;
-        }
-      }
-      const reason: JobNameIdentityReasonCode =
-        w.gap && !w.gap.contiguous
-          ? "GAP_TOLERANT_PROJECT_MATCH"
-          : "PROJECT_SCOPE_DISAMBIGUATION";
-      return matchResult(w.peer.jobId, reason, {
-        matchedTerms: [
-          ...w.projectTokens,
-          ...w.scopeTokens,
-          ...w.distinguishing,
-        ],
-        sharedIdentityTerms: [...sharedProjectTerms],
-        distinctiveTerms: w.uniqueProject,
-        weakTerms: w.scopeTokens,
-        distinguishingIdentityTerms: w.distinguishing,
-        identityFamilyJobIds: pool
-          .map((p) => p.jobId)
-          .filter((id) => id !== w.peer.jobId),
-        evidenceType: "project_scope",
-        evidenceField,
-        tokenDistance,
-        projectTokenUniqueness: sharedProjectTerms.size > 0 ? "shared" : "unique",
-        normalizationApplied: collectNormalizationApplied(
-          [...w.projectTokens, ...w.scopeTokens],
-          subjectTokens,
-          bodyTokens
-        ),
-      });
-    }
-
-    if (disambiguated.length > 1) {
-      // Check contradictory distinguishing
-      const withDist = disambiguated.filter((s) => s.distinguishing.length > 0);
-      if (withDist.length > 1) {
-        return {
-          status: "AMBIGUOUS",
-          preserveCandidates: true,
-          candidateJobIdsOverride: withDist.map((s) => s.peer.jobId),
-          diagnostics: diagBase(
-            JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
-            hit,
-            assessed,
-            withDist.map((s) => s.peer.jobId),
-            {
-              identityStrength: "CONFLICTING",
-              competingJobIds: withDist.map((s) => s.peer.jobId),
-              resolutionAllowed: false,
-              reason: "CONTRADICTORY_PROJECT_EVIDENCE",
-            }
-          ),
-        };
-      }
+    if (span) {
+      tokenDistance = span.intervening;
+      evidenceField = span.field;
     }
   }
-
-  // Case: unique selected Job via distinguishing token (Beltline Building #2)
-  // when content match was only a shared/generic project token.
-  if (selectedJobIds.length === 1) {
-    const selected = scores.find((s) => s.peer.jobId === selectedJobIds[0]);
-    if (selected && selected.distinguishing.length > 0) {
-      const exclusive = selected.distinguishing.filter(
-        (t) =>
-          peers.filter((p) => p.distinguishingTokens.includes(t)).length === 1
-      );
-      if (exclusive.length > 0 && selected.projectTokens.length > 0) {
-        // Project token may be shared; distinguishing resolves.
-        const siblingsWithSameProject = peers.filter(
-          (p) =>
-            p.jobId !== selected.peer.jobId &&
-            selected.projectTokens.some((t) =>
-              p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-            )
-        );
-        const siblingAlsoDistinguished = siblingsWithSameProject.filter((p) =>
-          p.distinguishingTokens.some((t) =>
-            hayHasProjectToken(subjectTokens, bodyTokens, t)
-          )
-        );
-        if (siblingAlsoDistinguished.length === 0) {
-          return matchResult(
-            selected.peer.jobId,
-            "PROJECT_SCOPE_DISAMBIGUATION",
-            {
-              matchedTerms: [
-                ...selected.projectTokens,
-                ...selected.distinguishing,
-              ],
-              sharedIdentityTerms: selected.projectTokens.filter((t) =>
-                siblingsWithSameProject.some((p) =>
-                  p.contentTokens.some((ct) => projectTokensEquivalent(ct, t))
-                )
-              ),
-              distinguishingIdentityTerms: exclusive,
-              identityFamilyJobIds: siblingsWithSameProject.map((p) => p.jobId),
-              evidenceType: "distinguishing_token",
-            }
-          );
-        }
-      }
+  return experimentalMatchResult(
+    ctx,
+    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+    w.peer.jobId,
+    reason,
+    {
+      matchedTerms: [
+        ...primaryUnique,
+        ...w.scopeTokens,
+        ...w.distinguishing,
+      ],
+      distinctiveTerms: primaryUnique,
+      weakTerms: w.scopeTokens,
+      distinguishingIdentityTerms: w.distinguishing,
+      evidenceType: "project_token",
+      evidenceField,
+      tokenDistance,
+      projectTokenUniqueness: "unique",
+      normalizationApplied: collectNormalizationApplied(
+        [...primaryUnique, ...w.scopeTokens],
+        subjectTokens,
+        bodyTokens
+      ),
     }
-  }
+  );
+}
 
+/**
+ * @deprecated Old bundled V2.2 recovery (title-gap + unique-token + scope/family).
+ * Kept as a no-op alias for import compatibility — active dispatch uses
+ * tryTitleGapProjectRecovery (V2.1) and tryUniqueProjectTokenRecovery (V2.2).
+ */
+export function tryProjectIdentityCoverageRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+}): ApplyIdentityPolicyResult | null {
+  void args;
   return null;
 }
