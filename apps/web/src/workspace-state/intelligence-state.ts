@@ -25,6 +25,8 @@ export type IntelligenceEvalMode =
   | 'COMPARE_V2_2'
   | 'COMPARE_ALL'
 
+export type IntelligenceModelSelectionMode = 'SINGLE' | 'COMPARE'
+
 export type { IntelligenceControlSection, IntelligenceControlSub }
 
 export type IntelligencePersistedState = {
@@ -40,8 +42,13 @@ export type IntelligencePersistedState = {
     sampling: 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
     count: number
     lifecycle: 'ALL' | 'CURRENT' | 'ARCHIVED'
-    /** CURRENT = baseline only; COMPARE_V1 = paired shadow comparison. */
+    /**
+     * Legacy dropdown mode — kept for older session restores.
+     * Prefer modelSelectionMode + selectedPolicyIds.
+     */
     evaluationMode: IntelligenceEvalMode
+    modelSelectionMode?: IntelligenceModelSelectionMode
+    selectedPolicyIds?: string[]
   }
   outcomeFilter:
     | 'ALL'
@@ -121,6 +128,15 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
     typeof ec.evaluationMode === 'string' && EVAL_MODES.has(ec.evaluationMode)
       ? (ec.evaluationMode as IntelligencePersistedState['evalConfig']['evaluationMode'])
       : 'CURRENT'
+  const modelSelectionMode =
+    ec.modelSelectionMode === 'SINGLE' || ec.modelSelectionMode === 'COMPARE'
+      ? ec.modelSelectionMode
+      : undefined
+  const selectedPolicyIds = Array.isArray(ec.selectedPolicyIds)
+    ? (ec.selectedPolicyIds as unknown[])
+        .filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 64)
+        .slice(0, 8)
+    : undefined
   if (typeof o.outcomeFilter !== 'string' || !OUTCOMES.has(o.outcomeFilter)) return null
   if (o.resultsView !== 'emails' && o.resultsView !== 'jobs') return null
   const selectedEmailMessageId =
@@ -147,6 +163,10 @@ export function validateIntelligenceState(raw: unknown): IntelligencePersistedSt
       count: ec.count,
       lifecycle: ec.lifecycle as IntelligencePersistedState['evalConfig']['lifecycle'],
       evaluationMode,
+      ...(modelSelectionMode ? { modelSelectionMode } : {}),
+      ...(selectedPolicyIds && selectedPolicyIds.length > 0
+        ? { selectedPolicyIds }
+        : {}),
     },
     outcomeFilter: o.outcomeFilter as IntelligencePersistedState['outcomeFilter'],
     transitionFilter,
@@ -167,6 +187,8 @@ export const DEFAULT_INTELLIGENCE_STATE: IntelligencePersistedState = {
     count: 100,
     lifecycle: 'ALL',
     evaluationMode: 'CURRENT',
+    modelSelectionMode: 'SINGLE',
+    selectedPolicyIds: ['CONTEXT_AWARE_V2'],
   },
   outcomeFilter: 'ALL',
   transitionFilter: null,

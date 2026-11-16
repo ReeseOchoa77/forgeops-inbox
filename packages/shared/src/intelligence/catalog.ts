@@ -230,7 +230,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
       groundTruthNotes:
         "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Exclude AI_* / JOB_NUMBER_MATCH / IMPORT. Folder labels can be noisy.",
       notes:
-        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Shadow compare: CONTEXT_AWARE_V1 | CONTEXT_AWARE_V2 | CONTEXT_AWARE_V2_1 | CONTEXT_AWARE_V2_2 | ALL_THREE (V2 vs V2.1 vs V2.2 family) on the same email IDs/snapshot. JMPS = 100×(C−5W+0.15A+0.05F)/N (weighted operator score, not precision). Primary metric cards prefer production CONTEXT_AWARE_V2 when scored. Stamp experimentRevision on V2.1/V2.2 bundles. Documented baseline metrics are historical references, not live hardcoded expectations.",
+        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Preferred API: identityPolicies[] (arbitrary validated subset; same emails/snapshot). Legacy compareWithIdentityPolicy still mapped. Dynamic multiPolicyComparison for N≥2. JMPS = 100×(C−5W+0.15A+0.05F)/N (weighted operator score, not precision). Primary metric cards prefer production CONTEXT_AWARE_V2 when scored. Stamp experimentRevision on V2.1/V2.2 bundles. Documented baseline metrics are historical references, not live hardcoded expectations.",
     },
     explainability: {
       available: true,

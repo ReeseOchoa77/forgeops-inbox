@@ -44,6 +44,11 @@
       "types": "./src/jobs/job-match-performance-score.ts",
       "import": "./src/jobs/job-match-performance-score.ts",
       "default": "./src/jobs/job-match-performance-score.ts"
+    },
+    "./jobs/job-match-multi-policy-compare": {
+      "types": "./src/jobs/job-match-multi-policy-compare.ts",
+      "import": "./src/jobs/job-match-multi-policy-compare.ts",
+      "default": "./src/jobs/job-match-multi-policy-compare.ts"
     }
   },
   "scripts": {

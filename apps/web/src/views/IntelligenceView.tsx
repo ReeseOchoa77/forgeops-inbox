@@ -708,7 +708,7 @@ function JobMatcherSection({
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {sub === 'comparisons' && (
         <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 8px', flexShrink: 0 }}>
-          Use Evaluation mode (COMPARE_V1 / V2 / V2.1 / V2.2 / ALL) to run paired comparisons. After a
+          Use Model Selection (Single or Compare) to evaluate any registered policy subset. After a
           run, switch Matcher results without re-running — metrics follow the selected evaluated
           policy.
         </p>

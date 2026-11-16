@@ -3040,6 +3040,14 @@ export const api = {
         | 'CONTEXT_AWARE_V2'
         | 'CONTEXT_AWARE_V2_1'
         | 'CONTEXT_AWARE_V2_2'
+      /** Preferred: one or more policies to evaluate / compare. */
+      identityPolicies?: Array<
+        | 'BASELINE'
+        | 'CONTEXT_AWARE_V1'
+        | 'CONTEXT_AWARE_V2'
+        | 'CONTEXT_AWARE_V2_1'
+        | 'CONTEXT_AWARE_V2_2'
+      >
       compareWithIdentityPolicy?:
         | 'CONTEXT_AWARE_V1'
         | 'CONTEXT_AWARE_V2'
@@ -5598,9 +5606,37 @@ export interface JobMatcherEvalResult {
    * Absent on historical two-policy / BASELINE three-way runs.
    */
   v2FamilyComparison?: JobMatcherV2FamilyCompareReport | null
+  /** Dynamic N-policy comparison (preferred for new multi-model runs). */
+  multiPolicyComparison?: JobMatcherMultiPolicyCompareReport | null
+  /** Policies requested for this run. */
+  selectedIdentityPolicies?: JobMatcherIdentityPolicy[]
+  evaluationSelectionMode?: 'SINGLE' | 'COMPARE'
   runtimeMs?: number
   groundTruthQuality: string
   groundTruthNotes: string
+}
+
+export interface JobMatcherMultiPolicyCompareRow {
+  emailMessageId: string
+  subject: string | null
+  trueJobId: string
+  trueJobName: string
+  groundTruthSource: string | null
+  sides: Array<{
+    policy: JobMatcherIdentityPolicy
+    summary: JobMatcherIdentityCompareSide
+  }>
+  policiesDisagree: boolean
+  groundTruthReviewFlag: boolean
+}
+
+export interface JobMatcherMultiPolicyCompareReport {
+  policies: JobMatcherIdentityPolicy[]
+  baselinePolicy: JobMatcherIdentityPolicy
+  metricsByPolicy: Record<string, JobMatcherEvalResult['metrics']>
+  performanceScores: Record<string, number | null>
+  rows: JobMatcherMultiPolicyCompareRow[]
+  runtimeMsByPolicy: Record<string, number>
 }
 
 /** Email-level V2 / V2.1 / V2.2 comparison row (same ground truth). */

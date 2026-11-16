@@ -31,6 +31,14 @@ export default defineConfig({
         rootDir,
         "../../packages/shared/src/jobs/job-match-performance-score.ts"
       ),
+      "@forgeops/shared/jobs/job-match-policy-registry": path.resolve(
+        rootDir,
+        "../../packages/shared/src/jobs/job-match-policy-registry.ts"
+      ),
+      "@forgeops/shared/jobs/job-match-multi-policy-compare": path.resolve(
+        rootDir,
+        "../../packages/shared/src/jobs/job-match-multi-policy-compare.ts"
+      ),
     },
   },
   test: {

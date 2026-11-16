@@ -12,16 +12,31 @@ import {
   JMPS_TOOLTIP,
 } from '@forgeops/shared/jobs/job-match-performance-score'
 import {
+  getJobMatchPolicyRegistryEntry,
+  getProductionJobMatchIdentityPolicy,
+} from '@forgeops/shared/jobs/job-match-policy-registry'
+import {
+  rowMatchesMultiPolicyFilter,
+  type MultiPolicyEmailCompareFilter,
+} from '@forgeops/shared/jobs/job-match-multi-policy-compare'
+import {
   api,
   type JobMatcherEvalFailureCategory,
   type JobMatcherEvalPreview,
   type JobMatcherEvalResult,
   type JobMatcherEvalRow,
   type JobMatcherIdentityPolicy,
+  type JobMatcherMultiPolicyCompareReport,
   type JobMatcherTransitionCategory,
   type JobMatcherV2FamilyCompareReport,
   type JobLookup,
 } from '../api'
+import {
+  JobMatcherModelSelectionPanel,
+  canRunModelSelection,
+  modelSelectionFromLegacyEvalMode,
+  type ModelSelectionState,
+} from './JobMatcherModelSelectionPanel'
 import {
   buildEvalComparisonCsv,
   assertDetailedExportMatchesDashboard,
@@ -40,7 +55,6 @@ import {
 import {
   availableEvalPolicies,
   defaultSelectedPolicy,
-  policyLabelSuffix,
 } from '../job-matcher-eval-policy-view'
 import {
   DEFAULT_INTELLIGENCE_STATE,
@@ -53,7 +67,6 @@ import {
   setJobMatcherEvalPending,
   setJobMatcherEvalSession,
   clearJobMatcherEvalPending,
-  type IntelligenceEvalMode,
   type IntelligencePersistedState,
 } from '../workspace-state'
 import { SafeEmailBody } from './SafeEmailBody'
@@ -101,9 +114,21 @@ export function JobMatcherEvaluationPanel({
   const [sampling, setSampling] = useState<Sampling>(() => initialUi.evalConfig.sampling)
   const [count, setCount] = useState(() => initialUi.evalConfig.count)
   const [lifecycle, setLifecycle] = useState<Lifecycle>(() => initialUi.evalConfig.lifecycle)
-  const [evaluationMode, setEvaluationMode] = useState<IntelligenceEvalMode>(
-    () => initialUi.evalConfig.evaluationMode ?? 'CURRENT'
+  const [modelSelection, setModelSelection] = useState<ModelSelectionState>(() => {
+    const ec = initialUi.evalConfig
+    if (ec.modelSelectionMode && ec.selectedPolicyIds && ec.selectedPolicyIds.length > 0) {
+      return {
+        mode: ec.modelSelectionMode,
+        selectedPolicyIds: ec.selectedPolicyIds as ModelSelectionState['selectedPolicyIds'],
+      }
+    }
+    return modelSelectionFromLegacyEvalMode(ec.evaluationMode)
+  })
+  const [resultTab, setResultTab] = useState<'comparison' | JobMatcherIdentityPolicy>(
+    'comparison'
   )
+  const [emailCompareFilter, setEmailCompareFilter] =
+    useState<MultiPolicyEmailCompareFilter>('ALL')
   const [transitionFilter, setTransitionFilter] = useState<JobMatcherTransitionCategory | 'ALL'>(
     () =>
       initialUi.transitionFilter
@@ -213,7 +238,10 @@ export function JobMatcherEvaluationPanel({
         sampling,
         count,
         lifecycle,
-        evaluationMode,
+        evaluationMode:
+          modelSelection.mode === 'SINGLE' ? 'CURRENT' : 'COMPARE_ALL',
+        modelSelectionMode: modelSelection.mode,
+        selectedPolicyIds: [...modelSelection.selectedPolicyIds],
       },
       outcomeFilter: outcomeFilter === 'EXCLUDED' ? 'ALL' : outcomeFilter,
       transitionFilter: transitionFilter === 'ALL' ? null : transitionFilter,
@@ -230,7 +258,7 @@ export function JobMatcherEvaluationPanel({
     sampling,
     count,
     lifecycle,
-    evaluationMode,
+    modelSelection,
     outcomeFilter,
     transitionFilter,
     resultsView,
@@ -361,6 +389,14 @@ export function JobMatcherEvaluationPanel({
       setError('Sign in required to run evaluation.')
       return
     }
+    if (!canRunModelSelection(modelSelection)) {
+      setError(
+        modelSelection.mode === 'COMPARE'
+          ? 'Select at least two models to compare.'
+          : 'Select one model to evaluate.'
+      )
+      return
+    }
     setBusy(true)
     setError(null)
     setSelectedRow(null)
@@ -373,13 +409,14 @@ export function JobMatcherEvaluationPanel({
     setExclusionError(null)
     const evaluationRunId = newEvaluationRunId()
     const startedAt = Date.now()
+    const identityPolicies = [...modelSelection.selectedPolicyIds]
     setRunProgress({
       evaluationRunId,
       phase: 'starting',
       emailsCompleted: 0,
       emailsTotal: preview?.expectedMax ?? preview?.eligibleCount ?? 0,
       policiesCompleted: 0,
-      policiesTotal: 1,
+      policiesTotal: identityPolicies.length,
       elapsedSec: 0,
     })
     const progressTimer = window.setInterval(() => {
@@ -408,27 +445,11 @@ export function JobMatcherEvaluationPanel({
           /* progress is best-effort while the evaluate request is in flight */
         })
     }, 1500)
-    const compareWith =
-      evaluationMode === 'COMPARE_V1'
-        ? ('CONTEXT_AWARE_V1' as const)
-        : evaluationMode === 'COMPARE_V2'
-          ? ('CONTEXT_AWARE_V2' as const)
-          : evaluationMode === 'COMPARE_V2_1'
-            ? ('CONTEXT_AWARE_V2_1' as const)
-            : evaluationMode === 'COMPARE_V2_2'
-              ? ('CONTEXT_AWARE_V2_2' as const)
-              : evaluationMode === 'COMPARE_ALL'
-                ? ('ALL_THREE' as const)
-                : null
-    // CURRENT = production policy (CONTEXT_AWARE_V2). Compare modes omit
-    // identityPolicy so the API can scaffold BASELINE primary + paired policies.
     const promise = api
       .evaluateJobMatcherIntelligence(workspaceId, {
         dataset,
         evaluationRunId,
-        ...(compareWith
-          ? { compareWithIdentityPolicy: compareWith }
-          : { identityPolicy: 'CONTEXT_AWARE_V2' as const }),
+        identityPolicies,
       })
       .then((res) => res.evaluation)
     setJobMatcherEvalPending({ workspaceId, userId, promise })
@@ -436,7 +457,14 @@ export function JobMatcherEvaluationPanel({
       const evaluation = await promise
       setResult(evaluation)
       setExclusions([])
+      const scored = availableEvalPolicies(evaluation)
+      const preferCompare =
+        (evaluation.multiPolicyComparison?.policies.length ?? 0) >= 2 ||
+        (evaluation.v2FamilyComparison != null) ||
+        (evaluation.comparison != null)
+      setResultTab(preferCompare ? 'comparison' : (scored[0] ?? 'CONTEXT_AWARE_V2'))
       setSelectedViewPolicy(defaultSelectedPolicy(evaluation))
+      setEmailCompareFilter('ALL')
       setJobMatcherEvalSession({
         workspaceId,
         userId,
@@ -535,11 +563,17 @@ export function JobMatcherEvaluationPanel({
     const compareById = new Map(
       (result.comparison?.rows ?? []).map((r) => [r.emailMessageId, r] as const)
     )
-    const familyById = new Map(
-      (result.v2FamilyComparison?.rows ?? []).map(
-        (r) => [r.emailMessageId, r] as const
-      )
+    const multiById = new Map(
+      (
+        result.multiPolicyComparison?.rows ??
+        (result.v2FamilyComparison
+          ? legacyV2FamilyAsMulti(result.v2FamilyComparison).rows
+          : [])
+      ).map((r) => [r.emailMessageId, r] as const)
     )
+    const baseline =
+      result.multiPolicyComparison?.baselinePolicy ??
+      getProductionJobMatchIdentityPolicy()
     if (outcomeFilter === 'EXCLUDED') {
       return excludedRows.filter((row) => {
         if (jobFilterId && row.trueJobId !== jobFilterId) return false
@@ -560,18 +594,22 @@ export function JobMatcherEvaluationPanel({
       }
       if (transitionFilter !== 'ALL') {
         const paired = compareById.get(row.emailMessageId)
-        if (paired) {
-          if (paired.transition !== transitionFilter) return false
-        } else {
-          const family = familyById.get(row.emailMessageId)
-          if (
-            !family ||
-            (family.v2ToV21 !== transitionFilter &&
-              family.v2ToV22 !== transitionFilter &&
-              family.v21ToV22 !== transitionFilter)
-          ) {
-            return false
-          }
+        if (paired && paired.transition !== transitionFilter) return false
+        if (!paired) {
+          // Transition chips apply to paired reports only.
+        }
+      }
+      if (emailCompareFilter !== 'ALL') {
+        const multi = multiById.get(row.emailMessageId)
+        if (
+          !multi ||
+          !rowMatchesMultiPolicyFilter(
+            multi as Parameters<typeof rowMatchesMultiPolicyFilter>[0],
+            emailCompareFilter,
+            baseline
+          )
+        ) {
+          return false
         }
       }
       return true
@@ -586,6 +624,7 @@ export function JobMatcherEvaluationPanel({
     failureFilter,
     resolvingMarkerFilter,
     transitionFilter,
+    emailCompareFilter,
   ])
 
   const toggleExclusion = async (emailMessageId: string) => {
@@ -791,6 +830,7 @@ export function JobMatcherEvaluationPanel({
   const canRun =
     !!userId &&
     !busy &&
+    canRunModelSelection(modelSelection) &&
     (jobsMode === 'ALL' ||
       (jobsMode === 'SPECIFIC' && selectedJobs.length === 1) ||
       (jobsMode === 'SELECTED' && selectedJobs.length > 0))
@@ -799,8 +839,27 @@ export function JobMatcherEvaluationPanel({
     sampling === 'PER_JOB' ? PER_JOB_PRESETS : TOTAL_PRESETS
   const groundTruthParts = parseGroundTruthLabel(preview?.groundTruth ?? '')
   const availablePolicies = result ? availableEvalPolicies(result) : []
-  const displayPolicy = viewingPolicy ?? 'BASELINE'
   const m = viewMetrics
+  const multiCompare =
+    result?.multiPolicyComparison ??
+    (result?.v2FamilyComparison
+      ? legacyV2FamilyAsMulti(result.v2FamilyComparison)
+      : null)
+  const hasComparisonTab = Boolean(
+    multiCompare || result?.comparison || result?.v2FamilyComparison
+  )
+  const showingComparison = resultTab === 'comparison' && hasComparisonTab
+
+  const selectResultTab = (tab: 'comparison' | JobMatcherIdentityPolicy) => {
+    setResultTab(tab)
+    if (tab !== 'comparison') {
+      setSelectedViewPolicy(tab)
+    } else if (multiCompare) {
+      setSelectedViewPolicy(multiCompare.baselinePolicy)
+    } else if (result) {
+      setSelectedViewPolicy(defaultSelectedPolicy(result))
+    }
+  }
 
   return (
     <div
@@ -957,25 +1016,13 @@ export function JobMatcherEvaluationPanel({
               <option value="ARCHIVED">Archived</option>
             </select>
           </Control>
-          <Control label="Evaluation mode">
-            <select
-              value={evaluationMode}
-              disabled={busy}
-              onChange={(e) => setEvaluationMode(e.target.value as IntelligenceEvalMode)}
-              style={{ ...selectStyle, minWidth: 200 }}
-              data-testid="job-matcher-eval-mode"
-            >
-              <option value="CURRENT">Current matcher (CONTEXT_AWARE_V2)</option>
-              <option value="COMPARE_V1">Compare BASELINE vs V1</option>
-              <option value="COMPARE_V2">Compare V1 vs V2</option>
-              <option value="COMPARE_V2_1">Compare V2 vs V2.1 (title-gap)</option>
-              <option value="COMPARE_V2_2">
-                Compare V2 vs V2.2 (unique-token)
-              </option>
-              <option value="COMPARE_ALL">Compare all (incl. V2.1/V2.2 experiments)</option>
-            </select>
-          </Control>
         </div>
+
+        <JobMatcherModelSelectionPanel
+          value={modelSelection}
+          onChange={setModelSelection}
+          disabled={busy}
+        />
 
         {jobPickerOpen && jobsMode !== 'ALL' && (
           <div
@@ -1247,7 +1294,7 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {/* Matcher selector + metric cards for the selected policy only */}
+        {/* Result tabs + metric cards for the selected policy */}
         {result && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
@@ -1262,50 +1309,68 @@ export function JobMatcherEvaluationPanel({
                 fontWeight: 600,
               }}
             >
-              <label
-                htmlFor="job-matcher-policy-select"
-                style={{ fontWeight: 600 }}
+              <span style={{ fontWeight: 600 }}>Results</span>
+              <div
+                data-testid="job-matcher-result-tabs"
+                style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
               >
-                Matcher results
-              </label>
-              <select
-                id="job-matcher-policy-select"
-                data-testid="job-matcher-policy-select"
-                value={displayPolicy}
-                disabled={availablePolicies.length === 0}
-                onChange={(e) => {
-                  setSelectedViewPolicy(
-                    e.target.value as JobMatcherIdentityPolicy
+                {hasComparisonTab ? (
+                  <button
+                    type="button"
+                    data-testid="job-matcher-tab-comparison"
+                    onClick={() => selectResultTab('comparison')}
+                    style={{
+                      ...chipBtn,
+                      background: resultTab === 'comparison' ? '#111827' : '#fff',
+                      color: resultTab === 'comparison' ? '#fff' : '#111827',
+                    }}
+                  >
+                    Comparison
+                  </button>
+                ) : null}
+                {availablePolicies.map((p) => {
+                  const entry = getJobMatchPolicyRegistryEntry(p)
+                  const short =
+                    entry?.displayName.split('—')[0]?.trim() ??
+                    p.replace('CONTEXT_AWARE_', '')
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      data-testid={`job-matcher-tab-${p}`}
+                      onClick={() => selectResultTab(p)}
+                      style={{
+                        ...chipBtn,
+                        background: resultTab === p ? '#111827' : '#fff',
+                        color: resultTab === p ? '#fff' : '#111827',
+                      }}
+                    >
+                      {short}
+                      {p === getProductionJobMatchIdentityPolicy()
+                        ? ' · prod'
+                        : ''}
+                    </button>
                   )
-                }}
-                style={{
-                  ...selectStyle,
-                  minWidth: 220,
-                  fontWeight: 600,
-                }}
-              >
-                {availablePolicies.length === 0 ? (
-                  <option value={displayPolicy}>
-                    {displayPolicy}
-                    {policyLabelSuffix(displayPolicy as JobMatcherIdentityPolicy)}
-                  </option>
-                ) : (
-                  availablePolicies.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                      {policyLabelSuffix(p)}
-                    </option>
-                  ))
-                )}
-              </select>
+                })}
+              </div>
               <span style={{ fontWeight: 500, color: '#6b7280' }}>
-                Production active: CONTEXT_AWARE_V2
+                Production active: {getProductionJobMatchIdentityPolicy()}
                 {result.evaluationRunId
                   ? ` · run ${result.evaluationRunId.slice(0, 8)}`
                   : ''}
               </span>
             </div>
-            {policyView && !policyView.available ? (
+            {showingComparison && multiCompare ? (
+              <MultiPolicyComparisonPanel comparison={multiCompare} />
+            ) : null}
+            {showingComparison && !multiCompare && result.comparison ? (
+              <ComparisonPanel
+                comparison={result.comparison}
+                transitionFilter={transitionFilter}
+                onTransitionFilter={setTransitionFilter}
+              />
+            ) : null}
+            {!showingComparison && policyView && !policyView.available ? (
               <div
                 data-testid="job-matcher-policy-unavailable"
                 role="status"
@@ -1322,7 +1387,7 @@ export function JobMatcherEvaluationPanel({
                 evaluation run. Select another matcher — metrics are not shown as
                 zero.
               </div>
-            ) : m ? (
+            ) : !showingComparison && m ? (
               (() => {
                 const jmps = computeJobMatcherPerformanceScore(m)
                 const rawJmps = rawMetrics
@@ -1434,20 +1499,44 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {result?.v2FamilyComparison && (
-          <V2FamilyComparisonPanel
-            comparison={result.v2FamilyComparison}
-            transitionFilter={transitionFilter}
-            onTransitionFilter={setTransitionFilter}
-          />
-        )}
-        {result?.comparison && !result.v2FamilyComparison && (
-          <ComparisonPanel
-            comparison={result.comparison}
-            transitionFilter={transitionFilter}
-            onTransitionFilter={setTransitionFilter}
-          />
-        )}
+        {result && hasComparisonTab ? (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 6,
+              alignItems: 'center',
+              fontSize: 12,
+            }}
+          >
+            <span style={{ color: '#6b7280', fontWeight: 600 }}>
+              Email compare filter
+            </span>
+            {(
+              [
+                ['ALL', 'All emails'],
+                ['DISAGREE', 'Policies disagree'],
+                ['AGREE', 'All policies agree'],
+                ['EXPERIMENTAL_IMPROVED', 'Experimental improved'],
+                ['EXPERIMENTAL_REGRESSED', 'Experimental regressed'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                data-testid={`job-matcher-email-compare-${key}`}
+                onClick={() => setEmailCompareFilter(key)}
+                style={{
+                  ...chipBtn,
+                  background: emailCompareFilter === key ? '#111827' : '#fff',
+                  color: emailCompareFilter === key ? '#fff' : '#111827',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {/* Results | Inspector — remaining viewport (always keeps majority of height) */}
@@ -1565,8 +1654,8 @@ export function JobMatcherEvaluationPanel({
                   (r) => r.emailMessageId === selectedRow.emailMessageId
                 ) ?? null
               }
-              v2FamilyRow={
-                result?.v2FamilyComparison?.rows.find(
+              multiPolicyRow={
+                multiCompare?.rows.find(
                   (r) => r.emailMessageId === selectedRow.emailMessageId
                 ) ?? null
               }
@@ -2163,7 +2252,7 @@ function EmailInspector({
   userId,
   row,
   compareRow,
-  v2FamilyRow,
+  multiPolicyRow,
   groundTruthQuality,
   inspectorTab,
   setInspectorTab,
@@ -2173,9 +2262,7 @@ function EmailInspector({
   userId?: string
   row: JobMatcherEvalRow
   compareRow?: NonNullable<JobMatcherEvalResult['comparison']>['rows'][number] | null
-  v2FamilyRow?: NonNullable<
-    JobMatcherEvalResult['v2FamilyComparison']
-  >['rows'][number] | null
+  multiPolicyRow?: JobMatcherMultiPolicyCompareReport['rows'][number] | null
   groundTruthQuality: string
   inspectorTab: 'email' | 'match'
   setInspectorTab: (t: 'email' | 'match') => void
@@ -2357,36 +2444,41 @@ function EmailInspector({
 
         {inspectorTab === 'match' && (
           <>
-            {v2FamilyRow && (
+            {multiPolicyRow && (
               <div
-                data-testid="eval-v2-family-sides"
+                data-testid="eval-multi-policy-sides"
                 style={{
                   marginBottom: 12,
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gridTemplateColumns: `repeat(${Math.min(multiPolicyRow.sides.length, 3)}, minmax(0, 1fr))`,
                   gap: 8,
                   fontSize: 11,
                 }}
               >
-                {(
-                  [
-                    ['V2 (production)', v2FamilyRow.v2],
-                    ['V2.1 (experimental)', v2FamilyRow.v21],
-                    ['V2.2 (experimental)', v2FamilyRow.v22],
-                  ] as const
-                ).map(([label, side]) => (
-                  <div
-                    key={label}
-                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}
-                  >
-                    <div style={{ fontWeight: 650, marginBottom: 4 }}>{label}</div>
-                    <div>{side.outcome.replace(/_/g, ' ')}</div>
-                    <div style={{ color: '#6b7280' }}>{side.predictedJobName || '—'}</div>
-                    <div style={{ color: '#6b7280', marginTop: 4 }}>
-                      {side.identityDiagnostics?.reason || side.resolvingMarker || '—'}
+                {multiPolicyRow.sides.map(({ policy, summary }) => {
+                  const entry = getJobMatchPolicyRegistryEntry(policy)
+                  return (
+                    <div
+                      key={policy}
+                      style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}
+                    >
+                      <div style={{ fontWeight: 650, marginBottom: 4 }}>
+                        {entry?.displayName ?? policy}
+                        {entry?.productionDefault ? ' · prod' : ''}
+                        {entry?.experimental ? ' · exp' : ''}
+                      </div>
+                      <div>{summary.outcome.replace(/_/g, ' ')}</div>
+                      <div style={{ color: '#6b7280' }}>
+                        {summary.predictedJobName || '—'}
+                      </div>
+                      <div style={{ color: '#6b7280', marginTop: 4 }}>
+                        {summary.identityDiagnostics?.reason ||
+                          summary.resolvingMarker ||
+                          '—'}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 <div
                   style={{
                     gridColumn: '1 / -1',
@@ -2394,17 +2486,17 @@ function EmailInspector({
                     fontSize: 11,
                   }}
                 >
-                  Ground truth: {v2FamilyRow.trueJobName}
-                  {v2FamilyRow.policiesDisagree ? ' · policies disagree' : ' · policies agree'}
-                  {v2FamilyRow.groundTruthReviewFlag ? ' · review (wrong present)' : ''}
-                  {' · '}
-                  V2→V2.1 {v2FamilyRow.v2ToV21.replace(/_TO_/g, ' → ')}
-                  {' · '}
-                  V2→V2.2 {v2FamilyRow.v2ToV22.replace(/_TO_/g, ' → ')}
+                  Ground truth: {multiPolicyRow.trueJobName}
+                  {multiPolicyRow.policiesDisagree
+                    ? ' · policies disagree'
+                    : ' · policies agree'}
+                  {multiPolicyRow.groundTruthReviewFlag
+                    ? ' · review (wrong present)'
+                    : ''}
                 </div>
               </div>
             )}
-            {compareRow && !v2FamilyRow && (
+            {compareRow && !multiPolicyRow && (
               <div
                 data-testid="eval-compare-sides"
                 style={{
@@ -2578,44 +2670,63 @@ function fmtRate(v: number | null | undefined): string {
   return `${(v * 100).toFixed(2)}%`
 }
 
-function V2FamilyComparisonPanel({
-  comparison,
-  transitionFilter,
-  onTransitionFilter,
-}: {
-  comparison: JobMatcherV2FamilyCompareReport
-  transitionFilter: JobMatcherTransitionCategory | 'ALL'
-  onTransitionFilter: (next: JobMatcherTransitionCategory | 'ALL') => void
-}) {
-  const cols = [
-    { key: 'v2', label: 'V2 (prod)', metrics: comparison.v2Metrics, score: comparison.performanceScores.v2 },
-    {
-      key: 'v21',
-      label: 'V2.1 (exp)',
-      metrics: comparison.v21Metrics,
-      score: comparison.performanceScores.v21,
+/** Adapt legacy V2-family report into the dynamic multi-policy shape. */
+function legacyV2FamilyAsMulti(
+  family: JobMatcherV2FamilyCompareReport
+): JobMatcherMultiPolicyCompareReport {
+  return {
+    policies: [...family.policies],
+    baselinePolicy: 'CONTEXT_AWARE_V2',
+    metricsByPolicy: {
+      CONTEXT_AWARE_V2: family.v2Metrics,
+      CONTEXT_AWARE_V2_1: family.v21Metrics,
+      CONTEXT_AWARE_V2_2: family.v22Metrics,
     },
-    {
-      key: 'v22',
-      label: 'V2.2 (exp)',
-      metrics: comparison.v22Metrics,
-      score: comparison.performanceScores.v22,
+    performanceScores: {
+      CONTEXT_AWARE_V2: family.performanceScores.v2,
+      CONTEXT_AWARE_V2_1: family.performanceScores.v21,
+      CONTEXT_AWARE_V2_2: family.performanceScores.v22,
     },
-  ] as const
+    runtimeMsByPolicy: {
+      CONTEXT_AWARE_V2: family.runtimeMs.v2,
+      CONTEXT_AWARE_V2_1: family.runtimeMs.v21,
+      CONTEXT_AWARE_V2_2: family.runtimeMs.v22,
+    },
+    rows: family.rows.map((r) => ({
+      emailMessageId: r.emailMessageId,
+      subject: r.subject,
+      trueJobId: r.trueJobId,
+      trueJobName: r.trueJobName,
+      groundTruthSource: r.groundTruthSource,
+      sides: [
+        { policy: 'CONTEXT_AWARE_V2', summary: r.v2 },
+        { policy: 'CONTEXT_AWARE_V2_1', summary: r.v21 },
+        { policy: 'CONTEXT_AWARE_V2_2', summary: r.v22 },
+      ],
+      policiesDisagree: r.policiesDisagree,
+      groundTruthReviewFlag: r.groundTruthReviewFlag,
+    })),
+  }
+}
 
-  const transitionEntries = (
-    [
-      ...Object.entries(comparison.v2ToV21),
-      ...Object.entries(comparison.v2ToV22),
-      ...Object.entries(comparison.v21ToV22),
-    ] as Array<[JobMatcherTransitionCategory, number]>
-  ).reduce(
-    (acc, [key, n]) => {
-      acc.set(key, (acc.get(key) ?? 0) + n)
-      return acc
-    },
-    new Map<JobMatcherTransitionCategory, number>()
-  )
+function MultiPolicyComparisonPanel({
+  comparison,
+}: {
+  comparison: JobMatcherMultiPolicyCompareReport
+}) {
+  const cols = comparison.policies.map((policy) => {
+    const entry = getJobMatchPolicyRegistryEntry(policy)
+    return {
+      policy,
+      label:
+        entry?.displayName.split('—')[0]?.trim() ??
+        policy.replace('CONTEXT_AWARE_', ''),
+      prod: entry?.productionDefault ?? false,
+      exp: entry?.experimental ?? false,
+      metrics: comparison.metricsByPolicy[policy],
+      score: comparison.performanceScores[policy] ?? null,
+    }
+  })
 
   const metricRows: Array<{
     label: string
@@ -2627,38 +2738,61 @@ function V2FamilyComparisonPanel({
       values: cols.map((c) => fmtJmps(c.score)),
       emphasize: true,
     },
-    { label: 'Evaluated', values: cols.map((c) => c.metrics.totalEvaluated) },
-    { label: 'Correct', values: cols.map((c) => c.metrics.correctMatches) },
-    { label: 'Wrong', values: cols.map((c) => c.metrics.wrongMatches) },
-    { label: 'Ambiguous', values: cols.map((c) => c.metrics.ambiguous) },
-    { label: 'Conflict', values: cols.map((c) => c.metrics.conflict) },
-    { label: 'No Match', values: cols.map((c) => c.metrics.noMatch) },
-    { label: 'Precision', values: cols.map((c) => fmtRate(c.metrics.precision)) },
+    {
+      label: 'Evaluated',
+      values: cols.map((c) => c.metrics?.totalEvaluated ?? 'Not evaluated'),
+    },
+    {
+      label: 'Correct',
+      values: cols.map((c) => c.metrics?.correctMatches ?? '—'),
+    },
+    {
+      label: 'Wrong',
+      values: cols.map((c) => c.metrics?.wrongMatches ?? '—'),
+    },
+    {
+      label: 'Ambiguous',
+      values: cols.map((c) => c.metrics?.ambiguous ?? '—'),
+    },
+    {
+      label: 'Conflict',
+      values: cols.map((c) => c.metrics?.conflict ?? '—'),
+    },
+    {
+      label: 'No Match',
+      values: cols.map((c) => c.metrics?.noMatch ?? '—'),
+    },
+    {
+      label: 'Precision',
+      values: cols.map((c) => fmtRate(c.metrics?.precision)),
+    },
     {
       label: 'Coverage',
-      values: cols.map((c) => fmtRate(c.metrics.correctCoverage)),
+      values: cols.map((c) => fmtRate(c.metrics?.correctCoverage)),
     },
     {
       label: 'Wrong rate',
-      values: cols.map((c) => fmtRate(c.metrics.wrongMatchRate)),
+      values: cols.map((c) => fmtRate(c.metrics?.wrongMatchRate)),
     },
     {
       label: 'Ambiguity rate',
-      values: cols.map((c) => fmtRate(c.metrics.ambiguityRate)),
+      values: cols.map((c) => fmtRate(c.metrics?.ambiguityRate)),
     },
     {
       label: 'Conflict rate',
-      values: cols.map((c) => fmtRate(c.metrics.conflictRate)),
+      values: cols.map((c) => fmtRate(c.metrics?.conflictRate)),
     },
     {
       label: 'No-match rate',
-      values: cols.map((c) => fmtRate(c.metrics.noMatchRate)),
+      values: cols.map((c) => fmtRate(c.metrics?.noMatchRate)),
     },
   ]
 
+  const heading = cols.map((c) => c.label).join(' vs ')
+
   return (
     <div
-      data-testid="job-matcher-v2-family-comparison"
+      data-testid="job-matcher-multi-policy-comparison"
       style={{
         border: '1px solid #e5e7eb',
         borderRadius: 8,
@@ -2668,16 +2802,17 @@ function V2FamilyComparisonPanel({
       }}
     >
       <div style={{ fontWeight: 650, marginBottom: 8 }}>
-        Matcher Comparison — V2 vs V2.1 vs V2.2
+        Matcher Comparison — {heading}
       </div>
-      <div style={{ overflowX: 'auto', marginBottom: 10 }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 480 }}>
+      <div style={{ overflowX: 'auto', marginBottom: 8 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 420 }}>
           <thead>
             <tr style={{ textAlign: 'left', color: '#6b7280' }}>
               <th style={cmpTh}>Metric</th>
               {cols.map((c) => (
-                <th key={c.key} style={{ ...cmpTh, textAlign: 'right' }}>
+                <th key={c.policy} style={{ ...cmpTh, textAlign: 'right' }}>
                   {c.label}
+                  {c.prod ? ' (prod)' : c.exp ? ' (exp)' : ''}
                 </th>
               ))}
             </tr>
@@ -2690,75 +2825,34 @@ function V2FamilyComparisonPanel({
                     ...cmpTd,
                     fontWeight: row.emphasize ? 650 : 400,
                   }}
-                  title={row.label === 'Performance Score' ? JMPS_TOOLTIP : undefined}
+                  title={
+                    row.label === 'Performance Score' ? JMPS_TOOLTIP : undefined
+                  }
                 >
                   {row.label}
                 </td>
-                {row.values.map((v, i) => {
-                  const highlight =
-                    row.emphasize &&
-                    typeof cols[i]?.score === 'number' &&
-                    cols.every(
-                      (c) =>
-                        c.score == null ||
-                        cols[i]!.score! >= (c.score ?? Number.NEGATIVE_INFINITY)
-                    )
-                  return (
-                    <td
-                      key={`${row.label}-${i}`}
-                      style={{
-                        ...cmpTd,
-                        textAlign: 'right',
-                        fontWeight: row.emphasize ? 700 : 400,
-                        color: highlight ? '#166534' : '#111827',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    >
-                      {typeof v === 'number' ? v.toLocaleString() : v}
-                    </td>
-                  )
-                })}
+                {row.values.map((v, i) => (
+                  <td
+                    key={`${row.label}-${i}`}
+                    style={{
+                      ...cmpTd,
+                      textAlign: 'right',
+                      fontWeight: row.emphasize ? 700 : 400,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {typeof v === 'number' ? v.toLocaleString() : v}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <div style={{ fontWeight: 650, marginBottom: 6 }}>Decision transitions</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-        <button
-          type="button"
-          onClick={() => onTransitionFilter('ALL')}
-          style={{
-            ...chipBtn,
-            background: transitionFilter === 'ALL' ? '#111827' : '#fff',
-            color: transitionFilter === 'ALL' ? '#fff' : '#111827',
-          }}
-        >
-          All
-        </button>
-        {[...transitionEntries.entries()]
-          .filter(([, n]) => n > 0)
-          .sort((a, b) => b[1] - a[1])
-          .map(([key, n]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onTransitionFilter(key)}
-              style={{
-                ...chipBtn,
-                background: transitionFilter === key ? '#111827' : '#fff',
-                color: transitionFilter === key ? '#fff' : '#111827',
-              }}
-            >
-              {key.replace(/_TO_/g, ' → ')} ({n})
-            </button>
-          ))}
-      </div>
       <div style={{ color: '#6b7280', fontSize: 11 }}>
-        Same dataset / ground truth / eligibility for all three policies. Runtime V2{' '}
-        {comparison.runtimeMs.v2}ms · V2.1 {comparison.runtimeMs.v21}ms · V2.2{' '}
-        {comparison.runtimeMs.v22}ms. Performance Score is a weighted operator metric
-        (not precision).
+        Same dataset / ground truth / eligibility for every selected policy.
+        Baseline for improve/regress filters: {comparison.baselinePolicy}.
+        Performance Score is a weighted operator metric (not precision).
       </div>
     </div>
   )

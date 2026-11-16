@@ -209,7 +209,7 @@ export const registerIntelligenceRoutes = async (
           /** V1 back-compat. */
           limit: z.union([z.literal(50), z.literal(100), z.literal(500)]).optional(),
           maxWrongDetails: z.number().int().min(1).max(100).optional(),
-          /** Primary identity policy. Default BASELINE (production semantics). */
+          /** Primary identity policy for single-policy runs (legacy). */
           identityPolicy: z
             .enum([
               "BASELINE",
@@ -220,7 +220,24 @@ export const registerIntelligenceRoutes = async (
             ])
             .optional(),
           /**
-           * Shadow comparison on the same emails/snapshot.
+           * Preferred: evaluate / compare exactly these policies.
+           * Length 1 = single; ≥ 2 = same-dataset comparison. Validated server-side.
+           */
+          identityPolicies: z
+            .array(
+              z.enum([
+                "BASELINE",
+                "CONTEXT_AWARE_V1",
+                "CONTEXT_AWARE_V2",
+                "CONTEXT_AWARE_V2_1",
+                "CONTEXT_AWARE_V2_2",
+              ])
+            )
+            .min(1)
+            .max(8)
+            .optional(),
+          /**
+           * Legacy shadow comparison on the same emails/snapshot.
            * Does not change production matcher default (CONTEXT_AWARE_V2).
            */
           compareWithIdentityPolicy: z
@@ -256,6 +273,9 @@ export const registerIntelligenceRoutes = async (
             : { limit: body.limit ?? 50 },
           ...(body.maxWrongDetails != null
             ? { maxWrongDetails: body.maxWrongDetails }
+            : {}),
+          ...(body.identityPolicies
+            ? { identityPolicies: body.identityPolicies }
             : {}),
           ...(body.identityPolicy ? { identityPolicy: body.identityPolicy } : {}),
           ...(body.compareWithIdentityPolicy

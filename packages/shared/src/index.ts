@@ -48,6 +48,7 @@ export * from "./jobs/job-match-eval-export-integrity.js";
 export * from "./jobs/job-match-eval-exclusions.js";
 export * from "./jobs/job-match-performance-score.js";
 export * from "./jobs/job-match-v2-family-compare.js";
+export * from "./jobs/job-match-multi-policy-compare.js";
 export * from "./jobs/job-match-policy-registry.js";
 export * from "./jobs/job-match-pipeline.js";
 export * from "./jobs/job-contact-marker.js";

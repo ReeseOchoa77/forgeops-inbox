@@ -161,13 +161,15 @@ export function jobMatcherProductionPolicyLabel(): string {
 export function jobMatcherPolicyRows(): ReadonlyArray<{
   id: string
   label: string
+  displayName: string
   productionDefault: boolean
   experimental: boolean
 }> {
   return JOB_MATCH_POLICY_REGISTRY.map((e: JobMatchPolicyRegistryEntry) => ({
     id: e.id,
     label: e.label,
+    displayName: e.displayName,
     productionDefault: e.productionDefault,
-    experimental: e.label === 'CONTEXT_AWARE_V2_2' || e.label === 'CONTEXT_AWARE_V2_1',
+    experimental: e.experimental,
   }))
 }

@@ -33,8 +33,16 @@ export type JobMatchPolicyRegistryEntry = {
   id: JobMatchIdentityPolicyId;
   /** Higher = more advanced. Used for primary metric-card selection. */
   advanceRank: number;
+  /** Short id-style label (CONTEXT_AWARE_V2). */
   label: string;
+  /** Operator-facing display name for Model Selection. */
+  displayName: string;
+  /** One-line description for selection cards. */
+  description: string;
   productionDefault: boolean;
+  experimental: boolean;
+  /** When true, shown in Historical Evaluations model selection. */
+  availableForEvaluation: boolean;
   /**
    * Human-readable experiment summary. Null for production/stable policies.
    * Does not change the policy id — use with JOB_MATCH_IDENTITY_EXPERIMENT_REVISION.
@@ -48,38 +56,71 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       id: JOB_MATCH_IDENTITY_POLICY_BASELINE,
       advanceRank: 0,
       label: "BASELINE",
+      displayName: "Baseline",
+      description:
+        "Legacy baseline identity matching (not shown in Model Selection).",
       productionDefault: false,
+      experimental: false,
+      availableForEvaluation: false,
       experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
       advanceRank: 1,
       label: "CONTEXT_AWARE_V1",
+      displayName: "V1",
+      description:
+        "Context-aware V1 identity policy (not shown in Model Selection).",
       productionDefault: false,
+      experimental: false,
+      availableForEvaluation: false,
       experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
       advanceRank: 2,
       label: "CONTEXT_AWARE_V2",
+      displayName: "V2 — Base Job Matcher",
+      description: "Production context-aware Job Matcher.",
       productionDefault: true,
+      experimental: false,
+      availableForEvaluation: true,
       experimentSummary: null,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
       advanceRank: 3,
       label: "CONTEXT_AWARE_V2_1",
+      displayName: "V2.1 — Title Gap Rule",
+      description: "V2 plus independent title-gap experiment only.",
       productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
       experimentSummary: `V2 + title-gap only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
       advanceRank: 4,
       label: "CONTEXT_AWARE_V2_2",
+      displayName: "V2.2 — Unique Project Token Rule",
+      description: "V2 plus independent unique-token experiment only.",
       productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
       experimentSummary: `V2 + unique-token only (${JOB_MATCH_IDENTITY_EXPERIMENT_REVISION})`,
     },
   ] as const;
+
+/** Policies exposed in the Model Selection Panel (registry-driven). */
+export function listEvaluationSelectablePolicies(): JobMatchPolicyRegistryEntry[] {
+  return JOB_MATCH_POLICY_REGISTRY.filter((e) => e.availableForEvaluation);
+}
+
+export function getJobMatchPolicyRegistryEntry(
+  id: string
+): JobMatchPolicyRegistryEntry | undefined {
+  return JOB_MATCH_POLICY_REGISTRY.find((e) => e.id === id);
+}
 
 /** Active production identity policy (exactly one registry entry). */
 export function getProductionJobMatchIdentityPolicy(): JobMatchIdentityPolicyId {
@@ -154,13 +195,19 @@ export function selectDisplayMetricsForEvaluation(input: {
     v21Metrics: HistoricalEvalMetrics;
     v22Metrics: HistoricalEvalMetrics;
   } | null;
+  /** Dynamic N-policy comparison (preferred for new runs). */
+  multiPolicyComparison?: {
+    policies: ReadonlyArray<string>;
+    metricsByPolicy: Record<string, HistoricalEvalMetrics>;
+  } | null;
 }): PolicyMetricsBundle {
   const bundles: PolicyMetricsBundle[] = [];
   const production = getProductionJobMatchIdentityPolicy();
   const isCompare =
     Boolean(input.comparison) ||
     Boolean(input.threeWayComparison) ||
-    Boolean(input.v2FamilyComparison);
+    Boolean(input.v2FamilyComparison) ||
+    Boolean(input.multiPolicyComparison);
 
   if (
     input.primaryPolicy &&
@@ -226,6 +273,15 @@ export function selectDisplayMetricsForEvaluation(input: {
       policy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
       metrics: input.v2FamilyComparison.v22Metrics,
     });
+  }
+
+  if (input.multiPolicyComparison) {
+    for (const p of input.multiPolicyComparison.policies) {
+      const metrics = input.multiPolicyComparison.metricsByPolicy[p];
+      if (metrics && isJobMatchIdentityPolicyId(p)) {
+        bundles.push({ policy: p, metrics });
+      }
+    }
   }
 
   if (!isCompare) {

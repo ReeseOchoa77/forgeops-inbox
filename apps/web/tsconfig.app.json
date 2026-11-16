@@ -37,6 +37,9 @@
       ],
       "@forgeops/shared/jobs/job-match-performance-score": [
         "../../packages/shared/src/jobs/job-match-performance-score.ts"
+      ],
+      "@forgeops/shared/jobs/job-match-multi-policy-compare": [
+        "../../packages/shared/src/jobs/job-match-multi-policy-compare.ts"
       ]
     },
 

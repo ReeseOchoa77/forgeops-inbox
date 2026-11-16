@@ -10,7 +10,8 @@ import {
   aggregateHistoricalEvalResults,
   assertTransitionsReconcile,
   buildIdentityCompareReport,
-  buildIdentityThreeWayCompareReport,
+  buildIdentityMultiPolicyCompareReport,
+  buildIdentityMultiPolicyCompareRow,
   buildIdentityV2FamilyCompareReport,
   buildV2FamilyCompareRow,
   buildJobMatcherEvalDiagnostics,
@@ -23,6 +24,8 @@ import {
   isJobMatcherAutoAssignEnabled,
   resolvingMarkerForResult,
   jobPassesLifecycleFilter,
+  normalizeEvalIdentityPolicies,
+  pickCompareBaselinePolicy,
   selectEvalEmailIds,
   summarizeDatasetSpec,
   validateJobMatcherEvalDatasetSpec,
@@ -32,8 +35,8 @@ import {
   type HistoricalEvalWrongDetail,
   type IdentityCompareReport,
   type IdentityCompareRow,
+  type IdentityMultiPolicyCompareReport,
   type IdentityThreeWayCompareReport,
-  type IdentityThreeWayCompareRow,
   type IdentityV2FamilyCompareReport,
   type JobMatchIdentityPolicy,
   type JobMatcherEvalDiagnostics,
@@ -147,10 +150,19 @@ export type JobMatcherHistoricalEvalResult = {
   /** Present when legacy BASELINE/V1/V2(+V2.1) three-way compare was requested. */
   threeWayComparison: IdentityThreeWayCompareReport | null;
   /**
-   * Present when Compare All (V2 / V2.1 / V2.2) was requested.
+   * Present when Compare All (V2 / V2.1 / V2.2) was requested (legacy).
    * Same email IDs / snapshot / eligibility for every policy.
    */
   v2FamilyComparison: IdentityV2FamilyCompareReport | null;
+  /**
+   * Dynamic N-policy comparison for arbitrary selected models (preferred).
+   * Absent on single-policy runs and some legacy persisted results.
+   */
+  multiPolicyComparison: IdentityMultiPolicyCompareReport | null;
+  /** Policies requested for this run (validated / deduped). */
+  selectedIdentityPolicies: JobMatchIdentityPolicy[];
+  /** SINGLE = one policy; COMPARE = two or more on the same dataset. */
+  evaluationSelectionMode: "SINGLE" | "COMPARE";
   /**
    * Metrics + rows for the primary Evaluation cards / email list / detailed export —
    * most advanced policy present in this completed evaluation (registry rank).
@@ -437,17 +449,19 @@ export async function runJobMatcherHistoricalEval(input: {
   limit?: number;
   maxWrongDetails?: number;
   /**
-   * Identity policy for the primary evaluation result.
+   * Identity policy for a single-policy evaluation.
    * Default CONTEXT_AWARE_V2 — production matcher semantics.
+   * Ignored when identityPolicies has length ≥ 1.
    */
   identityPolicy?: JobMatchIdentityPolicy;
   /**
-   * Shadow compare mode on the same emails/snapshot.
-   * - CONTEXT_AWARE_V1: BASELINE vs V1
-   * - CONTEXT_AWARE_V2: V1 vs V2 (paired)
-   * - CONTEXT_AWARE_V2_1: V2 vs V2.1 (paired)
-   * - CONTEXT_AWARE_V2_2: V2 vs V2.2 experimental (paired)
-   * - ALL_THREE: V2 + V2.1 + V2.2 (experimental family compare; not BASELINE/V1)
+   * Preferred: evaluate / compare exactly these policies (validated server-side).
+   * Length 1 = single; length ≥ 2 = same-dataset comparison. Not a fake policy.
+   */
+  identityPolicies?: JobMatchIdentityPolicy[];
+  /**
+   * Legacy shadow compare mode on the same emails/snapshot.
+   * Mapped to identityPolicies when identityPolicies is omitted.
    * Production default remains CONTEXT_AWARE_V2; experimental policies are never auto-activated.
    */
   compareWithIdentityPolicy?:
@@ -461,9 +475,16 @@ export async function runJobMatcherHistoricalEval(input: {
 }): Promise<JobMatcherHistoricalEvalResult> {
   const startedAt = Date.now();
   const evaluationRunId = input.evaluationRunId?.trim() || randomUUID();
-  const identityPolicy: JobMatchIdentityPolicy =
-    input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY;
   const compareWith = input.compareWithIdentityPolicy ?? null;
+
+  const selectedPolicies = resolveSelectedEvalPolicies({
+    ...(input.identityPolicies ? { identityPolicies: input.identityPolicies } : {}),
+    ...(input.identityPolicy ? { identityPolicy: input.identityPolicy } : {}),
+    ...(compareWith ? { compareWithIdentityPolicy: compareWith } : {}),
+  });
+  const evaluationSelectionMode =
+    selectedPolicies.length >= 2 ? ("COMPARE" as const) : ("SINGLE" as const);
+  const policiesTotal = selectedPolicies.length;
 
   const spec = normalizeSpec(
     input.dataset ?? (input.limit != null ? { limit: input.limit } : { limit: 50 })
@@ -475,17 +496,6 @@ export async function runJobMatcherHistoricalEval(input: {
   if (!workspace) {
     throw new Error("Workspace not found");
   }
-
-  const policiesTotal =
-    compareWith === "ALL_THREE"
-      ? 3
-      : compareWith === "CONTEXT_AWARE_V2" ||
-          compareWith === "CONTEXT_AWARE_V2_1" ||
-          compareWith === "CONTEXT_AWARE_V2_2"
-        ? 3
-        : compareWith === "CONTEXT_AWARE_V1"
-          ? 2
-          : 1;
 
   try {
   const [workspaceSummary, index, jobs, snapshot] = await Promise.all([
@@ -628,182 +638,179 @@ export async function runJobMatcherHistoricalEval(input: {
     return { evaluated, runtimeMs: Date.now() - t0 };
   }
 
-  // Paired BASELINE/V1 modes still scaffold BASELINE as primary.
-  // Compare All (V2 family) uses production V2 as primary.
-  const primaryPolicy: JobMatchIdentityPolicy =
-    compareWith === "ALL_THREE"
-      ? JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
-      : compareWith != null
-        ? "BASELINE"
-        : identityPolicy;
-  const primary = await scoreEmails(primaryPolicy);
-  const evaluated = primary.evaluated;
+  // Score only the requested policies on the same emails / snapshot / pool.
+  const primaryPolicy = selectedPolicies[0]!;
+  const runtimeMsByPolicy: Record<string, number> = {};
+  for (const policy of selectedPolicies) {
+    const scored = await scoreEmails(policy);
+    runtimeMsByPolicy[policy] = scored.runtimeMs;
+  }
+  const primaryEvaluated = evaluatedByPolicy.get(primaryPolicy) ?? [];
+  const evaluated = primaryEvaluated;
 
   let comparison: IdentityCompareReport | null = null;
   let threeWayComparison: IdentityThreeWayCompareReport | null = null;
   let v2FamilyComparison: IdentityV2FamilyCompareReport | null = null;
+  let multiPolicyComparison: IdentityMultiPolicyCompareReport | null = null;
 
-  function pairedRows(
-    left: HistoricalEvalEmail[],
-    right: HistoricalEvalEmail[],
-    leftIsBaselineLabel: boolean
-  ): IdentityCompareRow[] {
-    const rightById = new Map(right.map((r) => [r.id, r]));
-    const out: IdentityCompareRow[] = [];
-    for (const leftRow of left) {
-      const rightRow = rightById.get(leftRow.id);
-      if (!rightRow) continue;
-      const baseline = sideSummaryFromEval(leftRow, jobsById);
-      const proposedSide = sideSummaryFromEval(rightRow, jobsById);
-      const transition = classifyMatcherTransition({
-        baselineOutcome: baseline.outcome,
-        proposedOutcome: proposedSide.outcome,
-        baselinePredictedJobId: baseline.predictedJobId,
-        proposedPredictedJobId: proposedSide.predictedJobId,
-      });
-      const groundTruthReviewFlag =
-        baseline.outcome === "WRONG_MATCH" ||
-        proposedSide.outcome === "WRONG_MATCH" ||
-        (leftIsBaselineLabel && transition === "WRONG_TO_UNRESOLVED");
-      out.push({
-        emailMessageId: leftRow.id,
-        subject: leftRow.subject,
-        trueJobId: leftRow.trueJobId,
-        trueJobName:
-          jobsById.get(leftRow.trueJobId)?.name ?? "(missing Job)",
-        groundTruthSource: sourceById.get(leftRow.id) ?? null,
-        baseline,
-        proposed: proposedSide,
-        transition,
-        groundTruthReviewFlag,
-      });
+  if (selectedPolicies.length >= 2) {
+    const metricsByPolicy: Record<string, HistoricalEvalMetrics> = {};
+    for (const policy of selectedPolicies) {
+      metricsByPolicy[policy] = aggregateHistoricalEvalResults(
+        evaluatedByPolicy.get(policy) ?? []
+      );
     }
-    return out;
-  }
 
-  if (compareWith === "CONTEXT_AWARE_V1") {
-    const proposed = await scoreEmails("CONTEXT_AWARE_V1");
-    const compareRows = pairedRows(evaluated, proposed.evaluated, true);
-    const report = buildIdentityCompareReport({
-      baselinePolicy: "BASELINE",
-      proposedPolicy: "CONTEXT_AWARE_V1",
-      baselineMetrics: aggregateHistoricalEvalResults(evaluated),
-      proposedMetrics: aggregateHistoricalEvalResults(proposed.evaluated),
-      rows: compareRows,
-      runtimeMs: {
-        baseline: primary.runtimeMs,
-        proposed: proposed.runtimeMs,
-      },
-    });
-    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
-      throw new Error(
-        `Comparison transition counts do not equal evaluated (${compareRows.length})`
-      );
-    }
-    comparison = report;
-  } else if (compareWith === "CONTEXT_AWARE_V2") {
-    const v1 = await scoreEmails("CONTEXT_AWARE_V1");
-    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
-    const compareRows = pairedRows(v1.evaluated, v2.evaluated, false);
-    const report = buildIdentityCompareReport({
-      baselinePolicy: "CONTEXT_AWARE_V1",
-      proposedPolicy: "CONTEXT_AWARE_V2",
-      baselineMetrics: aggregateHistoricalEvalResults(v1.evaluated),
-      proposedMetrics: aggregateHistoricalEvalResults(v2.evaluated),
-      rows: compareRows,
-      runtimeMs: {
-        baseline: v1.runtimeMs,
-        proposed: v2.runtimeMs,
-      },
-    });
-    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
-      throw new Error(
-        `V1→V2 transition counts do not equal evaluated (${compareRows.length})`
-      );
-    }
-    comparison = report;
-  } else if (compareWith === "CONTEXT_AWARE_V2_1") {
-    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
-    const v21 = await scoreEmails("CONTEXT_AWARE_V2_1");
-    const compareRows = pairedRows(v2.evaluated, v21.evaluated, false);
-    const report = buildIdentityCompareReport({
-      baselinePolicy: "CONTEXT_AWARE_V2",
-      proposedPolicy: "CONTEXT_AWARE_V2_1",
-      baselineMetrics: aggregateHistoricalEvalResults(v2.evaluated),
-      proposedMetrics: aggregateHistoricalEvalResults(v21.evaluated),
-      rows: compareRows,
-      runtimeMs: {
-        baseline: v2.runtimeMs,
-        proposed: v21.runtimeMs,
-      },
-    });
-    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
-      throw new Error(
-        `V2→V2.1 transition counts do not equal evaluated (${compareRows.length})`
-      );
-    }
-    comparison = report;
-  } else if (compareWith === "CONTEXT_AWARE_V2_2") {
-    const v2 = await scoreEmails("CONTEXT_AWARE_V2");
-    const v22 = await scoreEmails("CONTEXT_AWARE_V2_2");
-    const compareRows = pairedRows(v2.evaluated, v22.evaluated, false);
-    const report = buildIdentityCompareReport({
-      baselinePolicy: "CONTEXT_AWARE_V2",
-      proposedPolicy: "CONTEXT_AWARE_V2_2",
-      baselineMetrics: aggregateHistoricalEvalResults(v2.evaluated),
-      proposedMetrics: aggregateHistoricalEvalResults(v22.evaluated),
-      rows: compareRows,
-      runtimeMs: {
-        baseline: v2.runtimeMs,
-        proposed: v22.runtimeMs,
-      },
-    });
-    if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
-      throw new Error(
-        `V2→V2.2 transition counts do not equal evaluated (${compareRows.length})`
-      );
-    }
-    comparison = report;
-  } else if (compareWith === "ALL_THREE") {
-    // Compare All = V2 family (production V2 + independent V2.1/V2.2 experiments).
-    // V2 already scored as primary; do not silently omit V2.2.
-    const v21 = await scoreEmails(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1);
-    const v22 = await scoreEmails(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2);
-    const v21ById = new Map(v21.evaluated.map((r) => [r.id, r]));
-    const v22ById = new Map(v22.evaluated.map((r) => [r.id, r]));
-    const familyRows = [];
-    for (const v2Row of evaluated) {
-      const v21Row = v21ById.get(v2Row.id);
-      const v22Row = v22ById.get(v2Row.id);
-      if (!v21Row || !v22Row) continue;
-      familyRows.push(
-        buildV2FamilyCompareRow({
-          emailMessageId: v2Row.id,
-          subject: v2Row.subject,
-          trueJobId: v2Row.trueJobId,
-          trueJobName:
-            jobsById.get(v2Row.trueJobId)?.name ?? "(missing Job)",
-          groundTruthSource: sourceById.get(v2Row.id) ?? null,
-          v2: sideSummaryFromEval(v2Row, jobsById),
-          v21: sideSummaryFromEval(v21Row, jobsById),
-          v22: sideSummaryFromEval(v22Row, jobsById),
+    const emailIds = (evaluatedByPolicy.get(selectedPolicies[0]!) ?? []).map(
+      (r) => r.id
+    );
+    const byPolicyMaps = new Map(
+      selectedPolicies.map((p) => [
+        p,
+        new Map((evaluatedByPolicy.get(p) ?? []).map((r) => [r.id, r])),
+      ] as const)
+    );
+
+    const multiRows = [];
+    for (const emailId of emailIds) {
+      const sides = [];
+      let subject: string | null = null;
+      let trueJobId = "";
+      for (const policy of selectedPolicies) {
+        const row = byPolicyMaps.get(policy)?.get(emailId);
+        if (!row) break;
+        subject = row.subject;
+        trueJobId = row.trueJobId;
+        sides.push({
+          policy,
+          summary: sideSummaryFromEval(row, jobsById),
+        });
+      }
+      if (sides.length !== selectedPolicies.length || !trueJobId) continue;
+      multiRows.push(
+        buildIdentityMultiPolicyCompareRow({
+          emailMessageId: emailId,
+          subject,
+          trueJobId,
+          trueJobName: jobsById.get(trueJobId)?.name ?? "(missing Job)",
+          groundTruthSource: sourceById.get(emailId) ?? null,
+          sides,
         })
       );
     }
-    v2FamilyComparison = buildIdentityV2FamilyCompareReport({
-      v2Metrics: aggregateHistoricalEvalResults(evaluated),
-      v21Metrics: aggregateHistoricalEvalResults(v21.evaluated),
-      v22Metrics: aggregateHistoricalEvalResults(v22.evaluated),
-      rows: familyRows,
-      runtimeMs: {
-        v2: primary.runtimeMs,
-        v21: v21.runtimeMs,
-        v22: v22.runtimeMs,
-      },
+
+    multiPolicyComparison = buildIdentityMultiPolicyCompareReport({
+      policies: selectedPolicies,
+      metricsByPolicy,
+      runtimeMsByPolicy,
+      rows: multiRows,
+      baselinePolicy: pickCompareBaselinePolicy(selectedPolicies),
     });
-    // Do not set a two-policy `comparison` panel — that previously hid V2.2.
-    comparison = null;
-    threeWayComparison = null;
+
+    // Legacy paired panel when exactly two policies (export / old UI).
+    if (selectedPolicies.length === 2) {
+      const [leftPolicy, rightPolicy] = selectedPolicies;
+      const left = evaluatedByPolicy.get(leftPolicy!) ?? [];
+      const right = evaluatedByPolicy.get(rightPolicy!) ?? [];
+      const rightById = new Map(right.map((r) => [r.id, r]));
+      const compareRows: IdentityCompareRow[] = [];
+      for (const leftRow of left) {
+        const rightRow = rightById.get(leftRow.id);
+        if (!rightRow) continue;
+        const baseline = sideSummaryFromEval(leftRow, jobsById);
+        const proposedSide = sideSummaryFromEval(rightRow, jobsById);
+        const transition = classifyMatcherTransition({
+          baselineOutcome: baseline.outcome,
+          proposedOutcome: proposedSide.outcome,
+          baselinePredictedJobId: baseline.predictedJobId,
+          proposedPredictedJobId: proposedSide.predictedJobId,
+        });
+        compareRows.push({
+          emailMessageId: leftRow.id,
+          subject: leftRow.subject,
+          trueJobId: leftRow.trueJobId,
+          trueJobName:
+            jobsById.get(leftRow.trueJobId)?.name ?? "(missing Job)",
+          groundTruthSource: sourceById.get(leftRow.id) ?? null,
+          baseline,
+          proposed: proposedSide,
+          transition,
+          groundTruthReviewFlag:
+            baseline.outcome === "WRONG_MATCH" ||
+            proposedSide.outcome === "WRONG_MATCH",
+        });
+      }
+      const report = buildIdentityCompareReport({
+        baselinePolicy: leftPolicy!,
+        proposedPolicy: rightPolicy!,
+        baselineMetrics: metricsByPolicy[leftPolicy!]!,
+        proposedMetrics: metricsByPolicy[rightPolicy!]!,
+        rows: compareRows,
+        runtimeMs: {
+          baseline: runtimeMsByPolicy[leftPolicy!] ?? 0,
+          proposed: runtimeMsByPolicy[rightPolicy!] ?? 0,
+        },
+      });
+      if (!assertTransitionsReconcile(report.transitions, compareRows.length)) {
+        throw new Error(
+          `Comparison transition counts do not equal evaluated (${compareRows.length})`
+        );
+      }
+      comparison = report;
+    }
+
+    // Preserve V2-family shape when exactly those three policies were selected.
+    const isV2Family =
+      selectedPolicies.length === 3 &&
+      selectedPolicies.includes(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2) &&
+      selectedPolicies.includes(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1) &&
+      selectedPolicies.includes(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2);
+    if (isV2Family) {
+      const v2Map = byPolicyMaps.get(JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2)!;
+      const v21Map = byPolicyMaps.get(
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1
+      )!;
+      const v22Map = byPolicyMaps.get(
+        JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
+      )!;
+      const familyRows = [];
+      for (const emailId of emailIds) {
+        const v2Row = v2Map.get(emailId);
+        const v21Row = v21Map.get(emailId);
+        const v22Row = v22Map.get(emailId);
+        if (!v2Row || !v21Row || !v22Row) continue;
+        familyRows.push(
+          buildV2FamilyCompareRow({
+            emailMessageId: emailId,
+            subject: v2Row.subject,
+            trueJobId: v2Row.trueJobId,
+            trueJobName:
+              jobsById.get(v2Row.trueJobId)?.name ?? "(missing Job)",
+            groundTruthSource: sourceById.get(emailId) ?? null,
+            v2: sideSummaryFromEval(v2Row, jobsById),
+            v21: sideSummaryFromEval(v21Row, jobsById),
+            v22: sideSummaryFromEval(v22Row, jobsById),
+          })
+        );
+      }
+      v2FamilyComparison = buildIdentityV2FamilyCompareReport({
+        v2Metrics: metricsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2]!,
+        v21Metrics:
+          metricsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1]!,
+        v22Metrics:
+          metricsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2]!,
+        rows: familyRows,
+        runtimeMs: {
+          v2: runtimeMsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2] ?? 0,
+          v21:
+            runtimeMsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1] ??
+            0,
+          v22:
+            runtimeMsByPolicy[JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2] ??
+            0,
+        },
+      });
+    }
   }
 
   const metrics = aggregateHistoricalEvalResults(evaluated);
@@ -813,6 +820,7 @@ export async function runJobMatcherHistoricalEval(input: {
     comparison,
     threeWayComparison,
     v2FamilyComparison,
+    multiPolicyComparison,
   });
   const displayEvaluated =
     evaluatedByPolicy.get(display.policy) ?? evaluated;
@@ -941,10 +949,13 @@ export async function runJobMatcherHistoricalEval(input: {
     comparison,
     threeWayComparison,
     v2FamilyComparison,
+    multiPolicyComparison,
+    selectedIdentityPolicies: selectedPolicies,
+    evaluationSelectionMode,
     runtimeMs: Date.now() - startedAt,
     groundTruthQuality: "MODERATE",
     groundTruthNotes:
-      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; V2.1 = V2 + title-gap only; V2.2 = V2 + unique-token only (independent experiments). experimentRevision stamps the implementation; older runs without it used prior V2.1/V2.2 algorithms. Dashboard matcher selector switches among policyResults without re-running.",
+      "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Folder labels can be noisy. AI_* / JOB_NUMBER_MATCH / IMPORT excluded. Selected Job filters ground truth only — never matcher input. Production identity policy is CONTEXT_AWARE_V2; V2.1 = V2 + title-gap only; V2.2 = V2 + unique-token only (independent experiments). experimentRevision stamps the implementation; older runs without it used prior V2.1/V2.2 algorithms. Dashboard model selection switches among policyResults without re-running.",
   };
   completeJobMatcherEvalProgress({
     workspaceId: input.workspaceId,
@@ -959,4 +970,62 @@ export async function runJobMatcherHistoricalEval(input: {
     });
     throw err;
   }
+}
+
+/**
+ * Resolve which policies to score. Prefer explicit identityPolicies;
+ * otherwise map legacy compareWith / single identityPolicy.
+ */
+function resolveSelectedEvalPolicies(input: {
+  identityPolicies?: JobMatchIdentityPolicy[];
+  identityPolicy?: JobMatchIdentityPolicy;
+  compareWithIdentityPolicy?:
+    | "CONTEXT_AWARE_V1"
+    | "CONTEXT_AWARE_V2"
+    | "CONTEXT_AWARE_V2_1"
+    | "CONTEXT_AWARE_V2_2"
+    | "ALL_THREE"
+    | null;
+}): JobMatchIdentityPolicy[] {
+  if (input.identityPolicies && input.identityPolicies.length > 0) {
+    const normalized = normalizeEvalIdentityPolicies(input.identityPolicies);
+    if (normalized.length === 0) {
+      throw new Error("identityPolicies must include at least one valid policy");
+    }
+    return normalized;
+  }
+
+  const compareWith = input.compareWithIdentityPolicy ?? null;
+  if (compareWith === "CONTEXT_AWARE_V1") {
+    return normalizeEvalIdentityPolicies(["BASELINE", "CONTEXT_AWARE_V1"]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V2") {
+    return normalizeEvalIdentityPolicies([
+      "CONTEXT_AWARE_V1",
+      "CONTEXT_AWARE_V2",
+    ]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V2_1") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+    ]);
+  }
+  if (compareWith === "CONTEXT_AWARE_V2_2") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+    ]);
+  }
+  if (compareWith === "ALL_THREE") {
+    return normalizeEvalIdentityPolicies([
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+    ]);
+  }
+
+  return normalizeEvalIdentityPolicies([
+    input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  ]);
 }
