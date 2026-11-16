@@ -76,9 +76,9 @@ function peerFromName(j: JobRecordForMatch): IdentityPeerJob {
 }
 
 describe("CONTEXT_AWARE_V2_4 compound numeric identity", () => {
-  it("stamps V2_4_COMPOUND_NUMERIC_IDENTITY_R1 and preserves prior revisions", () => {
+  it("stamps current V2.4 revision and preserves prior compound-numeric label", () => {
     expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
-      "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
+      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
     );
     expect(JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION).toBe(
       "V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1"
@@ -88,7 +88,7 @@ describe("CONTEXT_AWARE_V2_4 compound numeric identity", () => {
     );
     expect(JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION).toBe("V2_4_LEGACY");
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_4")).toBe(
-      "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
+      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
     );
     expect(getProductionJobMatchIdentityPolicy()).toBe("CONTEXT_AWARE_V2");
   });

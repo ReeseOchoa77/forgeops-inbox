@@ -90,6 +90,10 @@ export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
  * be reinterpreted with the new full-body + attachment semantics.
  */
 export const JOB_MATCH_V2_4_IMPLEMENTATION_REVISION =
+  "V2_4_DYNAMIC_WORD_IMPORTANCE_R1" as const;
+
+/** Prior V2.4 compound numeric identity revision (historical). */
+export const JOB_MATCH_V2_4_PRIOR_COMPOUND_NUMERIC_REVISION =
   "V2_4_COMPOUND_NUMERIC_IDENTITY_R1" as const;
 
 /** Prior V2.4 full-body + attachment identity revision (historical). */
@@ -239,14 +243,27 @@ export type JobNameIdentityReasonCode =
   /** V2.4: standalone number ignored as identity evidence. */
   | "STANDALONE_NUMBER_IGNORED"
   /** V2.4: descriptor alias normalized into a compound key. */
-  | "NUMERIC_DESCRIPTOR_NORMALIZED";
+  | "NUMERIC_DESCRIPTOR_NORMALIZED"
+  /** V2.4: family word + component number (Beltline #3). */
+  | "FAMILY_NUMERIC_IDENTITY"
+  /** V2.4: unique title term identified one Job (Nova → Nova Classical). */
+  | "SINGLE_WORD_PROJECT_IDENTITY"
+  /** V2.4: candidate-relative unique project term evidence. */
+  | "UNIQUE_PROJECT_TERM"
+  /** V2.4: shared project-family identifier without disambiguation. */
+  | "SHARED_PROJECT_FAMILY"
+  /** V2.4: dynamic word-importance classification recorded. */
+  | "DYNAMIC_WORD_IMPORTANCE"
+  /** V2.4: generic/weak term suppressed as independent identity. */
+  | "GENERIC_TERM_SUPPRESSED";
 
 export type CompoundNumericIdentityDiagnostic = {
   code:
     | "COMPOUND_NUMERIC_IDENTITY"
     | "STANDALONE_NUMBER_IGNORED"
     | "NUMERIC_IDENTITY_CONFLICT"
-    | "NUMERIC_DESCRIPTOR_NORMALIZED";
+    | "NUMERIC_DESCRIPTOR_NORMALIZED"
+    | "FAMILY_NUMERIC_IDENTITY";
   rawText: string;
   normalizedKey: string | null;
   descriptor: string | null;
@@ -255,6 +272,30 @@ export type CompoundNumericIdentityDiagnostic = {
   candidateJobId: string | null;
   conflictingKeys: string[];
   contributedToResolution: boolean;
+};
+
+export type WordImportanceIdentityDiagnostic = {
+  code:
+    | "DYNAMIC_WORD_IMPORTANCE"
+    | "UNIQUE_PROJECT_TERM"
+    | "SHARED_PROJECT_FAMILY"
+    | "GENERIC_TERM_SUPPRESSED"
+    | "SINGLE_WORD_PROJECT_IDENTITY";
+  matchedTerm: string;
+  sourceField: "subject" | "body" | "mixed";
+  importance:
+    | "unique"
+    | "shared_family"
+    | "generic"
+    | "distinguishing"
+    | "suppressed";
+  eligibleJobIds: string[];
+  candidateJobIds: string[];
+  projectFamily: string | null;
+  numericComponent: string | null;
+  competingNumericComponents: string[];
+  sufficientForResolution: boolean;
+  acceptRejectReason: string;
 };
 
 export type JobNameIdentityDiagnostics = {
@@ -291,6 +332,8 @@ export type JobNameIdentityDiagnostics = {
   contextualChangedBaseline?: boolean;
   /** V2.4: compound numeric identity diagnostics (not every unrelated digit). */
   compoundNumericDiagnostics?: CompoundNumericIdentityDiagnostic[];
+  /** V2.4: dynamic word-importance diagnostics. */
+  wordImportanceDiagnostics?: WordImportanceIdentityDiagnostic[];
 };
 
 /**
@@ -2160,6 +2203,12 @@ export function tryContextualWordSearchRecovery(args: {
                   resolved.compoundNumericDiagnostics,
               }
             : {}),
+          ...(resolved.wordImportanceDiagnostics?.length
+            ? {
+                wordImportanceDiagnostics:
+                  resolved.wordImportanceDiagnostics,
+              }
+            : {}),
         }
       ),
     };
@@ -2205,6 +2254,12 @@ export function tryContextualWordSearchRecovery(args: {
           ? {
               compoundNumericDiagnostics:
                 resolved.compoundNumericDiagnostics,
+            }
+          : {}),
+        ...(resolved.wordImportanceDiagnostics?.length
+          ? {
+              wordImportanceDiagnostics:
+                resolved.wordImportanceDiagnostics,
             }
           : {}),
       }

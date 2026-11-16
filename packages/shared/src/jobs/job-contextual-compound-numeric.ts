@@ -175,3 +175,107 @@ export function extractCompoundNumericIdentitiesFromText(
 ): CompoundNumericIdentity[] {
   return extractCompoundNumericIdentities(canonicalizeJobNameTokens(text));
 }
+
+/**
+ * Quantity / count followers that mean an adjacent number is not a project
+ * component (e.g. "Beltline 3 drawings", "Beltline has 3 open RFIs" after
+ * tokenization may still place a digit next to family — reject when the next
+ * token is a clear quantity noun).
+ */
+export const FAMILY_NUMERIC_QUANTITY_FOLLOWERS = new Set([
+  "drawing",
+  "drawings",
+  "attachment",
+  "attachments",
+  "sheet",
+  "sheets",
+  "page",
+  "pages",
+  "rfi",
+  "rfis",
+  "item",
+  "items",
+  "file",
+  "files",
+  "copy",
+  "copies",
+  "revision",
+  "revisions",
+  "open",
+  "emails",
+  "email",
+  "hours",
+  "days",
+  "weeks",
+]);
+
+export type FamilyScopedNumericIdentity = {
+  /** family:value e.g. beltline:3 */
+  key: string;
+  familyToken: string;
+  value: string;
+  rawTokens: string[];
+  startIndex: number;
+};
+
+/**
+ * Family word immediately followed by a number (Beltline #3 → beltline + 3).
+ * Does not invent descriptor compounds; used for family-scoped resolution.
+ */
+export function extractFamilyScopedNumericIdentities(
+  tokens: readonly string[],
+  familyTokens: readonly string[],
+  tokenEquivalent: (a: string, b: string) => boolean = (a, b) => a === b
+): FamilyScopedNumericIdentity[] {
+  if (familyTokens.length === 0 || tokens.length < 2) return [];
+  const out: FamilyScopedNumericIdentity[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    const fam = tokens[i]!;
+    if (!familyTokens.some((ft) => tokenEquivalent(fam, ft))) continue;
+    // Skip descriptor+number — those are handled as compounds.
+    if (resolveCompoundDescriptor(fam)) continue;
+    const next = tokens[i + 1]!;
+    if (!isNumericJobNameToken(next)) continue;
+    const follower = tokens[i + 2];
+    if (follower && FAMILY_NUMERIC_QUANTITY_FOLLOWERS.has(follower)) {
+      continue;
+    }
+    const key = `${fam.toLowerCase()}:${next}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      key,
+      familyToken: fam,
+      value: next,
+      rawTokens: [fam, next],
+      startIndex: i,
+    });
+  }
+  return out;
+}
+
+/**
+ * Among family peers, find the unique Job whose compound numeric value matches.
+ * Returns null when zero or multiple peers share that component number.
+ */
+export function resolveFamilyScopedNumericPeer(input: {
+  value: string;
+  familyPeers: readonly IdentityPeerJob[];
+}): {
+  peer: IdentityPeerJob;
+  compound: CompoundNumericIdentity;
+} | null {
+  const matches: Array<{
+    peer: IdentityPeerJob;
+    compound: CompoundNumericIdentity;
+  }> = [];
+  for (const peer of input.familyPeers) {
+    const compounds = extractPeerCompoundNumericIdentities(peer);
+    const hit = compounds.find((c) => c.value === input.value);
+    if (!hit) continue;
+    matches.push({ peer, compound: hit });
+  }
+  if (matches.length !== 1) return null;
+  return matches[0]!;
+}

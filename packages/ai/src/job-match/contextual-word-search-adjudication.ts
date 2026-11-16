@@ -53,6 +53,8 @@ Rules:
 - Do not invent Jobs or override eligibility.
 - Standalone numbers (e.g. "3", "three") are NEVER project identity evidence.
 - Compound numeric identifiers are pre-normalized (Building 3 / Bldg #3 → building:3). Trust those keys; do not re-decide whether #3 equals 3.
+- Family-scoped numerics are pre-normalized (Beltline #3 ≡ Beltline Bldg #3 when unique in-family). Trust those; do not re-decide.
+- Unique title terms (e.g. Nova) may already be resolved deterministically — do not invent competing Jobs.
 - Contradictory compounds (building:1 vs building:2) → CONFLICT, not score accumulation.
 
 json`;

@@ -15,17 +15,22 @@ import {
   phraseContained,
 } from "./job-name-normalize.js";
 import {
+  buildContextualFamilyIndex,
   canonicalizeContextualToken,
   contextualTokensEquivalent,
+  extractContextualIdentityTerms,
   isContextualWeakDistinguishingToken,
   isTokenIncidentalInContextualHay,
   isTokenNegatedInContextualHay,
 } from "./job-contextual-word-search.js";
 import {
   extractCompoundNumericIdentities,
+  extractFamilyScopedNumericIdentities,
   extractPeerCompoundNumericIdentities,
   findNumericIdentityConflicts,
+  isCompoundNumericKey,
   resolveCompoundDescriptor,
+  resolveFamilyScopedNumericPeer,
 } from "./job-contextual-compound-numeric.js";
 import type { IdentityPeerJob } from "./job-name-identity-policy.js";
 
@@ -307,6 +312,82 @@ function matchPeersInText(input: {
       });
       break;
     }
+  }
+
+  // Family-scoped numeric in attachment text: "Beltline #3".
+  const alreadyHit = new Set(hits.map((h) => h.jobId));
+  const familyIndex = buildContextualFamilyIndex(input.peers);
+  for (const family of familyIndex.families) {
+    const scoped = extractFamilyScopedNumericIdentities(
+      tokens,
+      [family.sharedId],
+      contextualTokensEquivalent
+    );
+    for (const fn of scoped) {
+      const resolved = resolveFamilyScopedNumericPeer({
+        value: fn.value,
+        familyPeers: family.peers,
+      });
+      if (!resolved) continue;
+      if (alreadyHit.has(resolved.peer.jobId)) continue;
+      if (isTokenNegatedInContextualHay(tokens, fn.startIndex)) continue;
+      if (
+        isTokenIncidentalInContextualHay(tokens, fn.startIndex) ||
+        isAttachmentExampleReference(tokens, fn.startIndex)
+      ) {
+        continue;
+      }
+      hits.push({
+        jobId: resolved.peer.jobId,
+        attachmentId: input.attachmentId,
+        filename: input.filename,
+        category: input.category,
+        matchedPhrase: resolved.compound.key,
+        supportingExcerpt: excerptAround(input.text, fn.rawTokens.join(" ")),
+        pageNumber: input.pageNumber,
+        strength: input.strength,
+      });
+      alreadyHit.add(resolved.peer.jobId);
+    }
+  }
+
+  // Unique project-title terms (e.g. Nova → Nova Classical).
+  const sharedKeys = new Set(
+    familyIndex.sharedIdentifiers.map((s) => canonicalizeContextualToken(s))
+  );
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i]!;
+    if (isNumericJobNameToken(tok)) continue;
+    if (resolveCompoundDescriptor(tok)) continue;
+    if (isContextualWeakDistinguishingToken(tok)) continue;
+    const key = canonicalizeContextualToken(tok);
+    if (sharedKeys.has(key)) continue;
+    const holders = input.peers.filter((p) =>
+      extractContextualIdentityTerms(p).some(
+        (t) =>
+          !isCompoundNumericKey(t) && contextualTokensEquivalent(t, tok)
+      )
+    );
+    if (holders.length !== 1) continue;
+    if (alreadyHit.has(holders[0]!.jobId)) continue;
+    if (isTokenNegatedInContextualHay(tokens, i)) continue;
+    if (
+      isTokenIncidentalInContextualHay(tokens, i) ||
+      isAttachmentExampleReference(tokens, i)
+    ) {
+      continue;
+    }
+    hits.push({
+      jobId: holders[0]!.jobId,
+      attachmentId: input.attachmentId,
+      filename: input.filename,
+      category: input.category,
+      matchedPhrase: key,
+      supportingExcerpt: excerptAround(input.text, tok),
+      pageNumber: input.pageNumber,
+      strength: input.strength,
+    });
+    alreadyHit.add(holders[0]!.jobId);
   }
   return hits;
 }

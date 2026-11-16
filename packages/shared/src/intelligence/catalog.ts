@@ -190,7 +190,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
           id: "marker-1",
           title: "Marker 1 — Project identity",
           summary:
-            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Production identityPolicy CONTEXT_AWARE_V2 (family disambiguation + contact safety). BASELINE/V1/V2.1–V2.4 remain available for evaluation; V2.1 = V2 + title-gap; V2.2 = V2 + unique-token; V2.3 = V2 + normalized subject identity; V2.4 = V2 + full-body project identity + contextual word search + Attachment Identity + compound numeric identity (building:3; standalone digits ignored). Independent experiments, not production. V2_4_COMPOUND_NUMERIC_IDENTITY_R1 stamps current V2.4; prior V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1 / V2_4_CONTEXTUAL_WORD_SEARCH / V2_4_LEGACY preserved.",
+            "name / alias / siteName / externalRef in subject/body. EXACT > ALL_TOKENS > OVERLAP. Unique strong MATCH stops pipeline. Production identityPolicy CONTEXT_AWARE_V2 (family disambiguation + contact safety). BASELINE/V1/V2.1–V2.4 remain available for evaluation; V2.1 = V2 + title-gap; V2.2 = V2 + unique-token; V2.3 = V2 + normalized subject identity; V2.4 = V2 + full-body + contextual word search + Attachment Identity + compound/family numeric + dynamic word importance (unique title terms e.g. Nova). Independent experiments, not production. V2_4_DYNAMIC_WORD_IMPORTANCE_R1 stamps current V2.4; prior compound-numeric / full-body / contextual / legacy stamps preserved.",
           version: JOB_NAME_MARKER_VERSION,
         },
         {
@@ -230,7 +230,7 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
       groundTruthNotes:
         "Authoritative EmailMessage.jobId (USER_ASSIGNED / VERIFIED_PROJECT_FOLDER). Exclude AI_* / JOB_NUMBER_MATCH / IMPORT. Folder labels can be noisy.",
       notes:
-        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Preferred API: identityPolicies[] (arbitrary validated subset; same emails/snapshot). Legacy compareWithIdentityPolicy still mapped. Dynamic multiPolicyComparison for N≥2. JMPS = 100×(C−5W+0.15A+0.05F)/N. Primary metric cards prefer production CONTEXT_AWARE_V2 when scored. V2.4 stamps V2_4_COMPOUND_NUMERIC_IDENTITY_R1 and loads cached EmailAttachment extractedText when available (disclosure when hasAttachments but unloaded). Documented baseline metrics are historical references, not live hardcoded expectations.",
+        "Reuse evaluate-job-matcher-production + aggregateHistoricalEvalResults. Read-only; holdout excludeEmailMessageId. Preferred API: identityPolicies[] (arbitrary validated subset; same emails/snapshot). Legacy compareWithIdentityPolicy still mapped. Dynamic multiPolicyComparison for N≥2. JMPS = 100×(C−5W+0.15A+0.05F)/N. Primary metric cards prefer production CONTEXT_AWARE_V2 when scored. V2.4 stamps V2_4_DYNAMIC_WORD_IMPORTANCE_R1 and loads cached EmailAttachment extractedText when available (disclosure when hasAttachments but unloaded). Documented baseline metrics are historical references, not live hardcoded expectations.",
     },
     explainability: {
       available: true,

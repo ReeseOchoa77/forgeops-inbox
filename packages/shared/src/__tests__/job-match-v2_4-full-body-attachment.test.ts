@@ -60,7 +60,7 @@ function peer(j: JobRecordForMatch, tokens: string[]): IdentityPeerJob {
 describe("V2.4 full-body + attachment identity", () => {
   it("revision is full-body+attachment (prior contextual preserved)", () => {
     expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
-      "V2_4_COMPOUND_NUMERIC_IDENTITY_R1"
+      "V2_4_DYNAMIC_WORD_IMPORTANCE_R1"
     );
     expect(JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION).toBe(
       "V2_4_CONTEXTUAL_WORD_SEARCH"
