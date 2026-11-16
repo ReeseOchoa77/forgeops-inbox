@@ -3,7 +3,9 @@ import type { JobMatcherEvalResult, JobMatcherEvalRow } from './api'
 import {
   availableEvalPolicies,
   defaultSelectedPolicy,
+  policyTabShortLabel,
   selectPolicyView,
+  shouldShowResultModelTabs,
 } from './job-matcher-eval-policy-view'
 
 function metrics(partial: {
@@ -204,5 +206,75 @@ describe('job-matcher-eval-policy-view', () => {
     expect(view.available).toBe(true)
     if (!view.available) return
     expect(view.rows).toHaveLength(1)
+  })
+
+  it('result model tabs only for multi-model evaluations', () => {
+    expect(shouldShowResultModelTabs(['CONTEXT_AWARE_V2'])).toBe(false)
+    expect(
+      shouldShowResultModelTabs(['CONTEXT_AWARE_V2', 'CONTEXT_AWARE_V2_1'])
+    ).toBe(true)
+    expect(
+      shouldShowResultModelTabs([
+        'CONTEXT_AWARE_V2',
+        'CONTEXT_AWARE_V2_1',
+        'CONTEXT_AWARE_V2_2',
+        'CONTEXT_AWARE_V2_3',
+      ])
+    ).toBe(true)
+  })
+
+  it('policyTabShortLabel is dynamic from displayName', () => {
+    expect(
+      policyTabShortLabel('CONTEXT_AWARE_V2', 'V2 — Base Job Matcher')
+    ).toBe('V2')
+    expect(
+      policyTabShortLabel(
+        'CONTEXT_AWARE_V2_3',
+        'V2.3 — Normalized Subject Identity'
+      )
+    ).toBe('V2.3')
+    expect(policyTabShortLabel('CONTEXT_AWARE_V2_1')).toBe('V2_1')
+  })
+
+  it('four-model policyResults yield four available tabs', () => {
+    const result = baseResult({
+      policyResults: [
+        {
+          identityPolicy: 'CONTEXT_AWARE_V2',
+          metrics: metrics({ correctMatches: 1, wrongMatches: 0, ambiguous: 0 }),
+          jobBreakdown: [],
+          rows: [row('e1', 'CORRECT_MATCH', 'CONTEXT_AWARE_V2')],
+          wrongMatches: [],
+        },
+        {
+          identityPolicy: 'CONTEXT_AWARE_V2_1',
+          metrics: metrics({ correctMatches: 1, wrongMatches: 0, ambiguous: 0 }),
+          jobBreakdown: [],
+          rows: [row('e1', 'CORRECT_MATCH', 'CONTEXT_AWARE_V2_1')],
+          wrongMatches: [],
+        },
+        {
+          identityPolicy: 'CONTEXT_AWARE_V2_2',
+          metrics: metrics({ correctMatches: 0, wrongMatches: 1, ambiguous: 0 }),
+          jobBreakdown: [],
+          rows: [row('e1', 'WRONG_MATCH', 'CONTEXT_AWARE_V2_2')],
+          wrongMatches: [],
+        },
+        {
+          identityPolicy: 'CONTEXT_AWARE_V2_3',
+          metrics: metrics({ correctMatches: 1, wrongMatches: 0, ambiguous: 0 }),
+          jobBreakdown: [],
+          rows: [row('e1', 'CORRECT_MATCH', 'CONTEXT_AWARE_V2_3')],
+          wrongMatches: [],
+        },
+      ],
+    })
+    const policies = availableEvalPolicies(result)
+    expect(policies).toHaveLength(4)
+    expect(shouldShowResultModelTabs(policies)).toBe(true)
+    const v22 = selectPolicyView(result, 'CONTEXT_AWARE_V2_2')
+    expect(v22.available).toBe(true)
+    if (!v22.available) return
+    expect(v22.rows[0]?.outcome).toBe('WRONG_MATCH')
   })
 })

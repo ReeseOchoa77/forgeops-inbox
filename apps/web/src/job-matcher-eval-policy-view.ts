@@ -16,6 +16,26 @@ export function policyLabelSuffix(policy: JobMatcherIdentityPolicy): string {
   return ''
 }
 
+/**
+ * Compact tab label for Results model selector (registry displayName prefix,
+ * else strip CONTEXT_AWARE_). Dynamic — not limited to V2–V2.3.
+ */
+export function policyTabShortLabel(
+  policy: JobMatcherIdentityPolicy,
+  displayName?: string | null
+): string {
+  const fromRegistry = displayName?.split('—')[0]?.trim()
+  if (fromRegistry) return fromRegistry
+  return policy.replace(/^CONTEXT_AWARE_/, '').replace(/^BASELINE$/, 'Baseline')
+}
+
+/** Show Results model tabs only for multi-model evaluation payloads. */
+export function shouldShowResultModelTabs(
+  policies: readonly JobMatcherIdentityPolicy[]
+): boolean {
+  return policies.length >= 2
+}
+
 /** True when a scored policy bundle uses the current independent experiment revision. */
 export function isCurrentExperimentRevision(
   bundle: Pick<JobMatcherEvalPolicyResultBundle, 'identityPolicy' | 'experimentRevision'>,

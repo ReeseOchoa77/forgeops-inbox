@@ -55,6 +55,8 @@ import {
 import {
   availableEvalPolicies,
   defaultSelectedPolicy,
+  policyTabShortLabel,
+  shouldShowResultModelTabs,
 } from '../job-matcher-eval-policy-view'
 import {
   DEFAULT_INTELLIGENCE_STATE,
@@ -273,6 +275,19 @@ export function JobMatcherEvaluationPanel({
     if (row) setSelectedRow(row)
   }, [result, initialUi.selectedEmailMessageId, selectedRow])
 
+  // Keep selected model valid for the loaded evaluation (historical + new runs).
+  useEffect(() => {
+    if (!result) {
+      setSelectedViewPolicy(null)
+      return
+    }
+    const available = availableEvalPolicies(result)
+    setSelectedViewPolicy((prev) => {
+      if (prev && available.includes(prev)) return prev
+      return defaultSelectedPolicy(result)
+    })
+  }, [result])
+
   // Re-attach to an in-flight SPA evaluation after navigating away/back.
   useEffect(() => {
     if (!userId) return
@@ -284,6 +299,7 @@ export function JobMatcherEvaluationPanel({
       .then((evaluation) => {
         if (cancelled) return
         setResult(evaluation)
+        setSelectedViewPolicy(defaultSelectedPolicy(evaluation))
         setJobMatcherEvalSession({
           workspaceId,
           userId,
@@ -1294,7 +1310,7 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {/* Result tabs + metric cards for the selected policy */}
+        {/* Comparison chrome + metric cards. Per-model tabs live in ResultsPane. */}
         {result && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
@@ -1310,11 +1326,11 @@ export function JobMatcherEvaluationPanel({
               }}
             >
               <span style={{ fontWeight: 600 }}>Results</span>
-              <div
-                data-testid="job-matcher-result-tabs"
-                style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-              >
-                {hasComparisonTab ? (
+              {hasComparisonTab ? (
+                <div
+                  data-testid="job-matcher-result-tabs"
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+                >
                   <button
                     type="button"
                     data-testid="job-matcher-tab-comparison"
@@ -1327,32 +1343,24 @@ export function JobMatcherEvaluationPanel({
                   >
                     Comparison
                   </button>
-                ) : null}
-                {availablePolicies.map((p) => {
-                  const entry = getJobMatchPolicyRegistryEntry(p)
-                  const short =
-                    entry?.displayName.split('—')[0]?.trim() ??
-                    p.replace('CONTEXT_AWARE_', '')
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      data-testid={`job-matcher-tab-${p}`}
-                      onClick={() => selectResultTab(p)}
-                      style={{
-                        ...chipBtn,
-                        background: resultTab === p ? '#111827' : '#fff',
-                        color: resultTab === p ? '#fff' : '#111827',
-                      }}
-                    >
-                      {short}
-                      {p === getProductionJobMatchIdentityPolicy()
-                        ? ' · prod'
-                        : ''}
-                    </button>
-                  )
-                })}
-              </div>
+                </div>
+              ) : null}
+              {!showingComparison && selectedViewPolicy ? (
+                <span
+                  data-testid="job-matcher-active-model-label"
+                  style={{ fontWeight: 500, color: '#6b7280' }}
+                >
+                  Viewing:{' '}
+                  {policyTabShortLabel(
+                    selectedViewPolicy,
+                    getJobMatchPolicyRegistryEntry(selectedViewPolicy)
+                      ?.displayName
+                  )}
+                  {shouldShowResultModelTabs(availablePolicies)
+                    ? ` · ${availablePolicies.length} models`
+                    : ''}
+                </span>
+              ) : null}
               <span style={{ fontWeight: 500, color: '#6b7280' }}>
                 Production active: {getProductionJobMatchIdentityPolicy()}
                 {result.evaluationRunId
@@ -1397,6 +1405,7 @@ export function JobMatcherEvaluationPanel({
               <>
               <div
                 data-testid="job-matcher-metric-cards"
+                data-identity-policy={selectedViewPolicy ?? ''}
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
@@ -1574,6 +1583,11 @@ export function JobMatcherEvaluationPanel({
                 ? policyView.identityPolicy
                 : null
             }
+            modelPolicies={availablePolicies}
+            activeModelPolicy={
+              resultTab === 'comparison' ? null : selectedViewPolicy
+            }
+            onSelectModelPolicy={(policy) => selectResultTab(policy)}
             filteredRows={filteredRows}
             outcomeFilter={outcomeFilter}
             setOutcomeFilter={setOutcomeFilter}
@@ -1692,6 +1706,12 @@ function ResultsPane(props: {
   result: JobMatcherEvalResult | null
   /** When set, show unavailable instead of empty/zero rows for a missing policy. */
   policyUnavailable?: JobMatcherIdentityPolicy | null
+  /** Models scored in this evaluation (from saved policyResults). */
+  modelPolicies: JobMatcherIdentityPolicy[]
+  /** Active model for Emails/Jobs/Diagnostics; null while Comparison chrome is open. */
+  activeModelPolicy: JobMatcherIdentityPolicy | null
+  /** Switch model without rematching — uses saved per-policy bundles. */
+  onSelectModelPolicy: (policy: JobMatcherIdentityPolicy) => void
   filteredRows: JobMatcherEvalRow[]
   outcomeFilter: OutcomeFilter
   setOutcomeFilter: (f: OutcomeFilter) => void
@@ -1714,6 +1734,7 @@ function ResultsPane(props: {
   onToggleExclusion: (emailMessageId: string) => void
   excludedCount: number
 }) {
+  const showModelTabs = shouldShowResultModelTabs(props.modelPolicies)
   return (
     <>
       <div
@@ -1740,6 +1761,61 @@ function ResultsPane(props: {
           <strong style={{ fontSize: 12, flexShrink: 0 }}>
             Results{props.result ? ` (${props.filteredRows.length})` : ''}
           </strong>
+          {props.jobFilterId && (
+            <button type="button" onClick={() => props.setJobFilterId(null)} style={linkBtn}>
+              Clear Job filter
+            </button>
+          )}
+        </div>
+        {showModelTabs ? (
+          <div
+            data-testid="job-matcher-results-model-tabs"
+            role="tablist"
+            aria-label="Evaluation model"
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 4,
+              alignItems: 'center',
+              minWidth: 0,
+            }}
+          >
+            {props.modelPolicies.map((p) => {
+              const entry = getJobMatchPolicyRegistryEntry(p)
+              const short = policyTabShortLabel(p, entry?.displayName)
+              const active = props.activeModelPolicy === p
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`job-matcher-results-model-tab-${p}`}
+                  onClick={() => props.onSelectModelPolicy(p)}
+                  style={{
+                    ...chipBtn,
+                    flexShrink: 0,
+                    background: active ? '#111827' : '#fff',
+                    color: active ? '#fff' : '#111827',
+                    fontWeight: active ? 700 : 500,
+                  }}
+                >
+                  {short}
+                  {p === getProductionJobMatchIdentityPolicy() ? ' · prod' : ''}
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            alignItems: 'center',
+            minWidth: 0,
+          }}
+        >
           <Segmented
             value={props.panelTab}
             onChange={props.setPanelTab}
@@ -1749,11 +1825,6 @@ function ResultsPane(props: {
               { value: 'diagnostics', label: 'Diagnostics' },
             ]}
           />
-          {props.jobFilterId && (
-            <button type="button" onClick={() => props.setJobFilterId(null)} style={linkBtn}>
-              Clear Job filter
-            </button>
-          )}
         </div>
         {props.panelTab === 'emails' && (
           <div
