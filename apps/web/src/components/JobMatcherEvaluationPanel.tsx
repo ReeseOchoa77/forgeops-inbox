@@ -28,10 +28,13 @@ import {
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
 import {
+  selectAdjustedPolicyView,
+  type JobMatcherEvalExclusion,
+} from '../job-matcher-eval-exclusions'
+import {
   availableEvalPolicies,
   defaultSelectedPolicy,
   policyLabelSuffix,
-  selectPolicyView,
 } from '../job-matcher-eval-policy-view'
 import {
   DEFAULT_INTELLIGENCE_STATE,
@@ -52,7 +55,14 @@ import { SafeEmailBody } from './SafeEmailBody'
 type JobsMode = 'ALL' | 'SPECIFIC' | 'SELECTED'
 type Sampling = 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
 type Lifecycle = 'ALL' | 'CURRENT' | 'ARCHIVED'
-type OutcomeFilter = 'ALL' | 'CORRECT_MATCH' | 'WRONG_MATCH' | 'AMBIGUOUS' | 'CONFLICT' | 'NO_MATCH'
+type OutcomeFilter =
+  | 'ALL'
+  | 'CORRECT_MATCH'
+  | 'WRONG_MATCH'
+  | 'AMBIGUOUS'
+  | 'CONFLICT'
+  | 'NO_MATCH'
+  | 'EXCLUDED'
 type ResultsView = 'emails' | 'jobs'
 type PanelTab = 'emails' | 'jobs' | 'diagnostics'
 
@@ -108,12 +118,18 @@ export function JobMatcherEvaluationPanel({
   const [result, setResult] = useState<JobMatcherEvalResult | null>(
     () => sessionSeed?.result ?? null
   )
+  /** Run-scoped exclusions — same email ids apply to every policy in the run. */
+  const [exclusions, setExclusions] = useState<JobMatcherEvalExclusion[]>([])
+  const [exclusionBusyId, setExclusionBusyId] = useState<string | null>(null)
+  const [exclusionError, setExclusionError] = useState<string | null>(null)
   /** Matcher version for metrics + email rows (does not re-run evaluation). */
   const [selectedViewPolicy, setSelectedViewPolicy] =
     useState<JobMatcherIdentityPolicy | null>(() =>
       sessionSeed?.result ? defaultSelectedPolicy(sessionSeed.result) : null
     )
-  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>(() => initialUi.outcomeFilter)
+  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>(
+    () => initialUi.outcomeFilter
+  )
   const [jobFilterId, setJobFilterId] = useState<string | null>(
     () => sessionSeed?.jobFilterId ?? null
   )
@@ -193,7 +209,7 @@ export function JobMatcherEvaluationPanel({
         lifecycle,
         evaluationMode,
       },
-      outcomeFilter,
+      outcomeFilter: outcomeFilter === 'EXCLUDED' ? 'ALL' : outcomeFilter,
       transitionFilter: transitionFilter === 'ALL' ? null : transitionFilter,
       resultsView,
       selectedEmailMessageId: selectedRow?.emailMessageId ?? null,
@@ -347,6 +363,8 @@ export function JobMatcherEvaluationPanel({
     setTransitionFilter('ALL')
     setResultsView('emails')
     setResult(null)
+    setExclusions([])
+    setExclusionError(null)
     const evaluationRunId = newEvaluationRunId()
     const startedAt = Date.now()
     setRunProgress({
@@ -411,6 +429,7 @@ export function JobMatcherEvaluationPanel({
     try {
       const evaluation = await promise
       setResult(evaluation)
+      setExclusions([])
       setSelectedViewPolicy(defaultSelectedPolicy(evaluation))
       setJobMatcherEvalSession({
         workspaceId,
@@ -418,6 +437,15 @@ export function JobMatcherEvaluationPanel({
         result: evaluation,
         jobFilterId: null,
       })
+      // Persist may race slightly; load exclusions (empty) after run is saved.
+      if (evaluation.evaluationRunId) {
+        void api
+          .listJobMatcherEvalExclusions(workspaceId, evaluation.evaluationRunId)
+          .then((res) => setExclusions(res.exclusions))
+          .catch(() => {
+            /* run may still be persisting */
+          })
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Evaluation failed')
     } finally {
@@ -429,22 +457,56 @@ export function JobMatcherEvaluationPanel({
     }
   }
 
+  // Reload exclusions (and optionally the persisted run) when a result is present.
+  useEffect(() => {
+    const runId = result?.evaluationRunId
+    if (!runId || !workspaceId) return
+    let cancelled = false
+    void api
+      .listJobMatcherEvalExclusions(workspaceId, runId)
+      .then((res) => {
+        if (!cancelled) setExclusions(res.exclusions)
+      })
+      .catch(() => {
+        /* older runs without persistence */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, result?.evaluationRunId])
+
   const policyView = useMemo(
-    () => (result ? selectPolicyView(result, selectedViewPolicy) : null),
-    [result, selectedViewPolicy]
+    () =>
+      result
+        ? selectAdjustedPolicyView(result, selectedViewPolicy, exclusions)
+        : null,
+    [result, selectedViewPolicy, exclusions]
   )
 
   const viewRows = policyView?.available ? policyView.rows : []
+  const excludedRows = policyView?.available ? policyView.excludedRows : []
   const viewMetrics = policyView?.available ? policyView.metrics : null
+  const rawMetrics = policyView?.available ? policyView.rawMetrics : null
+  const excludedCount = policyView?.available ? policyView.excludedCount : 0
+  const excludedIdSet = useMemo(
+    () => new Set(exclusions.map((e) => e.emailMessageId)),
+    [exclusions]
+  )
 
-  /** Result shaped for list/diagnostics/jobs tabs under the selected matcher. */
+  /** Result shaped for list/diagnostics/jobs tabs under the selected matcher (adjusted). */
   const viewResult = useMemo((): JobMatcherEvalResult | null => {
     if (!result || !policyView?.available) return result
     return {
       ...result,
       rows: policyView.rows,
-      metrics: policyView.metrics,
-      displayMetrics: policyView.metrics,
+      metrics: {
+        ...result.metrics,
+        ...policyView.metrics,
+      },
+      displayMetrics: {
+        ...result.metrics,
+        ...policyView.metrics,
+      },
       displayIdentityPolicy: policyView.identityPolicy,
       jobBreakdown: policyView.jobBreakdown,
       diagnostics: policyView.diagnostics,
@@ -455,9 +517,8 @@ export function JobMatcherEvaluationPanel({
   // Keep inspector on the same email when switching matchers (update to that policy's row).
   useEffect(() => {
     if (!selectedRow || !policyView?.available) return
-    const next = policyView.rows.find(
-      (r) => r.emailMessageId === selectedRow.emailMessageId
-    )
+    const pool = [...policyView.rows, ...policyView.excludedRows]
+    const next = pool.find((r) => r.emailMessageId === selectedRow.emailMessageId)
     if (next && next !== selectedRow) setSelectedRow(next)
     if (!next) setSelectedRow(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when policy rows change
@@ -468,6 +529,12 @@ export function JobMatcherEvaluationPanel({
     const compareById = new Map(
       (result.comparison?.rows ?? []).map((r) => [r.emailMessageId, r] as const)
     )
+    if (outcomeFilter === 'EXCLUDED') {
+      return excludedRows.filter((row) => {
+        if (jobFilterId && row.trueJobId !== jobFilterId) return false
+        return true
+      })
+    }
     return viewRows.filter((row) => {
       if (outcomeFilter !== 'ALL' && row.outcome !== outcomeFilter) return false
       if (jobFilterId && row.trueJobId !== jobFilterId) return false
@@ -490,12 +557,66 @@ export function JobMatcherEvaluationPanel({
     result,
     policyView,
     viewRows,
+    excludedRows,
     outcomeFilter,
     jobFilterId,
     failureFilter,
     resolvingMarkerFilter,
     transitionFilter,
   ])
+
+  const toggleExclusion = async (emailMessageId: string) => {
+    const runId = result?.evaluationRunId
+    if (!runId) {
+      setExclusionError('Evaluation run id missing — re-run evaluation to enable exclusions.')
+      return
+    }
+    const previouslyExcluded = excludedIdSet.has(emailMessageId)
+    setExclusionError(null)
+    setExclusionBusyId(emailMessageId)
+    // Optimistic update
+    if (previouslyExcluded) {
+      setExclusions((prev) => prev.filter((e) => e.emailMessageId !== emailMessageId))
+    } else {
+      setExclusions((prev) => [
+        ...prev,
+        {
+          id: `optimistic-${emailMessageId}`,
+          evaluationRunId: runId,
+          emailMessageId,
+          excludedByUserId: userId ?? null,
+          reason: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ])
+    }
+    try {
+      if (previouslyExcluded) {
+        await api.restoreJobMatcherEvalEmail(workspaceId, runId, emailMessageId)
+      } else {
+        const res = await api.excludeJobMatcherEvalEmail(workspaceId, runId, {
+          emailMessageId,
+        })
+        setExclusions((prev) => {
+          const without = prev.filter((e) => e.emailMessageId !== emailMessageId)
+          return [...without, res.exclusion]
+        })
+      }
+    } catch (e) {
+      // Roll back optimistic state
+      if (previouslyExcluded) {
+        void api
+          .listJobMatcherEvalExclusions(workspaceId, runId)
+          .then((res) => setExclusions(res.exclusions))
+      } else {
+        setExclusions((prev) => prev.filter((e) => e.emailMessageId !== emailMessageId))
+      }
+      setExclusionError(e instanceof Error ? e.message : 'Failed to update exclusion')
+    } finally {
+      setExclusionBusyId(null)
+    }
+  }
 
   const viewingPolicy =
     policyView?.identityPolicy ??
@@ -511,11 +632,27 @@ export function JobMatcherEvaluationPanel({
       }
     : undefined
 
+  const exclusionMetaByEmailId = useMemo(() => {
+    const map = new Map<
+      string,
+      { createdAt?: string | null; reason?: string | null }
+    >()
+    for (const ex of exclusions) {
+      map.set(ex.emailMessageId, {
+        createdAt: ex.createdAt,
+        reason: ex.reason,
+      })
+    }
+    return map
+  }, [exclusions])
+
   const detailedExportMeta = result
     ? {
         evaluationRunId: result.evaluationRunId ?? null,
         identityPolicy: viewingPolicy,
         datasetFingerprint: result.datasetFingerprint ?? null,
+        excludedEmailIds: excludedIdSet,
+        exclusionMetaByEmailId,
       }
     : undefined
 
@@ -527,7 +664,10 @@ export function JobMatcherEvaluationPanel({
     if (kind === 'summary') {
       downloadTextFile(
         jobMatcherEvalExportFilename('summary', 'csv', exportMeta),
-        buildEvalSummaryCsv(result),
+        buildEvalSummaryCsv(viewResult ?? result, {
+          rawMetrics,
+          excludedCount,
+        }),
         'text/csv;charset=utf-8'
       )
       return
@@ -563,8 +703,14 @@ export function JobMatcherEvaluationPanel({
         {
           ...result,
           displayIdentityPolicy: policyView.identityPolicy,
-          displayMetrics: policyView.metrics,
-          metrics: policyView.metrics,
+          displayMetrics: {
+            ...result.metrics,
+            ...policyView.metrics,
+          },
+          metrics: {
+            ...result.metrics,
+            ...policyView.metrics,
+          },
         },
         policyView.rows
       )
@@ -572,16 +718,22 @@ export function JobMatcherEvaluationPanel({
         setError(integrity.message)
         return
       }
+      // Full detail includes excluded rows (flagged) so they are not silently omitted.
+      const allRows = [...policyView.rows, ...policyView.excludedRows]
       downloadTextFile(
         jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
-        buildEvalDetailedCsv(policyView.rows, detailedExportMeta),
+        buildEvalDetailedCsv(allRows, detailedExportMeta),
         'text/csv;charset=utf-8'
       )
       return
     }
     downloadTextFile(
       jobMatcherEvalExportFilename('full', 'json', exportMeta),
-      buildEvalFullJson(result),
+      buildEvalFullJson(result, {
+        exclusions,
+        rawMetrics,
+        adjustedMetrics: viewMetrics,
+      }),
       'application/json;charset=utf-8'
     )
   }
@@ -1134,6 +1286,11 @@ export function JobMatcherEvaluationPanel({
               >
                 <Metric label="Evaluated" value={m.totalEvaluated} />
                 <Metric
+                  label="Excluded"
+                  value={excludedCount}
+                  tone={excludedCount > 0 ? 'warning' : undefined}
+                />
+                <Metric
                   label="Correct"
                   value={m.correctMatches}
                   tone="positive"
@@ -1180,6 +1337,31 @@ export function JobMatcherEvaluationPanel({
                   label="No-match rate"
                   value={`${(m.noMatchRate * 100).toFixed(2)}%`}
                 />
+              </div>
+            ) : null}
+            {m && rawMetrics && excludedCount > 0 ? (
+              <div
+                data-testid="job-matcher-raw-vs-adjusted"
+                style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}
+              >
+                Adjusted metrics exclude {excludedCount} email
+                {excludedCount === 1 ? '' : 's'}. Raw evaluated{' '}
+                {rawMetrics.totalEvaluated}
+                {rawMetrics.precision != null
+                  ? ` · raw precision ${(rawMetrics.precision * 100).toFixed(2)}%`
+                  : ''}
+                {m.precision != null
+                  ? ` · adjusted precision ${(m.precision * 100).toFixed(2)}%`
+                  : ''}
+                .
+              </div>
+            ) : null}
+            {exclusionError ? (
+              <div
+                role="alert"
+                style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}
+              >
+                {exclusionError}
               </div>
             ) : null}
           </div>
@@ -1284,6 +1466,10 @@ export function JobMatcherEvaluationPanel({
                 setInspectorTab('match')
               }
             }}
+            excludedEmailIds={excludedIdSet}
+            exclusionBusyId={exclusionBusyId}
+            onToggleExclusion={toggleExclusion}
+            excludedCount={excludedCount}
           />
         </div>
         <div
@@ -1355,6 +1541,10 @@ function ResultsPane(props: {
   onScrollSave?: (scrollTop: number) => void
   onApplyFailureFilter: (cat: JobMatcherEvalFailureCategory) => void
   onApplyConfusion: (actualJobId: string, predictedJobId: string) => void
+  excludedEmailIds: ReadonlySet<string>
+  exclusionBusyId: string | null
+  onToggleExclusion: (emailMessageId: string) => void
+  excludedCount: number
 }) {
   return (
     <>
@@ -1419,6 +1609,7 @@ function ResultsPane(props: {
                 ['CONFLICT', 'Conflict'],
                 ['NO_MATCH', 'None'],
                 ['CORRECT_MATCH', 'Correct'],
+                ['EXCLUDED', `Excluded${props.excludedCount ? ` (${props.excludedCount})` : ''}`],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -1548,12 +1739,15 @@ function ResultsPane(props: {
                 <th style={th}>Subject</th>
                 <th style={th}>Historical → Predicted</th>
                 <th style={th}>Resolved by</th>
+                <th style={{ ...th, width: 44, textAlign: 'center' }}>Excl.</th>
               </tr>
             </thead>
             <tbody>
               {props.filteredRows.map((row) => {
                 const selected = props.selectedRow?.emailMessageId === row.emailMessageId
                 const d = row.diagnostics
+                const excluded = props.excludedEmailIds.has(row.emailMessageId)
+                const busy = props.exclusionBusyId === row.emailMessageId
                 return (
                   <tr
                     key={row.emailMessageId}
@@ -1562,6 +1756,7 @@ function ResultsPane(props: {
                     style={{
                       cursor: 'pointer',
                       background: selected ? '#dbeafe' : undefined,
+                      opacity: excluded ? 0.55 : 1,
                     }}
                   >
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -1588,6 +1783,43 @@ function ResultsPane(props: {
                       {d?.candidateCountAfterResolving != null && (
                         <div>cand {d.candidateCountAfterResolving}</div>
                       )}
+                    </td>
+                    <td
+                      style={{ ...td, textAlign: 'center', width: 44 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        data-testid={`eval-exclude-${row.emailMessageId}`}
+                        aria-label={
+                          excluded
+                            ? 'Restore to evaluation'
+                            : 'Exclude from evaluation'
+                        }
+                        title={
+                          excluded
+                            ? 'Restore to evaluation'
+                            : 'Exclude from evaluation'
+                        }
+                        disabled={busy || !props.result?.evaluationRunId}
+                        onClick={() => props.onToggleExclusion(row.emailMessageId)}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          border: excluded
+                            ? '1px solid #2563eb'
+                            : '1px solid #d1d5db',
+                          background: excluded ? '#2563eb' : '#fff',
+                          color: excluded ? '#fff' : '#6b7280',
+                          cursor: busy ? 'wait' : 'pointer',
+                          fontSize: 14,
+                          lineHeight: 1,
+                          padding: 0,
+                        }}
+                      >
+                        {excluded ? '✓' : '○'}
+                      </button>
                     </td>
                   </tr>
                 )

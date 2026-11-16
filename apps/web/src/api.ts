@@ -3072,6 +3072,39 @@ export const api = {
       `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/progress`
     ),
 
+  getJobMatcherEvalRun: (workspaceId: string, evaluationRunId: string) =>
+    request<{
+      evaluation: JobMatcherEvalResult
+      exclusions: JobMatcherEvalExclusionDto[]
+    }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}`
+    ),
+
+  listJobMatcherEvalExclusions: (workspaceId: string, evaluationRunId: string) =>
+    request<{ exclusions: JobMatcherEvalExclusionDto[] }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/exclusions`
+    ),
+
+  excludeJobMatcherEvalEmail: (
+    workspaceId: string,
+    evaluationRunId: string,
+    body: { emailMessageId: string; reason?: string }
+  ) =>
+    request<{ exclusion: JobMatcherEvalExclusionDto }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/exclusions`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  restoreJobMatcherEvalEmail: (
+    workspaceId: string,
+    evaluationRunId: string,
+    emailMessageId: string
+  ) =>
+    request<{ restored: boolean }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/exclusions/${encodeURIComponent(emailMessageId)}`,
+      { method: 'DELETE' }
+    ),
+
   getJobMatcherEvalEmail: (workspaceId: string, emailMessageId: string) =>
     request<{ email: JobMatcherEvalEmailDetail }>(
       `/workspaces/${workspaceId}/intelligence/job-matcher/emails/${encodeURIComponent(emailMessageId)}`
@@ -5575,6 +5608,17 @@ export interface JobMatcherEvalPolicyResultBundle {
   jobBreakdown: JobMatcherEvalResult['jobBreakdown']
   rows: JobMatcherEvalRow[]
   wrongMatches: JobMatcherEvalResult['wrongMatches']
+}
+
+/** Run-specific evaluation exclusion (does not change ground truth). */
+export interface JobMatcherEvalExclusionDto {
+  id: string
+  evaluationRunId: string
+  emailMessageId: string
+  excludedByUserId: string | null
+  reason: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface JobMatcherEvalEmailDetail {

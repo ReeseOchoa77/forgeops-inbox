@@ -535,6 +535,8 @@ model Workspace {
   taxonomyRevisions    TaxonomyRevision[]
   subtypeRecommendationDecisions SubtypeRecommendationDecision[]
   subtypeTaxonomyEvalRuns SubtypeTaxonomyEvalRun[]
+  jobMatcherEvalRuns      JobMatcherEvalRun[]
+  jobMatcherEvalExclusions JobMatcherEvalExclusion[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
@@ -590,6 +592,8 @@ model User {
   jobParticipations       JobParticipant[] @relation("JobParticipantUser")
   confirmedBidCandidates  BidCandidate[]   @relation("BidCandidateConfirmer")
   proposedEstimatorCandidates BidCandidate[] @relation("BidCandidateProposedEstimator")
+  jobMatcherEvalRunsCreated JobMatcherEvalRun[] @relation("JobMatcherEvalRunCreator")
+  jobMatcherEvalExclusions  JobMatcherEvalExclusion[] @relation("JobMatcherEvalExclusionActor")
 }
 
 model ApprovedAccess {
@@ -2830,6 +2834,43 @@ model SubtypeTaxonomyEvalRun {
 
   @@index([workspaceId, createdAt])
   @@index([workspaceId, discoveryRunId])
+}
+
+/// Persisted Job Matcher historical evaluation run (raw result; exclusions are separate).
+model JobMatcherEvalRun {
+  id                 String   @id
+  workspaceId        String
+  createdByUserId    String?
+  datasetFingerprint String?
+  experimentRevision String?
+  /// Full evaluation payload JSON (raw outcomes; never rewritten by exclusions).
+  resultJson         Json
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser      User?     @relation("JobMatcherEvalRunCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  exclusions         JobMatcherEvalExclusion[]
+
+  @@index([workspaceId, createdAt])
+}
+
+/// Run-specific email exclusions for Job Matcher evaluation metrics (not GT edits).
+model JobMatcherEvalExclusion {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  evaluationRunId  String
+  emailMessageId   String
+  excludedByUserId String?
+  reason           String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  evaluationRun    JobMatcherEvalRun @relation(fields: [evaluationRunId], references: [id], onDelete: Cascade)
+  excludedByUser   User?     @relation("JobMatcherEvalExclusionActor", fields: [excludedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([evaluationRunId, emailMessageId])
+  @@index([workspaceId, evaluationRunId])
+  @@index([workspaceId, emailMessageId])
 }
 
 enum SenderStatus {

@@ -121,7 +121,23 @@ export function downloadTextFile(filename: string, content: string, mime: string
   URL.revokeObjectURL(url)
 }
 
-export function buildEvalSummaryCsv(result: JobMatcherEvalResult): string {
+export function buildEvalSummaryCsv(
+  result: JobMatcherEvalResult,
+  extras?: {
+    rawMetrics?: {
+      totalEvaluated: number
+      correctMatches: number
+      wrongMatches: number
+      ambiguous: number
+      conflict: number
+      noMatch: number
+      precision: number | null
+      correctCoverage: number
+      wrongMatchRate: number
+    } | null
+    excludedCount?: number
+  }
+): string {
   const lines = ['section,metric,category,value']
   const push = (section: string, metric: string, category: string, value: string | number) => {
     lines.push([section, metric, category, value].map(csvEscape).join(','))
@@ -139,6 +155,29 @@ export function buildEvalSummaryCsv(result: JobMatcherEvalResult): string {
   push('meta', 'eligible_count', '', result.dataset.eligibleCount)
   push('meta', 'sample_size_requested', '', result.dataset.sampleSizeRequested ?? 'ALL')
   push('meta', 'actual_evaluated', '', result.dataset.actualEvaluated)
+  push('meta', 'excluded_count', '', extras?.excludedCount ?? 0)
+  if (extras?.rawMetrics) {
+    const raw = extras.rawMetrics
+    push('raw_headline', 'evaluated', '', raw.totalEvaluated)
+    push('raw_headline', 'correct', '', raw.correctMatches)
+    push('raw_headline', 'wrong', '', raw.wrongMatches)
+    push('raw_headline', 'ambiguous', '', raw.ambiguous)
+    push('raw_headline', 'conflict', '', raw.conflict)
+    push('raw_headline', 'no_match', '', raw.noMatch)
+    push('raw_headline', 'precision', '', raw.precision ?? '')
+    push('raw_headline', 'coverage', '', raw.correctCoverage)
+    push('raw_headline', 'wrong_rate', '', raw.wrongMatchRate)
+  }
+  push('adjusted_headline', 'evaluated', '', m.totalEvaluated)
+  push('adjusted_headline', 'correct', '', m.correctMatches)
+  push('adjusted_headline', 'wrong', '', m.wrongMatches)
+  push('adjusted_headline', 'ambiguous', '', m.ambiguous)
+  push('adjusted_headline', 'conflict', '', m.conflict)
+  push('adjusted_headline', 'no_match', '', m.noMatch)
+  push('adjusted_headline', 'precision', '', m.precision ?? '')
+  push('adjusted_headline', 'coverage', '', m.correctCoverage)
+  push('adjusted_headline', 'wrong_rate', '', m.wrongMatchRate)
+  // Back-compat aliases
   push('headline', 'evaluated', '', m.totalEvaluated)
   push('headline', 'correct', '', m.correctMatches)
   push('headline', 'wrong', '', m.wrongMatches)
@@ -177,8 +216,17 @@ export function buildEvalDetailedCsv(
     evaluationRunId?: string | null
     identityPolicy?: string | null
     datasetFingerprint?: string | null
+    excludedEmailIds?: ReadonlySet<string> | ReadonlyArray<string>
+    exclusionMetaByEmailId?: ReadonlyMap<
+      string,
+      { createdAt?: string | null; reason?: string | null }
+    >
   }
 ): string {
+  const excluded =
+    meta?.excludedEmailIds instanceof Set
+      ? meta.excludedEmailIds
+      : new Set(meta?.excludedEmailIds ?? [])
   const headers = [
     'evaluation_run_id',
     'identity_policy',
@@ -195,6 +243,9 @@ export function buildEvalDetailedCsv(
     'predicted_job_name',
     'decision',
     'outcome',
+    'excluded',
+    'exclusion_timestamp',
+    'exclusion_reason',
     'failure_category',
     'failure_subcategory',
     'resolving_marker',
@@ -214,6 +265,8 @@ export function buildEvalDetailedCsv(
   for (const row of rows) {
     const d = row.diagnostics
     const rowPolicy = row.identityPolicy ?? policy
+    const isExcluded = excluded.has(row.emailMessageId)
+    const ex = meta?.exclusionMetaByEmailId?.get(row.emailMessageId)
     lines.push(
       [
         runId,
@@ -231,6 +284,9 @@ export function buildEvalDetailedCsv(
         row.predictedJobName,
         row.decision,
         row.outcome,
+        isExcluded ? 'true' : 'false',
+        isExcluded ? (ex?.createdAt ?? '') : '',
+        isExcluded ? (ex?.reason ?? '') : '',
         d?.failureCategory ?? '',
         d?.failureSubcategory ?? '',
         d?.resolvingMarker ?? row.resolvingMarker,
@@ -251,12 +307,27 @@ export function buildEvalDetailedCsv(
 }
 
 /** Full JSON for offline analysis — strips nothing already on the result; no bodies. */
-export function buildEvalFullJson(result: JobMatcherEvalResult): string {
+export function buildEvalFullJson(
+  result: JobMatcherEvalResult,
+  extras?: {
+    exclusions?: Array<{
+      emailMessageId: string
+      excludedByUserId: string | null
+      reason: string | null
+      createdAt: string
+    }>
+    rawMetrics?: unknown
+    adjustedMetrics?: unknown
+  }
+): string {
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      note: 'Completed evaluation export. Matcher was not re-run. Email bodies excluded.',
+      note: 'Completed evaluation export. Matcher was not re-run. Email bodies excluded. Exclusions are run-specific metadata — not ground-truth edits.',
       evaluation: result,
+      exclusions: extras?.exclusions ?? [],
+      rawMetrics: extras?.rawMetrics ?? null,
+      adjustedMetrics: extras?.adjustedMetrics ?? null,
     },
     null,
     2

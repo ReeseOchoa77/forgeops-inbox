@@ -34,6 +34,11 @@
       "types": "./src/jobs/job-match-policy-registry.ts",
       "import": "./src/jobs/job-match-policy-registry.ts",
       "default": "./src/jobs/job-match-policy-registry.ts"
+    },
+    "./jobs/job-match-eval-exclusions": {
+      "types": "./src/jobs/job-match-eval-exclusions.ts",
+      "import": "./src/jobs/job-match-eval-exclusions.ts",
+      "default": "./src/jobs/job-match-eval-exclusions.ts"
     }
   },
   "scripts": {

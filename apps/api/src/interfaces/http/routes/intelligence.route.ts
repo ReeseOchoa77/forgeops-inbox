@@ -12,6 +12,13 @@ import {
   runJobMatcherHistoricalEval,
 } from "../../../application/services/run-job-matcher-historical-eval.js";
 import { getJobMatcherEvalProgress } from "../../../application/services/job-matcher-eval-progress.js";
+import {
+  excludeJobMatcherEvalEmail,
+  getJobMatcherEvalRun,
+  listJobMatcherEvalExclusions,
+  persistJobMatcherEvalRun,
+  restoreJobMatcherEvalEmail,
+} from "../../../application/services/job-matcher-eval-exclusions.js";
 import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
 import { loadIntelligenceEvalEmail } from "../../../application/services/load-intelligence-eval-email.js";
 import {
@@ -258,6 +265,16 @@ export const registerIntelligenceRoutes = async (
             ? { evaluationRunId: body.evaluationRunId }
             : {}),
         });
+        try {
+          await persistJobMatcherEvalRun({
+            prisma: app.services.prisma,
+            workspaceId,
+            createdByUserId: auth.userId,
+            result,
+          });
+        } catch (persistErr) {
+          console.error("job-matcher-eval-run-persist-failed", persistErr);
+        }
         return reply.send({ evaluation: result });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Evaluation failed";
@@ -291,6 +308,137 @@ export const registerIntelligenceRoutes = async (
         return reply.code(404).send({ message: "Progress not found" });
       }
       return reply.send({ progress });
+    }
+  );
+
+  /** Load a persisted evaluation run + its exclusions (for refresh). */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          evaluationRunId: z.string().uuid(),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const run = await getJobMatcherEvalRun({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
+        evaluationRunId: params.evaluationRunId,
+      });
+      if (!run) {
+        return reply.code(404).send({ message: "Evaluation run not found" });
+      }
+      return reply.send(run);
+    }
+  );
+
+  /** List run-specific evaluation exclusions. */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/exclusions",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          evaluationRunId: z.string().uuid(),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const exclusions = await listJobMatcherEvalExclusions({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
+        evaluationRunId: params.evaluationRunId,
+      });
+      return reply.send({ exclusions });
+    }
+  );
+
+  /** Exclude an email from adjusted metrics for this evaluation run. */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/exclusions",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          evaluationRunId: z.string().uuid(),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const body = z
+        .object({
+          emailMessageId: z.string().min(1),
+          reason: z.string().max(500).optional(),
+        })
+        .parse(request.body);
+      try {
+        const exclusion = await excludeJobMatcherEvalEmail({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          evaluationRunId: params.evaluationRunId,
+          emailMessageId: body.emailMessageId,
+          actorUserId: auth.userId,
+          reason: body.reason ?? null,
+          request,
+        });
+        return reply.send({ exclusion });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Exclude failed";
+        const code = message.includes("not found")
+          ? 404
+          : message.includes("not part")
+            ? 400
+            : 400;
+        return reply.code(code).send({ message });
+      }
+    }
+  );
+
+  /** Restore a previously excluded email into adjusted metrics. */
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/exclusions/:emailMessageId",
+    async (request, reply) => {
+      const params = z
+        .object({
+          workspaceId: z.string().min(1),
+          evaluationRunId: z.string().uuid(),
+          emailMessageId: z.string().min(1),
+        })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const result = await restoreJobMatcherEvalEmail({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
+        evaluationRunId: params.evaluationRunId,
+        emailMessageId: params.emailMessageId,
+        actorUserId: auth.userId,
+        request,
+      });
+      return reply.send(result);
     }
   );
 

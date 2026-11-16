@@ -31,6 +31,9 @@
       ],
       "@forgeops/shared/jobs/job-match-policy-registry": [
         "../../packages/shared/src/jobs/job-match-policy-registry.ts"
+      ],
+      "@forgeops/shared/jobs/job-match-eval-exclusions": [
+        "../../packages/shared/src/jobs/job-match-eval-exclusions.ts"
       ]
     },
 
