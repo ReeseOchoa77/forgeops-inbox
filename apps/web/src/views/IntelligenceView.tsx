@@ -3,9 +3,11 @@ import {
   BUSINESS_SUBTYPE_FILTER_OPTIONS,
   BUSINESS_SUBTYPE_KEYS,
 } from '@forgeops/shared/business-subtypes'
+import { computeJobMatcherPerformanceScore } from '@forgeops/shared/jobs/job-match-performance-score'
 import {
   api,
   type IntelligenceSafeDto,
+  type JobMatcherEvalResult,
   type JobMatcherTestOneResult,
 } from '../api'
 import { IntelligencePipelineView } from '../components/IntelligencePipeline'
@@ -693,26 +695,7 @@ function JobMatcherSection({
           browser tab — browser refresh still clears results.
         </p>
         {session?.result ? (
-          <div
-            style={{
-              padding: 12,
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
-              background: '#fff',
-            }}
-          >
-            <div style={{ fontWeight: 650, marginBottom: 6 }}>Current session run</div>
-            <div>Emails evaluated: {session.result.metrics.totalEvaluated}</div>
-            <div>
-              Correct coverage:{' '}
-              {Math.round(session.result.metrics.correctCoverage * 1000) / 10}%
-            </div>
-            {session.result.evaluationRunId && (
-              <div style={{ color: '#6b7280', marginTop: 4 }}>
-                Run id: {session.result.evaluationRunId}
-              </div>
-            )}
-          </div>
+          <SessionEvalHistoryCard result={session.result} />
         ) : (
           <p style={{ color: '#6b7280' }}>No completed evaluation in this session.</p>
         )}
@@ -1294,6 +1277,53 @@ function StatusBadge({ status }: { status: string }) {
   }
   const [bg, fg] = colors[status] ?? ['#f3f4f6', '#374151']
   return <span style={badge(bg, fg)}>{intelligenceStatusLabel(status)}</span>
+}
+
+function SessionEvalHistoryCard({ result }: { result: JobMatcherEvalResult }) {
+  const m = result.displayMetrics ?? result.metrics
+  const jmps = computeJobMatcherPerformanceScore(m)
+  const family = result.v2FamilyComparison
+  return (
+    <div
+      style={{
+        padding: 12,
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        background: '#fff',
+      }}
+    >
+      <div style={{ fontWeight: 650, marginBottom: 6 }}>Current session run</div>
+      <div>
+        Performance Score: {jmps.display}
+        <span style={{ color: '#6b7280' }}> (weighted; not precision)</span>
+      </div>
+      <div>Emails evaluated: {m.totalEvaluated}</div>
+      <div>
+        Correct coverage: {Math.round(m.correctCoverage * 1000) / 10}%
+      </div>
+      {family ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: '#374151' }}>
+          Compare All present: V2 {fmtHistoryJmps(family.performanceScores.v2)} ·
+          V2.1 {fmtHistoryJmps(family.performanceScores.v21)} · V2.2{' '}
+          {fmtHistoryJmps(family.performanceScores.v22)}
+        </div>
+      ) : result.comparison ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+          Paired comparison ({result.comparison.baselinePolicy} →{' '}
+          {result.comparison.proposedPolicy}). V2.2 not in this run.
+        </div>
+      ) : null}
+      {result.evaluationRunId && (
+        <div style={{ color: '#6b7280', marginTop: 4 }}>
+          Run id: {result.evaluationRunId}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function fmtHistoryJmps(score: number | null): string {
+  return score == null ? 'N/A' : score.toFixed(2)
 }
 
 function KV({ label, value }: { label: string; value: string }) {

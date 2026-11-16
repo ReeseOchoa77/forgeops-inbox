@@ -5593,9 +5593,52 @@ export interface JobMatcherEvalResult {
     }
     runtimeMs: { baseline: number; v1: number; v2: number }
   } | null
+  /**
+   * Compare All: production V2 + experimental V2.1 + V2.2 on the same dataset.
+   * Absent on historical two-policy / BASELINE three-way runs.
+   */
+  v2FamilyComparison?: JobMatcherV2FamilyCompareReport | null
   runtimeMs?: number
   groundTruthQuality: string
   groundTruthNotes: string
+}
+
+/** Email-level V2 / V2.1 / V2.2 comparison row (same ground truth). */
+export interface JobMatcherV2FamilyCompareRow {
+  emailMessageId: string
+  subject: string | null
+  trueJobId: string
+  trueJobName: string
+  groundTruthSource: string | null
+  v2: JobMatcherIdentityCompareSide
+  v21: JobMatcherIdentityCompareSide
+  v22: JobMatcherIdentityCompareSide
+  v2ToV21: JobMatcherTransitionCategory
+  v2ToV22: JobMatcherTransitionCategory
+  v21ToV22: JobMatcherTransitionCategory
+  policiesDisagree: boolean
+  groundTruthReviewFlag: boolean
+}
+
+export interface JobMatcherV2FamilyCompareReport {
+  policies: [
+    'CONTEXT_AWARE_V2',
+    'CONTEXT_AWARE_V2_1',
+    'CONTEXT_AWARE_V2_2',
+  ]
+  v2Metrics: JobMatcherEvalResult['metrics']
+  v21Metrics: JobMatcherEvalResult['metrics']
+  v22Metrics: JobMatcherEvalResult['metrics']
+  v2ToV21: Record<JobMatcherTransitionCategory, number>
+  v2ToV22: Record<JobMatcherTransitionCategory, number>
+  v21ToV22: Record<JobMatcherTransitionCategory, number>
+  rows: JobMatcherV2FamilyCompareRow[]
+  runtimeMs: { v2: number; v21: number; v22: number }
+  performanceScores: {
+    v2: number | null
+    v21: number | null
+    v22: number | null
+  }
 }
 
 /** One scored policy's full metrics + rows within a completed evaluation run. */

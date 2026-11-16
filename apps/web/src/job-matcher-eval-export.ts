@@ -4,10 +4,12 @@
  * Standard CSV excludes email bodies.
  * Detailed rows must aggregate to displayMetrics for displayIdentityPolicy.
  */
+import { computeJobMatcherPerformanceScore } from '@forgeops/shared/jobs/job-match-performance-score'
 import type {
   JobMatcherEvalResult,
   JobMatcherEvalRow,
   JobMatcherIdentityCompareReport,
+  JobMatcherV2FamilyCompareReport,
 } from './api'
 
 export type ExportIntegrityError = {
@@ -92,7 +94,13 @@ function todayStamp(): string {
 }
 
 export function jobMatcherEvalExportFilename(
-  kind: 'summary' | 'detailed' | 'full' | 'comparison' | 'comparison-3way',
+  kind:
+    | 'summary'
+    | 'detailed'
+    | 'full'
+    | 'comparison'
+    | 'comparison-3way'
+    | 'comparison-v2-family',
   ext: 'csv' | 'json',
   meta?: {
     policy?: string | null
@@ -168,6 +176,8 @@ export function buildEvalSummaryCsv(
     push('raw_headline', 'coverage', '', raw.correctCoverage)
     push('raw_headline', 'wrong_rate', '', raw.wrongMatchRate)
   }
+  const adjustedJmps = computeJobMatcherPerformanceScore(m)
+  push('adjusted_headline', 'performance_score', '', adjustedJmps.display)
   push('adjusted_headline', 'evaluated', '', m.totalEvaluated)
   push('adjusted_headline', 'correct', '', m.correctMatches)
   push('adjusted_headline', 'wrong', '', m.wrongMatches)
@@ -177,7 +187,12 @@ export function buildEvalSummaryCsv(
   push('adjusted_headline', 'precision', '', m.precision ?? '')
   push('adjusted_headline', 'coverage', '', m.correctCoverage)
   push('adjusted_headline', 'wrong_rate', '', m.wrongMatchRate)
+  if (extras?.rawMetrics) {
+    const rawJmps = computeJobMatcherPerformanceScore(extras.rawMetrics)
+    push('raw_headline', 'performance_score', '', rawJmps.display)
+  }
   // Back-compat aliases
+  push('headline', 'performance_score', '', adjustedJmps.display)
   push('headline', 'evaluated', '', m.totalEvaluated)
   push('headline', 'correct', '', m.correctMatches)
   push('headline', 'wrong', '', m.wrongMatches)
@@ -507,5 +522,97 @@ export function buildEvalThreeWayComparisonCsv(comparison: ThreeWay): string {
         .join(',')
     )
   }
+  return lines.join('\n')
+}
+
+/** V2 / V2.1 / V2.2 family comparison CSV (one row per email). */
+export function buildEvalV2FamilyComparisonCsv(
+  comparison: JobMatcherV2FamilyCompareReport
+): string {
+  const headers = [
+    'email_message_id',
+    'subject',
+    'ground_truth_job_id',
+    'ground_truth_job_name',
+    'ground_truth_source',
+    'v2_decision',
+    'v2_outcome',
+    'v2_predicted_job',
+    'v2_resolving_marker',
+    'v21_decision',
+    'v21_outcome',
+    'v21_predicted_job',
+    'v21_resolving_marker',
+    'v22_decision',
+    'v22_outcome',
+    'v22_predicted_job',
+    'v22_resolving_marker',
+    'v2_to_v21',
+    'v2_to_v22',
+    'v21_to_v22',
+    'policies_disagree',
+    'ground_truth_review_flag',
+  ]
+  const lines = [headers.join(',')]
+  for (const row of comparison.rows) {
+    lines.push(
+      [
+        row.emailMessageId,
+        row.subject,
+        row.trueJobId,
+        row.trueJobName,
+        row.groundTruthSource,
+        row.v2.decision,
+        row.v2.outcome,
+        row.v2.predictedJobName,
+        row.v2.resolvingMarker,
+        row.v21.decision,
+        row.v21.outcome,
+        row.v21.predictedJobName,
+        row.v21.resolvingMarker,
+        row.v22.decision,
+        row.v22.outcome,
+        row.v22.predictedJobName,
+        row.v22.resolvingMarker,
+        row.v2ToV21,
+        row.v2ToV22,
+        row.v21ToV22,
+        row.policiesDisagree,
+        row.groundTruthReviewFlag,
+      ]
+        .map(csvEscape)
+        .join(',')
+    )
+  }
+  const fmt = (score: number | null) =>
+    score == null ? 'N/A' : score.toFixed(2)
+  lines.push(
+    [
+      '',
+      '',
+      '',
+      '',
+      'aggregate',
+      `jmps=${fmt(comparison.performanceScores.v2)}`,
+      '',
+      '',
+      '',
+      `jmps=${fmt(comparison.performanceScores.v21)}`,
+      '',
+      '',
+      '',
+      `jmps=${fmt(comparison.performanceScores.v22)}`,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ]
+      .map(csvEscape)
+      .join(',')
+  )
   return lines.join('\n')
 }

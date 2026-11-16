@@ -8,6 +8,10 @@ import {
   type RefObject,
 } from 'react'
 import {
+  computeJobMatcherPerformanceScore,
+  JMPS_TOOLTIP,
+} from '@forgeops/shared/jobs/job-match-performance-score'
+import {
   api,
   type JobMatcherEvalFailureCategory,
   type JobMatcherEvalPreview,
@@ -15,6 +19,7 @@ import {
   type JobMatcherEvalRow,
   type JobMatcherIdentityPolicy,
   type JobMatcherTransitionCategory,
+  type JobMatcherV2FamilyCompareReport,
   type JobLookup,
 } from '../api'
 import {
@@ -24,6 +29,7 @@ import {
   buildEvalFullJson,
   buildEvalSummaryCsv,
   buildEvalThreeWayComparisonCsv,
+  buildEvalV2FamilyComparisonCsv,
   downloadTextFile,
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
@@ -529,6 +535,11 @@ export function JobMatcherEvaluationPanel({
     const compareById = new Map(
       (result.comparison?.rows ?? []).map((r) => [r.emailMessageId, r] as const)
     )
+    const familyById = new Map(
+      (result.v2FamilyComparison?.rows ?? []).map(
+        (r) => [r.emailMessageId, r] as const
+      )
+    )
     if (outcomeFilter === 'EXCLUDED') {
       return excludedRows.filter((row) => {
         if (jobFilterId && row.trueJobId !== jobFilterId) return false
@@ -548,8 +559,20 @@ export function JobMatcherEvaluationPanel({
         return false
       }
       if (transitionFilter !== 'ALL') {
-        const cmp = compareById.get(row.emailMessageId)
-        if (!cmp || cmp.transition !== transitionFilter) return false
+        const paired = compareById.get(row.emailMessageId)
+        if (paired) {
+          if (paired.transition !== transitionFilter) return false
+        } else {
+          const family = familyById.get(row.emailMessageId)
+          if (
+            !family ||
+            (family.v2ToV21 !== transitionFilter &&
+              family.v2ToV22 !== transitionFilter &&
+              family.v21ToV22 !== transitionFilter)
+          ) {
+            return false
+          }
+        }
       }
       return true
     })
@@ -657,7 +680,13 @@ export function JobMatcherEvaluationPanel({
     : undefined
 
   const exportFull = (
-    kind: 'summary' | 'detailed' | 'json' | 'comparison' | 'comparison-3way'
+    kind:
+      | 'summary'
+      | 'detailed'
+      | 'json'
+      | 'comparison'
+      | 'comparison-3way'
+      | 'comparison-v2-family'
   ) => {
     if (!result) return
     setExportOpen(false)
@@ -686,6 +715,15 @@ export function JobMatcherEvaluationPanel({
       downloadTextFile(
         jobMatcherEvalExportFilename('comparison-3way', 'csv', exportMeta),
         buildEvalThreeWayComparisonCsv(result.threeWayComparison),
+        'text/csv;charset=utf-8'
+      )
+      return
+    }
+    if (kind === 'comparison-v2-family') {
+      if (!result.v2FamilyComparison) return
+      downloadTextFile(
+        jobMatcherEvalExportFilename('comparison-v2-family', 'csv', exportMeta),
+        buildEvalV2FamilyComparisonCsv(result.v2FamilyComparison),
         'text/csv;charset=utf-8'
       )
       return
@@ -1153,6 +1191,15 @@ export function JobMatcherEvaluationPanel({
                           Comparison CSV (BASELINE / V1 / V2)
                         </button>
                       )}
+                      {result.v2FamilyComparison && (
+                        <button
+                          type="button"
+                          style={exportItemBtn}
+                          onClick={() => exportFull('comparison-v2-family')}
+                        >
+                          Comparison CSV (V2 / V2.1 / V2.2)
+                        </button>
+                      )}
                       <button type="button" style={exportItemBtn} onClick={exportFiltered}>
                         Detailed CSV (current filtered results)
                       </button>
@@ -1276,6 +1323,13 @@ export function JobMatcherEvaluationPanel({
                 zero.
               </div>
             ) : m ? (
+              (() => {
+                const jmps = computeJobMatcherPerformanceScore(m)
+                const rawJmps = rawMetrics
+                  ? computeJobMatcherPerformanceScore(rawMetrics)
+                  : null
+                return (
+              <>
               <div
                 data-testid="job-matcher-metric-cards"
                 style={{
@@ -1284,6 +1338,14 @@ export function JobMatcherEvaluationPanel({
                   gap: 8,
                 }}
               >
+                <Metric
+                  label="Performance Score"
+                  value={jmps.display}
+                  strong
+                  title={JMPS_TOOLTIP}
+                  tone="positive"
+                  bar={jmps.clampedForDisplay}
+                />
                 <Metric label="Evaluated" value={m.totalEvaluated} />
                 <Metric
                   label="Excluded"
@@ -1338,13 +1400,14 @@ export function JobMatcherEvaluationPanel({
                   value={`${(m.noMatchRate * 100).toFixed(2)}%`}
                 />
               </div>
-            ) : null}
-            {m && rawMetrics && excludedCount > 0 ? (
+            {rawMetrics && excludedCount > 0 ? (
               <div
                 data-testid="job-matcher-raw-vs-adjusted"
                 style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}
               >
-                Adjusted metrics exclude {excludedCount} email
+                Showing adjusted Performance Score ({jmps.display}
+                {rawJmps ? `; raw ${rawJmps.display}` : ''}). Adjusted metrics
+                exclude {excludedCount} email
                 {excludedCount === 1 ? '' : 's'}. Raw evaluated{' '}
                 {rawMetrics.totalEvaluated}
                 {rawMetrics.precision != null
@@ -1355,6 +1418,10 @@ export function JobMatcherEvaluationPanel({
                   : ''}
                 .
               </div>
+            ) : null}
+              </>
+                )
+              })()
             ) : null}
             {exclusionError ? (
               <div
@@ -1367,7 +1434,14 @@ export function JobMatcherEvaluationPanel({
           </div>
         )}
 
-        {result?.comparison && (
+        {result?.v2FamilyComparison && (
+          <V2FamilyComparisonPanel
+            comparison={result.v2FamilyComparison}
+            transitionFilter={transitionFilter}
+            onTransitionFilter={setTransitionFilter}
+          />
+        )}
+        {result?.comparison && !result.v2FamilyComparison && (
           <ComparisonPanel
             comparison={result.comparison}
             transitionFilter={transitionFilter}
@@ -1488,6 +1562,11 @@ export function JobMatcherEvaluationPanel({
               row={selectedRow}
               compareRow={
                 result?.comparison?.rows.find(
+                  (r) => r.emailMessageId === selectedRow.emailMessageId
+                ) ?? null
+              }
+              v2FamilyRow={
+                result?.v2FamilyComparison?.rows.find(
                   (r) => r.emailMessageId === selectedRow.emailMessageId
                 ) ?? null
               }
@@ -2084,6 +2163,7 @@ function EmailInspector({
   userId,
   row,
   compareRow,
+  v2FamilyRow,
   groundTruthQuality,
   inspectorTab,
   setInspectorTab,
@@ -2093,6 +2173,9 @@ function EmailInspector({
   userId?: string
   row: JobMatcherEvalRow
   compareRow?: NonNullable<JobMatcherEvalResult['comparison']>['rows'][number] | null
+  v2FamilyRow?: NonNullable<
+    JobMatcherEvalResult['v2FamilyComparison']
+  >['rows'][number] | null
   groundTruthQuality: string
   inspectorTab: 'email' | 'match'
   setInspectorTab: (t: 'email' | 'match') => void
@@ -2274,8 +2357,56 @@ function EmailInspector({
 
         {inspectorTab === 'match' && (
           <>
-            {compareRow && (
+            {v2FamilyRow && (
               <div
+                data-testid="eval-v2-family-sides"
+                style={{
+                  marginBottom: 12,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: 8,
+                  fontSize: 11,
+                }}
+              >
+                {(
+                  [
+                    ['V2 (production)', v2FamilyRow.v2],
+                    ['V2.1 (experimental)', v2FamilyRow.v21],
+                    ['V2.2 (experimental)', v2FamilyRow.v22],
+                  ] as const
+                ).map(([label, side]) => (
+                  <div
+                    key={label}
+                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}
+                  >
+                    <div style={{ fontWeight: 650, marginBottom: 4 }}>{label}</div>
+                    <div>{side.outcome.replace(/_/g, ' ')}</div>
+                    <div style={{ color: '#6b7280' }}>{side.predictedJobName || '—'}</div>
+                    <div style={{ color: '#6b7280', marginTop: 4 }}>
+                      {side.identityDiagnostics?.reason || side.resolvingMarker || '—'}
+                    </div>
+                  </div>
+                ))}
+                <div
+                  style={{
+                    gridColumn: '1 / -1',
+                    color: '#6b7280',
+                    fontSize: 11,
+                  }}
+                >
+                  Ground truth: {v2FamilyRow.trueJobName}
+                  {v2FamilyRow.policiesDisagree ? ' · policies disagree' : ' · policies agree'}
+                  {v2FamilyRow.groundTruthReviewFlag ? ' · review (wrong present)' : ''}
+                  {' · '}
+                  V2→V2.1 {v2FamilyRow.v2ToV21.replace(/_TO_/g, ' → ')}
+                  {' · '}
+                  V2→V2.2 {v2FamilyRow.v2ToV22.replace(/_TO_/g, ' → ')}
+                </div>
+              </div>
+            )}
+            {compareRow && !v2FamilyRow && (
+              <div
+                data-testid="eval-compare-sides"
                 style={{
                   marginBottom: 12,
                   display: 'grid',
@@ -2433,6 +2564,201 @@ function MarkerStrip({ row }: { row: JobMatcherEvalRow }) {
             {row.predictedJobName || '—'}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function fmtJmps(score: number | null): string {
+  return score == null ? 'N/A' : score.toFixed(2)
+}
+
+function fmtRate(v: number | null | undefined): string {
+  if (v == null) return '—'
+  return `${(v * 100).toFixed(2)}%`
+}
+
+function V2FamilyComparisonPanel({
+  comparison,
+  transitionFilter,
+  onTransitionFilter,
+}: {
+  comparison: JobMatcherV2FamilyCompareReport
+  transitionFilter: JobMatcherTransitionCategory | 'ALL'
+  onTransitionFilter: (next: JobMatcherTransitionCategory | 'ALL') => void
+}) {
+  const cols = [
+    { key: 'v2', label: 'V2 (prod)', metrics: comparison.v2Metrics, score: comparison.performanceScores.v2 },
+    {
+      key: 'v21',
+      label: 'V2.1 (exp)',
+      metrics: comparison.v21Metrics,
+      score: comparison.performanceScores.v21,
+    },
+    {
+      key: 'v22',
+      label: 'V2.2 (exp)',
+      metrics: comparison.v22Metrics,
+      score: comparison.performanceScores.v22,
+    },
+  ] as const
+
+  const transitionEntries = (
+    [
+      ...Object.entries(comparison.v2ToV21),
+      ...Object.entries(comparison.v2ToV22),
+      ...Object.entries(comparison.v21ToV22),
+    ] as Array<[JobMatcherTransitionCategory, number]>
+  ).reduce(
+    (acc, [key, n]) => {
+      acc.set(key, (acc.get(key) ?? 0) + n)
+      return acc
+    },
+    new Map<JobMatcherTransitionCategory, number>()
+  )
+
+  const metricRows: Array<{
+    label: string
+    values: Array<string | number>
+    emphasize?: boolean
+  }> = [
+    {
+      label: 'Performance Score',
+      values: cols.map((c) => fmtJmps(c.score)),
+      emphasize: true,
+    },
+    { label: 'Evaluated', values: cols.map((c) => c.metrics.totalEvaluated) },
+    { label: 'Correct', values: cols.map((c) => c.metrics.correctMatches) },
+    { label: 'Wrong', values: cols.map((c) => c.metrics.wrongMatches) },
+    { label: 'Ambiguous', values: cols.map((c) => c.metrics.ambiguous) },
+    { label: 'Conflict', values: cols.map((c) => c.metrics.conflict) },
+    { label: 'No Match', values: cols.map((c) => c.metrics.noMatch) },
+    { label: 'Precision', values: cols.map((c) => fmtRate(c.metrics.precision)) },
+    {
+      label: 'Coverage',
+      values: cols.map((c) => fmtRate(c.metrics.correctCoverage)),
+    },
+    {
+      label: 'Wrong rate',
+      values: cols.map((c) => fmtRate(c.metrics.wrongMatchRate)),
+    },
+    {
+      label: 'Ambiguity rate',
+      values: cols.map((c) => fmtRate(c.metrics.ambiguityRate)),
+    },
+    {
+      label: 'Conflict rate',
+      values: cols.map((c) => fmtRate(c.metrics.conflictRate)),
+    },
+    {
+      label: 'No-match rate',
+      values: cols.map((c) => fmtRate(c.metrics.noMatchRate)),
+    },
+  ]
+
+  return (
+    <div
+      data-testid="job-matcher-v2-family-comparison"
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '10px 12px',
+        background: '#f8fafc',
+        fontSize: 12,
+      }}
+    >
+      <div style={{ fontWeight: 650, marginBottom: 8 }}>
+        Matcher Comparison — V2 vs V2.1 vs V2.2
+      </div>
+      <div style={{ overflowX: 'auto', marginBottom: 10 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 480 }}>
+          <thead>
+            <tr style={{ textAlign: 'left', color: '#6b7280' }}>
+              <th style={cmpTh}>Metric</th>
+              {cols.map((c) => (
+                <th key={c.key} style={{ ...cmpTh, textAlign: 'right' }}>
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {metricRows.map((row) => (
+              <tr key={row.label}>
+                <td
+                  style={{
+                    ...cmpTd,
+                    fontWeight: row.emphasize ? 650 : 400,
+                  }}
+                  title={row.label === 'Performance Score' ? JMPS_TOOLTIP : undefined}
+                >
+                  {row.label}
+                </td>
+                {row.values.map((v, i) => {
+                  const highlight =
+                    row.emphasize &&
+                    typeof cols[i]?.score === 'number' &&
+                    cols.every(
+                      (c) =>
+                        c.score == null ||
+                        cols[i]!.score! >= (c.score ?? Number.NEGATIVE_INFINITY)
+                    )
+                  return (
+                    <td
+                      key={`${row.label}-${i}`}
+                      style={{
+                        ...cmpTd,
+                        textAlign: 'right',
+                        fontWeight: row.emphasize ? 700 : 400,
+                        color: highlight ? '#166534' : '#111827',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {typeof v === 'number' ? v.toLocaleString() : v}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontWeight: 650, marginBottom: 6 }}>Decision transitions</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+        <button
+          type="button"
+          onClick={() => onTransitionFilter('ALL')}
+          style={{
+            ...chipBtn,
+            background: transitionFilter === 'ALL' ? '#111827' : '#fff',
+            color: transitionFilter === 'ALL' ? '#fff' : '#111827',
+          }}
+        >
+          All
+        </button>
+        {[...transitionEntries.entries()]
+          .filter(([, n]) => n > 0)
+          .sort((a, b) => b[1] - a[1])
+          .map(([key, n]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onTransitionFilter(key)}
+              style={{
+                ...chipBtn,
+                background: transitionFilter === key ? '#111827' : '#fff',
+                color: transitionFilter === key ? '#fff' : '#111827',
+              }}
+            >
+              {key.replace(/_TO_/g, ' → ')} ({n})
+            </button>
+          ))}
+      </div>
+      <div style={{ color: '#6b7280', fontSize: 11 }}>
+        Same dataset / ground truth / eligibility for all three policies. Runtime V2{' '}
+        {comparison.runtimeMs.v2}ms · V2.1 {comparison.runtimeMs.v21}ms · V2.2{' '}
+        {comparison.runtimeMs.v22}ms. Performance Score is a weighted operator metric
+        (not precision).
       </div>
     </div>
   )
@@ -2786,11 +3112,16 @@ function Metric({
   value,
   tone,
   strong,
+  title,
+  bar,
 }: {
   label: string
   value: string | number
   tone?: 'positive' | 'negative' | 'warning'
   strong?: boolean
+  title?: string
+  /** Optional 0–100 visual bar (clamped display only). */
+  bar?: number | null
 }) {
   const valueColor =
     tone === 'positive'
@@ -2802,6 +3133,7 @@ function Metric({
           : '#111827'
   return (
     <div
+      title={title}
       style={{
         border: '1px solid #e5e7eb',
         borderRadius: 8,
@@ -2821,6 +3153,25 @@ function Metric({
       >
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
+      {bar != null ? (
+        <div
+          style={{
+            marginTop: 6,
+            height: 4,
+            borderRadius: 2,
+            background: '#e5e7eb',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${bar}%`,
+              height: '100%',
+              background: '#166534',
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }

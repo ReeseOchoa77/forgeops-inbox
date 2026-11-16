@@ -23,6 +23,14 @@ export default defineConfig({
         rootDir,
         "../../packages/shared/src/reference/normalize.ts"
       ),
+      "@forgeops/shared/jobs/job-match-eval-exclusions": path.resolve(
+        rootDir,
+        "../../packages/shared/src/jobs/job-match-eval-exclusions.ts"
+      ),
+      "@forgeops/shared/jobs/job-match-performance-score": path.resolve(
+        rootDir,
+        "../../packages/shared/src/jobs/job-match-performance-score.ts"
+      ),
     },
   },
   test: {

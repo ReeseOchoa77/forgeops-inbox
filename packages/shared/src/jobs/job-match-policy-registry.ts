@@ -148,11 +148,19 @@ export function selectDisplayMetricsForEvaluation(input: {
     v2Metrics: HistoricalEvalMetrics;
     v21Metrics?: HistoricalEvalMetrics | null;
   } | null;
+  /** Compare All: V2 / V2.1 / V2.2 family. */
+  v2FamilyComparison?: {
+    v2Metrics: HistoricalEvalMetrics;
+    v21Metrics: HistoricalEvalMetrics;
+    v22Metrics: HistoricalEvalMetrics;
+  } | null;
 }): PolicyMetricsBundle {
   const bundles: PolicyMetricsBundle[] = [];
   const production = getProductionJobMatchIdentityPolicy();
   const isCompare =
-    Boolean(input.comparison) || Boolean(input.threeWayComparison);
+    Boolean(input.comparison) ||
+    Boolean(input.threeWayComparison) ||
+    Boolean(input.v2FamilyComparison);
 
   if (
     input.primaryPolicy &&
@@ -203,6 +211,21 @@ export function selectDisplayMetricsForEvaluation(input: {
         metrics: input.threeWayComparison.v21Metrics,
       });
     }
+  }
+
+  if (input.v2FamilyComparison) {
+    bundles.push({
+      policy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
+      metrics: input.v2FamilyComparison.v2Metrics,
+    });
+    bundles.push({
+      policy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_1,
+      metrics: input.v2FamilyComparison.v21Metrics,
+    });
+    bundles.push({
+      policy: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2,
+      metrics: input.v2FamilyComparison.v22Metrics,
+    });
   }
 
   if (!isCompare) {

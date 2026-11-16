@@ -39,6 +39,11 @@
       "types": "./src/jobs/job-match-eval-exclusions.ts",
       "import": "./src/jobs/job-match-eval-exclusions.ts",
       "default": "./src/jobs/job-match-eval-exclusions.ts"
+    },
+    "./jobs/job-match-performance-score": {
+      "types": "./src/jobs/job-match-performance-score.ts",
+      "import": "./src/jobs/job-match-performance-score.ts",
+      "default": "./src/jobs/job-match-performance-score.ts"
     }
   },
   "scripts": {
