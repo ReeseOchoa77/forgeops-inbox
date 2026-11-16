@@ -999,14 +999,15 @@ export function JobMatcherEvaluationPanel({
     >
       {/*
         Config/metrics/comparison may grow tall (esp. after a full compare).
-        Allow this chrome to shrink + scroll so the Results pane is never
-        crushed below a usable height by overflow:hidden ancestors.
+        When Results is expanded, cap chrome height so the Results pane keeps
+        a usable share. When Results is collapsed, drop the cap and let chrome
+        (Dataset Summary + controls) grow into the freed space.
       */}
       <div
         data-testid="job-matcher-eval-chrome"
         style={{
-          flex: '0 1 auto',
-          maxHeight: '42%',
+          flex: resultsCollapsed ? '1 1 auto' : '0 1 auto',
+          maxHeight: resultsCollapsed ? undefined : '42%',
           minHeight: 0,
           overflow: 'auto',
           display: 'flex',

@@ -29,6 +29,16 @@ describe('Job Matcher evaluation Results UI', () => {
     expect(panelSrc).toContain('selectResultTab')
   })
 
+  it('chrome expands when Results collapsed; capped when expanded', () => {
+    expect(panelSrc).toContain("flex: resultsCollapsed ? '1 1 auto' : '0 1 auto'")
+    expect(panelSrc).toContain(
+      "maxHeight: resultsCollapsed ? undefined : '42%'"
+    )
+    expect(panelSrc).toContain(
+      "flex: resultsCollapsed ? '0 0 auto' : '1 1 0'"
+    )
+  })
+
   it('defaults collapsed after new evaluation finishes', () => {
     expect(panelSrc).toContain('setResultsCollapsed(true)')
   })
