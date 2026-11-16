@@ -52,7 +52,7 @@ export type ProjectIdentityEvidenceFamily =
   | "EXTERNAL_REF"
   | "OTHER_IDENTITY";
 
-export type EvalMarkerId = "NAME" | "CONTACT" | "THREAD";
+export type EvalMarkerId = "NAME" | "ATTACHMENT" | "CONTACT" | "THREAD";
 
 export type EvalRowDiagnostics = {
   failureCategory: EvalFailureCategory | null;
@@ -177,7 +177,8 @@ export function projectIdentityFamilyForEvidenceType(
 }
 
 function asMarker(m: string): EvalMarkerId | null {
-  if (m === "NAME" || m === "CONTACT" || m === "THREAD") return m;
+  if (m === "NAME" || m === "ATTACHMENT" || m === "CONTACT" || m === "THREAD")
+    return m;
   return null;
 }
 
@@ -201,7 +202,7 @@ function survived(row: EvalDiagRowInput, marker: EvalMarkerId): boolean | null {
 export function contributingMarkersForRow(row: EvalDiagRowInput): EvalMarkerId[] {
   const out: EvalMarkerId[] = [];
   let prevCount: number | null = null;
-  for (const marker of ["NAME", "CONTACT", "THREAD"] as const) {
+  for (const marker of ["NAME", "ATTACHMENT", "CONTACT", "THREAD"] as const) {
     const t = traceFor(row, marker);
     if (!t) continue;
     const count = t.candidateJobIds.length;
@@ -436,7 +437,7 @@ export function buildJobMatcherEvalDiagnostics(
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
     .slice(0, 40);
 
-  const markers: EvalMarkerId[] = ["NAME", "CONTACT", "THREAD"];
+  const markers: EvalMarkerId[] = ["NAME", "ATTACHMENT", "CONTACT", "THREAD"];
   const markerPerformance = markers.map((marker) => {
     let correct = 0;
     let wrongN = 0;

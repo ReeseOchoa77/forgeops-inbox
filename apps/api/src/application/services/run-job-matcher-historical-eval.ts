@@ -65,6 +65,7 @@ import {
   findEvalWorkspace,
   loadAuthoritativeEvalEmailIndex,
   loadHistoricalEvalDatasetSummary,
+  loadEvalAttachmentsByEmailIds,
   loadHistoricalEvalEmailsByIds,
   loadJobMatchEvalSnapshot,
   loadWorkspaceJobsForEval,
@@ -544,6 +545,10 @@ export async function runJobMatcherHistoricalEval(input: {
   );
   const jobsById = new Map(snapshot.jobs.map((job) => [job.id, job]));
 
+  const needsAttachmentIdentity = selectedPolicies.includes(
+    JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
+  );
+
   const emailRecords = await loadHistoricalEvalEmailsByIds(input.prisma, {
     workspaceId: input.workspaceId,
     ids: selection.selectedIds,
@@ -559,6 +564,13 @@ export async function runJobMatcherHistoricalEval(input: {
   const sourceById = new Map(
     emailRecords.map((e) => [e.id, e.jobAssignmentSource] as const)
   );
+
+  const attachmentsByEmailId = needsAttachmentIdentity
+    ? await loadEvalAttachmentsByEmailIds(input.prisma, {
+        workspaceId: input.workspaceId,
+        emailMessageIds: emailRecords.map((e) => e.id),
+      })
+    : new Map();
 
   let policiesCompleted = 0;
   const evaluatedByPolicy = new Map<
@@ -589,6 +601,7 @@ export async function runJobMatcherHistoricalEval(input: {
           return null;
         }
         // Matcher must NOT receive trueJobId / selected Job as a hint.
+        const attachments = attachmentsByEmailId.get(email.id) ?? [];
         const result = await matcher.match({
           workspaceId: input.workspaceId,
           emailMessageId: email.id,
@@ -599,6 +612,14 @@ export async function runJobMatcherHistoricalEval(input: {
           providerThreadId: email.providerThreadId,
           eligibilityMode: "evaluation",
           identityPolicy: policy,
+          ...(policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
+            ? {
+                attachmentsForMatch: attachments,
+                ...(email.hasAttachments && attachments.length === 0
+                  ? { attachmentsPresentButNotLoaded: true }
+                  : {}),
+              }
+            : {}),
         });
         return {
           id: email.id,

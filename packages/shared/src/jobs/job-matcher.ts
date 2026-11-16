@@ -19,7 +19,15 @@ export type JobMatchEvidenceType =
   | "SENDER_JOB_CONTACT"
   | "THREAD_JOB_HINT"
   | "THREAD_JOB_AUTHORITATIVE"
-  | "N8N_COMPAT_HINT";
+  | "N8N_COMPAT_HINT"
+  /** V2.4 Attachment Identity evidence categories. */
+  | "ATTACHMENT_TITLE_BLOCK_PROJECT"
+  | "ATTACHMENT_DOCUMENT_HEADER_PROJECT"
+  | "ATTACHMENT_FILENAME_PROJECT"
+  | "ATTACHMENT_METADATA_PROJECT"
+  | "ATTACHMENT_BODY_PROJECT_REFERENCE"
+  | "ATTACHMENT_INCIDENTAL_REFERENCE"
+  | "ATTACHMENT_NEGATED_REFERENCE";
 
 export type JobMatchEvidence = {
   type: JobMatchEvidenceType;
@@ -58,7 +66,7 @@ export type JobMatchInput = {
   eligibilityMode?: "production" | "evaluation";
   /**
    * Marker 1 identity policy. Default CONTEXT_AWARE_V2 (production).
-   * BASELINE / V1 / V2.1 / V2.2 / V2.3 remain available for evaluation overrides.
+   * BASELINE / V1 / V2.1 / V2.2 / V2.3 / V2.4 remain available for evaluation overrides.
    */
   identityPolicy?:
     | "BASELINE"
@@ -67,7 +75,29 @@ export type JobMatchInput = {
     | "CONTEXT_AWARE_V2_1"
     | "CONTEXT_AWARE_V2_2"
     | "CONTEXT_AWARE_V2_3"
-  | "CONTEXT_AWARE_V2_4";
+    | "CONTEXT_AWARE_V2_4";
+  /**
+   * Preloaded attachment payloads for V2.4 Attachment Identity.
+   * Production V2 ignores this field.
+   */
+  attachmentsForMatch?: Array<{
+    attachmentId: string;
+    filename: string;
+    mimeType?: string | null;
+    extractedText?: string | null;
+    extractStatus:
+      | "READY"
+      | "PARTIAL"
+      | "UNSUPPORTED"
+      | "UNAVAILABLE"
+      | "FAILED"
+      | "PENDING"
+      | "NONE";
+    pageTexts?: Array<{ pageNumber: number; text: string }>;
+    metadataProjectName?: string | null;
+  }>;
+  /** Attachments exist on the email but were not loaded into the matcher. */
+  attachmentsPresentButNotLoaded?: boolean;
 };
 
 export type JobRecordForMatch = {
@@ -111,7 +141,7 @@ export type JobMatchDecision =
   | "NO_MATCH"
   | "CONFLICT";
 
-export type JobMatchMarkerId = "NAME" | "CONTACT" | "THREAD";
+export type JobMatchMarkerId = "NAME" | "ATTACHMENT" | "CONTACT" | "THREAD";
 
 export type JobMatchMarkerTrace = {
   marker: JobMatchMarkerId;
@@ -187,6 +217,30 @@ export type JobMatchResult = {
     evidenceIndependentFromThread: boolean | null;
     resolutionAllowed: boolean;
     reason: string;
+  };
+  /** V2.4 Attachment Identity diagnostics when the marker ran. */
+  attachmentDiagnostics?: {
+    marker: "ATTACHMENT";
+    attachmentsPresent: boolean;
+    attachmentsProcessed: number;
+    attachmentsPending: number;
+    attachmentsFailed: number;
+    attachmentsUnsupported: number;
+    attachmentsUnavailable: number;
+    extractionComplete: boolean;
+    extractionRevision: string;
+    aiInvoked: boolean;
+    reason: string;
+    hits: Array<{
+      jobId: string;
+      attachmentId: string;
+      filename: string;
+      category: string;
+      matchedPhrase: string;
+      supportingExcerpt: string;
+      pageNumber: number | null;
+      strength: string;
+    }>;
   };
 };
 

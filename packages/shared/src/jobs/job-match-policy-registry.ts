@@ -15,7 +15,9 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
   experimentRevisionForIdentityPolicy,
   type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
@@ -24,7 +26,9 @@ import {
 export {
   JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION,
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
   experimentRevisionForIdentityPolicy,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
@@ -138,11 +142,11 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       label: "CONTEXT_AWARE_V2_4",
       displayName: "V2.4 — Contextual Word Search",
       description:
-        "V2 plus contextual word search across subject/body (optional AI disambiguation).",
+        "V2 plus full-body project identity, contextual word search, and Attachment Identity (optional AI).",
       productionDefault: false,
       experimental: true,
       availableForEvaluation: true,
-      experimentSummary: `V2 + contextual word search (${JOB_MATCH_V2_4_IMPLEMENTATION_REVISION})`,
+      experimentSummary: `V2 + full-body + attachment identity (${JOB_MATCH_V2_4_IMPLEMENTATION_REVISION})`,
     },
   ] as const;
 

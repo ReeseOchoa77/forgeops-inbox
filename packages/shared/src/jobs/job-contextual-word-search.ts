@@ -411,6 +411,7 @@ export type ContextualResolution = {
     | "INCIDENTAL_PROJECT_REFERENCE"
     | "EXPLICIT_PROJECT_CORRECTION"
     | "SHARED_PROJECT_IDENTIFIER"
+    | "FULL_BODY_PROJECT_IDENTITY"
     | null;
   sharedIdentifiers: string[];
   familyJobIds: string[];
@@ -421,6 +422,136 @@ export type ContextualResolution = {
   aiInvoked: boolean;
   changedBaseline: boolean;
 };
+
+/**
+ * Unique eligible project name/alias phrases in subject and/or current body.
+ * Does not require a shared family identifier.
+ */
+export function resolveFullBodyProjectIdentity(input: {
+  peers: readonly IdentityPeerJob[];
+  subjectTokens: readonly string[];
+  bodyTokens: readonly string[];
+}): ContextualResolution {
+  const empty: ContextualResolution = {
+    status: null,
+    selectedJobId: null,
+    reason: null,
+    sharedIdentifiers: [],
+    familyJobIds: [],
+    distinguishingByJob: {},
+    matchedTerms: [],
+    evidenceField: null,
+    competingJobIds: [],
+    aiInvoked: false,
+    changedBaseline: false,
+  };
+  if (
+    (input.subjectTokens.length === 0 && input.bodyTokens.length === 0) ||
+    input.peers.length === 0
+  ) {
+    return empty;
+  }
+
+  type Hit = {
+    peerJobId: string;
+    phrase: string[];
+    field: "subject" | "body";
+  };
+  const hits: Hit[] = [];
+
+  const scanField = (
+    field: "subject" | "body",
+    hay: readonly string[]
+  ): void => {
+    if (hay.length === 0) return;
+    for (const peer of input.peers) {
+      const phrases =
+        peer.phraseTokenLists.length > 0
+          ? peer.phraseTokenLists
+          : [peer.contentTokens];
+      for (const phrase of phrases) {
+        const content = phrase.filter(
+          (t) =>
+            isJobNameContentToken(t) ||
+            isDistinguishingJobNameToken(t) ||
+            isNumericJobNameToken(t)
+        );
+        if (content.length === 0) continue;
+        if (
+          content.length === 1 &&
+          isContextualWeakDistinguishingToken(content[0]!)
+        ) {
+          continue;
+        }
+        if (content.length === 1) {
+          const token = content[0]!;
+          const holders = input.peers.filter((p) =>
+            p.contentTokens.some((ct) => contextualTokensEquivalent(ct, token))
+          );
+          if (holders.length > 1) continue;
+        }
+        for (let i = 0; i <= hay.length - content.length; i += 1) {
+          let ok = true;
+          for (let j = 0; j < content.length; j += 1) {
+            if (!contextualTokensEquivalent(hay[i + j]!, content[j]!)) {
+              ok = false;
+              break;
+            }
+          }
+          if (!ok) continue;
+          if (isTokenNegatedInContextualHay(hay, i)) continue;
+          if (
+            field === "body" &&
+            isTokenIncidentalInContextualHay(hay, i)
+          ) {
+            continue;
+          }
+          hits.push({ peerJobId: peer.jobId, phrase: content, field });
+          break;
+        }
+      }
+    }
+  };
+
+  scanField("subject", input.subjectTokens);
+  scanField("body", input.bodyTokens);
+
+  const uniqueJobs = [...new Set(hits.map((h) => h.peerJobId))];
+  if (uniqueJobs.length === 0) return empty;
+  if (uniqueJobs.length > 1) {
+    return {
+      ...empty,
+      status: "AMBIGUOUS",
+      reason: "CONTEXTUAL_WORD_SEARCH_AMBIGUOUS",
+      matchedTerms: hits.flatMap((h) => h.phrase),
+      competingJobIds: uniqueJobs,
+      evidenceField: "mixed",
+      changedBaseline: true,
+      familyJobIds: uniqueJobs,
+    };
+  }
+
+  const winner = uniqueJobs[0]!;
+  const winnerHits = hits.filter((h) => h.peerJobId === winner);
+  const subjectHit = winnerHits.some((h) => h.field === "subject");
+  return {
+    ...empty,
+    status: "MATCH",
+    selectedJobId: winner,
+    reason: "FULL_BODY_PROJECT_IDENTITY",
+    matchedTerms: winnerHits.flatMap((h) => h.phrase),
+    competingJobIds: input.peers
+      .map((p) => p.jobId)
+      .filter((id) => id !== winner),
+    evidenceField: subjectHit
+      ? winnerHits.some((h) => h.field === "body")
+        ? "mixed"
+        : "subject"
+      : "body",
+    changedBaseline: true,
+    familyJobIds: [winner],
+  };
+}
 
 /**
  * Deterministic contextual resolution for a shared project family.
@@ -452,234 +583,223 @@ export function resolveContextualWordSearch(input: {
       contextualTokensEquivalent(t, f.sharedId)
     )
   );
-  if (familyInHay.length === 0) return empty;
 
-  // Prefer subject-established family when present.
-  const subjectFamilies = familyInHay.filter((f) =>
-    input.subjectTokens.some((t) => contextualTokensEquivalent(t, f.sharedId))
-  );
-  const activeFamilies =
-    subjectFamilies.length > 0 ? subjectFamilies : familyInHay;
-  // Use the largest competing family set (union of peers for first shared id).
-  const family = activeFamilies[0]!;
-  const competitors = family.peers;
-  const sharedIdentifiers = [family.sharedId];
-  const distinguishingByJob: Record<string, string[]> = {};
-  for (const peer of competitors) {
-    distinguishingByJob[peer.jobId] = extractContextualDistinguishingTerms({
-      peer,
-      competitors,
-      sharedIdentifiers,
-    });
-  }
-
-  const allHits = competitors.flatMap((peer) =>
-    findContextualDistinguishingHits({
-      peer,
-      competitors,
-      sharedIdentifiers,
-      subjectTokens: input.subjectTokens,
-      bodyTokens: input.bodyTokens,
-    })
-  );
-
-  const positiveHits = allHits.filter((h) => !h.negated && !h.incidental);
-  const subjectPositive = positiveHits.filter((h) => h.field === "subject");
-  const bodyPositive = positiveHits.filter((h) => h.field === "body");
-
-  const uniqueJobIds = (hits: ContextualTermHit[]) => [
-    ...new Set(hits.map((h) => h.peerJobId)),
-  ];
-
-  const baseMeta = {
-    sharedIdentifiers,
-    familyJobIds: competitors.map((c) => c.jobId),
-    distinguishingByJob,
-    aiInvoked: false,
-    changedBaseline: true,
-  };
-
-  // Explicit correction across subject/body → conservative abstain.
-  if (
-    hasExplicitContextualCorrection([
-      ...input.subjectTokens,
-      ...input.bodyTokens,
-    ]) &&
-    uniqueJobIds(positiveHits).length >= 1 &&
-    (allHits.some((h) => h.negated) || uniqueJobIds(positiveHits).length > 1)
-  ) {
-    return {
-      ...empty,
-      ...baseMeta,
-      status: "AMBIGUOUS",
-      reason: "EXPLICIT_PROJECT_CORRECTION",
-      matchedTerms: positiveHits.map((h) => h.term),
-      competingJobIds: uniqueJobIds(allHits),
-      evidenceField: "mixed",
-    };
-  }
-
-  // Strong subject distinguishing evidence for exactly one peer.
-  const subjectWinners = uniqueJobIds(subjectPositive);
-  if (subjectWinners.length === 1) {
-    const winnerId = subjectWinners[0]!;
-    const bodyOthers = uniqueJobIds(
-      bodyPositive.filter((h) => h.peerJobId !== winnerId)
+  if (familyInHay.length > 0) {
+    // Prefer subject-established family when present.
+    const subjectFamilies = familyInHay.filter((f) =>
+      input.subjectTokens.some((t) => contextualTokensEquivalent(t, f.sharedId))
     );
-    // Incidental body mentions of others do not override.
-    if (bodyOthers.length > 0 && subjectPositive.length > 0) {
+    const activeFamilies =
+      subjectFamilies.length > 0 ? subjectFamilies : familyInHay;
+    const family = activeFamilies[0]!;
+    const competitors = family.peers;
+    const sharedIdentifiers = [family.sharedId];
+    const distinguishingByJob: Record<string, string[]> = {};
+    for (const peer of competitors) {
+      distinguishingByJob[peer.jobId] = extractContextualDistinguishingTerms({
+        peer,
+        competitors,
+        sharedIdentifiers,
+      });
+    }
+
+    const allHits = competitors.flatMap((peer) =>
+      findContextualDistinguishingHits({
+        peer,
+        competitors,
+        sharedIdentifiers,
+        subjectTokens: input.subjectTokens,
+        bodyTokens: input.bodyTokens,
+      })
+    );
+
+    const positiveHits = allHits.filter((h) => !h.negated && !h.incidental);
+    const subjectPositive = positiveHits.filter((h) => h.field === "subject");
+    const bodyPositive = positiveHits.filter((h) => h.field === "body");
+
+    const uniqueJobIds = (hits: ContextualTermHit[]) => [
+      ...new Set(hits.map((h) => h.peerJobId)),
+    ];
+
+    const baseMeta = {
+      sharedIdentifiers,
+      familyJobIds: competitors.map((c) => c.jobId),
+      distinguishingByJob,
+      aiInvoked: false,
+      changedBaseline: true,
+    };
+
+    // Explicit correction across subject/body → conservative abstain.
+    if (
+      hasExplicitContextualCorrection([
+        ...input.subjectTokens,
+        ...input.bodyTokens,
+      ]) &&
+      uniqueJobIds(positiveHits).length >= 1 &&
+      (allHits.some((h) => h.negated) || uniqueJobIds(positiveHits).length > 1)
+    ) {
       return {
         ...empty,
         ...baseMeta,
-        status: "MATCH",
-        selectedJobId: winnerId,
-        reason: "INCIDENTAL_PROJECT_REFERENCE",
-        matchedTerms: subjectPositive.map((h) => h.term),
-        competingJobIds: competitors
-          .map((c) => c.jobId)
-          .filter((id) => id !== winnerId),
+        status: "AMBIGUOUS",
+        reason: "EXPLICIT_PROJECT_CORRECTION",
+        matchedTerms: positiveHits.map((h) => h.term),
+        competingJobIds: uniqueJobIds(allHits),
         evidenceField: "mixed",
       };
     }
-    return {
-      ...empty,
-      ...baseMeta,
-      status: "MATCH",
-      selectedJobId: winnerId,
-      reason: "CONTEXTUAL_WORD_SEARCH_MATCH",
-      matchedTerms: subjectPositive.map((h) => h.term),
-      competingJobIds: competitors
-        .map((c) => c.jobId)
-        .filter((id) => id !== winnerId),
-      evidenceField: "subject",
-    };
-  }
 
-  if (subjectWinners.length > 1) {
-    return {
-      ...empty,
-      ...baseMeta,
-      status: "AMBIGUOUS",
-      reason: "CONTEXTUAL_WORD_SEARCH_AMBIGUOUS",
-      matchedTerms: subjectPositive.map((h) => h.term),
-      competingJobIds: subjectWinners,
-      evidenceField: "subject",
-    };
-  }
-
-  // Body-only positive evidence (subject established family).
-  const familyInSubject = input.subjectTokens.some((t) =>
-    contextualTokensEquivalent(t, family.sharedId)
-  );
-  if (familyInSubject) {
-    const bodyWinners = uniqueJobIds(bodyPositive);
-    if (bodyWinners.length === 1) {
-      const winnerId = bodyWinners[0]!;
-      // Negated hits for the same winner already filtered; if only negated
-      // concessions remain for another peer, ignore them.
+    // Strong subject distinguishing evidence for exactly one peer.
+    const subjectWinners = uniqueJobIds(subjectPositive);
+    if (subjectWinners.length === 1) {
+      const winnerId = subjectWinners[0]!;
       return {
         ...empty,
         ...baseMeta,
         status: "MATCH",
         selectedJobId: winnerId,
         reason: "CONTEXTUAL_WORD_SEARCH_MATCH",
-        matchedTerms: bodyPositive
-          .filter((h) => h.peerJobId === winnerId)
-          .map((h) => h.term),
+        matchedTerms: subjectPositive.map((h) => h.term),
         competingJobIds: competitors
           .map((c) => c.jobId)
           .filter((id) => id !== winnerId),
-        evidenceField: "body",
+        evidenceField: "subject",
       };
     }
-    if (bodyWinners.length > 1) {
-      // Try AI if provided.
-      if (input.aiDecision) {
-        const validated = validateContextualWordSearchAiDecision({
-          decision: input.aiDecision,
-          candidateJobIds: competitors.map((c) => c.jobId),
-          subject: input.subjectTokens.join(" "),
-          body: input.bodyTokens.join(" "),
-        });
-        if (validated.ok && validated.decision.decision === "MATCH") {
-          return {
-            ...empty,
-            ...baseMeta,
-            status: "MATCH",
-            selectedJobId: validated.decision.selectedJobId,
-            reason: "AI_CONTEXTUAL_DISAMBIGUATION",
-            matchedTerms: bodyPositive.map((h) => h.term),
-            competingJobIds: validated.decision.competingJobIds,
-            evidenceField: "mixed",
-            aiInvoked: true,
-          };
-        }
-        if (validated.ok) {
-          return {
-            ...empty,
-            ...baseMeta,
-            status: "AMBIGUOUS",
-            reason: "AI_CONTEXTUAL_ABSTENTION",
-            matchedTerms: bodyPositive.map((h) => h.term),
-            competingJobIds: bodyWinners,
-            evidenceField: "body",
-            aiInvoked: true,
-          };
-        }
-      }
+
+    if (subjectWinners.length > 1) {
       return {
         ...empty,
         ...baseMeta,
         status: "AMBIGUOUS",
         reason: "CONTEXTUAL_WORD_SEARCH_AMBIGUOUS",
-        matchedTerms: bodyPositive.map((h) => h.term),
-        competingJobIds: bodyWinners,
-        evidenceField: "body",
+        matchedTerms: subjectPositive.map((h) => h.term),
+        competingJobIds: subjectWinners,
+        evidenceField: "subject",
       };
     }
 
-    // Only negated distinguishing terms — not positive evidence.
-    if (allHits.some((h) => h.negated) && bodyWinners.length === 0) {
-      const positiveAfterNegation = uniqueJobIds(
-        allHits.filter((h) => !h.negated && !h.incidental)
-      );
-      if (positiveAfterNegation.length === 1) {
+    // Body distinguishing evidence — family may be in subject OR current body.
+    // Do not require the shared identifier in the subject.
+    const familyInSubjectOrBody = [...input.subjectTokens, ...input.bodyTokens].some(
+      (t) => contextualTokensEquivalent(t, family.sharedId)
+    );
+    if (familyInSubjectOrBody) {
+      const bodyWinners = uniqueJobIds(bodyPositive);
+      if (bodyWinners.length === 1) {
+        const winnerId = bodyWinners[0]!;
         return {
           ...empty,
           ...baseMeta,
           status: "MATCH",
-          selectedJobId: positiveAfterNegation[0]!,
-          reason: "NEGATED_PROJECT_REFERENCE",
-          matchedTerms: allHits
-            .filter((h) => !h.negated)
+          selectedJobId: winnerId,
+          reason: "CONTEXTUAL_WORD_SEARCH_MATCH",
+          matchedTerms: bodyPositive
+            .filter((h) => h.peerJobId === winnerId)
             .map((h) => h.term),
           competingJobIds: competitors
             .map((c) => c.jobId)
-            .filter((id) => id !== positiveAfterNegation[0]),
+            .filter((id) => id !== winnerId),
+          evidenceField: "body",
+        };
+      }
+      if (bodyWinners.length > 1) {
+        if (input.aiDecision) {
+          const validated = validateContextualWordSearchAiDecision({
+            decision: input.aiDecision,
+            candidateJobIds: competitors.map((c) => c.jobId),
+            subject: input.subjectTokens.join(" "),
+            body: input.bodyTokens.join(" "),
+          });
+          if (validated.ok && validated.decision.decision === "MATCH") {
+            return {
+              ...empty,
+              ...baseMeta,
+              status: "MATCH",
+              selectedJobId: validated.decision.selectedJobId,
+              reason: "AI_CONTEXTUAL_DISAMBIGUATION",
+              matchedTerms: bodyPositive.map((h) => h.term),
+              competingJobIds: validated.decision.competingJobIds,
+              evidenceField: "mixed",
+              aiInvoked: true,
+            };
+          }
+          if (validated.ok) {
+            return {
+              ...empty,
+              ...baseMeta,
+              status: "AMBIGUOUS",
+              reason: "AI_CONTEXTUAL_ABSTENTION",
+              matchedTerms: bodyPositive.map((h) => h.term),
+              competingJobIds: bodyWinners,
+              evidenceField: "body",
+              aiInvoked: true,
+            };
+          }
+        }
+        return {
+          ...empty,
+          ...baseMeta,
+          status: "AMBIGUOUS",
+          reason: "CONTEXTUAL_WORD_SEARCH_AMBIGUOUS",
+          matchedTerms: bodyPositive.map((h) => h.term),
+          competingJobIds: bodyWinners,
+          evidenceField: "body",
+        };
+      }
+
+      if (allHits.some((h) => h.negated) && bodyWinners.length === 0) {
+        const positiveAfterNegation = uniqueJobIds(
+          allHits.filter((h) => !h.negated && !h.incidental)
+        );
+        if (positiveAfterNegation.length === 1) {
+          return {
+            ...empty,
+            ...baseMeta,
+            status: "MATCH",
+            selectedJobId: positiveAfterNegation[0]!,
+            reason: "NEGATED_PROJECT_REFERENCE",
+            matchedTerms: allHits
+              .filter((h) => !h.negated)
+              .map((h) => h.term),
+            competingJobIds: competitors
+              .map((c) => c.jobId)
+              .filter((id) => id !== positiveAfterNegation[0]),
+            evidenceField: "mixed",
+          };
+        }
+        return {
+          ...empty,
+          ...baseMeta,
+          status: "AMBIGUOUS",
+          reason: "NEGATED_PROJECT_REFERENCE",
+          matchedTerms: allHits.map((h) => h.term),
+          competingJobIds: competitors.map((c) => c.jobId),
           evidenceField: "mixed",
         };
       }
+
+      // Shared family with no distinguishing terms — try full-body unique names
+      // before abstaining (covers unique siblings named without shared-id phrases).
+      const fullBody = resolveFullBodyProjectIdentity(input);
+      if (fullBody.status === "MATCH") return fullBody;
+
       return {
         ...empty,
         ...baseMeta,
         status: "AMBIGUOUS",
-        reason: "NEGATED_PROJECT_REFERENCE",
-        matchedTerms: allHits.map((h) => h.term),
+        reason: "SHARED_PROJECT_IDENTIFIER",
+        matchedTerms: sharedIdentifiers,
         competingJobIds: competitors.map((c) => c.jobId),
-        evidenceField: "mixed",
+        evidenceField: input.subjectTokens.some((t) =>
+          contextualTokensEquivalent(t, family.sharedId)
+        )
+          ? "subject"
+          : "body",
       };
     }
-
-    return {
-      ...empty,
-      ...baseMeta,
-      status: "AMBIGUOUS",
-      reason: "SHARED_PROJECT_IDENTIFIER",
-      matchedTerms: sharedIdentifiers,
-      competingJobIds: competitors.map((c) => c.jobId),
-      evidenceField: "subject",
-    };
   }
 
-  return empty;
+  // No shared-family path — unique project name/alias in current body (e.g. Exodus).
+  return resolveFullBodyProjectIdentity(input);
 }

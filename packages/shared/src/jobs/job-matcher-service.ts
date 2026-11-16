@@ -107,7 +107,15 @@ export class JobMatcherService {
     }
 
     const result = jobMatchPipelineFromEmailInput(
-      resolvedInput,
+      {
+        ...resolvedInput,
+        ...(resolvedInput.attachmentsForMatch
+          ? { attachmentsForMatch: resolvedInput.attachmentsForMatch }
+          : {}),
+        ...(resolvedInput.attachmentsPresentButNotLoaded
+          ? { attachmentsPresentButNotLoaded: true }
+          : {}),
+      },
       jobs,
       aliases,
       {

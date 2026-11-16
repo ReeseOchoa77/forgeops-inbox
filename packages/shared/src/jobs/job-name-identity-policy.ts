@@ -86,15 +86,23 @@ export const JOB_MATCH_IDENTITY_EXPERIMENT_REVISION =
   "independent-v23-normalized-subject-identity-r1" as const;
 
 /**
- * Current V2.4 algorithm revision. Historical V2.4 runs (if any) under a prior
- * implementation should be stamped V2_4_LEGACY — never reinterpret those rows.
+ * Current V2.4 algorithm revision. Prior V2.4 runs under older stamps must not
+ * be reinterpreted with the new full-body + attachment semantics.
  */
 export const JOB_MATCH_V2_4_IMPLEMENTATION_REVISION =
+  "V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1" as const;
+
+/** First V2.4 contextual-word-search-only revision (historical). */
+export const JOB_MATCH_V2_4_PRIOR_CONTEXTUAL_WORD_SEARCH_REVISION =
   "V2_4_CONTEXTUAL_WORD_SEARCH" as const;
 
 /** Label for any prior V2.4 implementation stored under the same policy id. */
 export const JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION =
   "V2_4_LEGACY" as const;
+
+/** Attachment text / title-block extraction pipeline revision (eval metadata). */
+export const JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION =
+  "attachment-identity-extract-r1" as const;
 
 export type JobMatchIdentityExperimentRevision =
   | typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION
@@ -209,7 +217,17 @@ export type JobNameIdentityReasonCode =
   /** V2.4: body mention treated as incidental vs stronger subject/current work. */
   | "INCIDENTAL_PROJECT_REFERENCE"
   /** V2.4: explicit correction language triggered conservative abstention. */
-  | "EXPLICIT_PROJECT_CORRECTION";
+  | "EXPLICIT_PROJECT_CORRECTION"
+  /** V2.4: unique eligible project name/alias in current body (no subject id required). */
+  | "FULL_BODY_PROJECT_IDENTITY"
+  /** V2.4: attachment identity uniquely resolved a Job. */
+  | "ATTACHMENT_IDENTITY_MATCH"
+  /** V2.4: attachment identity competing / unresolved. */
+  | "ATTACHMENT_IDENTITY_AMBIGUOUS"
+  /** V2.4: subject/body vs attachment project conflict. */
+  | "ATTACHMENT_IDENTITY_CONFLICT"
+  /** V2.4: attachments present but extraction pending/unavailable. */
+  | "ATTACHMENT_EXTRACTION_UNAVAILABLE";
 
 export type JobNameIdentityDiagnostics = {
   marker: "NAME";

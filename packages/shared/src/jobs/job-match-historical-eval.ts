@@ -22,7 +22,11 @@ export type HistoricalEvalOutcome =
   | "CONFLICT"
   | "NO_MATCH";
 
-export type HistoricalEvalResolvingMarker = "NAME" | "CONTACT" | "THREAD";
+export type HistoricalEvalResolvingMarker =
+  | "NAME"
+  | "ATTACHMENT"
+  | "CONTACT"
+  | "THREAD";
 
 export type HistoricalEvalCliArgs = {
   workspace: string;
@@ -221,6 +225,10 @@ export function resolvingMarkerForResult(
   }
   const name = result.markerTrace?.find((row) => row.marker === "NAME");
   if (name?.status === "MATCH") return "NAME";
+  const attachment = result.markerTrace?.find(
+    (row) => row.marker === "ATTACHMENT"
+  );
+  if (attachment?.status === "MATCH") return "ATTACHMENT";
   const contact = result.markerTrace?.find((row) => row.marker === "CONTACT");
   if (contact?.status === "MATCH") return "CONTACT";
   const thread = result.markerTrace?.find((row) => row.marker === "THREAD");

@@ -12,7 +12,43 @@ export type JobMatchEvalReadDb = {
   job: Pick<PrismaClient["job"], "findFirst" | "findMany">;
   entityAlias: Pick<PrismaClient["entityAlias"], "findMany">;
   jobEmailContact: Pick<PrismaClient["jobEmailContact"], "findMany">;
+  emailAttachment?: Pick<PrismaClient["emailAttachment"], "findMany">;
 };
+
+export type EvalAttachmentPayload = {
+  attachmentId: string;
+  filename: string;
+  mimeType: string | null;
+  extractedText: string | null;
+  extractStatus:
+    | "READY"
+    | "PARTIAL"
+    | "UNSUPPORTED"
+    | "UNAVAILABLE"
+    | "FAILED"
+    | "PENDING"
+    | "NONE";
+  metadataProjectName: string | null;
+};
+
+function mapExtractStatus(
+  status: string | null | undefined
+): EvalAttachmentPayload["extractStatus"] {
+  switch (status) {
+    case "READY":
+      return "READY";
+    case "FAILED":
+      return "FAILED";
+    case "SKIPPED":
+      return "UNSUPPORTED";
+    case "TEXT_UNAVAILABLE":
+      return "UNAVAILABLE";
+    case "NONE":
+      return "NONE";
+    default:
+      return "NONE";
+  }
+}
 
 export type HistoricalEvalEmailRecord = {
   id: string;
@@ -448,4 +484,56 @@ export async function loadHistoricalEvalEmailsPage(
       jobAssignmentSource: row.jobAssignmentSource,
       hasAttachments: row.hasAttachments,
     }));
+}
+
+/**
+ * Load cached EmailAttachment rows for Job Matcher V2.4 Attachment Identity.
+ * Reuses extractedText — does not download or re-parse. Workspace-scoped.
+ */
+export async function loadEvalAttachmentsByEmailIds(
+  db: JobMatchEvalReadDb,
+  input: {
+    workspaceId: string;
+    emailMessageIds: string[];
+    batchSize?: number;
+  }
+): Promise<Map<string, EvalAttachmentPayload[]>> {
+  const out = new Map<string, EvalAttachmentPayload[]>();
+  if (!db.emailAttachment || input.emailMessageIds.length === 0) {
+    return out;
+  }
+  const batchSize = Math.max(1, input.batchSize ?? 100);
+  for (let offset = 0; offset < input.emailMessageIds.length; offset += batchSize) {
+    const chunk = input.emailMessageIds.slice(offset, offset + batchSize);
+    const rows = await db.emailAttachment.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        emailMessageId: { in: chunk },
+        isInline: false,
+      },
+      select: {
+        id: true,
+        emailMessageId: true,
+        filename: true,
+        mimeType: true,
+        extractedText: true,
+        textExtractStatus: true,
+      },
+      take: 500,
+    });
+    for (const row of rows) {
+      const payload: EvalAttachmentPayload = {
+        attachmentId: row.id,
+        filename: row.filename,
+        mimeType: row.mimeType,
+        extractedText: row.extractedText,
+        extractStatus: mapExtractStatus(row.textExtractStatus),
+        metadataProjectName: null,
+      };
+      const list = out.get(row.emailMessageId) ?? [];
+      list.push(payload);
+      out.set(row.emailMessageId, list);
+    }
+  }
+  return out;
 }

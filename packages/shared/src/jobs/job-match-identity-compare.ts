@@ -132,7 +132,7 @@ export type IdentityComparePolicyId =
   | "CONTEXT_AWARE_V2_4";
 
 export type IdentityCompareMarkerBreakdown = {
-  marker: "NAME" | "CONTACT" | "THREAD" | "NONE";
+  marker: "NAME" | "ATTACHMENT" | "CONTACT" | "THREAD" | "NONE";
   resolved: number;
   correct: number;
   wrong: number;
@@ -328,8 +328,9 @@ export function buildMarkerBreakdownFromSides(
   sides: IdentityCompareSideSummary[],
   trueJobIds: string[]
 ): IdentityCompareMarkerBreakdown[] {
-  const markers: Array<"NAME" | "CONTACT" | "THREAD" | "NONE"> = [
+  const markers: Array<"NAME" | "ATTACHMENT" | "CONTACT" | "THREAD" | "NONE"> = [
     "NAME",
+    "ATTACHMENT",
     "CONTACT",
     "THREAD",
     "NONE",
@@ -343,6 +344,7 @@ export function buildMarkerBreakdownFromSides(
       const side = sides[i]!;
       const resolving = (side.resolvingMarker ?? "NONE") as
         | "NAME"
+        | "ATTACHMENT"
         | "CONTACT"
         | "THREAD"
         | "NONE";

@@ -28,6 +28,18 @@ import {
   type JobContactDiagnostics,
 } from "./job-match-contact-policy.js";
 import { runJobThreadMarker, type JobThreadHit } from "./job-thread-marker.js";
+import {
+  runJobAttachmentIdentityMarker,
+  type AttachmentIdentityDiagnostics,
+  type JobAttachmentForMatch,
+} from "./job-attachment-identity.js";
+import {
+  canonicalizeJobNameTokens,
+  isDistinguishingJobNameToken,
+  isJobNameContentToken,
+} from "./job-name-normalize.js";
+import { filterJobsEligibleForMatching } from "./job-name-marker.js";
+import type { IdentityPeerJob } from "./job-name-identity-policy.js";
 
 export const JOB_MATCH_PIPELINE_VERSION = "job-match-pipeline-v3";
 
@@ -204,6 +216,7 @@ function toResult(input: {
   identityPolicy: JobMatchIdentityPolicy;
   identityDiagnostics: JobNameIdentityDiagnostics;
   contactDiagnostics?: JobContactDiagnostics;
+  attachmentDiagnostics?: AttachmentIdentityDiagnostics;
 }): JobMatchResult {
   const requiresReview =
     input.decision === "AMBIGUOUS" || input.decision === "CONFLICT";
@@ -233,7 +246,41 @@ function toResult(input: {
     ...(input.contactDiagnostics
       ? { contactDiagnostics: input.contactDiagnostics }
       : {}),
+    ...(input.attachmentDiagnostics
+      ? { attachmentDiagnostics: input.attachmentDiagnostics }
+      : {}),
   };
+}
+
+function buildAttachmentPeers(
+  jobs: JobRecordForMatch[],
+  aliases: JobAliasForMatch[],
+  eligibilityMode: JobMatchEligibilityMode
+): IdentityPeerJob[] {
+  const eligible = filterJobsEligibleForMatching(jobs, eligibilityMode);
+  return eligible.map((job) => {
+    const nameTokens = canonicalizeJobNameTokens(job.name);
+    const siteTokens = job.siteName
+      ? canonicalizeJobNameTokens(job.siteName)
+      : [];
+    const aliasPhrases = aliases
+      .filter((a) => a.jobId === job.id)
+      .map((a) => canonicalizeJobNameTokens(a.alias));
+    const phrases = [
+      nameTokens,
+      ...(siteTokens.length ? [siteTokens] : []),
+      ...aliasPhrases,
+    ].filter((p) => p.length > 0);
+    return {
+      jobId: job.id,
+      customerId: job.customerId,
+      contentTokens: nameTokens.filter(isJobNameContentToken),
+      distinguishingTokens: nameTokens.filter(isDistinguishingJobNameToken),
+      phraseTokenLists: phrases,
+      matchedContentTokens: [],
+      kind: "NONE" as const,
+    };
+  });
 }
 
 function decisionFromNameStatus(
@@ -270,6 +317,8 @@ export function runJobMatchPipeline(input: {
   threadHits?: JobThreadHit[] | undefined;
   eligibilityMode?: JobMatchEligibilityMode;
   identityPolicy?: JobMatchIdentityPolicy;
+  attachmentsForMatch?: JobAttachmentForMatch[];
+  attachmentsPresentButNotLoaded?: boolean;
 }): JobMatchResult {
   const eligibilityMode = input.eligibilityMode ?? "production";
   const identityPolicy =
@@ -315,6 +364,110 @@ export function runJobMatchPipeline(input: {
     evidence: marker1.evidence,
     confidence: marker1.confidence,
   };
+
+  let attachmentDiagnostics: AttachmentIdentityDiagnostics | undefined;
+
+  // V2.4 only: Attachment Identity between NAME and CONTACT.
+  if (identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4) {
+    const peers = buildAttachmentPeers(
+      input.jobs,
+      input.aliases ?? [],
+      eligibilityMode
+    );
+    const attachment = runJobAttachmentIdentityMarker({
+      attachments: input.attachmentsForMatch ?? [],
+      peers,
+      ...(input.attachmentsPresentButNotLoaded
+        ? { attachmentsPresentButNotLoaded: true }
+        : {}),
+    });
+    attachmentDiagnostics = attachment.diagnostics;
+
+    // Strong NAME family evidence vs strong attachment disagreement → CONFLICT.
+    if (
+      marker1.identityDiagnostics.strongIdentityAnchor &&
+      marker1.identityDiagnostics.competingJobIds.length > 0 &&
+      attachment.status === "MATCH" &&
+      attachment.selectedJobId &&
+      !marker1.identityDiagnostics.competingJobIds.includes(
+        attachment.selectedJobId
+      ) &&
+      !marker1.candidateJobIds.includes(attachment.selectedJobId) &&
+      attachment.laterStrength === "STRONG"
+    ) {
+      markerTrace.push({
+        marker: "ATTACHMENT",
+        status: "CONFLICT",
+        selectedJobId: null,
+        candidateJobIds: uniqueIds([
+          ...marker1.candidateJobIds,
+          attachment.selectedJobId,
+        ]),
+      });
+      return toResult({
+        decision: "CONFLICT",
+        selectedJobId: null,
+        candidateJobIds: uniqueIds([
+          ...marker1.candidateJobIds,
+          attachment.selectedJobId,
+        ]),
+        evidence: [...current.evidence, ...attachment.evidence],
+        assignmentSource: null,
+        confidence: current.confidence,
+        eligibleJobCount: marker1.eligibleJobCount,
+        markerTrace,
+        identityPolicy,
+        identityDiagnostics: marker1.identityDiagnostics,
+        attachmentDiagnostics,
+      });
+    }
+
+    const afterAttachment = narrowJobMatchCandidates({
+      priorStatus: current.status,
+      priorSelectedJobId: current.selectedJobId,
+      priorCandidateJobIds: current.candidateJobIds,
+      priorEvidence: current.evidence,
+      laterJobIds: attachment.candidateJobIds,
+      laterMarker: "ATTACHMENT",
+      laterEvidence: attachment.evidence,
+      laterStrength: attachment.laterStrength,
+    });
+    markerTrace.push({
+      marker: "ATTACHMENT",
+      status: afterAttachment.status,
+      selectedJobId: afterAttachment.selectedJobId,
+      candidateJobIds: afterAttachment.candidateJobIds,
+    });
+    current = {
+      status: afterAttachment.status,
+      selectedJobId: afterAttachment.selectedJobId,
+      candidateJobIds: afterAttachment.candidateJobIds,
+      evidence: afterAttachment.evidence,
+      confidence:
+        afterAttachment.status === "MATCH"
+          ? Math.max(current.confidence, 0.88)
+          : current.confidence,
+    };
+
+    if (current.status === "MATCH" && current.selectedJobId) {
+      return toResult({
+        decision: "MATCH",
+        selectedJobId: current.selectedJobId,
+        candidateJobIds: current.candidateJobIds,
+        evidence: current.evidence,
+        assignmentSource: assignmentSourceForDecision(
+          current.status,
+          current.evidence
+        ),
+        confidence: current.confidence,
+        eligibleJobCount: marker1.eligibleJobCount,
+        markerTrace,
+        identityPolicy,
+        identityDiagnostics: marker1.identityDiagnostics,
+        attachmentDiagnostics,
+      });
+    }
+  }
 
   const contact = runJobContactMarker({
     senderEmail: input.senderEmail,
@@ -383,6 +536,9 @@ export function runJobMatchPipeline(input: {
       identityPolicy,
       identityDiagnostics: marker1.identityDiagnostics,
       contactDiagnostics: contactSafety.diagnostics,
+      ...(attachmentDiagnostics
+        ? { attachmentDiagnostics }
+        : {}),
     });
   }
 
@@ -481,6 +637,9 @@ export function runJobMatchPipeline(input: {
     identityPolicy,
     identityDiagnostics: marker1.identityDiagnostics,
     contactDiagnostics: contactSafety.diagnostics,
+    ...(attachmentDiagnostics
+      ? { attachmentDiagnostics }
+      : {}),
   });
 }
 
@@ -506,5 +665,11 @@ export function jobMatchPipelineFromEmailInput(
     threadHits: extras?.threadHits,
     eligibilityMode: input.eligibilityMode ?? "production",
     identityPolicy: input.identityPolicy ?? DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+    ...(input.attachmentsForMatch
+      ? { attachmentsForMatch: input.attachmentsForMatch }
+      : {}),
+    ...(input.attachmentsPresentButNotLoaded
+      ? { attachmentsPresentButNotLoaded: true }
+      : {}),
   });
 }

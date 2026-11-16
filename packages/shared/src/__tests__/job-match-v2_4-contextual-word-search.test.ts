@@ -77,13 +77,13 @@ describe("CONTEXT_AWARE_V2_4 contextual word search", () => {
     expect(entry?.productionDefault).toBe(false);
   });
 
-  it("stamps V2_4_CONTEXTUAL_WORD_SEARCH revision (not V2_4_LEGACY)", () => {
+  it("stamps V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1 revision (not legacy)", () => {
     expect(JOB_MATCH_V2_4_IMPLEMENTATION_REVISION).toBe(
-      "V2_4_CONTEXTUAL_WORD_SEARCH"
+      "V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1"
     );
     expect(JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION).toBe("V2_4_LEGACY");
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_4")).toBe(
-      "V2_4_CONTEXTUAL_WORD_SEARCH"
+      "V2_4_FULL_BODY_ATTACHMENT_IDENTITY_R1"
     );
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_3")).toBe(
       "independent-v23-normalized-subject-identity-r1"
