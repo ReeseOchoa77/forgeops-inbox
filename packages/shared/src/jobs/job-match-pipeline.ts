@@ -18,6 +18,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
   type JobMatchEligibilityMode,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
@@ -368,10 +369,12 @@ export function runJobMatchPipeline(input: {
 
   let attachmentDiagnostics: AttachmentIdentityDiagnostics | undefined;
 
-  // V2.4 / V3: Attachment Identity between NAME and CONTACT.
+  // V2.4 / V3 / V2.5: Attachment Identity between NAME and CONTACT.
+  // (V2.5 uses the V2.4 attachment feature set; V3 flags stay off.)
   if (
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3 ||
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5
   ) {
     const peers = buildAttachmentPeers(
       input.jobs,
@@ -576,7 +579,8 @@ export function runJobMatchPipeline(input: {
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 ||
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3;
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3 ||
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5;
 
   // V2 / V2.1 conflict veto: strong name family evidence vs disjoint authoritative thread.
   if (

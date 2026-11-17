@@ -20,7 +20,12 @@
  * CONTEXT_AWARE_V3: independent experiment = V2.4 baseline + dynamic word
  *   importance + family-scoped numeric (Beltline #3). Not production.
  *
- * V2.1 / V2.2 / V2.3 / V2.4 / V3 each branch from V2 independently (not cumulative).
+ * CONTEXT_AWARE_V2_5: independent experiment = V2 + AI Identity Profiles
+ *   (deterministic profile scoring: distinctive names, family disambiguation,
+ *   family-scoped numerics). Does NOT reuse V2.4 contextual word search or V3
+ *   flags. Not production.
+ *
+ * V2.1 / V2.2 / V2.3 / V2.4 / V3 / V2.5 each branch from V2 independently (not cumulative).
  */
 
 import {
@@ -32,6 +37,15 @@ import {
   resolveContextualWordSearch,
   type ContextualWordSearchAiDecision,
 } from "./job-contextual-word-search.js";
+import {
+  resolveV25ProjectIdentity,
+  toV25IdentityDiagnostics,
+  type V25IdentityDiagnostics,
+} from "./job-match-v25.js";
+import {
+  buildWorkspaceIdentityProfiles,
+  type JobIdentityProfile,
+} from "./job-identity-profile.js";
 import {
   buildProjectIdentityVocabulary,
   distinctiveProjectIdentityTermsInHay,
@@ -63,6 +77,8 @@ export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 =
   "CONTEXT_AWARE_V2_4" as const;
 export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3 =
   "CONTEXT_AWARE_V3" as const;
+export const JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5 =
+  "CONTEXT_AWARE_V2_5" as const;
 
 export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_BASELINE
@@ -72,7 +88,8 @@ export type JobMatchIdentityPolicy =
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
   | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
-  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3;
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
+  | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5;
 
 export const DEFAULT_JOB_MATCH_IDENTITY_POLICY: JobMatchIdentityPolicy =
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
@@ -125,15 +142,26 @@ export const JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION =
 export const JOB_MATCH_V3_IMPLEMENTATION_REVISION =
   "V3_DYNAMIC_WORD_IMPORTANCE_R1" as const;
 
+/**
+ * V2.5 algorithm: V2 baseline + deterministic Job identity profiles
+ * (distinctive / family / phrase / numbered roles) with workspace-DF scoring.
+ */
+export const JOB_MATCH_V2_5_IMPLEMENTATION_REVISION =
+  "V2_5_AI_IDENTITY_PROFILES_R1" as const;
+
 export type JobMatchIdentityExperimentRevision =
   | typeof JOB_MATCH_IDENTITY_EXPERIMENT_REVISION
   | typeof JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
-  | typeof JOB_MATCH_V3_IMPLEMENTATION_REVISION;
+  | typeof JOB_MATCH_V3_IMPLEMENTATION_REVISION
+  | typeof JOB_MATCH_V2_5_IMPLEMENTATION_REVISION;
 
 /** Experiment revision stamped on eval bundles for a given policy. */
 export function experimentRevisionForIdentityPolicy(
   policy: JobMatchIdentityPolicy
 ): string | null {
+  if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5) {
+    return JOB_MATCH_V2_5_IMPLEMENTATION_REVISION;
+  }
   if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3) {
     return JOB_MATCH_V3_IMPLEMENTATION_REVISION;
   }
@@ -296,7 +324,21 @@ export type JobNameIdentityReasonCode =
   /** V2.4: dynamic word-importance classification recorded. */
   | "DYNAMIC_WORD_IMPORTANCE"
   /** V2.4: generic/weak term suppressed as independent identity. */
-  | "GENERIC_TERM_SUPPRESSED";
+  | "GENERIC_TERM_SUPPRESSED"
+  /** V2.5: distinctive title term (workspace DF=1) identified one Job. */
+  | "V25_DISTINCTIVE_TERM"
+  /** V2.5: shared family term disambiguated by phrase/structure/number/term. */
+  | "V25_FAMILY_DISAMBIGUATION"
+  /** V2.5: family term + component number (Beltline #3) resolved one Job. */
+  | "V25_FAMILY_NUMERIC"
+  /** V2.5: multiword title phrase identified one Job. */
+  | "V25_COMPOUND_PHRASE"
+  /** V2.5: family (or comparable candidates) without a unique winner. */
+  | "V25_SHARED_FAMILY_AMBIGUOUS"
+  /** V2.5: descriptor numbers contradict every plausible Job. */
+  | "V25_NUMERIC_CONFLICT"
+  /** V2.5: no profile evidence; V2 baseline decision retained. */
+  | "V25_PROFILE_FALLBACK";
 
 export type CompoundNumericIdentityDiagnostic = {
   code:
@@ -375,6 +417,8 @@ export type JobNameIdentityDiagnostics = {
   compoundNumericDiagnostics?: CompoundNumericIdentityDiagnostic[];
   /** V2.4: dynamic word-importance diagnostics. */
   wordImportanceDiagnostics?: WordImportanceIdentityDiagnostic[];
+  /** V2.5: identity-profile candidate ranking + term analyses. */
+  v25Diagnostics?: V25IdentityDiagnostics;
 };
 
 /**
@@ -689,6 +733,8 @@ export function assessIdentityHitStrength(
 /** Lightweight peer Job identity for V2 family disambiguation. */
 export type IdentityPeerJob = {
   jobId: string;
+  /** Display name for diagnostics / V2.5 inspector labels. */
+  jobName?: string | null;
   customerId: string | null;
   contentTokens: string[];
   /** Numeric / compass tokens that disambiguate sibling Jobs. */
@@ -708,6 +754,8 @@ export type ApplyIdentityPolicyInput = {
   peerJobs?: IdentityPeerJob[];
   subjectTokens?: string[];
   bodyTokens?: string[];
+  /** V2.5 recovery only: signature-stripped current-body tokens. */
+  v25RecoveryBodyTokens?: string[];
   /**
    * Optional pre-validated AI decision for V2.4 contextual word search.
    * Produced outside @forgeops/shared (API / AI package); never invents Jobs.
@@ -987,6 +1035,15 @@ export function applyJobNameIdentityPolicy(
       });
       if (recovered) return recovered;
     }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5) {
+      return tryV25ProjectIdentityRecovery({
+        input,
+        assessed: null,
+        selectedJobIds,
+        priorReason: "NO_IDENTITY",
+        fallback: noMatchResult,
+      });
+    }
     return noMatchResult;
   }
 
@@ -1050,6 +1107,15 @@ export function applyJobNameIdentityPolicy(
       });
       if (recovered) return recovered;
       return annotateSharedProjectIdentifier(ambiguousResult, input);
+    }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5) {
+      return tryV25ProjectIdentityRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: ambiguousResult.diagnostics.reason,
+        fallback: annotateSharedProjectIdentifier(ambiguousResult, input),
+      });
     }
     return ambiguousResult;
   }
@@ -1122,7 +1188,8 @@ export function applyJobNameIdentityPolicy(
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3 ||
     policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3 ||
+    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5
   ) {
     const v2Result = applyContextAwareV2IdentityPolicy({
       input,
@@ -1168,6 +1235,15 @@ export function applyJobNameIdentityPolicy(
       if (recovered) return recovered;
       return annotateSharedProjectIdentifier(v2Result, input);
     }
+    if (policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5) {
+      return tryV25ProjectIdentityRecovery({
+        input,
+        assessed,
+        selectedJobIds,
+        priorReason: v2Result.diagnostics.reason,
+        fallback: annotateSharedProjectIdentifier(v2Result, input),
+      });
+    }
     if (isContextualWordSearchPolicy(policy)) {
       const recovered = tryContextualWordSearchRecovery({
         input,
@@ -1209,7 +1285,8 @@ function applyContextAwareV2IdentityPolicy(args: {
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_2
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3
     | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
-    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3;
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
+    | typeof JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5;
 }): ApplyIdentityPolicyResult {
   const { input, assessed, selectedJobIds, preserveWeakCandidates, policyId } =
     args;
@@ -2184,6 +2261,150 @@ function annotateContextualShadowOnStrongV2Match(
           }
         : {}),
     },
+  };
+}
+
+let v25ProfileCache: {
+  key: string;
+  profiles: Map<string, JobIdentityProfile>;
+} | null = null;
+
+/** Deterministic profiles for the current peer pool (1-entry memo per pool). */
+function v25ProfilesForPeers(
+  peers: readonly IdentityPeerJob[]
+): Map<string, JobIdentityProfile> {
+  const key = peers
+    .map(
+      (p) =>
+        `${p.jobId}|${p.phraseTokenLists.map((l) => l.join(" ")).join("/")}`
+    )
+    .join("\n");
+  if (v25ProfileCache && v25ProfileCache.key === key) {
+    return v25ProfileCache.profiles;
+  }
+  const profiles = buildWorkspaceIdentityProfiles({
+    jobs: peers.map((p) => ({
+      jobId: p.jobId,
+      jobName: p.jobName ?? null,
+      phraseTokenLists: p.phraseTokenLists,
+    })),
+  });
+  v25ProfileCache = { key, profiles };
+  return profiles;
+}
+
+/**
+ * CONTEXT_AWARE_V2_5 — Job identity profile recovery.
+ * Runs only when the V2 baseline abstained (AMBIGUOUS / NO_MATCH). Builds
+ * deterministic profiles from the peer pool (no DB/LLM needed) and scores
+ * subject/body evidence. Independent of V2.1–V2.4 and V3; never calls
+ * tryContextualWordSearchRecovery.
+ *
+ * Returns `fallback` (with v25Diagnostics attached) when V2.5 finds no
+ * resolution, so the V2 decision is preserved exactly.
+ */
+export function tryV25ProjectIdentityRecovery(args: {
+  input: ApplyIdentityPolicyInput;
+  assessed: ReturnType<typeof assessIdentityHitStrength> | null;
+  selectedJobIds: string[];
+  priorReason: JobNameIdentityReasonCode;
+  fallback: ApplyIdentityPolicyResult;
+}): ApplyIdentityPolicyResult {
+  const policyId = JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5;
+  const peers = args.input.peerJobs ?? [];
+  const subjectTokens = args.input.subjectTokens ?? [];
+  const bodyTokens =
+    args.input.v25RecoveryBodyTokens ?? args.input.bodyTokens ?? [];
+  if (peers.length === 0) return args.fallback;
+  if (subjectTokens.length === 0 && bodyTokens.length === 0) {
+    return args.fallback;
+  }
+
+  const resolved = resolveV25ProjectIdentity({
+    peers,
+    subjectTokens,
+    bodyTokens,
+    profilesByJobId: v25ProfilesForPeers(peers),
+  });
+  const v25Diagnostics = toV25IdentityDiagnostics(resolved);
+
+  if (resolved.status == null) {
+    return {
+      ...args.fallback,
+      diagnostics: { ...args.fallback.diagnostics, v25Diagnostics },
+    };
+  }
+
+  const sharedFamilyTerms = [
+    ...new Set(
+      resolved.termAnalyses
+        .filter((t) => t.role === "PROJECT_FAMILY_NAME" && t.matched)
+        .map((t) => t.term)
+    ),
+  ];
+  const evidenceField: "subject" | "body" | "mixed" | null =
+    resolved.evidenceField === "attachment"
+      ? "mixed"
+      : resolved.evidenceField;
+
+  if (resolved.status === "MATCH" && resolved.selectedJobId) {
+    return {
+      status: "MATCH",
+      preserveCandidates: true,
+      selectedJobIdOverride: resolved.selectedJobId,
+      candidateJobIdsOverride: [resolved.selectedJobId],
+      diagnostics: diagBase(
+        policyId,
+        args.input.hit,
+        args.assessed,
+        [resolved.selectedJobId],
+        {
+          identityStrength: "STRONG",
+          strongIdentityAnchor: true,
+          resolutionAllowed: true,
+          reason: resolved.reason,
+          matchedTerms: resolved.matchedTerms,
+          distinguishingIdentityTerms: resolved.matchedTerms,
+          sharedIdentityTerms: sharedFamilyTerms,
+          identityFamilyJobIds: resolved.familyJobIds,
+          competingJobIds: resolved.competingJobIds,
+          evidenceType: "v25_identity_profile",
+          evidenceField,
+          projectTokenUniqueness:
+            resolved.familyJobIds.length > 0 ? "shared" : "unique",
+          contextualAiInvoked: false,
+          contextualChangedBaseline: true,
+          v25Diagnostics,
+        }
+      ),
+    };
+  }
+
+  const competing =
+    resolved.competingJobIds.length > 0
+      ? resolved.competingJobIds
+      : resolved.familyJobIds;
+  return {
+    status: "AMBIGUOUS",
+    preserveCandidates: true,
+    candidateJobIdsOverride: competing,
+    diagnostics: diagBase(policyId, args.input.hit, args.assessed, competing, {
+      identityStrength:
+        resolved.status === "CONFLICT" ? "CONFLICTING" : "AMBIGUOUS",
+      strongIdentityAnchor: false,
+      resolutionAllowed: false,
+      reason: resolved.reason,
+      matchedTerms: resolved.matchedTerms,
+      sharedIdentityTerms: sharedFamilyTerms,
+      identityFamilyJobIds: resolved.familyJobIds,
+      competingJobIds: competing,
+      evidenceType: "v25_identity_profile",
+      evidenceField,
+      projectTokenUniqueness: "shared",
+      contextualAiInvoked: false,
+      contextualChangedBaseline: true,
+      v25Diagnostics,
+    }),
   };
 }
 

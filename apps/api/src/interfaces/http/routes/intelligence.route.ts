@@ -220,6 +220,7 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_3",
               "CONTEXT_AWARE_V2_4",
               "CONTEXT_AWARE_V3",
+              "CONTEXT_AWARE_V2_5",
             ])
             .optional(),
           /**
@@ -237,10 +238,11 @@ export const registerIntelligenceRoutes = async (
                 "CONTEXT_AWARE_V2_3",
                 "CONTEXT_AWARE_V2_4",
                 "CONTEXT_AWARE_V3",
+                "CONTEXT_AWARE_V2_5",
               ])
             )
             .min(1)
-            .max(8)
+            .max(9)
             .optional(),
           /**
            * Legacy shadow comparison on the same emails/snapshot.
@@ -255,6 +257,7 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_3",
               "CONTEXT_AWARE_V2_4",
               "CONTEXT_AWARE_V3",
+              "CONTEXT_AWARE_V2_5",
               "ALL_THREE",
             ])
             .optional(),

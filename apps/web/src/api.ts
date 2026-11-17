@@ -3043,6 +3043,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
         | 'CONTEXT_AWARE_V3'
+        | 'CONTEXT_AWARE_V2_5'
       /** Preferred: one or more policies to evaluate / compare. */
       identityPolicies?: Array<
         | 'BASELINE'
@@ -3053,6 +3054,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
         | 'CONTEXT_AWARE_V3'
+        | 'CONTEXT_AWARE_V2_5'
       >
       compareWithIdentityPolicy?:
         | 'CONTEXT_AWARE_V1'
@@ -3062,6 +3064,7 @@ export const api = {
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
         | 'CONTEXT_AWARE_V3'
+        | 'CONTEXT_AWARE_V2_5'
         | 'ALL_THREE'
       evaluationRunId?: string
     }
@@ -5299,6 +5302,54 @@ export interface JobMatcherEvalRowDiagnostics {
   marker3CandidateCount: number | null
 }
 
+/** V2.5 identity-profile diagnostics (mirrors shared V25IdentityDiagnostics). */
+export interface JobMatcherV25CandidateAnalysis {
+  jobId: string
+  jobLabel: string
+  score: number
+  familyScore: number
+  distinguishingScore: number
+  status: 'SELECTED' | 'CANDIDATE' | 'REJECTED'
+  reason: string
+  matchedTerms: string[]
+  contradictions: string[]
+}
+
+export interface JobMatcherV25TermAnalysis {
+  term: string
+  role: string
+  semanticImportance: string
+  competitiveImportance: string
+  documentFrequency: number
+  scopedDocumentFrequency: number | null
+  source: 'subject' | 'body' | 'attachment'
+  matched: boolean
+  negated: boolean
+  incidental: boolean
+  jobIds: string[]
+  score: number
+  capability: string
+  usedForResolution: boolean
+  note: string
+}
+
+export interface JobMatcherV25Diagnostics {
+  profileVersion: string
+  scoringRevision: string
+  status: 'MATCH' | 'AMBIGUOUS' | 'CONFLICT' | null
+  reason: string
+  resolutionReason: string
+  selectedJobId: string | null
+  familyJobIds: string[]
+  candidates: JobMatcherV25CandidateAnalysis[]
+  termAnalyses: JobMatcherV25TermAnalysis[]
+  profileSource: string
+  fallbackProfileJobIds: string[]
+  winnerScore: number | null
+  runnerUpScore: number | null
+  margin: number | null
+}
+
 export interface JobMatcherEvalRow {
   emailMessageId: string
   subject: string | null
@@ -5322,6 +5373,11 @@ export interface JobMatcherEvalRow {
   }>
   /** Policy that produced this row (must match displayIdentityPolicy for list/export). */
   identityPolicy?: JobMatcherIdentityPolicy
+  /** Marker 1 identity diagnostics (V2.5 adds v25Diagnostics; absent on historical evals). */
+  identityDiagnostics?: {
+    reason?: string
+    v25Diagnostics?: JobMatcherV25Diagnostics
+  } | null
   diagnostics?: JobMatcherEvalRowDiagnostics
 }
 
@@ -5397,6 +5453,7 @@ export type JobMatcherIdentityPolicy =
   | 'CONTEXT_AWARE_V2_3'
   | 'CONTEXT_AWARE_V2_4'
   | 'CONTEXT_AWARE_V3'
+  | 'CONTEXT_AWARE_V2_5'
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'

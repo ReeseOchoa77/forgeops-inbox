@@ -19,6 +19,7 @@ import {
   applyJobNameIdentityPolicy,
   buildWorkspaceIdentityTokenStats,
   DEFAULT_JOB_MATCH_IDENTITY_POLICY,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
   isContextualWordSearchPolicy,
   type JobMatchIdentityPolicy,
   type JobNameIdentityDiagnostics,
@@ -44,6 +45,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
   JOB_MATCH_IDENTITY_EXPERIMENT_REVISION,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_PRIOR_DYNAMIC_WORD_IMPORTANCE_REVISION,
@@ -52,6 +54,7 @@ export {
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
   JOB_MATCH_V3_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_5_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
   isContextualWordSearchPolicy,
 } from "./job-name-identity-policy.js";
@@ -703,6 +706,11 @@ export function runJobNameMarker(input: {
   const bodyTokens = isContextualWordSearchPolicy(identityPolicy)
     ? canonicalizeJobNameTokens(stripEmailSignatureForContextualSearch(body))
     : bodyForScoring;
+  // V2.5 keeps V2 baseline body tokens; only its recovery drops signatures.
+  const v25RecoveryBodyTokens =
+    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5
+      ? canonicalizeJobNameTokens(stripEmailSignatureForContextualSearch(body))
+      : null;
 
   const hits = prepared.map((job) =>
     scoreJob({
@@ -737,6 +745,7 @@ export function runJobNameMarker(input: {
   const primaryHit = decision.selected[0] ?? null;
   const peerJobs = hits.map((h) => ({
     jobId: h.job.job.id,
+    jobName: h.job.job.name,
     customerId: h.job.job.customerId,
     contentTokens: [...h.job.contentTokens],
     distinguishingTokens: [...h.job.distinguishingTokens],
@@ -760,6 +769,7 @@ export function runJobNameMarker(input: {
     peerJobs,
     subjectTokens,
     bodyTokens,
+    ...(v25RecoveryBodyTokens ? { v25RecoveryBodyTokens } : {}),
     ...(input.contextualAiDecision != null
       ? { contextualAiDecision: input.contextualAiDecision }
       : {}),

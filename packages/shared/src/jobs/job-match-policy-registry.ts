@@ -15,6 +15,7 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_PRIOR_DYNAMIC_WORD_IMPORTANCE_REVISION,
   JOB_MATCH_V2_4_PRIOR_FULL_BODY_ATTACHMENT_REVISION,
@@ -22,6 +23,7 @@ import {
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
   JOB_MATCH_V3_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_5_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
   type JobMatchIdentityExperimentRevision,
   type JobMatchIdentityPolicy,
@@ -36,6 +38,7 @@ export {
   JOB_MATCH_V2_4_LEGACY_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION,
   JOB_MATCH_V3_IMPLEMENTATION_REVISION,
+  JOB_MATCH_V2_5_IMPLEMENTATION_REVISION,
   experimentRevisionForIdentityPolicy,
   JOB_MATCH_IDENTITY_POLICY_BASELINE,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V1,
@@ -45,6 +48,7 @@ export {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_3,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
 };
 
 export type { JobMatchIdentityExperimentRevision };
@@ -167,6 +171,18 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       experimental: true,
       availableForEvaluation: true,
       experimentSummary: `V2.4 + dynamic word importance + family numeric (${JOB_MATCH_V3_IMPLEMENTATION_REVISION})`,
+    },
+    {
+      id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
+      advanceRank: 8,
+      label: "CONTEXT_AWARE_V2_5",
+      displayName: "V2.5 — AI Identity Profiles",
+      description:
+        "V2 plus independent Job identity profiles (distinctive names, family disambiguation, family-scoped numerics). Deterministic; AI enrichment optional.",
+      productionDefault: false,
+      experimental: true,
+      availableForEvaluation: true,
+      experimentSummary: `V2 + identity profiles with workspace-DF scoring (${JOB_MATCH_V2_5_IMPLEMENTATION_REVISION})`,
     },
   ] as const;
 

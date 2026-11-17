@@ -26,6 +26,7 @@ export * from "./bidding-analysis/bid-field-extraction.js";
 export * from "./bidding-analysis/quote-field-extraction.js";
 export * from "./bidding-analysis/match-adjudication.js";
 export * from "./job-match/contextual-word-search-adjudication.js";
+export * from "./job-match/job-identity-profile-generation.js";
 export * from "./bidding-analysis/scope-detail-parse.js";
 export * from "./inline-image-relevance/constants.js";
 export * from "./inline-image-relevance/dimensions.js";

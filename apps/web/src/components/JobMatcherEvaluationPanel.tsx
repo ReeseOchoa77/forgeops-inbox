@@ -27,6 +27,7 @@ import {
   type JobMatcherEvalRow,
   type JobMatcherIdentityPolicy,
   type JobMatcherMultiPolicyCompareReport,
+  type JobMatcherV25Diagnostics,
   type JobMatcherTransitionCategory,
   type JobMatcherV2FamilyCompareReport,
   type JobLookup,
@@ -2859,6 +2860,11 @@ function EmailInspector({
               )}
             </div>
             <MarkerStrip row={row} />
+            {row.identityDiagnostics?.v25Diagnostics && (
+              <V25IdentityInspector
+                diagnostics={row.identityDiagnostics.v25Diagnostics}
+              />
+            )}
             {row.evidence.length > 0 && (
               <>
                 <div style={{ fontWeight: 650, margin: '10px 0 4px' }}>Evidence</div>
@@ -2875,6 +2881,164 @@ function EmailInspector({
         )}
       </div>
     </aside>
+  )
+}
+
+function V25IdentityInspector({
+  diagnostics,
+}: {
+  diagnostics: JobMatcherV25Diagnostics
+}) {
+  const cell: CSSProperties = {
+    padding: '3px 6px',
+    borderBottom: '1px solid #f1f5f9',
+    textAlign: 'left',
+    verticalAlign: 'top',
+  }
+  const head: CSSProperties = { ...cell, fontWeight: 650, color: '#6b7280' }
+  const terms = diagnostics.termAnalyses.slice(0, 40)
+  const selected = diagnostics.candidates.find((c) => c.status === 'SELECTED')
+  const rejected = diagnostics.candidates.filter((c) => c.status === 'REJECTED')
+  return (
+    <div data-testid="eval-v25-inspector" style={{ marginTop: 12, fontSize: 11 }}>
+      <div style={{ fontWeight: 650, marginBottom: 4 }}>
+        V2.5 identity profiles · {diagnostics.reason.replace(/^V25_/, '')}
+      </div>
+      <div style={{ color: '#6b7280', marginBottom: 6 }}>
+        {diagnostics.resolutionReason}
+        {diagnostics.margin != null ? ` · margin ${diagnostics.margin.toFixed(2)}` : ''}
+        {' · evidence scores, not probabilities'}
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+          gap: 4,
+          marginBottom: 8,
+          color: '#4b5563',
+        }}
+      >
+        <span>Decision: {diagnostics.status ?? 'deferred to V2'}</span>
+        <span>Winner score: {diagnostics.winnerScore?.toFixed(2) ?? '—'}</span>
+        <span>Runner-up: {diagnostics.runnerUpScore?.toFixed(2) ?? '—'}</span>
+        <span>Profiles: {diagnostics.profileSource}</span>
+        <span>
+          Version: {diagnostics.profileVersion} / {diagnostics.scoringRevision}
+        </span>
+        {diagnostics.fallbackProfileJobIds.length > 0 ? (
+          <span>Fallback profiles: {diagnostics.fallbackProfileJobIds.length}</span>
+        ) : null}
+        {selected ? <span>Selected: {selected.jobLabel}</span> : null}
+        {rejected.length > 0 ? (
+          <span>Hard rejects: {rejected.length}</span>
+        ) : null}
+      </div>
+      <div style={{ fontWeight: 650, margin: '6px 0 2px' }}>
+        Candidate ranking (evidence scores)
+      </div>
+      {diagnostics.candidates.length === 0 ? (
+        <div style={{ color: '#6b7280' }}>
+          No V2.5 candidates recorded (historical eval may lack diagnostics).
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={head}>#</th>
+              <th style={head}>Job</th>
+              <th style={head}>Total</th>
+              <th style={head}>Family</th>
+              <th style={head}>Dist.</th>
+              <th style={head}>Status</th>
+              <th style={head}>Matched terms</th>
+              <th style={head}>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {diagnostics.candidates.map((c, i) => (
+              <tr key={c.jobId}>
+                <td style={cell}>{i + 1}</td>
+                <td style={cell}>{c.jobLabel}</td>
+                <td style={cell}>{c.score.toFixed(2)}</td>
+                <td style={cell}>{c.familyScore.toFixed(2)}</td>
+                <td style={cell}>{c.distinguishingScore.toFixed(2)}</td>
+                <td
+                  style={{
+                    ...cell,
+                    color:
+                      c.status === 'SELECTED'
+                        ? '#047857'
+                        : c.status === 'REJECTED'
+                          ? '#b91c1c'
+                          : '#374151',
+                  }}
+                >
+                  {c.status === 'SELECTED'
+                    ? 'selected'
+                    : c.status === 'REJECTED'
+                      ? 'rejected (contradiction)'
+                      : 'candidate'}
+                </td>
+                <td style={cell}>{c.matchedTerms.join(', ') || '—'}</td>
+                <td style={cell}>{c.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div style={{ fontWeight: 650, margin: '8px 0 2px' }}>
+        Word / phrase analysis
+      </div>
+      {terms.length === 0 ? (
+        <div style={{ color: '#6b7280' }}>No profile terms matched.</div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={head}>Term</th>
+              <th style={head}>Role</th>
+              <th style={head}>Semantic</th>
+              <th style={head}>Competitive</th>
+              <th style={head}>Capability</th>
+              <th style={head}>Source</th>
+              <th style={head}>Score</th>
+              <th style={head}>Match</th>
+            </tr>
+          </thead>
+          <tbody>
+            {terms.map((t, i) => (
+              <tr key={`${t.term}-${t.source}-${i}`} title={t.note}>
+                <td style={cell}>
+                  {t.term}
+                  {t.usedForResolution ? ' ★' : ''}
+                </td>
+                <td style={cell}>{t.role.replace(/_/g, ' ').toLowerCase()}</td>
+                <td style={cell}>{t.semanticImportance}</td>
+                <td style={cell}>
+                  {t.competitiveImportance} (DF {t.documentFrequency}
+                  {t.scopedDocumentFrequency != null
+                    ? ` / scoped ${t.scopedDocumentFrequency}`
+                    : ''}
+                  )
+                </td>
+                <td style={cell}>{t.capability}</td>
+                <td style={cell}>{t.source}</td>
+                <td style={cell}>{t.score.toFixed(2)}</td>
+                <td style={cell}>
+                  {t.matched
+                    ? 'yes'
+                    : t.negated
+                      ? 'negated'
+                      : t.incidental
+                        ? 'incidental'
+                        : 'no'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }
 
