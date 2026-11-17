@@ -1,9 +1,14 @@
 /**
- * Verified ground-truth corrections for Job Matcher evaluation.
+ * DEPRECATED persistence layer for Job Matcher evaluation ground-truth
+ * corrections.
  *
- * Eval-only metadata: never updates EmailMessage.jobId and never rewrites the
- * persisted evaluation run JSON. At most one ACTIVE correction per
- * (workspaceId, emailMessageId); prior corrections are kept as REVERSED history.
+ * The Evaluation UI Mark Correct flow is now temporary / client-side only and
+ * must not call these writers. Routes may remain for compatibility; do not use
+ * them from the web client.
+ *
+ * Historical note: this service only ever wrote JobMatcherEvalGroundTruthCorrection
+ * rows (+ audit events). It never updates EmailMessage.jobId and never rewrites
+ * JobMatcherEvalRun.resultJson.
  */
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyRequest } from "fastify";

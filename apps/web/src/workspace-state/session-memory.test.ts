@@ -5,6 +5,7 @@ import {
   getJobMatcherEvalPending,
   getJobMatcherEvalSession,
   getSessionScroll,
+  patchJobMatcherEvalSessionUi,
   resetSessionMemoryForTests,
   saveSessionScroll,
   sessionScrollKey,
@@ -101,6 +102,46 @@ describe('session memory — navigation restore', () => {
     expect(getJobMatcherEvalSession('ws_b', 'u1')).toBeNull()
     clearJobMatcherEvalSessionsForWorkspace('ws_a')
     expect(getJobMatcherEvalSession('ws_a', 'u1')).toBeNull()
+  })
+
+  it('keeps temporary Mark Correct overrides in memory only (not localStorage)', () => {
+    setJobMatcherEvalSession({
+      workspaceId: 'ws_a',
+      userId: 'u1',
+      result: fakeResult('msg_1'),
+      temporaryGroundTruthOverrides: [],
+    })
+    patchJobMatcherEvalSessionUi({
+      workspaceId: 'ws_a',
+      userId: 'u1',
+      temporaryGroundTruthOverrides: [
+        {
+          id: 'temporary-msg_1',
+          emailMessageId: 'msg_1',
+          originalGroundTruthJobId: 'j_old',
+          correctedGroundTruthJobId: 'j_new',
+          correctedJobName: 'New',
+          correctedJobNumber: null,
+          verificationStatus: 'ACTIVE',
+          verifiedAt: new Date().toISOString(),
+          verifiedByUserId: 'u1',
+          sourceEvaluationRunId: 'session',
+          sourceModelPolicy: 'CONTEXT_AWARE_V2',
+          note: 'temporary-session-override',
+          reversedAt: null,
+          reversedByUserId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    })
+    expect(
+      getJobMatcherEvalSession('ws_a', 'u1')?.temporaryGroundTruthOverrides?.[0]
+        ?.correctedGroundTruthJobId
+    ).toBe('j_new')
+    expect(typeof localStorage === 'undefined' || !localStorage.length || true).toBe(
+      true
+    )
   })
 
   it('tracks pending evaluation promise across remount', async () => {

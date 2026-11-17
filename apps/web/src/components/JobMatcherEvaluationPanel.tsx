@@ -166,18 +166,18 @@ export function JobMatcherEvaluationPanel({
     () => sessionSeed?.result ?? null
   )
   /**
-   * Verified ground-truth corrections (workspace-scoped ACTIVE). Apply to every
-   * model on the email; never remove emails from the denominator.
+   * Temporary Mark Correct overrides (in-memory only). Apply to every model on
+   * the email for displayed metrics; never write to the database or change
+   * production assignments / persisted evaluation snapshots.
    */
   const [groundTruthCorrections, setGroundTruthCorrections] = useState<
     JobMatcherEvalGroundTruthCorrection[]
-  >([])
-  const [correctionBusyId, setCorrectionBusyId] = useState<string | null>(null)
+  >(() => sessionSeed?.temporaryGroundTruthOverrides ?? [])
   const [correctionError, setCorrectionError] = useState<string | null>(null)
   /** Row awaiting Confirm Correct (current GT vs model prediction). */
   const [pendingCorrectionRow, setPendingCorrectionRow] =
     useState<JobMatcherEvalRow | null>(null)
-  /** Debug toggle: show raw labels instead of corrected ground truth. */
+  /** Toggle: show original snapshot labels vs temporary adjusted metrics. */
   const [showOriginalLabels, setShowOriginalLabels] = useState(false)
   /** Matcher version for metrics + email rows (does not re-run evaluation). */
   const [selectedViewPolicy, setSelectedViewPolicy] =
@@ -533,16 +533,8 @@ export function JobMatcherEvaluationPanel({
         result: evaluation,
         jobFilterId: null,
         resultsCollapsed: true,
+        temporaryGroundTruthOverrides: [],
       })
-      // Persist may race slightly; load workspace corrections for these emails once saved.
-      if (evaluation.evaluationRunId) {
-        void api
-          .listJobMatcherEvalGroundTruthCorrections(workspaceId, evaluation.evaluationRunId)
-          .then((res) => setGroundTruthCorrections(res.groundTruthCorrections))
-          .catch(() => {
-            /* run may still be persisting */
-          })
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Evaluation failed')
     } finally {
@@ -554,23 +546,19 @@ export function JobMatcherEvaluationPanel({
     }
   }
 
-  // Reload verified ground-truth corrections when a result is present.
-  useEffect(() => {
-    const runId = result?.evaluationRunId
-    if (!runId || !workspaceId) return
-    let cancelled = false
-    void api
-      .listJobMatcherEvalGroundTruthCorrections(workspaceId, runId)
-      .then((res) => {
-        if (!cancelled) setGroundTruthCorrections(res.groundTruthCorrections)
+  /** Keep temporary Mark Correct overrides in SPA session memory (not DB / not localStorage). */
+  const syncTemporaryOverrides = (
+    next: JobMatcherEvalGroundTruthCorrection[]
+  ) => {
+    setGroundTruthCorrections(next)
+    if (userId) {
+      patchJobMatcherEvalSessionUi({
+        workspaceId,
+        userId,
+        temporaryGroundTruthOverrides: next,
       })
-      .catch(() => {
-        /* older runs without persistence */
-      })
-    return () => {
-      cancelled = true
     }
-  }, [workspaceId, result?.evaluationRunId])
+  }
 
   const policyView = useMemo(
     () =>
@@ -696,75 +684,41 @@ export function JobMatcherEvaluationPanel({
     setPendingCorrectionRow(row)
   }
 
-  /** Verify the pending model prediction as the true Job for every model on that email. */
-  const confirmMarkCorrect = async () => {
+  /**
+   * Temporary override only: treat the pending MATCH prediction as effective GT
+   * for displayed metrics across all compared models. No database write.
+   */
+  const confirmMarkCorrect = () => {
     const row = pendingCorrectionRow
-    const runId = result?.evaluationRunId
     if (!row || !row.predictedJobId) return
-    if (!runId) {
-      setCorrectionError('Evaluation run id missing — re-run evaluation to mark ground truth.')
+    if (row.decision !== 'MATCH') {
+      setCorrectionError(
+        'Only a MATCH prediction can be marked correct (Ambiguous / Conflict / No Match cannot).'
+      )
       setPendingCorrectionRow(null)
       return
     }
-    const emailMessageId = row.emailMessageId
-    const previous = groundTruthCorrections
     setCorrectionError(null)
-    setCorrectionBusyId(emailMessageId)
-    // Optimistic: replace any prior ACTIVE correction for this email.
-    setGroundTruthCorrections((prev) => [
-      ...prev.filter((c) => c.emailMessageId !== emailMessageId),
-      optimisticCorrection({
-        row,
-        evaluationRunId: runId,
-        originalGroundTruthJobId: row.originalTrueJobId ?? row.trueJobId,
-        userId: userId ?? null,
-        sourceModelPolicy: row.identityPolicy ?? selectedViewPolicy,
-      }),
+    const override = optimisticCorrection({
+      row,
+      evaluationRunId: result?.evaluationRunId ?? 'session',
+      originalGroundTruthJobId: row.originalTrueJobId ?? row.trueJobId,
+      userId: userId ?? null,
+      sourceModelPolicy: row.identityPolicy ?? selectedViewPolicy,
+    })
+    syncTemporaryOverrides([
+      ...groundTruthCorrections.filter((c) => c.emailMessageId !== row.emailMessageId),
+      override,
     ])
     setPendingCorrectionRow(null)
-    try {
-      const res = await api.verifyJobMatcherEvalGroundTruthCorrection(workspaceId, runId, {
-        emailMessageId,
-        correctedGroundTruthJobId: row.predictedJobId,
-        ...((row.identityPolicy ?? selectedViewPolicy)
-          ? { sourceModelPolicy: (row.identityPolicy ?? selectedViewPolicy) as string }
-          : {}),
-      })
-      setGroundTruthCorrections((prev) => [
-        ...prev.filter((c) => c.emailMessageId !== emailMessageId),
-        res.groundTruthCorrection,
-      ])
-    } catch (e) {
-      setGroundTruthCorrections(previous)
-      setCorrectionError(
-        e instanceof Error ? e.message : 'Failed to mark ground truth correct'
-      )
-    } finally {
-      setCorrectionBusyId(null)
-    }
   }
 
-  /** Undo a verified correction (restores original ground truth for all models). */
-  const undoMarkCorrect = async (emailMessageId: string) => {
-    const runId = result?.evaluationRunId
-    if (!runId) {
-      setCorrectionError('Evaluation run id missing — re-run evaluation to undo.')
-      return
-    }
-    const previous = groundTruthCorrections
+  /** Remove a temporary override (restores original snapshot labels for all models). */
+  const undoMarkCorrect = (emailMessageId: string) => {
     setCorrectionError(null)
-    setCorrectionBusyId(emailMessageId)
-    setGroundTruthCorrections((prev) =>
-      prev.filter((c) => c.emailMessageId !== emailMessageId)
+    syncTemporaryOverrides(
+      groundTruthCorrections.filter((c) => c.emailMessageId !== emailMessageId)
     )
-    try {
-      await api.reverseJobMatcherEvalGroundTruthCorrection(workspaceId, runId, emailMessageId)
-    } catch (e) {
-      setGroundTruthCorrections(previous)
-      setCorrectionError(e instanceof Error ? e.message : 'Failed to undo correction')
-    } finally {
-      setCorrectionBusyId(null)
-    }
   }
 
   const viewingPolicy =
@@ -1643,13 +1597,15 @@ export function JobMatcherEvaluationPanel({
                 style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}
               >
                 <strong style={{ color: '#065f46' }}>
-                  {showOriginalLabels ? 'Original labels' : 'Corrected ground truth'}
+                  {showOriginalLabels
+                    ? 'Original metrics'
+                    : 'Temporary adjusted metrics'}
                 </strong>
                 {' · '}
-                {totalActiveCorrections} verified correction
-                {totalActiveCorrections === 1 ? '' : 's'} (all emails stay in the
-                denominator: {rawMetrics.totalEvaluated}). Performance Score{' '}
-                {jmps.display}
+                {totalActiveCorrections} temporary Mark Correct override
+                {totalActiveCorrections === 1 ? '' : 's'} (session only; all
+                emails stay in the denominator: {rawMetrics.totalEvaluated}).
+                Performance Score {jmps.display}
                 {rawJmps && !showOriginalLabels
                   ? `; original ${rawJmps.display}`
                   : ''}
@@ -1657,9 +1613,9 @@ export function JobMatcherEvaluationPanel({
                   ? ` · original precision ${(rawMetrics.precision * 100).toFixed(2)}%`
                   : ''}
                 {m.precision != null
-                  ? ` · ${showOriginalLabels ? 'original' : 'corrected'} precision ${(m.precision * 100).toFixed(2)}%`
+                  ? ` · ${showOriginalLabels ? 'original' : 'adjusted'} precision ${(m.precision * 100).toFixed(2)}%`
                   : ''}
-                .
+                . Cleared on reload or new evaluation.
               </div>
             ) : null}
               </>
@@ -1684,7 +1640,7 @@ export function JobMatcherEvaluationPanel({
                   checked={showOriginalLabels}
                   onChange={(e) => setShowOriginalLabels(e.target.checked)}
                 />
-                Show original labels
+                Show original metrics
               </label>
             ) : null}
             {correctionError ? (
@@ -1883,7 +1839,7 @@ export function JobMatcherEvaluationPanel({
               }
             }}
             correctionByEmailId={activeCorrectionByEmail}
-            correctionBusyId={correctionBusyId}
+            correctionBusyId={null}
             onMarkCorrect={requestMarkCorrect}
             onUndoCorrect={undoMarkCorrect}
           />
@@ -1917,7 +1873,7 @@ export function JobMatcherEvaluationPanel({
               setInspectorTab={setInspectorTab}
               onClose={() => setSelectedRow(null)}
               correction={activeCorrectionByEmail.get(selectedRow.emailMessageId) ?? null}
-              correctionBusy={correctionBusyId === selectedRow.emailMessageId}
+              correctionBusy={false}
               onMarkCorrect={requestMarkCorrect}
               onUndoCorrect={undoMarkCorrect}
             />
@@ -1946,9 +1902,9 @@ export function JobMatcherEvaluationPanel({
       {pendingCorrectionRow ? (
         <ConfirmCorrectDialog
           row={pendingCorrectionRow}
-          busy={correctionBusyId === pendingCorrectionRow.emailMessageId}
+          busy={false}
           onCancel={() => setPendingCorrectionRow(null)}
-          onConfirm={() => void confirmMarkCorrect()}
+          onConfirm={() => confirmMarkCorrect()}
         />
       ) : null}
     </div>
@@ -1958,8 +1914,9 @@ export function JobMatcherEvaluationPanel({
 type RowCorrectionState = 'verified' | 'eligible' | 'verified-other' | 'none'
 
 /**
- * Per-row Mark Correct state. `verified` = this model's MATCH is the verified GT;
- * `verified-other` = email has a verified GT this model did not predict.
+ * Per-row Mark Correct state. `verified` = this model's MATCH is the temporary
+ * override Job; `verified-other` = email has a temporary override this model
+ * did not predict.
  */
 function rowCorrectionState(
   row: JobMatcherEvalRow,
@@ -1995,7 +1952,7 @@ function GroundTruthActions(props: {
         <button
           type="button"
           data-testid={`eval-mark-correct-${id}`}
-          title="Verify this model prediction as the true Job (updates ground truth for all models)"
+          title="Temporarily treat this MATCH prediction as the reference Job for displayed metrics (session only)"
           disabled={props.busy || props.disabled}
           onClick={props.onMarkCorrect}
           style={small}
@@ -2007,19 +1964,19 @@ function GroundTruthActions(props: {
           data-testid={`eval-verified-${id}`}
           title={
             props.state === 'verified'
-              ? 'This prediction was verified as the true Job'
-              : 'Ground truth for this email was corrected via a verified prediction'
+              ? 'Temporary override uses this prediction'
+              : 'Temporary override differs from this model prediction'
           }
           style={{ color: '#047857', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}
         >
-          ✓ {props.state === 'verified' ? 'Verified Correct' : 'Verified GT'}
+          ✓ {props.state === 'verified' ? 'Temp override' : 'Other override'}
         </span>
       )}
       {props.state !== 'eligible' ? (
         <button
           type="button"
           data-testid={`eval-undo-correct-${id}`}
-          title="Undo verified correction"
+          title="Undo temporary override"
           disabled={props.busy || props.disabled}
           onClick={props.onUndo}
           style={small}
@@ -2084,9 +2041,10 @@ function ConfirmCorrectDialog(props: {
           </strong>
         </div>
         <p style={{ margin: '10px 0 14px', color: '#6b7280', fontSize: 12 }}>
-          This updates the evaluation ground truth for this email across all models. The
-          email stays in the denominator. Production Job assignments and matcher policies
-          are not changed.
+          This creates a temporary session override for displayed metrics across all
+          models. The email stays in the denominator. It is not saved to the database,
+          does not change historical evaluation snapshots, and does not change production
+          Job assignments. Cleared on page reload or a new evaluation.
         </p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button

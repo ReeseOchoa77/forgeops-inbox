@@ -231,8 +231,7 @@ export function markCorrectEligibility(
 }
 
 /**
- * Optimistic client DTO for a just-confirmed correction (server returns the
- * canonical DTO with the Job name from the database).
+ * Build a temporary in-memory Mark Correct override (never persisted).
  */
 export function optimisticCorrection(input: {
   row: JobMatcherEvalRow
@@ -243,7 +242,7 @@ export function optimisticCorrection(input: {
 }): JobMatcherEvalGroundTruthCorrection {
   const now = new Date().toISOString()
   return {
-    id: `optimistic-${input.row.emailMessageId}`,
+    id: `temporary-${input.row.emailMessageId}`,
     emailMessageId: input.row.emailMessageId,
     originalGroundTruthJobId: input.originalGroundTruthJobId,
     correctedGroundTruthJobId: input.row.predictedJobId ?? '',
@@ -254,7 +253,7 @@ export function optimisticCorrection(input: {
     verifiedByUserId: input.userId ?? null,
     sourceEvaluationRunId: input.evaluationRunId,
     sourceModelPolicy: input.sourceModelPolicy ?? null,
-    note: null,
+    note: 'temporary-session-override',
     reversedAt: null,
     reversedByUserId: null,
     createdAt: now,

@@ -54,6 +54,11 @@ export type JobMatcherEvalSession = {
   jobFilterId: string | null
   /** Results pane collapse preference for this session. */
   resultsCollapsed?: boolean
+  /**
+   * Temporary Mark Correct overrides for displayed metrics only.
+   * In-memory SPA session — cleared on full page reload; never persisted to DB.
+   */
+  temporaryGroundTruthOverrides?: import('../job-matcher-eval-ground-truth-corrections').JobMatcherEvalGroundTruthCorrection[]
   updatedAt: number
 }
 
@@ -85,6 +90,7 @@ export function setJobMatcherEvalSession(input: {
   result: import('../api').JobMatcherEvalResult
   jobFilterId?: string | null
   resultsCollapsed?: boolean
+  temporaryGroundTruthOverrides?: import('../job-matcher-eval-ground-truth-corrections').JobMatcherEvalGroundTruthCorrection[]
 }): void {
   if (!input.workspaceId || !input.userId) return
   const key = evalKey(input.workspaceId, input.userId)
@@ -96,6 +102,10 @@ export function setJobMatcherEvalSession(input: {
     jobFilterId: input.jobFilterId ?? null,
     resultsCollapsed:
       input.resultsCollapsed ?? existing?.resultsCollapsed ?? true,
+    temporaryGroundTruthOverrides:
+      input.temporaryGroundTruthOverrides !== undefined
+        ? input.temporaryGroundTruthOverrides
+        : existing?.temporaryGroundTruthOverrides ?? [],
     updatedAt: Date.now(),
   })
   evalPending.delete(key)
@@ -118,6 +128,7 @@ export function patchJobMatcherEvalSessionUi(input: {
   userId: string
   jobFilterId?: string | null
   resultsCollapsed?: boolean
+  temporaryGroundTruthOverrides?: import('../job-matcher-eval-ground-truth-corrections').JobMatcherEvalGroundTruthCorrection[]
 }): void {
   const existing = getJobMatcherEvalSession(input.workspaceId, input.userId)
   if (!existing) return
@@ -128,6 +139,9 @@ export function patchJobMatcherEvalSessionUi(input: {
       : {}),
     ...(input.resultsCollapsed !== undefined
       ? { resultsCollapsed: input.resultsCollapsed }
+      : {}),
+    ...(input.temporaryGroundTruthOverrides !== undefined
+      ? { temporaryGroundTruthOverrides: input.temporaryGroundTruthOverrides }
       : {}),
     updatedAt: Date.now(),
   })

@@ -481,7 +481,10 @@ export const registerIntelligenceRoutes = async (
     evaluationRunId: z.string().uuid(),
   });
 
-  /** List ACTIVE verified ground-truth corrections for emails in this evaluation run. */
+  /**
+   * DEPRECATED — Evaluation Mark Correct is temporary/client-side only.
+   * Kept for compatibility; the web UI must not call this for new overrides.
+   */
   app.get(
     "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections",
     async (request, reply) => {
@@ -505,7 +508,10 @@ export const registerIntelligenceRoutes = async (
     }
   );
 
-  /** Verify a model MATCH prediction as the true Job (eval ground truth only). */
+  /**
+   * DEPRECATED — Do not use from the Evaluation UI.
+   * Mark Correct now stores temporary in-memory overrides only.
+   */
   app.post(
     "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections",
     async (request, reply) => {
@@ -548,7 +554,10 @@ export const registerIntelligenceRoutes = async (
     }
   );
 
-  /** Undo a verified ground-truth correction (marks it REVERSED). */
+  /**
+   * DEPRECATED — Do not use from the Evaluation UI.
+   * Temporary Mark Correct undo is client-side only.
+   */
   app.delete(
     "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections/:emailMessageId",
     async (request, reply) => {
