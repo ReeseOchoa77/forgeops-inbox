@@ -3042,9 +3042,8 @@ export const api = {
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V3'
         | 'CONTEXT_AWARE_V2_5'
-      /** Preferred: one or more policies to evaluate / compare. */
+      /** Preferred: one or more policies to evaluate / compare. V3 is retired. */
       identityPolicies?: Array<
         | 'BASELINE'
         | 'CONTEXT_AWARE_V1'
@@ -3053,7 +3052,6 @@ export const api = {
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V3'
         | 'CONTEXT_AWARE_V2_5'
       >
       compareWithIdentityPolicy?:
@@ -3063,7 +3061,6 @@ export const api = {
         | 'CONTEXT_AWARE_V2_2'
         | 'CONTEXT_AWARE_V2_3'
         | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V3'
         | 'CONTEXT_AWARE_V2_5'
         | 'ALL_THREE'
       evaluationRunId?: string

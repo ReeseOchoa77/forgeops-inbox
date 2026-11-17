@@ -16,16 +16,17 @@
  *   Does NOT inherit V2.1 title-gap or V2.2 unique-token promotion.
  * CONTEXT_AWARE_V2_4: frozen experiment = V2 + full-body + contextual word
  *   search + attachment identity + descriptor compound numerics. Does NOT
- *   include V3 unique-term / family-scoped #N matching, or V2.1–V2.3 recoveries.
- * CONTEXT_AWARE_V3: independent experiment = V2.4 baseline + dynamic word
- *   importance + family-scoped numeric (Beltline #3). Not production.
+ *   include retired V3 unique-term / family-scoped #N matching, or V2.1–V2.3
+ *   recoveries.
+ * CONTEXT_AWARE_V3: retired experiment. Id retained for historical evaluation
+ *   display only; not selectable or runnable for new evaluations.
  *
  * CONTEXT_AWARE_V2_5: independent experiment = V2 + AI Identity Profiles
  *   (deterministic profile scoring: distinctive names, family disambiguation,
- *   family-scoped numerics). Does NOT reuse V2.4 contextual word search or V3
- *   flags. Not production.
+ *   family-scoped numerics). Does NOT reuse V2.4 contextual word search or
+ *   retired V3 flags. Not production.
  *
- * V2.1 / V2.2 / V2.3 / V2.4 / V3 / V2.5 each branch from V2 independently (not cumulative).
+ * V2.1 / V2.2 / V2.3 / V2.4 / V2.5 each branch from V2 independently (not cumulative).
  */
 
 import {
@@ -136,8 +137,8 @@ export const JOB_MATCH_V2_4_ATTACHMENT_EXTRACTION_REVISION =
   "attachment-identity-extract-r1" as const;
 
 /**
- * Current V3 algorithm: V2.4 compound-numeric baseline + dynamic word
- * importance + family-scoped numeric (Beltline #3).
+ * Retired V3 algorithm stamp (historical evals only).
+ * V3 is no longer selectable or runnable for new evaluations.
  */
 export const JOB_MATCH_V3_IMPLEMENTATION_REVISION =
   "V3_DYNAMIC_WORD_IMPORTANCE_R1" as const;
@@ -182,23 +183,23 @@ export function experimentRevisionForIdentityPolicy(
 export function isContextualWordSearchPolicy(
   policy: JobMatchIdentityPolicy
 ): boolean {
-  return (
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
-    policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3
-  );
+  return policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4;
 }
 
-/** V3-only: unique title terms + family-scoped #N matching. */
+/**
+ * Feature flags for contextual word search / attachment identity.
+ * V3 unique-term + family-numeric flags are retired (always false).
+ * Shared compound-numeric helpers remain available to V2.4 / V2.5.
+ */
 export function contextualWordSearchFeatureOptions(
-  policy: JobMatchIdentityPolicy
+  _policy: JobMatchIdentityPolicy
 ): {
   enableUniqueProjectTerms: boolean;
   enableFamilyScopedNumeric: boolean;
 } {
-  const v3 = policy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3;
   return {
-    enableUniqueProjectTerms: v3,
-    enableFamilyScopedNumeric: v3,
+    enableUniqueProjectTerms: false,
+    enableFamilyScopedNumeric: false,
   };
 }
 

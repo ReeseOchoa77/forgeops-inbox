@@ -6,7 +6,6 @@ import {
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
   JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,
-  JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
   JOB_MATCH_V2_4_IMPLEMENTATION_REVISION,
   JOB_MATCH_V2_5_IMPLEMENTATION_REVISION,
   JOB_MATCH_V3_IMPLEMENTATION_REVISION,
@@ -114,7 +113,7 @@ describe("CONTEXT_AWARE_V2_5 identity profiles", () => {
     expect(entry?.availableForEvaluation).toBe(true);
     expect(entry?.productionDefault).toBe(false);
     expect(jobMatchPolicyAdvanceRank("CONTEXT_AWARE_V2_5")).toBeGreaterThan(
-      jobMatchPolicyAdvanceRank("CONTEXT_AWARE_V3")
+      jobMatchPolicyAdvanceRank("CONTEXT_AWARE_V2_4")
     );
     expect(getProductionJobMatchIdentityPolicy()).toBe(
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2
@@ -125,9 +124,12 @@ describe("CONTEXT_AWARE_V2_5 identity profiles", () => {
       "CONTEXT_AWARE_V2_2",
       "CONTEXT_AWARE_V2_3",
       "CONTEXT_AWARE_V2_4",
-      "CONTEXT_AWARE_V3",
       "CONTEXT_AWARE_V2_5",
     ]);
+    const retiredV3 = getJobMatchPolicyRegistryEntry("CONTEXT_AWARE_V3");
+    expect(retiredV3?.availableForEvaluation).toBe(false);
+    expect(retiredV3?.retired).toBe(true);
+    expect(retiredV3?.displayName).toBe("V3 — Retired Model");
   });
 
   it("1. Nova → Nova Classical", () => {
@@ -322,27 +324,20 @@ describe("CONTEXT_AWARE_V2_5 identity profiles", () => {
     expect(run("Beltline #3 shops", beltPool).selectedJobId).toBe("job-belt-b3");
   });
 
-  it("21. V2.4 / V3 behavior and stamps are unaffected", () => {
+  it("21. V2.4 stamp unaffected; retired V3 remains readable by id", () => {
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V2_4")).toBe(
       JOB_MATCH_V2_4_IMPLEMENTATION_REVISION
     );
     expect(experimentRevisionForIdentityPolicy("CONTEXT_AWARE_V3")).toBe(
       JOB_MATCH_V3_IMPLEMENTATION_REVISION
     );
-    for (const p of [
-      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4,
-      JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
-    ]) {
-      const r = run("Beltline #3 shops", beltPool, "", p);
-      expect(r.identityDiagnostics.v25Diagnostics).toBeUndefined();
-    }
-    // V2.4 still cannot resolve Beltline #3 (V3-only feature) — unchanged.
     const v24 = run(
       "Beltline #3 shops",
       beltPool,
       "",
       JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4
     );
+    expect(v24.identityDiagnostics.v25Diagnostics).toBeUndefined();
     expect(v24.selectedJobId).toBeNull();
   });
 

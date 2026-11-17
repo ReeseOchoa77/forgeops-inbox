@@ -70,6 +70,11 @@ export type JobMatchPolicyRegistryEntry = {
   /** When true, shown in Historical Evaluations model selection. */
   availableForEvaluation: boolean;
   /**
+   * Retired policies remain in the registry for historical result display but
+   * cannot be selected for new evaluations.
+   */
+  retired?: boolean;
+  /**
    * Human-readable experiment summary. Null for production/stable policies.
    * Does not change the policy id — use with JOB_MATCH_IDENTITY_EXPERIMENT_REVISION.
    */
@@ -164,13 +169,14 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
       advanceRank: 7,
       label: "CONTEXT_AWARE_V3",
-      displayName: "V3 — Dynamic Word Importance",
+      displayName: "V3 — Retired Model",
       description:
-        "V2.4 baseline plus unique title-term identity and family-scoped numeric matching (Beltline #3).",
+        "Retired experimental policy. Historical evaluation results remain viewable read-only; not available for new evaluations.",
       productionDefault: false,
       experimental: true,
-      availableForEvaluation: true,
-      experimentSummary: `V2.4 + dynamic word importance + family numeric (${JOB_MATCH_V3_IMPLEMENTATION_REVISION})`,
+      availableForEvaluation: false,
+      retired: true,
+      experimentSummary: `Retired — prior stamp ${JOB_MATCH_V3_IMPLEMENTATION_REVISION}`,
     },
     {
       id: JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5,

@@ -369,11 +369,10 @@ export function runJobMatchPipeline(input: {
 
   let attachmentDiagnostics: AttachmentIdentityDiagnostics | undefined;
 
-  // V2.4 / V3 / V2.5: Attachment Identity between NAME and CONTACT.
-  // (V2.5 uses the V2.4 attachment feature set; V3 flags stay off.)
+  // V2.4 / V2.5: Attachment Identity between NAME and CONTACT.
+  // (V2.5 uses the V2.4 attachment feature set; retired V3 flags stay off.)
   if (
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_4 ||
-    identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3 ||
     identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2_5
   ) {
     const peers = buildAttachmentPeers(
@@ -388,10 +387,8 @@ export function runJobMatchPipeline(input: {
         ? { attachmentsPresentButNotLoaded: true }
         : {}),
       features: {
-        enableUniqueProjectTerms:
-          identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
-        enableFamilyScopedNumeric:
-          identityPolicy === JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V3,
+        enableUniqueProjectTerms: false,
+        enableFamilyScopedNumeric: false,
       },
     });
     attachmentDiagnostics = attachment.diagnostics;

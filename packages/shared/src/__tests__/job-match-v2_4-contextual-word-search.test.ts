@@ -19,8 +19,11 @@ import {
   resolveContextualWordSearch,
   buildContextualFamilyIndex,
 } from "../jobs/job-contextual-word-search.js";
-import { listEvaluationSelectablePolicies } from "../jobs/job-match-policy-registry.js";
-import { getProductionJobMatchIdentityPolicy } from "../jobs/job-match-policy-registry.js";
+import {
+  getJobMatchPolicyRegistryEntry,
+  getProductionJobMatchIdentityPolicy,
+  listEvaluationSelectablePolicies,
+} from "../jobs/job-match-policy-registry.js";
 import type { IdentityPeerJob } from "../jobs/job-name-identity-policy.js";
 
 function job(
@@ -454,13 +457,13 @@ describe("CONTEXT_AWARE_V2_4 contextual word search", () => {
         "CONTEXT_AWARE_V2_2",
         "CONTEXT_AWARE_V2_3",
         "CONTEXT_AWARE_V2_4",
-        "CONTEXT_AWARE_V3",
+        "CONTEXT_AWARE_V2_5",
       ])
     );
-    const v3 = listEvaluationSelectablePolicies().find(
-      (e) => e.id === "CONTEXT_AWARE_V3"
-    );
-    expect(v3?.displayName).toBe("V3 — Dynamic Word Importance");
+    expect(ids).not.toContain("CONTEXT_AWARE_V3");
+    const v3 = getJobMatchPolicyRegistryEntry("CONTEXT_AWARE_V3");
+    expect(v3?.availableForEvaluation).toBe(false);
+    expect(v3?.displayName).toBe("V3 — Retired Model");
   });
 
   it("frozen V2.4 does not promote unique Nova or Beltline #3", () => {

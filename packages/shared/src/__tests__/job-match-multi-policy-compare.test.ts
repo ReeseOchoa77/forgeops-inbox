@@ -69,6 +69,9 @@ describe("multi-policy compare", () => {
     expect(() => normalizeEvalIdentityPolicies(["NOT_A_POLICY"])).toThrow(
       /Invalid identity policy/
     );
+    expect(() => normalizeEvalIdentityPolicies(["CONTEXT_AWARE_V3"])).toThrow(
+      /retired/
+    );
   });
 
   it("builds dynamic comparison for V2 vs V2.2 only", () => {

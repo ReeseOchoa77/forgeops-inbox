@@ -223,13 +223,13 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_2",
               "CONTEXT_AWARE_V2_3",
               "CONTEXT_AWARE_V2_4",
-              "CONTEXT_AWARE_V3",
               "CONTEXT_AWARE_V2_5",
             ])
             .optional(),
           /**
            * Preferred: evaluate / compare exactly these policies.
            * Length 1 = single; ≥ 2 = same-dataset comparison. Validated server-side.
+           * CONTEXT_AWARE_V3 is retired and rejected.
            */
           identityPolicies: z
             .array(
@@ -241,12 +241,11 @@ export const registerIntelligenceRoutes = async (
                 "CONTEXT_AWARE_V2_2",
                 "CONTEXT_AWARE_V2_3",
                 "CONTEXT_AWARE_V2_4",
-                "CONTEXT_AWARE_V3",
                 "CONTEXT_AWARE_V2_5",
               ])
             )
             .min(1)
-            .max(9)
+            .max(8)
             .optional(),
           /**
            * Legacy shadow comparison on the same emails/snapshot.
@@ -260,7 +259,6 @@ export const registerIntelligenceRoutes = async (
               "CONTEXT_AWARE_V2_2",
               "CONTEXT_AWARE_V2_3",
               "CONTEXT_AWARE_V2_4",
-              "CONTEXT_AWARE_V3",
               "CONTEXT_AWARE_V2_5",
               "ALL_THREE",
             ])

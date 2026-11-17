@@ -10,6 +10,7 @@ import {
 } from "./job-match-identity-compare.js";
 import { computeJobMatcherPerformanceScore } from "./job-match-performance-score.js";
 import {
+  getJobMatchPolicyRegistryEntry,
   getProductionJobMatchIdentityPolicy,
   isJobMatchIdentityPolicyId,
   jobMatchPolicyAdvanceRank,
@@ -200,6 +201,12 @@ export function normalizeEvalIdentityPolicies(
   for (const raw of policies) {
     if (!isJobMatchIdentityPolicyId(raw)) {
       throw new Error(`Invalid identity policy: ${raw}`);
+    }
+    const entry = getJobMatchPolicyRegistryEntry(raw);
+    if (entry?.retired) {
+      throw new Error(
+        `Identity policy ${raw} is retired and cannot be selected for new evaluations`
+      );
     }
     if (seen.has(raw)) continue;
     seen.add(raw);
