@@ -12,6 +12,7 @@ import {
   JMPS_TOOLTIP,
 } from '@forgeops/shared/jobs/job-match-performance-score'
 import {
+  filterRunnablePolicyIds,
   getJobMatchPolicyRegistryEntry,
   getProductionJobMatchIdentityPolicy,
 } from '@forgeops/shared/jobs/job-match-policy-registry'
@@ -134,9 +135,12 @@ export function JobMatcherEvaluationPanel({
   const [modelSelection, setModelSelection] = useState<ModelSelectionState>(() => {
     const ec = initialUi.evalConfig
     if (ec.modelSelectionMode && ec.selectedPolicyIds && ec.selectedPolicyIds.length > 0) {
-      return {
-        mode: ec.modelSelectionMode,
-        selectedPolicyIds: ec.selectedPolicyIds as ModelSelectionState['selectedPolicyIds'],
+      const selectedPolicyIds = filterRunnablePolicyIds(ec.selectedPolicyIds)
+      if (selectedPolicyIds.length > 0) {
+        return {
+          mode: ec.modelSelectionMode,
+          selectedPolicyIds,
+        }
       }
     }
     return modelSelectionFromLegacyEvalMode(ec.evaluationMode)

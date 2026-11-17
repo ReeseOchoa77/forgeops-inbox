@@ -6,15 +6,21 @@ import type { CSSProperties } from 'react'
 import {
   getProductionJobMatchIdentityPolicy,
   listEvaluationSelectablePolicies,
-  type JobMatchIdentityPolicyId,
+  type JobMatchEvaluationSelectablePolicyId,
   type JobMatchPolicyRegistryEntry,
+  type JobMatchRunnablePolicyId,
 } from '@forgeops/shared/jobs/job-match-policy-registry'
 
 export type ModelSelectionMode = 'SINGLE' | 'COMPARE'
 
+/**
+ * Policies the operator may select for a *new* evaluation.
+ * Excludes retired historical ids (e.g. CONTEXT_AWARE_V3).
+ * May include legacy BASELINE / V1 via compareWith mapping.
+ */
 export type ModelSelectionState = {
   mode: ModelSelectionMode
-  selectedPolicyIds: JobMatchIdentityPolicyId[]
+  selectedPolicyIds: JobMatchRunnablePolicyId[]
 }
 
 export function defaultModelSelection(): ModelSelectionState {
@@ -98,11 +104,11 @@ export function JobMatcherModelSelectionPanel({
     onChange({ mode: 'COMPARE', selectedPolicyIds: ids })
   }
 
-  const selectSingle = (id: JobMatchIdentityPolicyId) => {
+  const selectSingle = (id: JobMatchEvaluationSelectablePolicyId) => {
     onChange({ mode: 'SINGLE', selectedPolicyIds: [id] })
   }
 
-  const toggleCompare = (id: JobMatchIdentityPolicyId) => {
+  const toggleCompare = (id: JobMatchEvaluationSelectablePolicyId) => {
     const set = new Set(value.selectedPolicyIds)
     if (set.has(id)) set.delete(id)
     else set.add(id)

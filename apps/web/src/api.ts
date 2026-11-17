@@ -1,3 +1,5 @@
+import type { JobMatchRunnablePolicyId } from '@forgeops/shared/jobs/job-match-policy-registry'
+
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1'
 
 /** API error that preserves status/code/cause for SCHEMA_DRIFT diagnosis. */
@@ -3034,34 +3036,12 @@ export const api = {
       dataset?: JobMatcherEvalDatasetSpec
       limit?: 50 | 100 | 500
       maxWrongDetails?: number
-      identityPolicy?:
-        | 'BASELINE'
-        | 'CONTEXT_AWARE_V1'
-        | 'CONTEXT_AWARE_V2'
-        | 'CONTEXT_AWARE_V2_1'
-        | 'CONTEXT_AWARE_V2_2'
-        | 'CONTEXT_AWARE_V2_3'
-        | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V2_5'
-      /** Preferred: one or more policies to evaluate / compare. V3 is retired. */
-      identityPolicies?: Array<
-        | 'BASELINE'
-        | 'CONTEXT_AWARE_V1'
-        | 'CONTEXT_AWARE_V2'
-        | 'CONTEXT_AWARE_V2_1'
-        | 'CONTEXT_AWARE_V2_2'
-        | 'CONTEXT_AWARE_V2_3'
-        | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V2_5'
-      >
+      /** Single-policy legacy; must be runnable (not retired). */
+      identityPolicy?: JobMatcherRunnableIdentityPolicy
+      /** Preferred: one or more runnable policies to evaluate / compare. */
+      identityPolicies?: JobMatcherRunnableIdentityPolicy[]
       compareWithIdentityPolicy?:
-        | 'CONTEXT_AWARE_V1'
-        | 'CONTEXT_AWARE_V2'
-        | 'CONTEXT_AWARE_V2_1'
-        | 'CONTEXT_AWARE_V2_2'
-        | 'CONTEXT_AWARE_V2_3'
-        | 'CONTEXT_AWARE_V2_4'
-        | 'CONTEXT_AWARE_V2_5'
+        | Exclude<JobMatcherRunnableIdentityPolicy, 'BASELINE'>
         | 'ALL_THREE'
       evaluationRunId?: string
     }
@@ -5513,6 +5493,9 @@ export interface JobMatcherEvalDiagnostics {
   definitions: Record<string, string>
 }
 
+/**
+ * All historically recognized policies (including retired V3 for result display).
+ */
 export type JobMatcherIdentityPolicy =
   | 'BASELINE'
   | 'CONTEXT_AWARE_V1'
@@ -5523,6 +5506,12 @@ export type JobMatcherIdentityPolicy =
   | 'CONTEXT_AWARE_V2_4'
   | 'CONTEXT_AWARE_V3'
   | 'CONTEXT_AWARE_V2_5'
+
+/**
+ * Policies accepted for *new* evaluation runs (excludes retired policies).
+ * Derived from the shared registry via JobMatchRunnablePolicyId.
+ */
+export type JobMatcherRunnableIdentityPolicy = JobMatchRunnablePolicyId
 
 export type JobMatcherTransitionCategory =
   | 'WRONG_TO_CORRECT'

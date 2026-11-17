@@ -192,21 +192,53 @@ export const JOB_MATCH_POLICY_REGISTRY: readonly JobMatchPolicyRegistryEntry[] =
     },
   ] as const;
 
+/**
+ * Policies marked retired in the registry (historical display only).
+ * Derived from JOB_MATCH_POLICY_REGISTRY — do not hardcode.
+ */
+export type JobMatchRetiredPolicyId = Extract<
+  (typeof JOB_MATCH_POLICY_REGISTRY)[number],
+  { retired: true }
+>["id"];
+
+/**
+ * Policies that may be requested for a *new* evaluation run.
+ * All historically recognized ids minus retired (e.g. CONTEXT_AWARE_V3).
+ * Includes legacy BASELINE / V1 for compareWith mapping.
+ */
+export type JobMatchRunnablePolicyId = Exclude<
+  JobMatchIdentityPolicyId,
+  JobMatchRetiredPolicyId
+>;
+
+/**
+ * Policies shown in the Model Selection Panel
+ * (`availableForEvaluation: true` in the registry).
+ */
+export type JobMatchEvaluationSelectablePolicyId = Extract<
+  (typeof JOB_MATCH_POLICY_REGISTRY)[number],
+  { availableForEvaluation: true }
+>["id"];
+
 /** Policies exposed in the Model Selection Panel (registry-driven). */
-export function listEvaluationSelectablePolicies(): JobMatchPolicyRegistryEntry[] {
-  return JOB_MATCH_POLICY_REGISTRY.filter((e) => e.availableForEvaluation);
+export function listEvaluationSelectablePolicies(): Array<
+  JobMatchPolicyRegistryEntry & {
+    id: JobMatchEvaluationSelectablePolicyId;
+    availableForEvaluation: true;
+  }
+> {
+  return JOB_MATCH_POLICY_REGISTRY.filter(
+    (e): e is JobMatchPolicyRegistryEntry & {
+      id: JobMatchEvaluationSelectablePolicyId;
+      availableForEvaluation: true;
+    } => e.availableForEvaluation
+  );
 }
 
 export function getJobMatchPolicyRegistryEntry(
   id: string
 ): JobMatchPolicyRegistryEntry | undefined {
   return JOB_MATCH_POLICY_REGISTRY.find((e) => e.id === id);
-}
-
-/** Active production identity policy (exactly one registry entry). */
-export function getProductionJobMatchIdentityPolicy(): JobMatchIdentityPolicyId {
-  const entry = JOB_MATCH_POLICY_REGISTRY.find((e) => e.productionDefault);
-  return entry?.id ?? JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
 }
 
 const RANK = new Map(
@@ -217,6 +249,29 @@ export function isJobMatchIdentityPolicyId(
   value: string
 ): value is JobMatchIdentityPolicyId {
   return RANK.has(value as JobMatchIdentityPolicyId);
+}
+
+export function isJobMatchRunnablePolicyId(
+  value: string
+): value is JobMatchRunnablePolicyId {
+  if (!isJobMatchIdentityPolicyId(value)) return false;
+  return getJobMatchPolicyRegistryEntry(value)?.retired !== true;
+}
+
+/** Drop retired / unknown ids from a persisted or external policy list. */
+export function filterRunnablePolicyIds(
+  ids: readonly string[]
+): JobMatchRunnablePolicyId[] {
+  return ids.filter(isJobMatchRunnablePolicyId);
+}
+
+/** Active production identity policy (exactly one registry entry; always runnable). */
+export function getProductionJobMatchIdentityPolicy(): JobMatchRunnablePolicyId {
+  const entry = JOB_MATCH_POLICY_REGISTRY.find((e) => e.productionDefault);
+  const id = entry?.id ?? JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
+  return isJobMatchRunnablePolicyId(id)
+    ? id
+    : JOB_MATCH_IDENTITY_POLICY_CONTEXT_AWARE_V2;
 }
 
 export function jobMatchPolicyAdvanceRank(
