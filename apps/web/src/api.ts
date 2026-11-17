@@ -3131,6 +3131,40 @@ export const api = {
       { method: 'DELETE' }
     ),
 
+  previewJobMatcherEvalGroundTruthRestoration: (
+    workspaceId: string,
+    params: {
+      scope: 'CURRENT_EVALUATION' | 'TENANT_ALL'
+      evaluationRunId?: string
+    }
+  ) => {
+    const q = new URLSearchParams()
+    q.set('scope', params.scope)
+    if (params.evaluationRunId) q.set('evaluationRunId', params.evaluationRunId)
+    return request<{ preview: JobMatcherEvalGroundTruthRestorationPreview }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/ground-truth-corrections/restore-preview?${q.toString()}`
+    )
+  },
+
+  restoreJobMatcherEvalGroundTruthCorrections: (
+    workspaceId: string,
+    body: {
+      scope: 'CURRENT_EVALUATION' | 'TENANT_ALL'
+      evaluationRunId?: string
+      confirm: true
+    }
+  ) =>
+    request<{
+      restoration: {
+        reversedCount: number
+        affectedEmailCount: number
+        alreadyClean: boolean
+      }
+    }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/ground-truth-corrections/restore`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   listJobMatcherEvalExclusions: (workspaceId: string, evaluationRunId: string) =>
     request<{ exclusions: JobMatcherEvalExclusionDto[] }>(
       `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/exclusions`
@@ -5822,6 +5856,31 @@ export interface JobMatcherEvalGroundTruthCorrectionDto {
   reversedByUserId: string | null
   createdAt: string
   updatedAt: string
+}
+
+/** Admin restore preview for historical JobMatcherEvalGroundTruthCorrection overlays. */
+export interface JobMatcherEvalGroundTruthRestorationPreview {
+  scope: 'CURRENT_EVALUATION' | 'TENANT_ALL'
+  evaluationRunId: string | null
+  activeCount: number
+  reversedCount: number
+  affectedEmailCount: number
+  affectedEvaluationRunCount: number
+  restorationNecessary: boolean
+  message: string
+  items: Array<{
+    id: string
+    emailMessageId: string
+    originalGroundTruthJobId: string
+    originalGroundTruthJobLabel: string | null
+    correctedGroundTruthJobId: string
+    correctedGroundTruthJobLabel: string | null
+    verificationStatus: 'ACTIVE' | 'REVERSED'
+    sourceEvaluationRunId: string | null
+    sourceModelPolicy: string | null
+    verifiedAt: string
+  }>
+  truncated: boolean
 }
 
 export interface JobMatcherEvalEmailDetail {

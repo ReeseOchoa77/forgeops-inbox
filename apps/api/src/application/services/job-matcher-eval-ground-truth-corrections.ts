@@ -284,3 +284,298 @@ export async function reverseJobMatcherEvalGroundTruthCorrection(input: {
   }
   return { reversed: true };
 }
+
+export type GroundTruthRestorationScope =
+  | "CURRENT_EVALUATION"
+  | "TENANT_ALL";
+
+export type GroundTruthRestorationPreviewItem = {
+  id: string;
+  emailMessageId: string;
+  originalGroundTruthJobId: string;
+  originalGroundTruthJobLabel: string | null;
+  correctedGroundTruthJobId: string;
+  correctedGroundTruthJobLabel: string | null;
+  verificationStatus: "ACTIVE" | "REVERSED";
+  sourceEvaluationRunId: string | null;
+  sourceModelPolicy: string | null;
+  verifiedAt: string;
+};
+
+export type GroundTruthRestorationPreview = {
+  scope: GroundTruthRestorationScope;
+  evaluationRunId: string | null;
+  activeCount: number;
+  reversedCount: number;
+  affectedEmailCount: number;
+  affectedEvaluationRunCount: number;
+  restorationNecessary: boolean;
+  message: string;
+  /** ACTIVE rows that would be reversed (capped for UI). */
+  items: GroundTruthRestorationPreviewItem[];
+  truncated: boolean;
+};
+
+const PREVIEW_ITEM_LIMIT = 50;
+
+function jobLabel(
+  job: { name: string; jobNumber: string | null } | null | undefined,
+  jobId: string
+): string {
+  if (!job) return jobId;
+  return [job.jobNumber, job.name].filter(Boolean).join(" · ") || jobId;
+}
+
+/**
+ * Read-only preview of ACTIVE correction overlays that administrative restore
+ * would reverse. Never mutates data.
+ */
+export async function previewJobMatcherEvalGroundTruthRestoration(input: {
+  prisma: PrismaClient;
+  workspaceId: string;
+  scope: GroundTruthRestorationScope;
+  evaluationRunId?: string | null;
+}): Promise<GroundTruthRestorationPreview> {
+  const evaluationRunId = input.evaluationRunId?.trim() || null;
+  if (input.scope === "CURRENT_EVALUATION" && !evaluationRunId) {
+    throw new Error("evaluationRunId is required for CURRENT_EVALUATION scope");
+  }
+
+  let emailIdsInRun: string[] | null = null;
+  if (input.scope === "CURRENT_EVALUATION" && evaluationRunId) {
+    const run = await input.prisma.jobMatcherEvalRun.findFirst({
+      where: { id: evaluationRunId, workspaceId: input.workspaceId },
+      select: { resultJson: true },
+    });
+    if (!run) throw new Error("Evaluation run not found");
+    emailIdsInRun = collectEvalRunEmailIds(run.resultJson);
+  }
+
+  const workspaceWhere = { workspaceId: input.workspaceId };
+  const activeScopeWhere =
+    input.scope === "TENANT_ALL"
+      ? workspaceWhere
+      : {
+          ...workspaceWhere,
+          OR: [
+            { sourceEvaluationRunId: evaluationRunId },
+            ...(emailIdsInRun && emailIdsInRun.length > 0
+              ? [{ emailMessageId: { in: emailIdsInRun } }]
+              : []),
+          ],
+        };
+
+  const [activeCount, reversedCount, activeRows] = await Promise.all([
+    input.prisma.jobMatcherEvalGroundTruthCorrection.count({
+      where: { ...activeScopeWhere, verificationStatus: "ACTIVE" },
+    }),
+    input.prisma.jobMatcherEvalGroundTruthCorrection.count({
+      where: { ...activeScopeWhere, verificationStatus: "REVERSED" },
+    }),
+    input.prisma.jobMatcherEvalGroundTruthCorrection.findMany({
+      where: { ...activeScopeWhere, verificationStatus: "ACTIVE" },
+      orderBy: { verifiedAt: "asc" },
+      take: PREVIEW_ITEM_LIMIT,
+    }),
+  ]);
+
+  const labels = await loadJobLabels(input.prisma, input.workspaceId, [
+    ...activeRows.map((r) => r.originalGroundTruthJobId),
+    ...activeRows.map((r) => r.correctedGroundTruthJobId),
+  ]);
+
+  const emailSet = new Set(activeRows.map((r) => r.emailMessageId));
+  // For full counts when truncated, re-query distinct if needed.
+  let affectedEmailCount = emailSet.size;
+  let affectedEvaluationRunCount = new Set(
+    activeRows.map((r) => r.sourceEvaluationRunId).filter(Boolean)
+  ).size;
+  const truncated = activeCount > activeRows.length;
+  if (truncated || activeCount > 0) {
+    const allActive = truncated
+      ? await input.prisma.jobMatcherEvalGroundTruthCorrection.findMany({
+          where: { ...activeScopeWhere, verificationStatus: "ACTIVE" },
+          select: {
+            emailMessageId: true,
+            sourceEvaluationRunId: true,
+          },
+        })
+      : activeRows.map((r) => ({
+          emailMessageId: r.emailMessageId,
+          sourceEvaluationRunId: r.sourceEvaluationRunId,
+        }));
+    affectedEmailCount = new Set(allActive.map((r) => r.emailMessageId)).size;
+    affectedEvaluationRunCount = new Set(
+      allActive.map((r) => r.sourceEvaluationRunId).filter(Boolean)
+    ).size;
+  }
+
+  const restorationNecessary = activeCount > 0;
+  const message = restorationNecessary
+    ? `Found ${activeCount} ACTIVE correction overlay${activeCount === 1 ? "" : "s"} affecting ${affectedEmailCount} email${affectedEmailCount === 1 ? "" : "s"}. Restoration will mark them REVERSED without changing historical evaluation snapshots or production assignments.`
+    : "No ACTIVE correction overlays in this scope. Original evaluation data is already in effect; restoration is not necessary.";
+
+  return {
+    scope: input.scope,
+    evaluationRunId,
+    activeCount,
+    reversedCount,
+    affectedEmailCount,
+    affectedEvaluationRunCount,
+    restorationNecessary,
+    message,
+    items: activeRows.map((r) => ({
+      id: r.id,
+      emailMessageId: r.emailMessageId,
+      originalGroundTruthJobId: r.originalGroundTruthJobId,
+      originalGroundTruthJobLabel: jobLabel(
+        labels.get(r.originalGroundTruthJobId),
+        r.originalGroundTruthJobId
+      ),
+      correctedGroundTruthJobId: r.correctedGroundTruthJobId,
+      correctedGroundTruthJobLabel: jobLabel(
+        labels.get(r.correctedGroundTruthJobId),
+        r.correctedGroundTruthJobId
+      ),
+      verificationStatus: "ACTIVE",
+      sourceEvaluationRunId: r.sourceEvaluationRunId,
+      sourceModelPolicy: r.sourceModelPolicy,
+      verifiedAt: r.verifiedAt.toISOString(),
+    })),
+    truncated,
+  };
+}
+
+/**
+ * Admin restore: reverse ACTIVE correction overlays for the given scope.
+ * Non-destructive (ACTIVE → REVERSED). Idempotent. Never touches EmailMessage,
+ * Jobs, or JobMatcherEvalRun.resultJson.
+ */
+export async function restoreJobMatcherEvalGroundTruthCorrections(input: {
+  prisma: PrismaClient;
+  workspaceId: string;
+  scope: GroundTruthRestorationScope;
+  evaluationRunId?: string | null;
+  actorUserId: string;
+  confirm: true;
+  request?: FastifyRequest;
+}): Promise<{
+  reversedCount: number;
+  affectedEmailCount: number;
+  alreadyClean: boolean;
+}> {
+  if (input.confirm !== true) {
+    throw new Error("Explicit confirmation is required");
+  }
+
+  const preview = await previewJobMatcherEvalGroundTruthRestoration({
+    prisma: input.prisma,
+    workspaceId: input.workspaceId,
+    scope: input.scope,
+    evaluationRunId: input.evaluationRunId ?? null,
+  });
+
+  if (!preview.restorationNecessary) {
+    return {
+      reversedCount: 0,
+      affectedEmailCount: 0,
+      alreadyClean: true,
+    };
+  }
+
+  // Re-resolve ACTIVE ids inside a transaction for idempotency under concurrency.
+  const evaluationRunId = input.evaluationRunId?.trim() || null;
+  let emailIdsInRun: string[] | null = null;
+  if (input.scope === "CURRENT_EVALUATION" && evaluationRunId) {
+    const run = await input.prisma.jobMatcherEvalRun.findFirst({
+      where: { id: evaluationRunId, workspaceId: input.workspaceId },
+      select: { resultJson: true },
+    });
+    if (!run) throw new Error("Evaluation run not found");
+    emailIdsInRun = collectEvalRunEmailIds(run.resultJson);
+  }
+
+  const activeScopeWhere =
+    input.scope === "TENANT_ALL"
+      ? { workspaceId: input.workspaceId, verificationStatus: "ACTIVE" as const }
+      : {
+          workspaceId: input.workspaceId,
+          verificationStatus: "ACTIVE" as const,
+          OR: [
+            { sourceEvaluationRunId: evaluationRunId },
+            ...(emailIdsInRun && emailIdsInRun.length > 0
+              ? [{ emailMessageId: { in: emailIdsInRun } }]
+              : []),
+          ],
+        };
+
+  const now = new Date();
+  const result = await input.prisma.$transaction(async (tx) => {
+    const active = await tx.jobMatcherEvalGroundTruthCorrection.findMany({
+      where: activeScopeWhere,
+      select: {
+        id: true,
+        emailMessageId: true,
+        originalGroundTruthJobId: true,
+        correctedGroundTruthJobId: true,
+        sourceEvaluationRunId: true,
+      },
+    });
+    if (active.length === 0) {
+      return { reversedCount: 0, affectedEmailCount: 0, rows: [] as typeof active };
+    }
+    await tx.jobMatcherEvalGroundTruthCorrection.updateMany({
+      where: { id: { in: active.map((a) => a.id) } },
+      data: {
+        verificationStatus: "REVERSED",
+        reversedAt: now,
+        reversedByUserId: input.actorUserId,
+      },
+    });
+    return {
+      reversedCount: active.length,
+      affectedEmailCount: new Set(active.map((a) => a.emailMessageId)).size,
+      rows: active,
+    };
+  });
+
+  const audit = new AuditEventLogger(input.prisma);
+  await audit.log({
+    workspaceId: input.workspaceId,
+    actorUserId: input.actorUserId,
+    entityType: "JobMatcherEvalGroundTruthCorrection",
+    entityId: input.workspaceId,
+    action: "JOB_MATCHER_EVAL_GT_RESTORED",
+    metadata: {
+      scope: input.scope,
+      evaluationRunId,
+      reversedCount: result.reversedCount,
+      affectedEmailCount: result.affectedEmailCount,
+      correctionIds: result.rows.map((r) => r.id).slice(0, 100),
+    },
+    ...(input.request ? { request: input.request } : {}),
+  });
+  for (const row of result.rows.slice(0, 100)) {
+    await audit.log({
+      workspaceId: input.workspaceId,
+      actorUserId: input.actorUserId,
+      entityType: "JobMatcherEvalGroundTruthCorrection",
+      entityId: row.id,
+      action: "JOB_MATCHER_EVAL_GT_REVERSED",
+      metadata: {
+        emailMessageId: row.emailMessageId,
+        originalGroundTruthJobId: row.originalGroundTruthJobId,
+        correctedGroundTruthJobId: row.correctedGroundTruthJobId,
+        sourceEvaluationRunId: row.sourceEvaluationRunId,
+        via: "admin_restore",
+      },
+      ...(input.request ? { request: input.request } : {}),
+    });
+  }
+
+  return {
+    reversedCount: result.reversedCount,
+    affectedEmailCount: result.affectedEmailCount,
+    alreadyClean: result.reversedCount === 0,
+  };
+}

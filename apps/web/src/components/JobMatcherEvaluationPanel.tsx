@@ -87,6 +87,7 @@ import {
   type IntelligencePersistedState,
 } from '../workspace-state'
 import { SafeEmailBody } from './SafeEmailBody'
+import { JobMatcherEvalRestorePanel } from './JobMatcherEvalRestorePanel'
 
 type JobsMode = 'ALL' | 'SPECIFIC' | 'SELECTED'
 type Sampling = 'TOTAL' | 'PER_JOB' | 'ALL_ELIGIBLE'
@@ -1366,6 +1367,11 @@ export function JobMatcherEvaluationPanel({
             </div>
           </div>
         </div>
+
+        <JobMatcherEvalRestorePanel
+          workspaceId={workspaceId}
+          evaluationRunId={result?.evaluationRunId ?? null}
+        />
 
         {busy && runProgress && (
           <div

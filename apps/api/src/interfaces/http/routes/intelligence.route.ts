@@ -20,6 +20,8 @@ import {
   restoreJobMatcherEvalEmail,
 } from "../../../application/services/job-matcher-eval-exclusions.js";
 import {
+  previewJobMatcherEvalGroundTruthRestoration,
+  restoreJobMatcherEvalGroundTruthCorrections,
   reverseJobMatcherEvalGroundTruthCorrection,
   verifyJobMatcherEvalGroundTruthCorrection,
 } from "../../../application/services/job-matcher-eval-ground-truth-corrections.js";
@@ -579,6 +581,87 @@ export const registerIntelligenceRoutes = async (
         request,
       });
       return reply.send(result);
+    }
+  );
+
+  /**
+   * Admin preview: ACTIVE historical correction overlays that restore would reverse.
+   * Read-only. Does not reactivate Mark Correct persistence.
+   */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/ground-truth-corrections/restore-preview",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        workspaceId
+      );
+      if (!auth) return;
+      const query = z
+        .object({
+          scope: z.enum(["CURRENT_EVALUATION", "TENANT_ALL"]),
+          evaluationRunId: z.string().uuid().optional(),
+        })
+        .parse(request.query);
+      try {
+        const preview = await previewJobMatcherEvalGroundTruthRestoration({
+          prisma: app.services.prisma,
+          workspaceId,
+          scope: query.scope,
+          evaluationRunId: query.evaluationRunId ?? null,
+        });
+        return reply.send({ preview });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Preview failed";
+        return reply
+          .code(message.includes("not found") ? 404 : 400)
+          .send({ message });
+      }
+    }
+  );
+
+  /**
+   * Admin restore: reverse ACTIVE historical correction overlays (ACTIVE→REVERSED).
+   * Requires confirm:true. Never modifies EmailMessage, Jobs, or eval snapshots.
+   * Distinct from temporary Mark Correct UI overrides.
+   */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/ground-truth-corrections/restore",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        workspaceId
+      );
+      if (!auth) return;
+      const body = z
+        .object({
+          scope: z.enum(["CURRENT_EVALUATION", "TENANT_ALL"]),
+          evaluationRunId: z.string().uuid().optional(),
+          confirm: z.literal(true),
+        })
+        .parse(request.body);
+      try {
+        const result = await restoreJobMatcherEvalGroundTruthCorrections({
+          prisma: app.services.prisma,
+          workspaceId,
+          scope: body.scope,
+          evaluationRunId: body.evaluationRunId ?? null,
+          actorUserId: auth.userId,
+          confirm: true,
+          request,
+        });
+        return reply.send({ restoration: result });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Restore failed";
+        return reply
+          .code(message.includes("not found") ? 404 : 400)
+          .send({ message });
+      }
     }
   );
 
