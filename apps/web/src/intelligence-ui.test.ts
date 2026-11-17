@@ -202,7 +202,7 @@ describe('job matcher evaluation UX v2', () => {
     expect(src).toContain('job-matcher-multi-policy-comparison')
     expect(src).toContain('Performance Score')
     expect(src).toContain('job-matcher-display-policy')
-    expect(src).toContain('selectAdjustedPolicyView')
+    expect(src).toContain('selectCorrectedPolicyView')
     expect(src).toContain('availableEvalPolicies')
     expect(src).toContain('onSelectModelPolicy')
     expect(src).toContain('displayMetrics')

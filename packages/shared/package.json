@@ -35,6 +35,11 @@
       "import": "./src/jobs/job-match-policy-registry.ts",
       "default": "./src/jobs/job-match-policy-registry.ts"
     },
+    "./jobs/job-match-eval-ground-truth-corrections": {
+      "types": "./src/jobs/job-match-eval-ground-truth-corrections.ts",
+      "import": "./src/jobs/job-match-eval-ground-truth-corrections.ts",
+      "default": "./src/jobs/job-match-eval-ground-truth-corrections.ts"
+    },
     "./jobs/job-match-eval-exclusions": {
       "types": "./src/jobs/job-match-eval-exclusions.ts",
       "import": "./src/jobs/job-match-eval-exclusions.ts",

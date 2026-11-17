@@ -50,10 +50,12 @@ import {
   jobMatcherEvalExportFilename,
 } from '../job-matcher-eval-export'
 import {
-  adjustedPolicyBundles,
-  selectAdjustedPolicyView,
-  type JobMatcherEvalExclusion,
-} from '../job-matcher-eval-exclusions'
+  correctedPolicyBundles,
+  markCorrectEligibility,
+  optimisticCorrection,
+  selectCorrectedPolicyView,
+  type JobMatcherEvalGroundTruthCorrection,
+} from '../job-matcher-eval-ground-truth-corrections'
 import {
   areMetricSetsComparable,
   computeMetricDelta,
@@ -96,7 +98,6 @@ type OutcomeFilter =
   | 'AMBIGUOUS'
   | 'CONFLICT'
   | 'NO_MATCH'
-  | 'EXCLUDED'
 type ResultsView = 'emails' | 'jobs'
 type PanelTab = 'emails' | 'jobs' | 'diagnostics'
 
@@ -164,10 +165,20 @@ export function JobMatcherEvaluationPanel({
   const [result, setResult] = useState<JobMatcherEvalResult | null>(
     () => sessionSeed?.result ?? null
   )
-  /** Run-scoped exclusions — same email ids apply to every policy in the run. */
-  const [exclusions, setExclusions] = useState<JobMatcherEvalExclusion[]>([])
-  const [exclusionBusyId, setExclusionBusyId] = useState<string | null>(null)
-  const [exclusionError, setExclusionError] = useState<string | null>(null)
+  /**
+   * Verified ground-truth corrections (workspace-scoped ACTIVE). Apply to every
+   * model on the email; never remove emails from the denominator.
+   */
+  const [groundTruthCorrections, setGroundTruthCorrections] = useState<
+    JobMatcherEvalGroundTruthCorrection[]
+  >([])
+  const [correctionBusyId, setCorrectionBusyId] = useState<string | null>(null)
+  const [correctionError, setCorrectionError] = useState<string | null>(null)
+  /** Row awaiting Confirm Correct (current GT vs model prediction). */
+  const [pendingCorrectionRow, setPendingCorrectionRow] =
+    useState<JobMatcherEvalRow | null>(null)
+  /** Debug toggle: show raw labels instead of corrected ground truth. */
+  const [showOriginalLabels, setShowOriginalLabels] = useState(false)
   /** Matcher version for metrics + email rows (does not re-run evaluation). */
   const [selectedViewPolicy, setSelectedViewPolicy] =
     useState<JobMatcherIdentityPolicy | null>(() =>
@@ -269,7 +280,7 @@ export function JobMatcherEvaluationPanel({
         modelSelectionMode: modelSelection.mode,
         selectedPolicyIds: [...modelSelection.selectedPolicyIds],
       },
-      outcomeFilter: outcomeFilter === 'EXCLUDED' ? 'ALL' : outcomeFilter,
+      outcomeFilter,
       transitionFilter: transitionFilter === 'ALL' ? null : transitionFilter,
       resultsView,
       selectedEmailMessageId: selectedRow?.emailMessageId ?? null,
@@ -453,8 +464,9 @@ export function JobMatcherEvaluationPanel({
     setTransitionFilter('ALL')
     setResultsView('emails')
     setResult(null)
-    setExclusions([])
-    setExclusionError(null)
+    setGroundTruthCorrections([])
+    setCorrectionError(null)
+    setPendingCorrectionRow(null)
     const evaluationRunId = newEvaluationRunId()
     const startedAt = Date.now()
     const identityPolicies = [...modelSelection.selectedPolicyIds]
@@ -504,7 +516,7 @@ export function JobMatcherEvaluationPanel({
     try {
       const evaluation = await promise
       setResult(evaluation)
-      setExclusions([])
+      setGroundTruthCorrections([])
       setResultsCollapsed(true)
       const scored = availableEvalPolicies(evaluation)
       const preferCompare =
@@ -522,11 +534,11 @@ export function JobMatcherEvaluationPanel({
         jobFilterId: null,
         resultsCollapsed: true,
       })
-      // Persist may race slightly; load exclusions (empty) after run is saved.
+      // Persist may race slightly; load workspace corrections for these emails once saved.
       if (evaluation.evaluationRunId) {
         void api
-          .listJobMatcherEvalExclusions(workspaceId, evaluation.evaluationRunId)
-          .then((res) => setExclusions(res.exclusions))
+          .listJobMatcherEvalGroundTruthCorrections(workspaceId, evaluation.evaluationRunId)
+          .then((res) => setGroundTruthCorrections(res.groundTruthCorrections))
           .catch(() => {
             /* run may still be persisting */
           })
@@ -542,15 +554,15 @@ export function JobMatcherEvaluationPanel({
     }
   }
 
-  // Reload exclusions (and optionally the persisted run) when a result is present.
+  // Reload verified ground-truth corrections when a result is present.
   useEffect(() => {
     const runId = result?.evaluationRunId
     if (!runId || !workspaceId) return
     let cancelled = false
     void api
-      .listJobMatcherEvalExclusions(workspaceId, runId)
+      .listJobMatcherEvalGroundTruthCorrections(workspaceId, runId)
       .then((res) => {
-        if (!cancelled) setExclusions(res.exclusions)
+        if (!cancelled) setGroundTruthCorrections(res.groundTruthCorrections)
       })
       .catch(() => {
         /* older runs without persistence */
@@ -563,22 +575,29 @@ export function JobMatcherEvaluationPanel({
   const policyView = useMemo(
     () =>
       result
-        ? selectAdjustedPolicyView(result, selectedViewPolicy, exclusions)
+        ? selectCorrectedPolicyView(result, selectedViewPolicy, groundTruthCorrections, {
+            useOriginalGroundTruth: showOriginalLabels,
+          })
         : null,
-    [result, selectedViewPolicy, exclusions]
+    [result, selectedViewPolicy, groundTruthCorrections, showOriginalLabels]
   )
 
   const viewRows = policyView?.available ? policyView.rows : []
-  const excludedRows = policyView?.available ? policyView.excludedRows : []
   const viewMetrics = policyView?.available ? policyView.metrics : null
   const rawMetrics = policyView?.available ? policyView.rawMetrics : null
-  const excludedCount = policyView?.available ? policyView.excludedCount : 0
-  const excludedIdSet = useMemo(
-    () => new Set(exclusions.map((e) => e.emailMessageId)),
-    [exclusions]
-  )
+  /** Corrections applied to the displayed rows (0 when showing original labels). */
+  const correctionCount = policyView?.available ? policyView.correctionCount : 0
+  /** ACTIVE corrections keyed by email (independent of the original-labels toggle). */
+  const activeCorrectionByEmail = useMemo(() => {
+    const map = new Map<string, JobMatcherEvalGroundTruthCorrection>()
+    for (const c of groundTruthCorrections) {
+      if (c.verificationStatus === 'ACTIVE') map.set(c.emailMessageId, c)
+    }
+    return map
+  }, [groundTruthCorrections])
+  const totalActiveCorrections = activeCorrectionByEmail.size
 
-  /** Result shaped for list/diagnostics/jobs tabs under the selected matcher (adjusted). */
+  /** Result shaped for list/diagnostics/jobs tabs under the selected matcher (corrected). */
   const viewResult = useMemo((): JobMatcherEvalResult | null => {
     if (!result || !policyView?.available) return result
     return {
@@ -602,8 +621,7 @@ export function JobMatcherEvaluationPanel({
   // Keep inspector on the same email when switching matchers (update to that policy's row).
   useEffect(() => {
     if (!selectedRow || !policyView?.available) return
-    const pool = [...policyView.rows, ...policyView.excludedRows]
-    const next = pool.find((r) => r.emailMessageId === selectedRow.emailMessageId)
+    const next = policyView.rows.find((r) => r.emailMessageId === selectedRow.emailMessageId)
     if (next && next !== selectedRow) setSelectedRow(next)
     if (!next) setSelectedRow(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when policy rows change
@@ -625,12 +643,6 @@ export function JobMatcherEvaluationPanel({
     const baseline =
       result.multiPolicyComparison?.baselinePolicy ??
       getProductionJobMatchIdentityPolicy()
-    if (outcomeFilter === 'EXCLUDED') {
-      return excludedRows.filter((row) => {
-        if (jobFilterId && row.trueJobId !== jobFilterId) return false
-        return true
-      })
-    }
     return viewRows.filter((row) => {
       if (outcomeFilter !== 'ALL' && row.outcome !== outcomeFilter) return false
       if (jobFilterId && row.trueJobId !== jobFilterId) return false
@@ -669,7 +681,6 @@ export function JobMatcherEvaluationPanel({
     result,
     policyView,
     viewRows,
-    excludedRows,
     outcomeFilter,
     jobFilterId,
     failureFilter,
@@ -678,56 +689,81 @@ export function JobMatcherEvaluationPanel({
     emailCompareFilter,
   ])
 
-  const toggleExclusion = async (emailMessageId: string) => {
+  /** Open the confirmation dialog for a MATCH prediction (filters/selection are preserved). */
+  const requestMarkCorrect = (row: JobMatcherEvalRow) => {
+    if (markCorrectEligibility(row) !== 'eligible') return
+    setCorrectionError(null)
+    setPendingCorrectionRow(row)
+  }
+
+  /** Verify the pending model prediction as the true Job for every model on that email. */
+  const confirmMarkCorrect = async () => {
+    const row = pendingCorrectionRow
     const runId = result?.evaluationRunId
+    if (!row || !row.predictedJobId) return
     if (!runId) {
-      setExclusionError('Evaluation run id missing — re-run evaluation to enable exclusions.')
+      setCorrectionError('Evaluation run id missing — re-run evaluation to mark ground truth.')
+      setPendingCorrectionRow(null)
       return
     }
-    const previouslyExcluded = excludedIdSet.has(emailMessageId)
-    setExclusionError(null)
-    setExclusionBusyId(emailMessageId)
-    // Optimistic update
-    if (previouslyExcluded) {
-      setExclusions((prev) => prev.filter((e) => e.emailMessageId !== emailMessageId))
-    } else {
-      setExclusions((prev) => [
-        ...prev,
-        {
-          id: `optimistic-${emailMessageId}`,
-          evaluationRunId: runId,
-          emailMessageId,
-          excludedByUserId: userId ?? null,
-          reason: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ])
-    }
+    const emailMessageId = row.emailMessageId
+    const previous = groundTruthCorrections
+    setCorrectionError(null)
+    setCorrectionBusyId(emailMessageId)
+    // Optimistic: replace any prior ACTIVE correction for this email.
+    setGroundTruthCorrections((prev) => [
+      ...prev.filter((c) => c.emailMessageId !== emailMessageId),
+      optimisticCorrection({
+        row,
+        evaluationRunId: runId,
+        originalGroundTruthJobId: row.originalTrueJobId ?? row.trueJobId,
+        userId: userId ?? null,
+        sourceModelPolicy: row.identityPolicy ?? selectedViewPolicy,
+      }),
+    ])
+    setPendingCorrectionRow(null)
     try {
-      if (previouslyExcluded) {
-        await api.restoreJobMatcherEvalEmail(workspaceId, runId, emailMessageId)
-      } else {
-        const res = await api.excludeJobMatcherEvalEmail(workspaceId, runId, {
-          emailMessageId,
-        })
-        setExclusions((prev) => {
-          const without = prev.filter((e) => e.emailMessageId !== emailMessageId)
-          return [...without, res.exclusion]
-        })
-      }
+      const res = await api.verifyJobMatcherEvalGroundTruthCorrection(workspaceId, runId, {
+        emailMessageId,
+        correctedGroundTruthJobId: row.predictedJobId,
+        ...((row.identityPolicy ?? selectedViewPolicy)
+          ? { sourceModelPolicy: (row.identityPolicy ?? selectedViewPolicy) as string }
+          : {}),
+      })
+      setGroundTruthCorrections((prev) => [
+        ...prev.filter((c) => c.emailMessageId !== emailMessageId),
+        res.groundTruthCorrection,
+      ])
     } catch (e) {
-      // Roll back optimistic state
-      if (previouslyExcluded) {
-        void api
-          .listJobMatcherEvalExclusions(workspaceId, runId)
-          .then((res) => setExclusions(res.exclusions))
-      } else {
-        setExclusions((prev) => prev.filter((e) => e.emailMessageId !== emailMessageId))
-      }
-      setExclusionError(e instanceof Error ? e.message : 'Failed to update exclusion')
+      setGroundTruthCorrections(previous)
+      setCorrectionError(
+        e instanceof Error ? e.message : 'Failed to mark ground truth correct'
+      )
     } finally {
-      setExclusionBusyId(null)
+      setCorrectionBusyId(null)
+    }
+  }
+
+  /** Undo a verified correction (restores original ground truth for all models). */
+  const undoMarkCorrect = async (emailMessageId: string) => {
+    const runId = result?.evaluationRunId
+    if (!runId) {
+      setCorrectionError('Evaluation run id missing — re-run evaluation to undo.')
+      return
+    }
+    const previous = groundTruthCorrections
+    setCorrectionError(null)
+    setCorrectionBusyId(emailMessageId)
+    setGroundTruthCorrections((prev) =>
+      prev.filter((c) => c.emailMessageId !== emailMessageId)
+    )
+    try {
+      await api.reverseJobMatcherEvalGroundTruthCorrection(workspaceId, runId, emailMessageId)
+    } catch (e) {
+      setGroundTruthCorrections(previous)
+      setCorrectionError(e instanceof Error ? e.message : 'Failed to undo correction')
+    } finally {
+      setCorrectionBusyId(null)
     }
   }
 
@@ -745,27 +781,11 @@ export function JobMatcherEvaluationPanel({
       }
     : undefined
 
-  const exclusionMetaByEmailId = useMemo(() => {
-    const map = new Map<
-      string,
-      { createdAt?: string | null; reason?: string | null }
-    >()
-    for (const ex of exclusions) {
-      map.set(ex.emailMessageId, {
-        createdAt: ex.createdAt,
-        reason: ex.reason,
-      })
-    }
-    return map
-  }, [exclusions])
-
   const detailedExportMeta = result
     ? {
         evaluationRunId: result.evaluationRunId ?? null,
         identityPolicy: viewingPolicy,
         datasetFingerprint: result.datasetFingerprint ?? null,
-        excludedEmailIds: excludedIdSet,
-        exclusionMetaByEmailId,
       }
     : undefined
 
@@ -785,7 +805,7 @@ export function JobMatcherEvaluationPanel({
         jobMatcherEvalExportFilename('summary', 'csv', exportMeta),
         buildEvalSummaryCsv(viewResult ?? result, {
           rawMetrics,
-          excludedCount,
+          groundTruthCorrectionCount: correctionCount,
         }),
         'text/csv;charset=utf-8'
       )
@@ -846,11 +866,10 @@ export function JobMatcherEvaluationPanel({
         setError(integrity.message)
         return
       }
-      // Full detail includes excluded rows (flagged) so they are not silently omitted.
-      const allRows = [...policyView.rows, ...policyView.excludedRows]
+      // Every row is exported (denominator never reduced by corrections).
       downloadTextFile(
         jobMatcherEvalExportFilename('detailed', 'csv', exportMeta),
-        buildEvalDetailedCsv(allRows, detailedExportMeta),
+        buildEvalDetailedCsv(policyView.rows, detailedExportMeta),
         'text/csv;charset=utf-8'
       )
       return
@@ -858,7 +877,7 @@ export function JobMatcherEvaluationPanel({
     downloadTextFile(
       jobMatcherEvalExportFilename('full', 'json', exportMeta),
       buildEvalFullJson(result, {
-        exclusions,
+        groundTruthCorrections,
         rawMetrics,
         adjustedMetrics: viewMetrics,
       }),
@@ -905,7 +924,9 @@ export function JobMatcherEvaluationPanel({
     if (!result || availablePolicies.length < 2) {
       return {} as Partial<Record<JobMatcherIdentityPolicy, EvalOutcomeMetricsLite>>
     }
-    const bundles = adjustedPolicyBundles(result, exclusions)
+    const bundles = correctedPolicyBundles(result, groundTruthCorrections, {
+      useOriginalGroundTruth: showOriginalLabels,
+    })
     const out: Partial<Record<JobMatcherIdentityPolicy, EvalOutcomeMetricsLite>> =
       {}
     for (const b of bundles) {
@@ -925,7 +946,7 @@ export function JobMatcherEvaluationPanel({
       }
     }
     return out
-  }, [result, exclusions, availablePolicies.length])
+  }, [result, groundTruthCorrections, showOriginalLabels, availablePolicies.length])
 
   const effectiveDeltaBaseline =
     deltaBaselinePolicy && availablePolicies.includes(deltaBaselinePolicy)
@@ -1551,11 +1572,6 @@ export function JobMatcherEvaluationPanel({
                 />
                 <Metric label="Evaluated" value={m.totalEvaluated} />
                 <Metric
-                  label="Excluded"
-                  value={excludedCount}
-                  tone={excludedCount > 0 ? 'warning' : undefined}
-                />
-                <Metric
                   label="Correct"
                   value={m.correctMatches}
                   tone="positive"
@@ -1621,21 +1637,27 @@ export function JobMatcherEvaluationPanel({
                   delta={cardDelta(activeModelDelta, m, 'noMatchRate', 'rate', 'lowerBetter')}
                 />
               </div>
-            {rawMetrics && excludedCount > 0 ? (
+            {rawMetrics && totalActiveCorrections > 0 ? (
               <div
-                data-testid="job-matcher-raw-vs-adjusted"
+                data-testid="job-matcher-gt-corrected-note"
                 style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}
               >
-                Showing adjusted Performance Score ({jmps.display}
-                {rawJmps ? `; raw ${rawJmps.display}` : ''}). Adjusted metrics
-                exclude {excludedCount} email
-                {excludedCount === 1 ? '' : 's'}. Raw evaluated{' '}
-                {rawMetrics.totalEvaluated}
-                {rawMetrics.precision != null
-                  ? ` · raw precision ${(rawMetrics.precision * 100).toFixed(2)}%`
+                <strong style={{ color: '#065f46' }}>
+                  {showOriginalLabels ? 'Original labels' : 'Corrected ground truth'}
+                </strong>
+                {' · '}
+                {totalActiveCorrections} verified correction
+                {totalActiveCorrections === 1 ? '' : 's'} (all emails stay in the
+                denominator: {rawMetrics.totalEvaluated}). Performance Score{' '}
+                {jmps.display}
+                {rawJmps && !showOriginalLabels
+                  ? `; original ${rawJmps.display}`
+                  : ''}
+                {rawMetrics.precision != null && !showOriginalLabels
+                  ? ` · original precision ${(rawMetrics.precision * 100).toFixed(2)}%`
                   : ''}
                 {m.precision != null
-                  ? ` · adjusted precision ${(m.precision * 100).toFixed(2)}%`
+                  ? ` · ${showOriginalLabels ? 'original' : 'corrected'} precision ${(m.precision * 100).toFixed(2)}%`
                   : ''}
                 .
               </div>
@@ -1644,12 +1666,33 @@ export function JobMatcherEvaluationPanel({
                 )
               })()
             ) : null}
-            {exclusionError ? (
+            {totalActiveCorrections > 0 ? (
+              <label
+                data-testid="job-matcher-show-original-labels"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 11,
+                  color: '#6b7280',
+                  marginTop: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showOriginalLabels}
+                  onChange={(e) => setShowOriginalLabels(e.target.checked)}
+                />
+                Show original labels
+              </label>
+            ) : null}
+            {correctionError ? (
               <div
                 role="alert"
                 style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}
               >
-                {exclusionError}
+                {correctionError}
               </div>
             ) : null}
           </div>
@@ -1839,10 +1882,10 @@ export function JobMatcherEvaluationPanel({
                 setInspectorTab('match')
               }
             }}
-            excludedEmailIds={excludedIdSet}
-            exclusionBusyId={exclusionBusyId}
-            onToggleExclusion={toggleExclusion}
-            excludedCount={excludedCount}
+            correctionByEmailId={activeCorrectionByEmail}
+            correctionBusyId={correctionBusyId}
+            onMarkCorrect={requestMarkCorrect}
+            onUndoCorrect={undoMarkCorrect}
           />
         </div>
         <div
@@ -1873,6 +1916,10 @@ export function JobMatcherEvaluationPanel({
               inspectorTab={inspectorTab}
               setInspectorTab={setInspectorTab}
               onClose={() => setSelectedRow(null)}
+              correction={activeCorrectionByEmail.get(selectedRow.emailMessageId) ?? null}
+              correctionBusy={correctionBusyId === selectedRow.emailMessageId}
+              onMarkCorrect={requestMarkCorrect}
+              onUndoCorrect={undoMarkCorrect}
             />
           ) : (
             <div
@@ -1895,6 +1942,172 @@ export function JobMatcherEvaluationPanel({
         </div>
       </div>
         ) : null}
+      </div>
+      {pendingCorrectionRow ? (
+        <ConfirmCorrectDialog
+          row={pendingCorrectionRow}
+          busy={correctionBusyId === pendingCorrectionRow.emailMessageId}
+          onCancel={() => setPendingCorrectionRow(null)}
+          onConfirm={() => void confirmMarkCorrect()}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+type RowCorrectionState = 'verified' | 'eligible' | 'verified-other' | 'none'
+
+/**
+ * Per-row Mark Correct state. `verified` = this model's MATCH is the verified GT;
+ * `verified-other` = email has a verified GT this model did not predict.
+ */
+function rowCorrectionState(
+  row: JobMatcherEvalRow,
+  correction: JobMatcherEvalGroundTruthCorrection | null
+): RowCorrectionState {
+  if (
+    correction &&
+    row.decision === 'MATCH' &&
+    row.predictedJobId === correction.correctedGroundTruthJobId
+  ) {
+    return 'verified'
+  }
+  if (markCorrectEligibility(row) === 'eligible') return 'eligible'
+  return correction ? 'verified-other' : 'none'
+}
+
+function GroundTruthActions(props: {
+  row: JobMatcherEvalRow
+  state: RowCorrectionState
+  busy: boolean
+  disabled?: boolean
+  onMarkCorrect: () => void
+  onUndo: () => void
+}) {
+  const id = props.row.emailMessageId
+  const small: CSSProperties = { ...chipBtn, cursor: props.busy ? 'wait' : 'pointer' }
+  if (props.state === 'none') {
+    return <span style={{ color: '#9ca3af', fontSize: 11 }}>—</span>
+  }
+  return (
+    <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+      {props.state === 'eligible' ? (
+        <button
+          type="button"
+          data-testid={`eval-mark-correct-${id}`}
+          title="Verify this model prediction as the true Job (updates ground truth for all models)"
+          disabled={props.busy || props.disabled}
+          onClick={props.onMarkCorrect}
+          style={small}
+        >
+          Mark Correct
+        </button>
+      ) : (
+        <span
+          data-testid={`eval-verified-${id}`}
+          title={
+            props.state === 'verified'
+              ? 'This prediction was verified as the true Job'
+              : 'Ground truth for this email was corrected via a verified prediction'
+          }
+          style={{ color: '#047857', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}
+        >
+          ✓ {props.state === 'verified' ? 'Verified Correct' : 'Verified GT'}
+        </span>
+      )}
+      {props.state !== 'eligible' ? (
+        <button
+          type="button"
+          data-testid={`eval-undo-correct-${id}`}
+          title="Undo verified correction"
+          disabled={props.busy || props.disabled}
+          onClick={props.onUndo}
+          style={small}
+        >
+          Undo
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function ConfirmCorrectDialog(props: {
+  row: JobMatcherEvalRow
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { row } = props
+  const jobLabel = (number: string | null | undefined, name: string | null | undefined, id: string | null) =>
+    [number, name].filter(Boolean).join(' · ') || id || '—'
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="job-matcher-mark-correct-title"
+      data-testid="job-matcher-mark-correct-dialog"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(17,24,39,0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+      onClick={props.onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 10,
+          padding: 18,
+          width: 'min(480px, 92vw)',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+          fontSize: 13,
+          color: '#111827',
+        }}
+      >
+        <h3 id="job-matcher-mark-correct-title" style={{ margin: '0 0 8px', fontSize: 15 }}>
+          Mark model prediction as correct?
+        </h3>
+        <div style={{ color: '#4b5563', marginBottom: 10 }}>
+          {row.subject || '(no subject)'}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px' }}>
+          <span style={{ color: '#6b7280' }}>Current ground truth</span>
+          <strong>{jobLabel(row.trueJobNumber, row.trueJobName, row.trueJobId)}</strong>
+          <span style={{ color: '#6b7280' }}>Model prediction</span>
+          <strong>
+            {jobLabel(row.predictedJobNumber, row.predictedJobName, row.predictedJobId)}
+          </strong>
+        </div>
+        <p style={{ margin: '10px 0 14px', color: '#6b7280', fontSize: 12 }}>
+          This updates the evaluation ground truth for this email across all models. The
+          email stays in the denominator. Production Job assignments and matcher policies
+          are not changed.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            type="button"
+            data-testid="job-matcher-mark-correct-cancel"
+            onClick={props.onCancel}
+            disabled={props.busy}
+            style={chipBtn}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="job-matcher-mark-correct-confirm"
+            onClick={props.onConfirm}
+            disabled={props.busy}
+            style={{ ...chipBtn, background: '#047857', color: '#fff', borderColor: '#047857' }}
+          >
+            Confirm Correct
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -1948,10 +2161,10 @@ function ResultsPane(props: {
   onScrollSave?: (scrollTop: number) => void
   onApplyFailureFilter: (cat: JobMatcherEvalFailureCategory) => void
   onApplyConfusion: (actualJobId: string, predictedJobId: string) => void
-  excludedEmailIds: ReadonlySet<string>
-  exclusionBusyId: string | null
-  onToggleExclusion: (emailMessageId: string) => void
-  excludedCount: number
+  correctionByEmailId: ReadonlyMap<string, JobMatcherEvalGroundTruthCorrection>
+  correctionBusyId: string | null
+  onMarkCorrect: (row: JobMatcherEvalRow) => void
+  onUndoCorrect: (emailMessageId: string) => void
 }) {
   const showModelTabs = shouldShowResultModelTabs(props.modelPolicies)
   return (
@@ -2067,7 +2280,6 @@ function ResultsPane(props: {
                 ['CONFLICT', 'Conflict'],
                 ['NO_MATCH', 'None'],
                 ['CORRECT_MATCH', 'Correct'],
-                ['EXCLUDED', `Excluded${props.excludedCount ? ` (${props.excludedCount})` : ''}`],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -2197,15 +2409,16 @@ function ResultsPane(props: {
                 <th style={th}>Subject</th>
                 <th style={th}>Historical → Predicted</th>
                 <th style={th}>Resolved by</th>
-                <th style={{ ...th, width: 44, textAlign: 'center' }}>Excl.</th>
+                <th style={{ ...th, width: 120, textAlign: 'center' }}>Ground truth</th>
               </tr>
             </thead>
             <tbody>
               {props.filteredRows.map((row) => {
                 const selected = props.selectedRow?.emailMessageId === row.emailMessageId
                 const d = row.diagnostics
-                const excluded = props.excludedEmailIds.has(row.emailMessageId)
-                const busy = props.exclusionBusyId === row.emailMessageId
+                const correction = props.correctionByEmailId.get(row.emailMessageId) ?? null
+                const gtState = rowCorrectionState(row, correction)
+                const busy = props.correctionBusyId === row.emailMessageId
                 return (
                   <tr
                     key={row.emailMessageId}
@@ -2214,7 +2427,6 @@ function ResultsPane(props: {
                     style={{
                       cursor: 'pointer',
                       background: selected ? '#dbeafe' : undefined,
-                      opacity: excluded ? 0.55 : 1,
                     }}
                   >
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -2243,41 +2455,17 @@ function ResultsPane(props: {
                       )}
                     </td>
                     <td
-                      style={{ ...td, textAlign: 'center', width: 44 }}
+                      style={{ ...td, textAlign: 'center', width: 120 }}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        data-testid={`eval-exclude-${row.emailMessageId}`}
-                        aria-label={
-                          excluded
-                            ? 'Restore to evaluation'
-                            : 'Exclude from evaluation'
-                        }
-                        title={
-                          excluded
-                            ? 'Restore to evaluation'
-                            : 'Exclude from evaluation'
-                        }
-                        disabled={busy || !props.result?.evaluationRunId}
-                        onClick={() => props.onToggleExclusion(row.emailMessageId)}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 6,
-                          border: excluded
-                            ? '1px solid #2563eb'
-                            : '1px solid #d1d5db',
-                          background: excluded ? '#2563eb' : '#fff',
-                          color: excluded ? '#fff' : '#6b7280',
-                          cursor: busy ? 'wait' : 'pointer',
-                          fontSize: 14,
-                          lineHeight: 1,
-                          padding: 0,
-                        }}
-                      >
-                        {excluded ? '✓' : '○'}
-                      </button>
+                      <GroundTruthActions
+                        row={row}
+                        state={gtState}
+                        busy={busy}
+                        disabled={!props.result?.evaluationRunId}
+                        onMarkCorrect={() => props.onMarkCorrect(row)}
+                        onUndo={() => props.onUndoCorrect(row.emailMessageId)}
+                      />
                     </td>
                   </tr>
                 )
@@ -2547,6 +2735,10 @@ function EmailInspector({
   inspectorTab,
   setInspectorTab,
   onClose,
+  correction,
+  correctionBusy,
+  onMarkCorrect,
+  onUndoCorrect,
 }: {
   workspaceId: string
   userId?: string
@@ -2557,7 +2749,12 @@ function EmailInspector({
   inspectorTab: 'email' | 'match'
   setInspectorTab: (t: 'email' | 'match') => void
   onClose: () => void
+  correction: JobMatcherEvalGroundTruthCorrection | null
+  correctionBusy: boolean
+  onMarkCorrect: (row: JobMatcherEvalRow) => void
+  onUndoCorrect: (emailMessageId: string) => void
 }) {
+  const gtState = rowCorrectionState(row, correction)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [email, setEmail] = useState<
@@ -2651,6 +2848,16 @@ function EmailInspector({
             {row.trueJobName}
           </strong>
           <span style={{ color: '#9ca3af' }}> · {row.jobAssignmentSource || '—'} · GT {groundTruthQuality}</span>
+          {row.groundTruthCorrected && row.originalTrueJobId ? (
+            <span
+              data-testid="eval-gt-corrected-note"
+              style={{ color: '#047857' }}
+              title={`Original ground truth job id: ${row.originalTrueJobId}`}
+            >
+              {' '}
+              · corrected from original ground truth
+            </span>
+          ) : null}
         </div>
         <div>
           <span style={{ color: '#6b7280' }}>Predicted: </span>
@@ -2665,6 +2872,17 @@ function EmailInspector({
             {row.resolvingMarker ? ` · ${row.resolvingMarker}` : ''}
           </span>
         </div>
+        {gtState !== 'none' ? (
+          <div data-testid="eval-inspector-ground-truth" style={{ marginTop: 2 }}>
+            <GroundTruthActions
+              row={row}
+              state={gtState}
+              busy={correctionBusy}
+              onMarkCorrect={() => onMarkCorrect(row)}
+              onUndo={() => onUndoCorrect(row.emailMessageId)}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div

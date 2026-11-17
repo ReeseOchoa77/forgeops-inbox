@@ -6,6 +6,11 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import type { JobMatcherHistoricalEvalResult } from "./run-job-matcher-historical-eval.js";
 import { AuditEventLogger } from "./audit-event-logger.js";
 import type { FastifyRequest } from "fastify";
+import {
+  collectEvalRunEmailIds,
+  listActiveJobMatcherEvalGroundTruthCorrections,
+  type JobMatcherEvalGroundTruthCorrectionDto,
+} from "./job-matcher-eval-ground-truth-corrections.js";
 
 export type JobMatcherEvalExclusionDto = {
   id: string;
@@ -57,6 +62,8 @@ export async function getJobMatcherEvalRun(input: {
 }): Promise<{
   evaluation: JobMatcherHistoricalEvalResult;
   exclusions: JobMatcherEvalExclusionDto[];
+  /** ACTIVE verified ground-truth corrections (workspace-scoped) for emails in this run. */
+  groundTruthCorrections: JobMatcherEvalGroundTruthCorrectionDto[];
 } | null> {
   const run = await input.prisma.jobMatcherEvalRun.findFirst({
     where: {
@@ -68,9 +75,16 @@ export async function getJobMatcherEvalRun(input: {
     },
   });
   if (!run) return null;
+  const groundTruthCorrections =
+    await listActiveJobMatcherEvalGroundTruthCorrections({
+      prisma: input.prisma,
+      workspaceId: input.workspaceId,
+      emailMessageIds: collectEvalRunEmailIds(run.resultJson),
+    });
   return {
     evaluation: run.resultJson as unknown as JobMatcherHistoricalEvalResult,
     exclusions: run.exclusions.map(mapExclusion),
+    groundTruthCorrections,
   };
 }
 

@@ -3096,8 +3096,42 @@ export const api = {
     request<{
       evaluation: JobMatcherEvalResult
       exclusions: JobMatcherEvalExclusionDto[]
+      groundTruthCorrections: JobMatcherEvalGroundTruthCorrectionDto[]
     }>(
       `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}`
+    ),
+
+  listJobMatcherEvalGroundTruthCorrections: (
+    workspaceId: string,
+    evaluationRunId: string
+  ) =>
+    request<{ groundTruthCorrections: JobMatcherEvalGroundTruthCorrectionDto[] }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/ground-truth-corrections`
+    ),
+
+  verifyJobMatcherEvalGroundTruthCorrection: (
+    workspaceId: string,
+    evaluationRunId: string,
+    body: {
+      emailMessageId: string
+      correctedGroundTruthJobId: string
+      sourceModelPolicy?: string
+      note?: string
+    }
+  ) =>
+    request<{ groundTruthCorrection: JobMatcherEvalGroundTruthCorrectionDto }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/ground-truth-corrections`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  reverseJobMatcherEvalGroundTruthCorrection: (
+    workspaceId: string,
+    evaluationRunId: string,
+    emailMessageId: string
+  ) =>
+    request<{ reversed: boolean }>(
+      `/workspaces/${workspaceId}/intelligence/job-matcher/evaluate/${encodeURIComponent(evaluationRunId)}/ground-truth-corrections/${encodeURIComponent(emailMessageId)}`,
+      { method: 'DELETE' }
     ),
 
   listJobMatcherEvalExclusions: (workspaceId: string, evaluationRunId: string) =>
@@ -5379,6 +5413,10 @@ export interface JobMatcherEvalRow {
     v25Diagnostics?: JobMatcherV25Diagnostics
   } | null
   diagnostics?: JobMatcherEvalRowDiagnostics
+  /** Set client-side when a verified ground-truth correction is applied. */
+  originalTrueJobId?: string
+  groundTruthCorrected?: boolean
+  effectiveTrueJobId?: string
 }
 
 export interface JobMatcherEvalDiagnostics {
@@ -5765,6 +5803,26 @@ export interface JobMatcherEvalExclusionDto {
   emailMessageId: string
   excludedByUserId: string | null
   reason: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** Verified ground-truth correction (eval only; never edits EmailMessage.jobId). */
+export interface JobMatcherEvalGroundTruthCorrectionDto {
+  id: string
+  emailMessageId: string
+  originalGroundTruthJobId: string
+  correctedGroundTruthJobId: string
+  correctedJobName: string | null
+  correctedJobNumber: string | null
+  verificationStatus: 'ACTIVE' | 'REVERSED'
+  verifiedAt: string
+  verifiedByUserId: string | null
+  sourceEvaluationRunId: string | null
+  sourceModelPolicy: string | null
+  note: string | null
+  reversedAt: string | null
+  reversedByUserId: string | null
   createdAt: string
   updatedAt: string
 }

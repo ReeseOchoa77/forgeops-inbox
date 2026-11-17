@@ -19,6 +19,10 @@ import {
   persistJobMatcherEvalRun,
   restoreJobMatcherEvalEmail,
 } from "../../../application/services/job-matcher-eval-exclusions.js";
+import {
+  reverseJobMatcherEvalGroundTruthCorrection,
+  verifyJobMatcherEvalGroundTruthCorrection,
+} from "../../../application/services/job-matcher-eval-ground-truth-corrections.js";
 import { runJobMatcherTestOne } from "../../../application/services/run-job-matcher-test-one.js";
 import { loadIntelligenceEvalEmail } from "../../../application/services/load-intelligence-eval-email.js";
 import {
@@ -466,6 +470,103 @@ export const registerIntelligenceRoutes = async (
         prisma: app.services.prisma,
         workspaceId: params.workspaceId,
         evaluationRunId: params.evaluationRunId,
+        emailMessageId: params.emailMessageId,
+        actorUserId: auth.userId,
+        request,
+      });
+      return reply.send(result);
+    }
+  );
+
+  const gtCorrectionRunParams = z.object({
+    workspaceId: z.string().min(1),
+    evaluationRunId: z.string().uuid(),
+  });
+
+  /** List ACTIVE verified ground-truth corrections for emails in this evaluation run. */
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections",
+    async (request, reply) => {
+      const params = gtCorrectionRunParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const run = await getJobMatcherEvalRun({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
+        evaluationRunId: params.evaluationRunId,
+      });
+      if (!run) {
+        return reply.code(404).send({ message: "Evaluation run not found" });
+      }
+      return reply.send({ groundTruthCorrections: run.groundTruthCorrections });
+    }
+  );
+
+  /** Verify a model MATCH prediction as the true Job (eval ground truth only). */
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections",
+    async (request, reply) => {
+      const params = gtCorrectionRunParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const body = z
+        .object({
+          emailMessageId: z.string().min(1),
+          correctedGroundTruthJobId: z.string().min(1),
+          sourceModelPolicy: z.string().max(100).optional(),
+          note: z.string().max(500).optional(),
+        })
+        .parse(request.body);
+      try {
+        const groundTruthCorrection =
+          await verifyJobMatcherEvalGroundTruthCorrection({
+            prisma: app.services.prisma,
+            workspaceId: params.workspaceId,
+            evaluationRunId: params.evaluationRunId,
+            emailMessageId: body.emailMessageId,
+            correctedGroundTruthJobId: body.correctedGroundTruthJobId,
+            sourceModelPolicy: body.sourceModelPolicy ?? null,
+            note: body.note ?? null,
+            actorUserId: auth.userId,
+            request,
+          });
+        return reply.send({ groundTruthCorrection });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Verify failed";
+        return reply
+          .code(message.includes("not found") ? 404 : 400)
+          .send({ message });
+      }
+    }
+  );
+
+  /** Undo a verified ground-truth correction (marks it REVERSED). */
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-matcher/evaluate/:evaluationRunId/ground-truth-corrections/:emailMessageId",
+    async (request, reply) => {
+      const params = gtCorrectionRunParams
+        .extend({ emailMessageId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      const result = await reverseJobMatcherEvalGroundTruthCorrection({
+        prisma: app.services.prisma,
+        workspaceId: params.workspaceId,
         emailMessageId: params.emailMessageId,
         actorUserId: auth.userId,
         request,

@@ -27,6 +27,10 @@ export default defineConfig({
         rootDir,
         "../../packages/shared/src/jobs/job-match-eval-exclusions.ts"
       ),
+      "@forgeops/shared/jobs/job-match-eval-ground-truth-corrections": path.resolve(
+        rootDir,
+        "../../packages/shared/src/jobs/job-match-eval-ground-truth-corrections.ts"
+      ),
       "@forgeops/shared/jobs/job-match-performance-score": path.resolve(
         rootDir,
         "../../packages/shared/src/jobs/job-match-performance-score.ts"

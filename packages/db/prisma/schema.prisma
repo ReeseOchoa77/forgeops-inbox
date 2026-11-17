@@ -538,6 +538,7 @@ model Workspace {
   jobMatcherEvalRuns      JobMatcherEvalRun[]
   jobIdentityProfiles     JobIdentityProfile[]
   jobMatcherEvalExclusions JobMatcherEvalExclusion[]
+  jobMatcherEvalGtCorrections JobMatcherEvalGroundTruthCorrection[]
   senderEvidence       SenderEvidence[]
   domainEvidence       DomainEvidence[]
   emailAttachments     EmailAttachment[]
@@ -595,6 +596,8 @@ model User {
   proposedEstimatorCandidates BidCandidate[] @relation("BidCandidateProposedEstimator")
   jobMatcherEvalRunsCreated JobMatcherEvalRun[] @relation("JobMatcherEvalRunCreator")
   jobMatcherEvalExclusions  JobMatcherEvalExclusion[] @relation("JobMatcherEvalExclusionActor")
+  jobMatcherEvalGtCorrectionsVerified JobMatcherEvalGroundTruthCorrection[] @relation("JobMatcherEvalGtCorrectionVerifier")
+  jobMatcherEvalGtCorrectionsReversed JobMatcherEvalGroundTruthCorrection[] @relation("JobMatcherEvalGtCorrectionReverser")
 }
 
 model ApprovedAccess {
@@ -2873,6 +2876,34 @@ model JobMatcherEvalExclusion {
   @@unique([evaluationRunId, emailMessageId])
   @@index([workspaceId, evaluationRunId])
   @@index([workspaceId, emailMessageId])
+}
+
+/// Verified ground-truth correction for Job Matcher evaluation (eval-only; never edits EmailMessage.jobId).
+/// Application ensures at most one ACTIVE row per (workspaceId, emailMessageId); REVERSED rows are history.
+model JobMatcherEvalGroundTruthCorrection {
+  id                        String    @id @default(cuid())
+  workspaceId               String
+  emailMessageId            String
+  originalGroundTruthJobId  String
+  correctedGroundTruthJobId String
+  /// ACTIVE | REVERSED
+  verificationStatus        String
+  verifiedAt                DateTime  @default(now())
+  verifiedByUserId          String?
+  sourceEvaluationRunId     String?
+  sourceModelPolicy         String?
+  note                      String?
+  reversedAt                DateTime?
+  reversedByUserId          String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+  workspace                 Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  verifiedByUser            User?     @relation("JobMatcherEvalGtCorrectionVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  reversedByUser            User?     @relation("JobMatcherEvalGtCorrectionReverser", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, emailMessageId])
+  @@index([workspaceId, verificationStatus])
+  @@index([workspaceId, sourceEvaluationRunId])
 }
 
 /// Optional cache of V2.5 Job identity profiles (deterministic or AI-enriched).

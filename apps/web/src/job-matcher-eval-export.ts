@@ -144,6 +144,7 @@ export function buildEvalSummaryCsv(
       wrongMatchRate: number
     } | null
     excludedCount?: number
+    groundTruthCorrectionCount?: number
   }
 ): string {
   const lines = ['section,metric,category,value']
@@ -164,6 +165,7 @@ export function buildEvalSummaryCsv(
   push('meta', 'sample_size_requested', '', result.dataset.sampleSizeRequested ?? 'ALL')
   push('meta', 'actual_evaluated', '', result.dataset.actualEvaluated)
   push('meta', 'excluded_count', '', extras?.excludedCount ?? 0)
+  push('meta', 'ground_truth_corrections', '', extras?.groundTruthCorrectionCount ?? 0)
   if (extras?.rawMetrics) {
     const raw = extras.rawMetrics
     push('raw_headline', 'evaluated', '', raw.totalEvaluated)
@@ -261,6 +263,8 @@ export function buildEvalDetailedCsv(
     'excluded',
     'exclusion_timestamp',
     'exclusion_reason',
+    'original_ground_truth_job_id',
+    'ground_truth_corrected',
     'failure_category',
     'failure_subcategory',
     'resolving_marker',
@@ -302,6 +306,8 @@ export function buildEvalDetailedCsv(
         isExcluded ? 'true' : 'false',
         isExcluded ? (ex?.createdAt ?? '') : '',
         isExcluded ? (ex?.reason ?? '') : '',
+        row.originalTrueJobId ?? row.trueJobId,
+        row.groundTruthCorrected ? 'true' : 'false',
         d?.failureCategory ?? '',
         d?.failureSubcategory ?? '',
         d?.resolvingMarker ?? row.resolvingMarker,
@@ -331,6 +337,7 @@ export function buildEvalFullJson(
       reason: string | null
       createdAt: string
     }>
+    groundTruthCorrections?: unknown[]
     rawMetrics?: unknown
     adjustedMetrics?: unknown
   }
@@ -338,9 +345,10 @@ export function buildEvalFullJson(
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      note: 'Completed evaluation export. Matcher was not re-run. Email bodies excluded. Exclusions are run-specific metadata — not ground-truth edits.',
+      note: 'Completed evaluation export. Matcher was not re-run. Email bodies excluded. Verified ground-truth corrections are eval-only metadata — production EmailMessage.jobId is unchanged. evaluation holds raw (uncorrected) labels; adjustedMetrics reflects displayed (corrected) labels.',
       evaluation: result,
       exclusions: extras?.exclusions ?? [],
+      groundTruthCorrections: extras?.groundTruthCorrections ?? [],
       rawMetrics: extras?.rawMetrics ?? null,
       adjustedMetrics: extras?.adjustedMetrics ?? null,
     },
