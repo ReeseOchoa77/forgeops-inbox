@@ -149,6 +149,17 @@ export const WORKER_JOB_DEFINITIONS: Record<QueueName, WorkerJobDefinition> = {
     revert: false,
     revertReason: "Discovery runs are read-only; cancel stops work but does not reverse taxonomy (none applied).",
   },
+  [QueueNames.JOB_INTELLIGENCE]: {
+    queue: QueueNames.JOB_INTELLIGENCE,
+    displayName: "Job intelligence",
+    purpose:
+      "Extract evidence-backed job events/summary from assigned emails. Decision-support only — never writes EmailMessage.jobId or Job pricing.",
+    pause: false,
+    resume: false,
+    cancelActive: true,
+    revert: false,
+    revertReason: "Extracted events are not journaled for reverse; human verifications are preserved on re-run.",
+  },
 };
 
 export function isKnownQueue(value: string): value is QueueName {

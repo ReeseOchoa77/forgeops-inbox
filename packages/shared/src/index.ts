@@ -57,6 +57,7 @@ export * from "./jobs/job-match-v2-family-compare.js";
 export * from "./jobs/job-match-multi-policy-compare.js";
 export * from "./jobs/job-match-policy-registry.js";
 export * from "./jobs/job-match-pipeline.js";
+export * from "./jobs/job-intelligence/index.js";
 export * from "./jobs/job-contact-marker.js";
 export * from "./jobs/job-thread-marker.js";
 export * from "./jobs/job-match-eval.js";

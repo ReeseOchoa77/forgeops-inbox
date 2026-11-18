@@ -931,4 +931,100 @@ export const INTELLIGENCE_CATALOG: readonly IntelligenceDefinition[] = [
     featureFlags: [],
     discoverable: true,
   },
+
+  {
+    id: "job-intelligence",
+    name: "Job Intelligence",
+    description:
+      "Evidence-backed extraction of financial, scope, schedule, RFI, risk, contact, and commitment events from Job-linked emails, plus AI project briefs.",
+    type: "AI_LLM",
+    status: "ACTIVE",
+    version: "job-intel-extract-v1",
+    purpose:
+      "Decision-support project intelligence for steel fabrication Jobs. Never writes EmailMessage.jobId, Job pricing, or matcher ground truth.",
+    implementation: {
+      packages: ["@forgeops/shared", "@forgeops/ai", "apps/worker", "apps/api"],
+      entryPoints: [
+        "job-intelligence worker",
+        "OpenAIJobIntelligenceExtractor",
+        "OpenAIJobIntelligenceSummarizer",
+        "POST .../jobs/:jobId/intelligence/analyze",
+      ],
+    },
+    inputs:
+      "Eligible Job-linked EmailMessage bodies (quote-stripped) + attachment extractedText when present",
+    outputs:
+      "JobIntelligenceEvent/Fact/Summary rows with source excerpts; analysis run progress",
+    pipeline: {
+      nodes: [
+        { id: "in", kind: "INPUT", label: "Job emails" },
+        { id: "elig", kind: "RULE", label: "Assignment eligibility" },
+        { id: "prep", kind: "RULE", label: "Quote strip / batch" },
+        { id: "extract", kind: "MODEL", label: "Structured event extraction" },
+        { id: "validate", kind: "VALIDATOR", label: "Evidence + tenant validation" },
+        { id: "dedupe", kind: "TRANSFORM", label: "Fingerprint upsert / supersession" },
+        { id: "summary", kind: "MODEL", label: "Brief from structured events" },
+        { id: "out", kind: "PERSISTENCE", label: "Job Intelligence tables" },
+      ],
+      edges: [
+        { from: "in", to: "elig" },
+        { from: "elig", to: "prep" },
+        { from: "prep", to: "extract" },
+        { from: "extract", to: "validate" },
+        { from: "validate", to: "dedupe" },
+        { from: "dedupe", to: "summary" },
+        { from: "summary", to: "out" },
+      ],
+    },
+    instructions: {
+      available: true,
+      source: "code_module",
+      inspectionKeys: [
+        "jobIntelligenceSystemPrompt",
+        "jobIntelligenceSummarySystemPrompt",
+      ],
+      summary:
+        "Hardcoded system prompts in @forgeops/ai job-intelligence. Email bodies treated as untrusted data.",
+      editable: false,
+    },
+    rules: {
+      available: true,
+      summary:
+        "Eligibility from assignment provenance; evidence required; human corrections protected; no blind financial sums.",
+      items: [
+        {
+          id: "eligibility",
+          title: "Email eligibility",
+          summary:
+            "AUTHORITATIVE (manual/user/folder) and HIGH_CONFIDENCE_AI (AI_AUTO_ASSIGNED) aggregate; REVIEW_ONLY excluded.",
+        },
+        {
+          id: "human-protect",
+          title: "Human verification protection",
+          summary:
+            "HUMAN_VERIFIED / HUMAN_CORRECTED / REJECTED rows are not overwritten by later AI runs.",
+        },
+      ],
+    },
+    evaluation: {
+      supported: false,
+      metrics: [],
+      groundTruthQuality: "WEAK",
+      groundTruthNotes:
+        "No labeled Job Intelligence ground-truth corpus yet. Human verify/reject is operational feedback, not matcher eval GT.",
+      notes: "Register evaluation when a held-out event corpus exists.",
+    },
+    explainability: {
+      available: true,
+      capabilities: [
+        "evidence excerpts",
+        "source email IDs",
+        "verificationStatus",
+        "financialKind",
+      ],
+      notes: "Confidence is model-reported, not calibrated probability.",
+    },
+    featureFlags: [],
+    discoverable: true,
+  },
 ];

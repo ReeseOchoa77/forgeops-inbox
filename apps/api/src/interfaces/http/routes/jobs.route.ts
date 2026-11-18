@@ -56,6 +56,10 @@ import {
   type DocumentControlStateFilter,
 } from "../../../application/services/job-document-records.js";
 import { deleteWorkspaceJob } from "../../../application/services/delete-workspace-job.js";
+import {
+  invalidateIntelligenceForEmailReassignment,
+  startJobIntelligenceAnalysis,
+} from "../../../application/services/job-intelligence.js";
 import { requireWorkspaceMembership } from "../../../application/services/workspace-access.js";
 import { getSessionFromRequest } from "../authentication.js";
 import { existsSync, unlinkSync } from "node:fs";
@@ -1318,6 +1322,37 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
       });
     });
 
+    // Incremental Job Intelligence when this Job already has intelligence (best-effort).
+    try {
+      const hasIntel = await app.services.prisma.jobIntelligenceSummary.findFirst({
+        where: { workspaceId, jobId },
+        select: { id: true },
+      });
+      if (hasIntel) {
+        await startJobIntelligenceAnalysis({
+          prisma: app.services.prisma,
+          queue: app.services.jobIntelligenceQueue,
+          workspaceId,
+          jobId,
+          userId: auth.userId,
+          kind: "INCREMENTAL",
+        });
+      }
+      if (message.jobId && message.jobId !== jobId) {
+        await invalidateIntelligenceForEmailReassignment({
+          prisma: app.services.prisma,
+          queue: app.services.jobIntelligenceQueue,
+          workspaceId,
+          emailMessageId: message.id,
+          fromJobId: message.jobId,
+          toJobId: jobId,
+          userId: auth.userId,
+        });
+      }
+    } catch (err) {
+      request.log.warn({ err, event: "job_intelligence_assign_hook_failed" });
+    }
+
     return reply.code(201).send({ assigned: 1, messageId: message.id });
   });
 
@@ -1522,6 +1557,20 @@ export const registerJobsRoutes = async (app: FastifyInstance): Promise<void> =>
         now,
       });
     });
+
+    try {
+      await invalidateIntelligenceForEmailReassignment({
+        prisma: app.services.prisma,
+        queue: app.services.jobIntelligenceQueue,
+        workspaceId,
+        emailMessageId: body.messageId,
+        fromJobId: jobId,
+        toJobId: body.targetJobId,
+        userId: auth.userId,
+      });
+    } catch (err) {
+      request.log.warn({ err, event: "job_intelligence_move_hook_failed" });
+    }
 
     return reply.send({ messageId: body.messageId, fromJobId: jobId, toJobId: body.targetJobId });
   });

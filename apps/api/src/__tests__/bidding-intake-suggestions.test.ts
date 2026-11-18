@@ -420,8 +420,8 @@ describe("bidding intake route / freeze / customer regression", () => {
     expect(dialogSrc).toContain("New customer");
     expect(dialogSrc).toContain("proposedCustomerName");
     expect(dialogSrc).toContain("customerName: createCustomerName");
-    expect(dialogSrc).toContain("Create Bid Candidate");
-    expect(dialogSrc).toContain("+ Create Bid Candidate");
+    expect(dialogSrc).toContain("Create Bid");
+    expect(dialogSrc).not.toContain("Create Bid Candidate");
     expect(dialogSrc).toContain("createBidCandidateFromEmail");
     expect(dialogSrc).not.toContain("addEmailToBidding");
     expect(dialogSrc).not.toMatch(/\bCreate Job\b/);

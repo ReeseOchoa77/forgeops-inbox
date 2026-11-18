@@ -31,6 +31,8 @@ import {
   type InlineImageRelevanceJobResult,
   type SubtypeDiscoveryJobPayload,
   type SubtypeDiscoveryJobResult,
+  type JobIntelligenceJobPayload,
+  type JobIntelligenceJobResult,
 } from "@forgeops/shared";
 import Fastify from "fastify";
 import { Queue, QueueEvents } from "bullmq";
@@ -83,6 +85,7 @@ import { registerSenderEvidenceRoutes } from "./routes/sender-evidence.route.js"
 import { registerEmailAttachmentRoutes } from "./routes/email-attachment.route.js";
 import { registerTestDataAdminRoutes } from "./routes/test-data-admin.route.js";
 import { registerJobsRoutes } from "./routes/jobs.route.js";
+import { registerJobIntelligenceRoutes } from "./routes/job-intelligence.route.js";
 import { registerJobFabricationRoutes } from "./routes/job-fabrication.route.js";
 import { registerJobParticipantRoutes } from "./routes/job-participants.route.js";
 import { registerJobWorkPackageRoutes } from "./routes/job-work-packages.route.js";
@@ -203,6 +206,12 @@ export const buildServer = async () => {
     SubtypeDiscoveryJobPayload,
     SubtypeDiscoveryJobResult
   >(QueueNames.SUBTYPE_DISCOVERY, {
+    connection: createBullMqConnection(env.REDIS_URL)
+  });
+  const jobIntelligenceQueue = new Queue<
+    JobIntelligenceJobPayload,
+    JobIntelligenceJobResult
+  >(QueueNames.JOB_INTELLIGENCE, {
     connection: createBullMqConnection(env.REDIS_URL)
   });
   if (attachmentIngestQueue.name !== QueueNames.ATTACHMENT_INGEST) {
@@ -375,6 +384,7 @@ export const buildServer = async () => {
       mailboxReclassifyQueue,
       inlineImageRelevanceQueue,
       subtypeDiscoveryQueue,
+      jobIntelligenceQueue,
       googleOAuthService,
     providerRegistry,
     sessionStore,
@@ -479,6 +489,7 @@ export const buildServer = async () => {
   await registerEmailAttachmentRoutes(app);
   await registerTestDataAdminRoutes(app);
   await registerJobsRoutes(app);
+  await registerJobIntelligenceRoutes(app);
   await registerJobFabricationRoutes(app);
   registerJobParticipantRoutes(app);
   registerJobWorkPackageRoutes(app);
@@ -558,6 +569,7 @@ export const buildServer = async () => {
     await projectFolderEmailAnalyzeQueue.close();
     await bidEmailAnalyzeQueue.close();
     await subtypeDiscoveryQueue.close();
+    await jobIntelligenceQueue.close();
     await mailboxReclassifyQueue.close();
     await inlineImageRelevanceQueue.close();
     await attachmentIngestQueue.close();

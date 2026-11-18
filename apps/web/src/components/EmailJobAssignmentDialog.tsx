@@ -23,7 +23,7 @@ type Props = {
   onClose: () => void
   onAssigned: (job: JobLookup) => void
   onRemoved: () => void
-  /** Fired after Create Bid Candidate (no Job). */
+  /** Fired after Create Bid (no Job). */
   onCreated: (job: { id: string; name: string; jobNumber: string | null; status: string }) => void
   /** Optional: fired when email is linked to a Bid Candidate. */
   onBidCandidateLinked?: (candidateId: string) => void
@@ -34,8 +34,8 @@ type DialogMode = 'assign' | 'create' | 'assign-candidate'
 /**
  * Unified Inbox assignment modal:
  * - assign / change / remove existing Job
- * - Create Bid Candidate (permanent opportunity — no Job / Job number)
- * - Assign to Bid Candidate (manual association is authoritative)
+ * - Create Bid (permanent opportunity — no Job / Job number)
+ * - Assign to Job via Bid Candidate picker (manual association is authoritative)
  */
 export function EmailJobAssignmentDialog({
   workspaceId,
@@ -330,12 +330,7 @@ export function EmailJobAssignmentDialog({
     }
   }
 
-  const title =
-    mode === 'create'
-      ? 'Create Bid Candidate'
-      : mode === 'assign-candidate'
-        ? 'Assign to Bid Candidate'
-        : 'Assign to Job'
+  const title = mode === 'create' ? 'Create Bid' : 'Assign to Job'
   const busy = assignBusy || createBusy || candidateBusy
 
   return (
@@ -387,7 +382,7 @@ export function EmailJobAssignmentDialog({
                 fontWeight: 650, color: '#1d4ed8', borderColor: '#bfdbfe', background: '#eff6ff',
               }}
             >
-              + Create Bid Candidate
+              Create Bid
             </button>
             <button
               type="button"
@@ -399,7 +394,7 @@ export function EmailJobAssignmentDialog({
                 fontWeight: 600, color: '#0f766e', borderColor: '#99f6e4', background: '#f0fdfa',
               }}
             >
-              Assign to Bid Candidate
+              Assign to Job
             </button>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
               <JobAssignPicker
@@ -594,7 +589,7 @@ export function EmailJobAssignmentDialog({
                 data-testid="confirm-create-bid-candidate"
                 style={primaryButton(createBusy)}
               >
-                {createBusy ? 'Saving…' : 'Create Bid Candidate'}
+                {createBusy ? 'Saving…' : 'Create Bid'}
               </button>
             </div>
           </>

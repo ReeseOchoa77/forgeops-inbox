@@ -359,3 +359,19 @@ export interface BidEmailAnalyzeJobResult {
   errorMessage?: string;
 }
 
+export interface JobIntelligenceJobPayload {
+  workspaceId: string;
+  jobId: string;
+  runId: string;
+  kind?: "HISTORICAL_BACKFILL" | "INCREMENTAL" | "SUMMARY_ONLY" | "REPROCESS";
+  initiatedByUserId?: string | null;
+}
+
+export interface JobIntelligenceJobResult {
+  workspaceId: string;
+  jobId: string;
+  runId: string;
+  status: "COMPLETED" | "FAILED" | "CANCELLED";
+  errorMessage?: string;
+}
+

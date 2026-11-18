@@ -41,8 +41,8 @@ describe('Bid Opportunity / Bid Invites / Bid Candidate terminology', () => {
       join(here, 'components/EmailJobAssignmentDialog.tsx'),
       'utf8'
     )
-    expect(dialog).toContain('Create Bid Candidate')
-    expect(dialog).toContain('Assign to Bid Candidate')
+    expect(dialog).toContain('Create Bid')
+    expect(dialog).toContain('Assign to Job')
     expect(bidding).toMatch(/Convert to Job|convertBidCandidate/)
   })
 

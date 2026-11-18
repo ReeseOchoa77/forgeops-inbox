@@ -562,6 +562,12 @@ model Workspace {
   jobShipments         JobShipment[]
   jobInstallationRecords JobInstallationRecord[]
   jobInvoices          JobInvoice[]
+  jobIntelligenceAnalysisRuns JobIntelligenceAnalysisRun[]
+  jobIntelligenceEvents       JobIntelligenceEvent[]
+  jobIntelligenceEventSources JobIntelligenceEventSource[]
+  jobIntelligenceFacts        JobIntelligenceFact[]
+  jobIntelligenceSummaries    JobIntelligenceSummary[]
+  jobIntelligenceEmailStates  JobIntelligenceEmailState[]
 }
 
 model User {
@@ -868,6 +874,8 @@ model EmailMessage {
   bidFolderDiscoveries BidFolderDiscoveryEmail[]
   bidQuoteStagings BidQuoteStaging[]
   jobEmailContactFirsts JobEmailContact[] @relation("JobEmailContactFirstEmail")
+  intelligenceEventSources JobIntelligenceEventSource[]
+  intelligenceEmailStates  JobIntelligenceEmailState[]
 
   @@unique([workspaceId, id])
   @@unique([inboxConnectionId, gmailMessageId])
@@ -1241,6 +1249,11 @@ model Job {
   confirmedBidCandidates BidCandidate[] @relation("BidCandidateCanonicalJob")
   proposedBidCandidates  BidCandidate[] @relation("BidCandidateProposedExistingJob")
   emailContacts          JobEmailContact[]
+  intelligenceAnalysisRuns JobIntelligenceAnalysisRun[]
+  intelligenceEvents       JobIntelligenceEvent[]
+  intelligenceFacts        JobIntelligenceFact[]
+  intelligenceSummaries    JobIntelligenceSummary[]
+  intelligenceEmailStates  JobIntelligenceEmailState[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, normalizedName])
@@ -3026,6 +3039,7 @@ model EmailAttachment {
   emailMessage          EmailMessage          @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
   relevanceClassifications InlineImageRelevanceClassification[]
   documentRecord        JobDocumentRecord?
+  intelligenceEventSources JobIntelligenceEventSource[]
 
   @@unique([workspaceId, emailMessageId, providerAttachmentId])
   @@unique([workspaceId, storageKey])
@@ -3093,4 +3107,265 @@ model InlineImageRelevanceClassification {
   @@index([workspaceId, contentChecksum, analyzerVersion])
   @@index([workspaceId, relevance])
   @@index([workspaceId, method, correctedAt])
+}
+
+// ─── Job Intelligence (decision-support; never mutates Job pricing / jobId) ───
+
+enum JobIntelligenceRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum JobIntelligenceRunKind {
+  HISTORICAL_BACKFILL
+  INCREMENTAL
+  SUMMARY_ONLY
+  REPROCESS
+}
+
+enum JobIntelligenceEventCategory {
+  FINANCIAL
+  SCOPE
+  SCHEDULE
+  RFI_TECHNICAL
+  RISK_CHANGE
+  CONTACT
+  DECISION_COMMITMENT
+  OTHER
+}
+
+enum JobIntelligenceEventStatus {
+  PROPOSED
+  REQUESTED
+  TENTATIVE
+  CONFIRMED
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELED
+  SUPERSEDED
+  OPEN
+  RESOLVED
+  DISPUTED
+  UNKNOWN
+}
+
+enum JobIntelligenceVerificationStatus {
+  AI_EXTRACTED
+  HUMAN_VERIFIED
+  HUMAN_CORRECTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum JobIntelligenceFinancialKind {
+  ESTIMATE
+  QUOTE
+  PROPOSAL
+  REQUESTED
+  APPROVED
+  REJECTED
+  INVOICED
+  PAID
+  DISPUTED
+  CREDIT
+  BACKCHARGE
+  CHANGE_ORDER
+  OTHER
+  NONE
+}
+
+enum JobIntelligenceEligibilityTier {
+  AUTHORITATIVE
+  HIGH_CONFIDENCE_AI
+  REVIEW_ONLY
+  EXCLUDED
+}
+
+enum JobIntelligenceSummaryStatus {
+  STALE
+  CURRENT
+  GENERATING
+  FAILED
+}
+
+enum JobIntelligenceEmailProcessStatus {
+  PROCESSED
+  SKIPPED
+  FAILED
+}
+
+model JobIntelligenceAnalysisRun {
+  id                    String                   @id @default(cuid())
+  workspaceId           String
+  jobId                 String
+  status                JobIntelligenceRunStatus @default(PENDING)
+  kind                  JobIntelligenceRunKind
+  extractionModelVersion String
+  schemaVersion         String
+  /// { eligibleTotal, processed, skipped, failed, eventsExtracted, lastEmailId, errors[] }
+  progress              Json                     @default("{}")
+  errorMessage          String?
+  initiatedByUserId     String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  workspace             Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                   Job                      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  events                JobIntelligenceEvent[]
+  summaries             JobIntelligenceSummary[]
+  emailStates           JobIntelligenceEmailState[]
+
+  @@index([workspaceId, jobId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model JobIntelligenceEvent {
+  id                     String                            @id @default(cuid())
+  workspaceId            String
+  jobId                  String
+  analysisRunId          String?
+  category               JobIntelligenceEventCategory
+  subtype                String?
+  title                  String
+  description            String
+  eventDate              DateTime?
+  /// DAY | MONTH | YEAR | UNKNOWN
+  eventDatePrecision     String?
+  status                 JobIntelligenceEventStatus        @default(UNKNOWN)
+  confidence             Float?
+  financialKind          JobIntelligenceFinancialKind      @default(NONE)
+  amountDecimal          Decimal?                          @db.Decimal(14, 2)
+  currency               String?
+  parties                Json?
+  fabricationItems       Json?
+  metadata               Json?
+  verificationStatus     JobIntelligenceVerificationStatus @default(AI_EXTRACTED)
+  humanCorrection        Json?
+  contentFingerprint     String
+  supersededByEventId    String?
+  extractionModelVersion String
+  schemaVersion          String
+  verifiedByUserId       String?
+  verifiedAt             DateTime?
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+  workspace              Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                    Job                               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  analysisRun            JobIntelligenceAnalysisRun?       @relation(fields: [analysisRunId], references: [id], onDelete: SetNull)
+  supersededBy           JobIntelligenceEvent?             @relation("JobIntelligenceEventSupersede", fields: [supersededByEventId], references: [id], onDelete: SetNull)
+  supersedes             JobIntelligenceEvent[]            @relation("JobIntelligenceEventSupersede")
+  sources                JobIntelligenceEventSource[]
+  facts                  JobIntelligenceFact[]
+
+  @@unique([workspaceId, jobId, contentFingerprint])
+  @@index([workspaceId, jobId, category])
+  @@index([workspaceId, jobId, status])
+  @@index([workspaceId, jobId, eventDate])
+  @@index([workspaceId, jobId, verificationStatus])
+  @@index([workspaceId, analysisRunId])
+}
+
+model JobIntelligenceEventSource {
+  id                String              @id @default(cuid())
+  workspaceId       String
+  eventId           String
+  emailMessageId    String?
+  emailAttachmentId String?
+  excerpt           String
+  /// Empty excerpt hashed as "". Required for uniqueness.
+  excerptHash       String
+  /// PRIMARY | QUOTED | ATTACHMENT
+  sourceRole        String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  event             JobIntelligenceEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  emailMessage      EmailMessage?       @relation(fields: [emailMessageId], references: [id], onDelete: SetNull)
+  emailAttachment   EmailAttachment?    @relation(fields: [emailAttachmentId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, eventId, emailMessageId, excerptHash])
+  @@index([workspaceId, emailMessageId])
+  @@index([workspaceId, eventId])
+}
+
+model JobIntelligenceFact {
+  id                     String                            @id @default(cuid())
+  workspaceId            String
+  jobId                  String
+  eventId                String?
+  factKey                String
+  factValue              String
+  valueType              String?
+  status                 JobIntelligenceEventStatus        @default(UNKNOWN)
+  verificationStatus     JobIntelligenceVerificationStatus @default(AI_EXTRACTED)
+  evidenceEventIds       Json?
+  metadata               Json?
+  contentFingerprint     String
+  supersededByFactId     String?
+  humanCorrection        Json?
+  extractionModelVersion String
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+  workspace              Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                    Job                               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  event                  JobIntelligenceEvent?             @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  supersededBy           JobIntelligenceFact?              @relation("JobIntelligenceFactSupersede", fields: [supersededByFactId], references: [id], onDelete: SetNull)
+  supersedes             JobIntelligenceFact[]             @relation("JobIntelligenceFactSupersede")
+
+  @@unique([workspaceId, jobId, contentFingerprint])
+  @@index([workspaceId, jobId, factKey])
+  @@index([workspaceId, jobId, verificationStatus])
+}
+
+model JobIntelligenceSummary {
+  id                String                       @id @default(cuid())
+  workspaceId       String
+  jobId             String
+  version           Int
+  status            JobIntelligenceSummaryStatus @default(GENERATING)
+  /// overview, currentStatus, scope, financial, schedule, recentDevelopments, openIssues, risks, keyDecisions, nextActions
+  sections          Json                         @default("{}")
+  modelVersion      String
+  schemaVersion     String
+  generatedAt       DateTime?
+  basedOnEventCount Int                          @default(0)
+  basedOnRunId      String?
+  errorMessage      String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+  workspace         Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job               Job                          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  basedOnRun        JobIntelligenceAnalysisRun?  @relation(fields: [basedOnRunId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, jobId, version])
+  @@index([workspaceId, jobId, status])
+}
+
+model JobIntelligenceEmailState {
+  id                       String                           @id @default(cuid())
+  workspaceId              String
+  jobId                    String
+  emailMessageId           String
+  eligibilityTier          JobIntelligenceEligibilityTier
+  lastProcessedAt          DateTime?
+  lastContentHash          String?
+  lastExtractionModelVersion String?
+  lastRunId                String?
+  skipReason               String?
+  status                   JobIntelligenceEmailProcessStatus @default(SKIPPED)
+  createdAt                DateTime                         @default(now())
+  updatedAt                DateTime                         @updatedAt
+  workspace                Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                      Job                              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  emailMessage             EmailMessage                     @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  lastRun                  JobIntelligenceAnalysisRun?      @relation(fields: [lastRunId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, jobId, emailMessageId])
+  @@index([workspaceId, jobId, status])
+  @@index([workspaceId, emailMessageId])
 }

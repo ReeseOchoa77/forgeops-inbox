@@ -10,6 +10,7 @@ export const QueueNames = {
   MAILBOX_RECLASSIFY: "mailbox-reclassify",
   INLINE_IMAGE_RELEVANCE: "inline-image-relevance",
   SUBTYPE_DISCOVERY: "subtype-discovery",
+  JOB_INTELLIGENCE: "job-intelligence",
 } as const;
 
 export type QueueName = (typeof QueueNames)[keyof typeof QueueNames];
@@ -56,3 +57,15 @@ export function buildSubtypeDiscoveryJobId(runId: string): string {
   return `subtype-discovery-${runId}`;
 }
 
+/** Deterministic job id for a Job Intelligence analysis run. */
+export function buildJobIntelligenceRunJobId(runId: string): string {
+  return `job-intelligence-${runId}`;
+}
+
+/**
+ * Debounced incremental job id per Job (collapses concurrent new-email triggers).
+ * Must not contain ":" — BullMQ rejects colons in custom job IDs.
+ */
+export function buildJobIntelligenceIncrementalJobId(jobId: string): string {
+  return `job-intelligence-incremental-${jobId}`;
+}

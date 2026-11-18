@@ -15,7 +15,9 @@ export type OpenAIResponsesStage =
   | "existing_job_adjudicate"
   | "bid_group_adjudicate"
   | "job_match_contextual_adjudicate"
-  | "job_match_identity_profile";
+  | "job_match_identity_profile"
+  | "job_intelligence"
+  | "job_intelligence_summary";
 
 const MAX_SANITIZE_DEPTH = 8;
 

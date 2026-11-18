@@ -99,8 +99,8 @@ describe('Phase 3 — web Bid Opportunity / Bid Invites Inbox', () => {
       join(here, 'components/EmailJobAssignmentDialog.tsx'),
       'utf8'
     )
-    expect(src).toContain('Create Bid Candidate')
-    expect(src).toContain('Assign to Bid Candidate')
+    expect(src).toContain('Create Bid')
+    expect(src).toContain('Assign to Job')
     expect(src).toContain('createBidCandidateFromEmail')
     expect(src).toContain('assignEmailToBidCandidate')
     expect(src).not.toContain('addEmailToBidding')

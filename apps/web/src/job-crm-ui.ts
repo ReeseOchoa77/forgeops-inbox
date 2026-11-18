@@ -5,6 +5,7 @@
 
 export type JobCrmTab =
   | 'overview'
+  | 'intelligence'
   | 'scope'
   | 'schedule'
   | 'changes'
@@ -20,6 +21,7 @@ export type JobCrmTab =
 
 export const JOB_CRM_TABS: Array<{ key: JobCrmTab; label: string; group: string }> = [
   { key: 'overview', label: 'Overview', group: 'core' },
+  { key: 'intelligence', label: 'Intelligence', group: 'core' },
   { key: 'emails', label: 'Emails', group: 'communication' },
   { key: 'documents', label: 'Documents', group: 'communication' },
   { key: 'tasks', label: 'Tasks', group: 'communication' },
@@ -48,6 +50,7 @@ export const BIDDING_HIDDEN_TABS: readonly JobCrmTab[] = [
  */
 export const BIDDING_JOB_TABS: JobCrmTab[] = [
   'overview',
+  'intelligence',
   'emails',
   'documents',
   'scope',
@@ -64,6 +67,7 @@ export const BIDDING_JOB_TABS: JobCrmTab[] = [
  */
 export const ACTIVE_JOB_TABS: JobCrmTab[] = [
   'overview',
+  'intelligence',
   'emails',
   'documents',
   'tasks',

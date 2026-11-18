@@ -24,6 +24,7 @@ import { startInlineImageRelevanceWorker } from "./jobs/inline-image-relevance.w
 import { startProjectFolderEmailAnalyzeWorker } from "./jobs/project-folder-email-analyze.worker.js";
 import { startBidEmailAnalyzeWorker } from "./jobs/bid-email-analyze.worker.js";
 import { startSubtypeDiscoveryWorker } from "./jobs/subtype-discovery.worker.js";
+import { startJobIntelligenceWorker } from "./jobs/job-intelligence.worker.js";
 import { createBullMqConnection } from "./infrastructure/redis/connection.js";
 
 const env = loadWorkerEnv();
@@ -37,6 +38,7 @@ const mailboxClassify = startMailboxClassifyWorker(env);
 const mailboxReclassify = startMailboxReclassifyWorker(env);
 const inlineImageRelevance = startInlineImageRelevanceWorker(env);
 const subtypeDiscovery = startSubtypeDiscoveryWorker(env);
+const jobIntelligence = startJobIntelligenceWorker(env);
 
 /** Producer queue for safety-net re-enqueue (worker only consumes). */
 const mailboxClassifyQueue = new Queue<
@@ -258,11 +260,14 @@ const shutdown = async (signal: string): Promise<void> => {
     mailboxClassify.worker.close(),
     mailboxReclassify.worker.close(),
     inlineImageRelevance.worker.close(),
+    subtypeDiscovery.worker.close(),
+    jobIntelligence.worker.close(),
     inlineImageRelevance.queue.close(),
     inboxSync.syncQueue.close(),
     historicalImport.queue.close(),
     projectFolderEmailAnalyze.queue.close(),
     bidEmailAnalyze.queue.close(),
+    jobIntelligence.queue.close(),
     mailboxClassifyQueue.close(),
     inboxSync.redis.quit(),
     inboxAnalysis.redis.quit(),

@@ -39,6 +39,7 @@ import {
   type JobCrmTab,
 } from '../job-crm-ui'
 import { JobConfirmDialog } from '../components/JobCrmModal'
+import { JobIntelligencePanel } from '../components/JobIntelligencePanel'
 import { FinancialOverviewSummary } from '../components/FinancialOverviewSummary'
 import { JobScopeView, WorkPackageOverviewSummary } from './JobScopeView'
 import { JobScheduleView, ScheduleOverviewSummary } from './JobScheduleView'
@@ -1440,6 +1441,14 @@ export function JobDetailView({
           canEdit={canEdit}
           isPhone={isPhone}
           onSnapshotChange={onBillingSnapshotChange}
+        />
+      )}
+
+      {tab === 'intelligence' && (
+        <JobIntelligencePanel
+          workspaceId={workspaceId}
+          jobId={jobId}
+          canEdit={canEdit}
         />
       )}
 

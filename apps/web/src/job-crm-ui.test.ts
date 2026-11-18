@@ -21,6 +21,7 @@ describe('job CRM UI helpers', () => {
   it('defines BIDDING vs ACTIVE tab registries', () => {
     expect(BIDDING_JOB_TABS).toEqual([
       'overview',
+      'intelligence',
       'emails',
       'documents',
       'scope',
@@ -30,6 +31,7 @@ describe('job CRM UI helpers', () => {
       'activity',
       'settings',
     ])
+    expect(ACTIVE_JOB_TABS).toContain('intelligence')
     expect(BIDDING_HIDDEN_TABS).toEqual([
       'schedule',
       'procurement',

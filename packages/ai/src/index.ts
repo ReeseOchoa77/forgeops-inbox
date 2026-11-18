@@ -38,3 +38,8 @@ export * from "./inline-image-relevance/filters.js";
 export * from "./inline-image-relevance/analyze-batch.js";
 export * from "./inline-image-relevance/vision.js";
 export * from "./subtype-discovery/index.js";
+export * from "./job-intelligence/prompt.js";
+export * from "./job-intelligence/parse.js";
+export * from "./job-intelligence/extractor.js";
+export * from "./job-intelligence/summary-prompt.js";
+export * from "./job-intelligence/summary.js";

@@ -2222,6 +2222,43 @@ export const api = {
   getJob: (workspaceId: string, jobId: string) =>
     request<{ job: JobDetail }>(`/workspaces/${workspaceId}/jobs/${jobId}`),
 
+  getJobIntelligence: (workspaceId: string, jobId: string, category?: string) =>
+    request<Record<string, unknown>>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/intelligence${
+        category ? `?category=${encodeURIComponent(category)}` : ''
+      }`
+    ),
+
+  analyzeJobIntelligence: (workspaceId: string, jobId: string) =>
+    request<{ runId: string; status: string }>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/intelligence/analyze`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  verifyJobIntelligenceEvent: (workspaceId: string, jobId: string, eventId: string) =>
+    request<Record<string, unknown>>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/intelligence/events/${eventId}/verify`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  rejectJobIntelligenceEvent: (workspaceId: string, jobId: string, eventId: string) =>
+    request<Record<string, unknown>>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/intelligence/events/${eventId}/reject`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  correctJobIntelligenceEvent: (
+    workspaceId: string,
+    jobId: string,
+    eventId: string,
+    patch: Record<string, unknown>
+  ) =>
+    request<Record<string, unknown>>(
+      `/workspaces/${workspaceId}/jobs/${jobId}/intelligence/events/${eventId}/correct`,
+      { method: 'POST', body: JSON.stringify(patch) }
+    ),
+
+
   updateJob: (workspaceId: string, jobId: string, data: {
     name?: string; jobNumber?: string; status?: string; customerId?: string | null;
     description?: string; notes?: string; startDate?: string | null; targetCompletionDate?: string | null;

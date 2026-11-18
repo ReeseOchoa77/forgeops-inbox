@@ -69,6 +69,7 @@ function queues(app: FastifyInstance) {
     mailboxReclassifyQueue: app.services.mailboxReclassifyQueue as unknown as WorkerQueueHandle,
     inlineImageRelevanceQueue: app.services.inlineImageRelevanceQueue as unknown as WorkerQueueHandle,
     subtypeDiscoveryQueue: app.services.subtypeDiscoveryQueue as unknown as WorkerQueueHandle,
+    jobIntelligenceQueue: app.services.jobIntelligenceQueue as unknown as WorkerQueueHandle,
   });
 }
 
