@@ -19,6 +19,7 @@ import { WorkspaceView } from './views/WorkspaceView'
 import { EmailAnalysisView } from './views/EmailAnalysisView'
 import { ReferenceDataView, isReferenceDataTab, type ReferenceDataTab } from './views/ReferenceDataView'
 import { IntelligenceView } from './views/IntelligenceView'
+import { AiControlCenterView } from './views/AiControlCenterView'
 import { JobsView } from './views/JobsView'
 import { BiddingView } from './views/BiddingView'
 import { JobDetailView } from './views/JobDetailView'
@@ -42,7 +43,7 @@ import {
 
 const SHOW_DEV_INDICATOR = shouldShowDevelopmentIndicator(import.meta.env)
 
-type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'email-analysis' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'intelligence' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
+type Page = 'dashboard' | 'inbox' | 'message-detail' | 'review' | 'email-analysis' | 'tasks' | 'calendar' | 'bidding' | 'jobs' | 'job-detail' | 'outlook-folders' | 'documents' | 'reference' | 'intelligence' | 'ai-control' | 'team-access' | 'workspace' | 'settings' | 'admin' | 'worker-jobs'
 
 type UserRole = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | 'VIEWER'
 
@@ -55,6 +56,7 @@ const NAV_ITEMS: Array<{ page: Page; label: string; icon: string; section?: stri
   { page: 'dashboard', label: 'Dashboard', icon: '\uD83D\uDCCA', section: 'Manage' },
   { page: 'reference', label: 'Company Data', icon: '\uD83D\uDCDA', section: 'Manage' },
   { page: 'intelligence', label: 'Intelligence', icon: '\uD83E\uDDE0', section: 'Manage', minRole: 'ADMIN' },
+  { page: 'ai-control', label: 'AI Control Center', icon: '\u26A1', section: 'Manage', minRole: 'ADMIN' },
   { page: 'workspace', label: 'Workspace', icon: '\uD83C\uDFE2' },
   { page: 'review', label: 'Email Classification', icon: '\u2696', section: 'System', minRole: 'ADMIN' },
   { page: 'email-analysis', label: 'Email Analysis', icon: '\uD83D\uDCC2', section: 'System', minRole: 'MEMBER' },
@@ -77,6 +79,7 @@ const PAGE_TITLES: Record<Page, string> = {
   documents: 'Documents',
   reference: 'Company Data',
   intelligence: 'Intelligence',
+  'ai-control': 'AI Control Center',
   'team-access': 'Team Access',
   workspace: 'Workspace',
   settings: 'Settings',
@@ -267,7 +270,7 @@ export default function App() {
     if (skipNavRestoreRef.current) return
     const restored = loadNavState({ workspaceId, userId: session.user.id })
     if (!restored) return
-    if (restored.page === 'intelligence') {
+    if (restored.page === 'intelligence' || restored.page === 'ai-control') {
       const role = session.memberships.find((m) => m.workspace.id === workspaceId)?.role as UserRole | undefined
       if (!role || !hasMinRole(role, 'ADMIN')) {
         setPage('inbox')
@@ -1070,6 +1073,11 @@ export default function App() {
                 onOpen={(id) => setIntelligenceId(id)}
                 onBack={() => setIntelligenceId(null)}
               />
+            </div>
+          )}
+          {page === 'ai-control' && (
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+              <AiControlCenterView workspaceId={workspaceId} />
             </div>
           )}
           {page === 'settings' && (

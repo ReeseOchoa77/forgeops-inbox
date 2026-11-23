@@ -6,6 +6,7 @@ import {
   DEFAULT_BIDDING_FOLDER_SCAN_RANGE,
   isBiddingFolderScanRangePreset,
   resolveBiddingFolderScanSinceAt,
+  mergeAiControlStates,
   type BidEmailAnalyzeJobPayload,
   type BidEmailAnalyzeJobResult,
   type BidEmailAnalyzeOperation,
@@ -21,7 +22,8 @@ export class BidEmailAnalyzeError extends Error {
     | "ALREADY_RUNNING"
     | "INVALID_RANGE"
     | "NO_DISCOVERY"
-    | "ENQUEUE_FAILED";
+    | "ENQUEUE_FAILED"
+    | "AI_CONTROL_DISABLED";
 
   constructor(code: BidEmailAnalyzeError["code"], message: string) {
     super(message);
@@ -55,6 +57,21 @@ export async function enqueueBidEmailAnalyze(input: {
       : input.operation === "scan_bids"
         ? "scan_bids"
         : "scan";
+
+  const aiControl = await input.prisma.workspaceAiControlConfig.findUnique({
+    where: { workspaceId: input.workspaceId },
+    select: { subsystems: true },
+  });
+  const bidEnabled = mergeAiControlStates(aiControl?.subsystems ?? {})[
+    "bid-analysis"
+  ].enabled;
+  if (!bidEnabled) {
+    throw new BidEmailAnalyzeError(
+      "AI_CONTROL_DISABLED",
+      "Bid / Quote Analysis is disabled in AI Control Center. Existing staging rows remain."
+    );
+  }
+
   const connection = await input.prisma.inboxConnection.findFirst({
     where: {
       id: input.connectionId,

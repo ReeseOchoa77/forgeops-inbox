@@ -20,6 +20,8 @@ import {
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
+import { isWorkspaceAiSubsystemEnabled } from "./ai-control-gates.js";
+
 const MAX_PAGES = 400;
 const RECURRENCE_SAMPLE = 400;
 
@@ -36,6 +38,40 @@ export async function processInlineImageRelevanceJob(input: {
   const page = input.payload.page ?? 0;
   const afterAttachmentId = input.payload.afterAttachmentId ?? null;
   const runId = input.payload.runId ?? "run";
+
+  const inlineEnabled = await isWorkspaceAiSubsystemEnabled(
+    input.prisma,
+    workspaceId,
+    "inline-image-relevance"
+  );
+  if (!inlineEnabled) {
+    console.info({
+      event: "inline-image-relevance-skipped-ai-control",
+      workspaceId,
+      page,
+      runId,
+    });
+    return {
+      workspaceId,
+      analyzed: 0,
+      reused: 0,
+      failed: 0,
+      unsupported: 0,
+      remaining: 0,
+      deterministic: 0,
+      hashHuman: 0,
+      hashModel: 0,
+      vision: 0,
+      uncertain: 0,
+      relevant: 0,
+      noise: 0,
+      visionCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      continued: false,
+    };
+  }
+
   const client = createOpenAIClient(
     input.openaiApiKey ? { apiKey: input.openaiApiKey } : {}
   );

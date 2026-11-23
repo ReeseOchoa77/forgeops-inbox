@@ -24,6 +24,7 @@ import {
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
+import { isWorkspaceAiSubsystemEnabled } from "../services/ai-control-gates.js";
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import type { InboxSyncContext } from "../../domain/inbox-sync-context.js";
@@ -470,11 +471,24 @@ export class InboxSyncProcessor {
         skipReason: syncResult.skipReason,
       });
 
-      if (
+      const classificationAiEnabled =
         this.classifyQueue &&
         !syncResult.skipped &&
         shouldEnqueueNativeClassification(connection) &&
         (syncResult.createdMessageIds?.length ?? 0) > 0
+          ? await isWorkspaceAiSubsystemEnabled(
+              this.prisma,
+              context.workspaceId,
+              "email-classification"
+            )
+          : false;
+
+      if (
+        this.classifyQueue &&
+        !syncResult.skipped &&
+        shouldEnqueueNativeClassification(connection) &&
+        (syncResult.createdMessageIds?.length ?? 0) > 0 &&
+        classificationAiEnabled
       ) {
         let enqueued = 0;
         let skippedInflight = 0;

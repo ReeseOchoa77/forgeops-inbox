@@ -67,6 +67,7 @@ export * from "./jobs/job-match-eval-diagnostics.js";
 export * from "./jobs/job-match-eval-snapshot-loader.js";
 export * from "./jobs/learn-job-contact-from-email.js";
 export * from "./ai-automation-gates.js";
+export * from "./ai-control/index.js";
 export * from "./job-file-types.js";
 export * from "./file-preview.js";
 export * from "./date-bounds.js";

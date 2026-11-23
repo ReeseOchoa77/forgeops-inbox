@@ -10,6 +10,7 @@ import {
   type InboxAnalysisResult,
 } from "@forgeops/shared";
 
+import { resolveJobMatcherGate } from "./ai-control-gates.js";
 import { classifyNormalizedEmail } from "./classify-normalized-email.js";
 import { extractTaskCandidate } from "./extract-task-candidate.js";
 import { normalizeEmailMessage } from "./normalize-email-message.js";
@@ -209,6 +210,10 @@ export const analyzeInboxConnection = async (input: {
 
   let taskCandidatesCreated = 0;
   let lowConfidenceItemsFlaggedForReview = 0;
+  const matcherGate = await resolveJobMatcherGate(
+    input.prisma,
+    input.workspaceId
+  );
   const jobMatcher = createJobMatcherService(input.prisma);
 
   const BATCH_SIZE = 25;
@@ -221,6 +226,7 @@ export const analyzeInboxConnection = async (input: {
       Awaited<ReturnType<typeof jobMatcher.match>>
     >();
     for (const message of batch) {
+      if (!matcherGate.enabled) continue;
       try {
         const normalizedForMatch = normalizeEmailMessage({
           subject: message.subject,
@@ -251,6 +257,7 @@ export const analyzeInboxConnection = async (input: {
             null,
           threadId: message.threadId,
           providerThreadId: message.providerThreadId,
+          identityPolicy: matcherGate.identityPolicy,
         });
         batchJobMatches.set(message.id, match);
       } catch (e) {
@@ -447,6 +454,7 @@ export const analyzeInboxConnection = async (input: {
             jobAssignmentIsManual: message.jobAssignmentIsManual,
             jobAssignmentSource: message.jobAssignmentSource,
           },
+          autoAssignEnabled: matcherGate.enabled,
         });
         taskJobId = persisted.jobId;
       }

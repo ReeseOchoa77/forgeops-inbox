@@ -21,6 +21,7 @@ import {
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
+import { isWorkspaceAiSubsystemEnabled } from "../services/ai-control-gates.js";
 import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 import {
@@ -274,6 +275,11 @@ export async function processProjectFolderEmailAnalyze(
 
   const client = deps.listFolderMessages ? null : new OutlookClient(deps.outlookConfig);
   let refreshToken = deps.tokenCipher.decrypt(connection.encryptedRefreshToken);
+  const classificationAiEnabled = await isWorkspaceAiSubsystemEnabled(
+    deps.prisma,
+    payload.workspaceId,
+    "email-classification"
+  );
 
   try {
     for (const folderId of folderIds) {
@@ -499,7 +505,7 @@ export async function processProjectFolderEmailAnalyze(
             }
 
             const hasClassification = existing.classifications.length > 0;
-            if (!hasClassification) {
+            if (!hasClassification && classificationAiEnabled) {
               try {
                 const enqueue = await ensureMailboxClassifyJob({
                   queue: deps.classifyQueue,

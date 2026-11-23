@@ -44,7 +44,8 @@ describe("native classification V1 job assignment freeze", () => {
     expect(persistNative).toContain("persistJobMatchResult");
     expect(persistNative).toMatch(/jobId:\s*null/);
     expect(persistNative).toContain("matcherWouldPersist");
-    expect(persistNative).toContain("isJobMatcherAutoAssignEnabled");
+    expect(persistNative).toContain("matcherGate.enabled");
+    expect(persistNative).toContain("resolveJobMatcherGate");
   });
 
   it("D/F: high-confidence matcher candidate does not persist when flag off", () => {

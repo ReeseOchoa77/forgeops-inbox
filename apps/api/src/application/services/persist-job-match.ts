@@ -48,7 +48,7 @@ export type JobMatchPersistenceFields = {
  * Build dual-persistence payloads from a JobMatcherService result.
  * Returns null when:
  * - a protected assignment must be preserved, OR
- * - JOB_MATCHER_AUTO_ASSIGN_ENABLED is off (default freeze).
+ * - auto-assign is disabled (workspace AI Control Center and/or env freeze).
  */
 export function buildJobMatchPersistence(
   match: JobMatchResult,
@@ -56,9 +56,12 @@ export function buildJobMatchPersistence(
     jobId?: string | null;
     jobAssignmentIsManual?: boolean | null;
     jobAssignmentSource?: string | null;
-  } | null
+  } | null,
+  options?: { autoAssignEnabled?: boolean }
 ): JobMatchPersistenceFields | null {
-  if (!isJobMatcherAutoAssignEnabled()) {
+  const autoAssignEnabled =
+    options?.autoAssignEnabled ?? isJobMatcherAutoAssignEnabled();
+  if (!autoAssignEnabled) {
     return null;
   }
   if (existing && isProtectedJobAssignment(existing)) {
@@ -128,9 +131,14 @@ export async function persistJobMatchResult(
       jobAssignmentIsManual?: boolean | null;
       jobAssignmentSource?: string | null;
     } | null;
+    autoAssignEnabled?: boolean;
   }
 ): Promise<{ applied: boolean; preservedManual: boolean; jobId: string | null }> {
-  const fields = buildJobMatchPersistence(input.match, input.existing);
+  const autoAssignEnabled =
+    input.autoAssignEnabled ?? isJobMatcherAutoAssignEnabled();
+  const fields = buildJobMatchPersistence(input.match, input.existing, {
+    autoAssignEnabled,
+  });
   const jobId = fields ? fields.emailMessage.jobId : (input.existing?.jobId ?? null);
   const taskLink = tasksForEmailJobLink({
     workspaceId: input.workspaceId,
@@ -139,7 +147,7 @@ export async function persistJobMatchResult(
   });
 
   if (!fields) {
-    if (input.match.selectedJobId && !isJobMatcherAutoAssignEnabled()) {
+    if (input.match.selectedJobId && !autoAssignEnabled) {
       console.info({
         event: "job-match-candidate-not-assigned",
         emailMessageId: input.emailMessageId,

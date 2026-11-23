@@ -8,6 +8,7 @@ import {
   buildJobIntelligenceIncrementalJobId,
   buildJobIntelligenceRunJobId,
   emptyJobIntelligenceProgress,
+  mergeAiControlStates,
   type JobIntelligenceJobPayload,
   type JobIntelligenceJobResult,
 } from "@forgeops/shared";
@@ -31,6 +32,22 @@ export async function startJobIntelligenceAnalysis(input: {
   });
   if (!job) {
     throw Object.assign(new Error("Job not found"), { statusCode: 404 });
+  }
+
+  const aiControl = await input.prisma.workspaceAiControlConfig.findUnique({
+    where: { workspaceId: input.workspaceId },
+    select: { subsystems: true },
+  });
+  const jiEnabled = mergeAiControlStates(aiControl?.subsystems ?? {})[
+    "job-intelligence"
+  ].enabled;
+  if (!jiEnabled) {
+    throw Object.assign(
+      new Error(
+        "Job Intelligence is disabled in AI Control Center. Existing intelligence remains readable."
+      ),
+      { statusCode: 503 }
+    );
   }
 
   const kind = input.kind ?? "HISTORICAL_BACKFILL";

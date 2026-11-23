@@ -21,6 +21,7 @@ export const RESTORABLE_PAGES = [
   'jobs',
   'reference',
   'intelligence',
+  'ai-control',
   'workspace',
   'settings',
   'admin',

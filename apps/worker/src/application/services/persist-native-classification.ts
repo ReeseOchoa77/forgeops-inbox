@@ -10,7 +10,6 @@ import {
   extractPrismaClientDiagnostic,
   filterOutBidSubmissionTasks,
   formatClassificationFailureMessage,
-  isJobMatcherAutoAssignEnabled,
   mapN8nPriorityToStored,
   NATIVE_PIPELINE_MODEL_NAME,
   NATIVE_PIPELINE_MODEL_VERSION,
@@ -22,6 +21,7 @@ import {
 } from "@forgeops/shared";
 
 import { buildNativeTaskPersistPayload } from "./native-task-persist-payload.js";
+import { resolveJobMatcherGate } from "./ai-control-gates.js";
 import {
   buildJobMatchPersistence,
   persistJobMatchResult,
@@ -218,9 +218,13 @@ export async function persistNativeClassificationResult(input: {
     emailMessageId: message.id,
   });
 
+  const matcherGate = await resolveJobMatcherGate(
+    input.prisma,
+    input.workspaceId
+  );
   const jobMatcher = createJobMatcherService(input.prisma);
   let jobMatch: Awaited<ReturnType<typeof jobMatcher.match>> | null = null;
-  if (mailboxCategory === "BUSINESS") {
+  if (mailboxCategory === "BUSINESS" && matcherGate.enabled) {
     try {
       jobMatch = await jobMatcher.match({
         workspaceId: input.workspaceId,
@@ -235,6 +239,7 @@ export async function persistNativeClassificationResult(input: {
         threadId: message.threadId,
         providerThreadId: message.providerThreadId,
         n8nSelectedJobIdHint: entities?.selectedJobId ?? null,
+        identityPolicy: matcherGate.identityPolicy,
       });
       if (jobMatch.requiresReview) requiresReview = true;
     } catch (e) {
@@ -245,17 +250,21 @@ export async function persistNativeClassificationResult(input: {
     }
   }
 
-  // Feedback: JobMatcher may force BUSINESS ONLY when V1 auto-assign escape hatch
-  // would actually persist that job (flag ON + not protected). Candidates alone
+  // Feedback: JobMatcher may force BUSINESS ONLY when auto-assign would persist
+  // (AI Control Center / env gate ON + not protected). Candidates alone
   // must never become confirmed Job association evidence.
   const matcherWouldPersist =
     jobMatch != null &&
-    isJobMatcherAutoAssignEnabled() &&
-    buildJobMatchPersistence(jobMatch, {
-      jobId: message.jobId,
-      jobAssignmentIsManual: message.jobAssignmentIsManual,
-      jobAssignmentSource: message.jobAssignmentSource,
-    }) != null;
+    matcherGate.enabled &&
+    buildJobMatchPersistence(
+      jobMatch,
+      {
+        jobId: message.jobId,
+        jobAssignmentIsManual: message.jobAssignmentIsManual,
+        jobAssignmentSource: message.jobAssignmentSource,
+      },
+      { autoAssignEnabled: matcherGate.enabled }
+    ) != null;
 
   if (jobMatch?.selectedJobId && matcherWouldPersist) {
     const matchedJob = await input.prisma.job.findFirst({
@@ -594,6 +603,7 @@ export async function persistNativeClassificationResult(input: {
           jobAssignmentIsManual: message.jobAssignmentIsManual,
           jobAssignmentSource: message.jobAssignmentSource,
         },
+        autoAssignEnabled: matcherGate.enabled,
       });
       taskJobId = persisted.jobId;
     }

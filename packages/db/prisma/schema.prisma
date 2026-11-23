@@ -570,6 +570,7 @@ model Workspace {
   jobIntelligenceEmailStates  JobIntelligenceEmailState[]
   jobIntelligenceLabRuns      JobIntelligenceLabRun[]
   intelligenceConfig          WorkspaceIntelligenceConfig?
+  aiControlConfig             WorkspaceAiControlConfig?
 }
 
 model User {
@@ -3373,8 +3374,24 @@ model JobIntelligenceEmailState {
   @@index([workspaceId, emailMessageId])
 }
 
+/// Tenant-scoped AI Control Center configuration (production gates + model selection).
+model WorkspaceAiControlConfig {
+  id              String   @id @default(cuid())
+  workspaceId     String   @unique
+  configVersion   Int      @default(1)
+  /// Map of subsystemId → { enabled, productionModelId }
+  subsystems      Json     @default("{}")
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
 /// Per-workspace production Job Intelligence model selection.
 /// Does NOT change Job Matcher production policy (that remains registry/env gated).
+/// Prefer WorkspaceAiControlConfig for new control-plane reads; kept for Lab compatibility.
 model WorkspaceIntelligenceConfig {
   id                            String   @id @default(cuid())
   workspaceId                   String   @unique

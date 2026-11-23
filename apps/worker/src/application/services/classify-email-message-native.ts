@@ -25,6 +25,7 @@ import {
 } from "@forgeops/shared";
 import type { PrismaClient } from "@prisma/client";
 
+import { isWorkspaceAiSubsystemEnabled } from "./ai-control-gates.js";
 import { persistNativeClassificationResult } from "./persist-native-classification.js";
 
 function attachmentNamesFromMetadata(metadata: unknown): string[] {
@@ -70,6 +71,27 @@ export async function classifyEmailMessageNative(
 ): Promise<MailboxClassifyJobResult> {
   const started = Date.now();
   const openaiConfigured = Boolean(normalizeOpenAiApiKey(deps.openaiApiKey));
+  const classificationEnabled = await isWorkspaceAiSubsystemEnabled(
+    deps.prisma,
+    payload.workspaceId,
+    "email-classification"
+  );
+  if (!classificationEnabled) {
+    console.info({
+      event: "mailbox-classify-skipped-ai-control",
+      workspaceId: payload.workspaceId,
+      emailMessageId: payload.emailMessageId,
+      reason: "EMAIL_CLASSIFICATION_DISABLED",
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      inboxConnectionId: payload.inboxConnectionId,
+      emailMessageId: payload.emailMessageId,
+      status: "skipped",
+      skipReason: "ai_control_disabled",
+      durationMs: Date.now() - started,
+    };
+  }
   const baseLog = {
     workspaceId: payload.workspaceId,
     inboxConnectionId: payload.inboxConnectionId,

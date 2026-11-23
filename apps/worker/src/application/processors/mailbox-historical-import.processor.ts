@@ -21,6 +21,7 @@ import {
 } from "@forgeops/shared";
 import type { Queue } from "bullmq";
 
+import { isWorkspaceAiSubsystemEnabled } from "../services/ai-control-gates.js";
 import { enqueueAttachmentIngestFromSync } from "../services/enqueue-attachment-ingest-from-sync.js";
 import { importProviderMailbox } from "../services/import-provider-mailbox.js";
 
@@ -383,36 +384,43 @@ export async function processMailboxHistoricalImport(
       }
 
       if (shouldEnqueueNativeClassification(connection)) {
-        for (const emailMessageId of batchCreatedIds) {
-          try {
-            const outcome = await ensureMailboxClassifyJob({
-              queue: deps.classifyQueue,
-              workspaceId: payload.workspaceId,
-              inboxConnectionId: connection.id,
-              emailMessageId,
-              ...(payload.initiatedBy
-                ? { initiatedBy: payload.initiatedBy }
-                : {}),
-            });
-            if (outcome === "enqueued") {
-              await deps.prisma.emailMessage
-                .update({
-                  where: { id: emailMessageId },
-                  data: {
-                    classificationStatus: "PENDING",
-                    classificationLastAttemptAt: new Date(),
-                    classificationAttemptCount: { increment: 1 },
-                    classificationError: null,
-                  },
-                })
-                .catch(() => {});
+        const classificationAiEnabled = await isWorkspaceAiSubsystemEnabled(
+          deps.prisma,
+          payload.workspaceId,
+          "email-classification"
+        );
+        if (classificationAiEnabled) {
+          for (const emailMessageId of batchCreatedIds) {
+            try {
+              const outcome = await ensureMailboxClassifyJob({
+                queue: deps.classifyQueue,
+                workspaceId: payload.workspaceId,
+                inboxConnectionId: connection.id,
+                emailMessageId,
+                ...(payload.initiatedBy
+                  ? { initiatedBy: payload.initiatedBy }
+                  : {}),
+              });
+              if (outcome === "enqueued") {
+                await deps.prisma.emailMessage
+                  .update({
+                    where: { id: emailMessageId },
+                    data: {
+                      classificationStatus: "PENDING",
+                      classificationLastAttemptAt: new Date(),
+                      classificationAttemptCount: { increment: 1 },
+                      classificationError: null,
+                    },
+                  })
+                  .catch(() => {});
+              }
+            } catch (e) {
+              failedCount += 1;
+              console.warn("historical-classify-queue-failed", {
+                emailMessageId,
+                error: e instanceof Error ? e.message : "unknown",
+              });
             }
-          } catch (e) {
-            failedCount += 1;
-            console.warn("historical-classify-queue-failed", {
-              emailMessageId,
-              error: e instanceof Error ? e.message : "unknown",
-            });
           }
         }
       }

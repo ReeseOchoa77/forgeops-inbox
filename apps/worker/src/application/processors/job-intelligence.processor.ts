@@ -27,6 +27,8 @@ import {
   type JobIntelligenceRunProgress,
 } from "@forgeops/shared";
 
+import { isWorkspaceAiSubsystemEnabled } from "../services/ai-control-gates.js";
+
 type Deps = {
   prisma: PrismaClient;
   openaiApiKey?: string | null;
@@ -104,6 +106,26 @@ export async function processJobIntelligenceRun(
       jobId: payload.jobId,
       runId: payload.runId,
       status: "CANCELLED",
+    };
+  }
+
+  const jiEnabled = await isWorkspaceAiSubsystemEnabled(
+    prisma,
+    payload.workspaceId,
+    "job-intelligence"
+  );
+  if (!jiEnabled) {
+    await failOpenJobIntelligenceRun(
+      payload.runId,
+      prisma,
+      "Job Intelligence disabled in AI Control Center (queued run aborted; existing data preserved)"
+    );
+    return {
+      workspaceId: payload.workspaceId,
+      jobId: payload.jobId,
+      runId: payload.runId,
+      status: "FAILED",
+      errorMessage: "ai_control_disabled",
     };
   }
 

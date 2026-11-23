@@ -77,6 +77,36 @@ export interface SessionResponse {
   }>;
 }
 
+export type AiControlSubsystemState = {
+  enabled: boolean
+  productionModelId: string
+}
+
+export type AiControlConfigPayload = {
+  configVersion: number
+  subsystems: Record<string, AiControlSubsystemState>
+  updatedAt: string | null
+  updatedByUserId: string | null
+}
+
+export type AiControlCenterDto = {
+  config: AiControlConfigPayload
+  definitions: Array<{
+    id: string
+    name: string
+    description: string
+    dependencies: string[]
+    disableBehavior: string
+    models: Array<{
+      id: string
+      displayName: string
+      description: string
+      status: 'production' | 'experimental' | 'retired'
+      selectable: boolean
+    }>
+  }>
+}
+
 export type AuthorizationStatus =
   | 'REQUIRED'
   | 'CONNECTED'
@@ -3043,6 +3073,22 @@ export const api = {
       `/workspaces/${workspaceId}/intelligence${q ? `?${q}` : ''}`
     )
   },
+
+  getAiControlCenter: (workspaceId: string) =>
+    request<AiControlCenterDto>(`/workspaces/${workspaceId}/ai-control`),
+
+  updateAiControlCenter: (
+    workspaceId: string,
+    body: {
+      confirm: true
+      expectedConfigVersion?: number | null
+      subsystems: Record<string, Partial<AiControlSubsystemState>>
+    }
+  ) =>
+    request<{ config: AiControlConfigPayload; note: string }>(
+      `/workspaces/${workspaceId}/ai-control`,
+      { method: 'PUT', body: JSON.stringify(body) }
+    ),
 
   getJobIntelligenceLabConfig: (workspaceId: string) =>
     request<{

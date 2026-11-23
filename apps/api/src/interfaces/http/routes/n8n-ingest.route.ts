@@ -9,6 +9,9 @@ import {
   isBlockedByInboxClearedAt,
   filterOutBidSubmissionTasks,
   resolveUniqueToAssigneeUserId,
+  mergeAiControlStates,
+  isJobMatchRunnablePolicyId,
+  getProductionJobMatchIdentityPolicy,
 } from "@forgeops/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -819,6 +822,24 @@ async function handleN8nIngest(
     // ForgeOps-owned job matching for BUSINESS mail (same service as native analysis).
     if (body.analysis.mailboxCategory !== "PERSONAL") {
       try {
+        const aiControlRow =
+          await app.services.prisma.workspaceAiControlConfig.findUnique({
+            where: { workspaceId },
+            select: { subsystems: true },
+          });
+        const matcherState = mergeAiControlStates(
+          aiControlRow?.subsystems ?? {}
+        )["job-matcher"];
+        const matcherEnabled = matcherState.enabled;
+        const identityPolicy = isJobMatchRunnablePolicyId(
+          matcherState.productionModelId
+        )
+          ? matcherState.productionModelId
+          : getProductionJobMatchIdentityPolicy();
+
+        if (!matcherEnabled) {
+          // Ingest + classification already persisted; skip automatic Job matching.
+        } else {
         const existingAssignment = await app.services.prisma.emailMessage.findUnique({
           where: { id: result.messageId },
           select: {
@@ -846,6 +867,7 @@ async function handleN8nIngest(
           threadId: existingAssignment?.threadId ?? result.threadId,
           providerThreadId: existingAssignment?.providerThreadId ?? null,
           n8nSelectedJobIdHint: body.analysis.selectedJobId ?? null,
+          identityPolicy,
         });
 
         if (result.classificationId) {
@@ -855,6 +877,7 @@ async function handleN8nIngest(
             emailMessageId: result.messageId,
             match,
             existing: existingAssignment,
+            autoAssignEnabled: matcherEnabled,
           });
         }
 
@@ -868,6 +891,7 @@ async function handleN8nIngest(
               reviewStatus: "PENDING",
             },
           }).catch(() => {});
+        }
         }
       } catch (e) {
         app.log.warn({

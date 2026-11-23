@@ -108,6 +108,7 @@ import { registerCalendarRoutes } from "./routes/calendar.route.js";
 import { registerJobImportRoutes } from "./routes/job-import.route.js";
 import { registerDashboardRoutes } from "./routes/dashboard.route.js";
 import { registerIntelligenceRoutes } from "./routes/intelligence.route.js";
+import { registerAiControlRoutes } from "./routes/ai-control.route.js";
 import { S3AttachmentStorage } from "../../infrastructure/storage/attachment-storage.js";
 
 export const buildServer = async () => {
@@ -490,6 +491,7 @@ export const buildServer = async () => {
   await registerTestDataAdminRoutes(app);
   await registerJobsRoutes(app);
   await registerJobIntelligenceRoutes(app);
+  await registerAiControlRoutes(app);
   await registerJobFabricationRoutes(app);
   registerJobParticipantRoutes(app);
   registerJobWorkPackageRoutes(app);

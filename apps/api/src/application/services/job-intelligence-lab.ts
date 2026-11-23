@@ -23,6 +23,7 @@ import {
   isJobMatchRunnablePolicyId,
   listExecutableJobIntelligenceModels,
   listEvaluationSelectablePolicies,
+  mergeAiControlStates,
   prepareEmailBodyForExtraction,
   resolveJobIntelligenceModelForExecution,
   type JobIntelligenceLabAssociationMode,
@@ -101,6 +102,31 @@ export async function setProductionIntelligenceModel(input: {
       updatedByUserId: input.userId,
     },
   });
+
+  // Keep AI Control Center in sync for the same production intelligence model.
+  const existingAi = await input.prisma.workspaceAiControlConfig.findUnique({
+    where: { workspaceId: input.workspaceId },
+  });
+  const nextSubsystems = mergeAiControlStates(existingAi?.subsystems ?? {});
+  nextSubsystems["job-intelligence"] = {
+    ...nextSubsystems["job-intelligence"],
+    productionModelId: input.intelligenceModelId,
+  };
+  await input.prisma.workspaceAiControlConfig.upsert({
+    where: { workspaceId: input.workspaceId },
+    create: {
+      workspaceId: input.workspaceId,
+      configVersion: 1,
+      subsystems: nextSubsystems as object,
+      updatedByUserId: input.userId,
+    },
+    update: {
+      configVersion: { increment: 1 },
+      subsystems: nextSubsystems as object,
+      updatedByUserId: input.userId,
+    },
+  });
+
   await input.prisma.auditEvent.create({
     data: {
       workspaceId: input.workspaceId,

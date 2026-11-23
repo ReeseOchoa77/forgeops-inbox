@@ -13,6 +13,7 @@ import {
   RECLASSIFY_READ_VALUES,
   RECLASSIFY_TASK_MODE_VALUES,
   MAILBOX_RECLASSIFY_MAX_SELECTED,
+  mergeAiControlStates,
   type MailboxReclassifyFilters,
   type MailboxReclassifyJobPayload,
   type MailboxReclassifyJobResult,
@@ -281,6 +282,21 @@ export function registerMailboxReclassifyRoutes(app: FastifyInstance): void {
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
       if (!hasMinRole(membership.role, "ADMIN")) {
         return reply.code(403).send({ message: "ADMIN or OWNER required" });
+      }
+
+      const aiControlRow = await app.services.prisma.workspaceAiControlConfig.findUnique({
+        where: { workspaceId: params.workspaceId },
+        select: { subsystems: true },
+      });
+      const classificationEnabled = mergeAiControlStates(
+        aiControlRow?.subsystems ?? {}
+      )["email-classification"].enabled;
+      if (!classificationEnabled) {
+        return reply.code(503).send({
+          message:
+            "Email Classification is disabled in AI Control Center. Reclassify cannot run until it is re-enabled.",
+          paused: true,
+        });
       }
 
       try {

@@ -8,7 +8,7 @@ import {
 import {
   QueueNames,
   buildInlineImageRelevanceJobId,
-  isInlineImageAiAnalyzeEnabled,
+  mergeAiControlStates,
   type InlineImageRelevanceJobPayload,
 } from "@forgeops/shared";
 
@@ -74,13 +74,6 @@ export function registerInlineImageRelevanceRoutes(app: FastifyInstance): void {
   app.post(
     "/api/v1/workspaces/:workspaceId/inline-image-relevance/analyze",
     async (request, reply) => {
-      if (!isInlineImageAiAnalyzeEnabled()) {
-        return reply.code(503).send({
-          message:
-            "Inline image AI analysis is paused. Existing classifications remain available for review.",
-          paused: true,
-        });
-      }
       const params = paramsSchema.parse(request.params);
       const body = analyzeBody.parse(request.body ?? {});
       const session = await getSessionFromRequest(request);
@@ -93,6 +86,22 @@ export function registerInlineImageRelevanceRoutes(app: FastifyInstance): void {
       if (!membership) return reply.code(403).send({ message: "Workspace access denied" });
       if (!hasMinRole(membership.role, "ADMIN")) {
         return reply.code(403).send({ message: "ADMIN or OWNER required" });
+      }
+
+      const aiControlRow = await app.services.prisma.workspaceAiControlConfig.findUnique({
+        where: { workspaceId: params.workspaceId },
+        select: { subsystems: true },
+      });
+      // Defaults preserve env freeze until an admin saves AI Control Center config.
+      const inlineEnabled = mergeAiControlStates(aiControlRow?.subsystems ?? {})[
+        "inline-image-relevance"
+      ].enabled;
+      if (!inlineEnabled) {
+        return reply.code(503).send({
+          message:
+            "Inline image AI analysis is paused. Existing classifications remain available for review.",
+          paused: true,
+        });
       }
 
       const inflight = await app.services.inlineImageRelevanceQueue.getJobs(

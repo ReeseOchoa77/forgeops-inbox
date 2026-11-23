@@ -173,11 +173,13 @@ export async function registerBidAnalysisRoutes(app: FastifyInstance) {
               ? 404
               : e.code === "NOT_AUTHORIZED"
                 ? 401
-                : e.code === "ALREADY_RUNNING" ||
-                    e.code === "INVALID_RANGE" ||
-                    e.code === "NO_DISCOVERY"
-                  ? 409
-                  : 502;
+                : e.code === "AI_CONTROL_DISABLED"
+                  ? 503
+                  : e.code === "ALREADY_RUNNING" ||
+                      e.code === "INVALID_RANGE" ||
+                      e.code === "NO_DISCOVERY"
+                    ? 409
+                    : 502;
           return reply.code(status).send({ message: e.message, code: e.code });
         }
         throw e;
