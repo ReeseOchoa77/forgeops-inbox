@@ -568,6 +568,8 @@ model Workspace {
   jobIntelligenceFacts        JobIntelligenceFact[]
   jobIntelligenceSummaries    JobIntelligenceSummary[]
   jobIntelligenceEmailStates  JobIntelligenceEmailState[]
+  jobIntelligenceLabRuns      JobIntelligenceLabRun[]
+  intelligenceConfig          WorkspaceIntelligenceConfig?
 }
 
 model User {
@@ -601,6 +603,7 @@ model User {
   confirmedBidCandidates  BidCandidate[]   @relation("BidCandidateConfirmer")
   proposedEstimatorCandidates BidCandidate[] @relation("BidCandidateProposedEstimator")
   jobMatcherEvalRunsCreated JobMatcherEvalRun[] @relation("JobMatcherEvalRunCreator")
+  jobIntelligenceLabRunsCreated JobIntelligenceLabRun[] @relation("JobIntelligenceLabRunCreator")
   jobMatcherEvalExclusions  JobMatcherEvalExclusion[] @relation("JobMatcherEvalExclusionActor")
   jobMatcherEvalGtCorrectionsVerified JobMatcherEvalGroundTruthCorrection[] @relation("JobMatcherEvalGtCorrectionVerifier")
   jobMatcherEvalGtCorrectionsReversed JobMatcherEvalGroundTruthCorrection[] @relation("JobMatcherEvalGtCorrectionReverser")
@@ -3368,4 +3371,58 @@ model JobIntelligenceEmailState {
   @@unique([workspaceId, jobId, emailMessageId])
   @@index([workspaceId, jobId, status])
   @@index([workspaceId, emailMessageId])
+}
+
+/// Per-workspace production Job Intelligence model selection.
+/// Does NOT change Job Matcher production policy (that remains registry/env gated).
+model WorkspaceIntelligenceConfig {
+  id                            String   @id @default(cuid())
+  workspaceId                   String   @unique
+  /// Executable Job Intelligence model id from JOB_INTELLIGENCE_MODEL_REGISTRY.
+  productionIntelligenceModelId String   @default("job-intel-extract-v1")
+  /// Optional documentation of which matcher policy operators believe is production.
+  /// Never silently applied to EmailMessage.jobId — informational + Lab default only.
+  documentedMatcherPolicyId     String?
+  updatedByUserId               String?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+  workspace                     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// Isolated experimental Job Intelligence Lab run.
+/// Never writes EmailMessage.jobId or production JobIntelligence* tables.
+model JobIntelligenceLabRun {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  jobId                String?
+  /// PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
+  status               String   @default("PENDING")
+  associationMode      String
+  matcherModelId       String
+  matcherModelVersion  String?
+  intelligenceModelId  String
+  intelligenceModelVersion String
+  schemaVersion        String
+  configHash           String?
+  /// Immutable association snapshot: [{emailMessageId, jobId, source, ...}]
+  associationSnapshot  Json     @default("[]")
+  /// Source email/attachment id lists for audit.
+  sourceEmailIds       Json     @default("[]")
+  sourceAttachmentIds  Json     @default("[]")
+  /// Extracted events + summary for this experiment only.
+  resultJson           Json     @default("{}")
+  diagnostics          Json?
+  usage                Json?
+  errorMessage         String?
+  initiatedByUserId    String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiatedByUser      User?     @relation("JobIntelligenceLabRunCreator", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, jobId, createdAt])
+  @@index([workspaceId, status])
 }

@@ -71,6 +71,7 @@ const CONTROL_SECTIONS = new Set([
   'overview',
   'email-classification',
   'job-matcher',
+  'job-intelligence',
   'document-intelligence',
   'workflow-intelligence',
 ])

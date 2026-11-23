@@ -3044,6 +3044,56 @@ export const api = {
     )
   },
 
+  getJobIntelligenceLabConfig: (workspaceId: string) =>
+    request<{
+      productionIntelligenceModelId: string
+      productionMatcherPolicyId: string
+      documentedMatcherPolicyId: string | null
+      intelligenceModels: Array<Record<string, unknown>>
+      matcherModels: Array<Record<string, unknown>>
+    }>(`/workspaces/${workspaceId}/intelligence/job-intelligence/config`),
+
+  setJobIntelligenceProductionModel: (
+    workspaceId: string,
+    body: { intelligenceModelId: string; confirm: true }
+  ) =>
+    request<{ productionIntelligenceModelId: string; note: string }>(
+      `/workspaces/${workspaceId}/intelligence/job-intelligence/config/production-model`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  runJobIntelligenceLab: (
+    workspaceId: string,
+    body: {
+      jobId: string
+      associationMode: 'PRODUCTION_ASSIGNMENTS' | 'MATCHER_POLICY'
+      matcherModelId?: string
+      intelligenceModelId?: string
+    }
+  ) =>
+    request<{ runId: string; status: string }>(
+      `/workspaces/${workspaceId}/intelligence/job-intelligence/lab/runs`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  listJobIntelligenceLabRuns: (workspaceId: string, jobId?: string) => {
+    const q = jobId ? `?jobId=${encodeURIComponent(jobId)}` : ''
+    return request<{ runs: Array<Record<string, unknown>> }>(
+      `/workspaces/${workspaceId}/intelligence/job-intelligence/lab/runs${q}`
+    )
+  },
+
+  getJobIntelligenceLabRun: (workspaceId: string, runId: string) =>
+    request<{ run: Record<string, unknown> }>(
+      `/workspaces/${workspaceId}/intelligence/job-intelligence/lab/runs/${runId}`
+    ),
+
+  compareJobIntelligenceLabRuns: (workspaceId: string, runIds: string[]) =>
+    request<{ comparison: Record<string, unknown> }>(
+      `/workspaces/${workspaceId}/intelligence/job-intelligence/lab/compare`,
+      { method: 'POST', body: JSON.stringify({ runIds }) }
+    ),
+
   getIntelligence: (workspaceId: string, intelligenceId: string) =>
     request<{
       component: IntelligenceSafeDto

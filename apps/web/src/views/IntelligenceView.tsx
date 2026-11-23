@@ -11,6 +11,7 @@ import {
   type JobMatcherTestOneResult,
 } from '../api'
 import { IntelligencePipelineView } from '../components/IntelligencePipeline'
+import { JobIntelligenceLabPanel } from '../components/JobIntelligenceLabPanel'
 import { JobMatcherEvaluationPanel } from '../components/JobMatcherEvaluationPanel'
 import { SubtypeDiscoveryPanel } from '../components/SubtypeDiscoveryPanel'
 import {
@@ -18,6 +19,7 @@ import {
   EMAIL_CLASSIFICATION_SUBS,
   INTELLIGENCE_CONTROL_SECTIONS,
   INTELLIGENCE_SECTION_IDS,
+  JOB_INTELLIGENCE_SUBS,
   JOB_MATCHER_SUBS,
   WORKFLOW_INTELLIGENCE_SUBS,
   defaultSubForSection,
@@ -29,6 +31,7 @@ import {
   type EmailClassificationSub,
   type IntelligenceControlSection,
   type IntelligenceControlSub,
+  type JobIntelligenceSub,
   type JobMatcherSub,
   type WorkflowIntelligenceSub,
 } from '../intelligence-control-center'
@@ -183,9 +186,11 @@ function IntelligenceControlCenter({
               ? EMAIL_CLASSIFICATION_SUBS
               : section === 'job-matcher'
                 ? JOB_MATCHER_SUBS
-                : section === 'document-intelligence'
-                  ? DOCUMENT_INTELLIGENCE_SUBS
-                  : WORKFLOW_INTELLIGENCE_SUBS
+                : section === 'job-intelligence'
+                  ? JOB_INTELLIGENCE_SUBS
+                  : section === 'document-intelligence'
+                    ? DOCUMENT_INTELLIGENCE_SUBS
+                    : WORKFLOW_INTELLIGENCE_SUBS
             ).map((s) => (
               <button
                 key={s.id}
@@ -247,6 +252,13 @@ function IntelligenceControlCenter({
             sub={(sub as JobMatcherSub) ?? 'overview'}
             uiState={intelUi}
             onUiStateChange={setIntelUi}
+            onOpen={onOpen}
+          />
+        ) : section === 'job-intelligence' ? (
+          <JobIntelligenceSection
+            workspaceId={workspaceId}
+            components={components}
+            sub={(sub as JobIntelligenceSub) ?? 'overview'}
             onOpen={onOpen}
           />
         ) : section === 'document-intelligence' ? (
@@ -592,6 +604,47 @@ function EmailClassificationSection({
 
   // discovery
   return <SubtypeDiscoveryPanel workspaceId={workspaceId} />
+}
+
+function JobIntelligenceSection({
+  workspaceId,
+  components,
+  sub,
+  onOpen,
+}: {
+  workspaceId: string
+  components: IntelligenceSafeDto[]
+  sub: JobIntelligenceSub
+  onOpen: (id: string) => void
+}) {
+  const component = components.find((c) => c.id === 'job-intelligence')
+
+  if (sub === 'lab' || sub === 'model-settings') {
+    return <JobIntelligenceLabPanel workspaceId={workspaceId} />
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12, maxWidth: 760 }}>
+      <h3 style={sectionH}>Job Intelligence</h3>
+      <p style={{ fontSize: 13, color: '#6b7280', marginTop: 0 }}>
+        Production Job Intelligence lives on each Job&apos;s Intelligence tab. Use Intelligence Lab
+        for isolated experiments that never mutate EmailMessage.jobId or production intelligence
+        tables. Job Matcher models and Job Intelligence models are selected independently.
+      </p>
+      {component ? (
+        <>
+          <OverviewSection component={component} />
+          <button type="button" onClick={() => onOpen(component.id)} style={linkBtn}>
+            Open registry detail →
+          </button>
+        </>
+      ) : (
+        <div style={{ fontSize: 13, color: '#6b7280' }}>
+          Job Intelligence is not registered in this workspace catalog.
+        </div>
+      )}
+    </div>
+  )
 }
 
 function JobMatcherSection({

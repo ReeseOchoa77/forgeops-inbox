@@ -13,6 +13,7 @@ export type IntelligenceControlSection =
   | 'overview'
   | 'email-classification'
   | 'job-matcher'
+  | 'job-intelligence'
   | 'document-intelligence'
   | 'workflow-intelligence'
 
@@ -31,12 +32,14 @@ export type JobMatcherSub =
   | 'comparisons'
   | 'history'
 
+export type JobIntelligenceSub = 'overview' | 'lab' | 'model-settings'
 export type DocumentIntelligenceSub = 'overview' | 'systems'
 export type WorkflowIntelligenceSub = 'overview' | 'systems'
 
 export type IntelligenceControlSub =
   | EmailClassificationSub
   | JobMatcherSub
+  | JobIntelligenceSub
   | DocumentIntelligenceSub
   | WorkflowIntelligenceSub
 
@@ -47,8 +50,18 @@ export const INTELLIGENCE_CONTROL_SECTIONS: ReadonlyArray<{
   { id: 'overview', label: 'Overview' },
   { id: 'email-classification', label: 'Email Classification' },
   { id: 'job-matcher', label: 'Job Matcher' },
+  { id: 'job-intelligence', label: 'Job Intelligence' },
   { id: 'document-intelligence', label: 'Document Intelligence' },
   { id: 'workflow-intelligence', label: 'Workflow Intelligence' },
+]
+
+export const JOB_INTELLIGENCE_SUBS: ReadonlyArray<{
+  id: JobIntelligenceSub
+  label: string
+}> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'lab', label: 'Intelligence Lab' },
+  { id: 'model-settings', label: 'Model Settings' },
 ]
 
 export const EMAIL_CLASSIFICATION_SUBS: ReadonlyArray<{
@@ -97,6 +110,7 @@ export const INTELLIGENCE_SECTION_IDS: Record<
 > = {
   'email-classification': ['email-classification', 'subtype-discovery'],
   'job-matcher': ['job-matcher'],
+  'job-intelligence': ['job-intelligence'],
   'document-intelligence': [
     'knowledge-document-analysis',
     'inline-image-relevance',
@@ -139,9 +153,11 @@ export function isValidSubForSection(
       ? EMAIL_CLASSIFICATION_SUBS
       : section === 'job-matcher'
         ? JOB_MATCHER_SUBS
-        : section === 'document-intelligence'
-          ? DOCUMENT_INTELLIGENCE_SUBS
-          : WORKFLOW_INTELLIGENCE_SUBS
+        : section === 'job-intelligence'
+          ? JOB_INTELLIGENCE_SUBS
+          : section === 'document-intelligence'
+            ? DOCUMENT_INTELLIGENCE_SUBS
+            : WORKFLOW_INTELLIGENCE_SUBS
   return list.some((s) => s.id === sub)
 }
 

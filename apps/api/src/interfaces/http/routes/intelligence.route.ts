@@ -47,6 +47,14 @@ import {
   SubtypeRecommendationReviewError,
   upsertRecommendationDecision,
 } from "../../../application/services/subtype-recommendation-review.js";
+import {
+  compareLabRunsService,
+  getJobIntelligenceLabRun,
+  getWorkspaceIntelligenceConfig,
+  listJobIntelligenceLabRuns,
+  runJobIntelligenceLab,
+  setProductionIntelligenceModel,
+} from "../../../application/services/job-intelligence-lab.js";
 import { getSessionFromRequest } from "../authentication.js";
 
 const datasetSpecSchema = z.object({
@@ -1130,6 +1138,190 @@ export const registerIntelligenceRoutes = async (
       });
       if (!evalRun) return reply.code(404).send({ message: "Eval run not found" });
       return reply.send({ eval: evalRun });
+    }
+  );
+
+  // ── Job Intelligence Lab (isolated; never writes EmailMessage.jobId) ──
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/config",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const config = await getWorkspaceIntelligenceConfig(
+        app.services.prisma,
+        workspaceId
+      );
+      return reply.send(config);
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/config/production-model",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          intelligenceModelId: z.string().min(1),
+          confirm: z.literal(true),
+        })
+        .parse(request.body);
+      try {
+        const row = await setProductionIntelligenceModel({
+          prisma: app.services.prisma,
+          workspaceId,
+          userId: auth.userId,
+          intelligenceModelId: body.intelligenceModelId,
+          confirm: body.confirm,
+        });
+        return reply.send({
+          productionIntelligenceModelId: row.productionIntelligenceModelId,
+          note: "Historical analyses are not rewritten. Job Matcher production policy is unchanged.",
+        });
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "statusCode" in err
+            ? Number((err as { statusCode: number }).statusCode)
+            : 500;
+        return reply
+          .code(status)
+          .send({ message: err instanceof Error ? err.message : "Failed" });
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/lab/runs",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          jobId: z.string().min(1),
+          associationMode: z.enum(["PRODUCTION_ASSIGNMENTS", "MATCHER_POLICY"]),
+          matcherModelId: z.string().min(1).optional(),
+          intelligenceModelId: z.string().min(1).optional(),
+        })
+        .parse(request.body);
+      try {
+        const labInput: Parameters<typeof runJobIntelligenceLab>[0] = {
+          prisma: app.services.prisma,
+          workspaceId,
+          userId: auth.userId,
+          jobId: body.jobId,
+          associationMode: body.associationMode,
+          openaiModel: app.services.env.OPENAI_MODEL,
+        };
+        if (body.matcherModelId !== undefined) {
+          labInput.matcherModelId = body.matcherModelId;
+        }
+        if (body.intelligenceModelId !== undefined) {
+          labInput.intelligenceModelId = body.intelligenceModelId;
+        }
+        if (app.services.env.OPENAI_API_KEY !== undefined) {
+          labInput.openaiApiKey = app.services.env.OPENAI_API_KEY;
+        }
+        const result = await runJobIntelligenceLab(labInput);
+        return reply.code(201).send(result);
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "statusCode" in err
+            ? Number((err as { statusCode: number }).statusCode)
+            : 500;
+        const runId =
+          err && typeof err === "object" && "runId" in err
+            ? String((err as { runId: string }).runId)
+            : undefined;
+        return reply.code(status).send({
+          message: err instanceof Error ? err.message : "Lab run failed",
+          ...(runId ? { runId } : {}),
+        });
+      }
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/lab/runs",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const query = z
+        .object({ jobId: z.string().optional() })
+        .parse(request.query ?? {});
+      const listArgs: Parameters<typeof listJobIntelligenceLabRuns>[0] = {
+        prisma: app.services.prisma,
+        workspaceId,
+      };
+      if (query.jobId !== undefined) listArgs.jobId = query.jobId;
+      const runs = await listJobIntelligenceLabRuns(listArgs);
+      return reply.send({ runs });
+    }
+  );
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/lab/runs/:runId",
+    async (request, reply) => {
+      const params = z
+        .object({ workspaceId: z.string().min(1), runId: z.string().min(1) })
+        .parse(request.params);
+      const auth = await requireIntelligenceAccess(
+        app,
+        request,
+        reply,
+        params.workspaceId
+      );
+      if (!auth) return;
+      try {
+        const run = await getJobIntelligenceLabRun({
+          prisma: app.services.prisma,
+          workspaceId: params.workspaceId,
+          runId: params.runId,
+        });
+        return reply.send({ run });
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "statusCode" in err
+            ? Number((err as { statusCode: number }).statusCode)
+            : 500;
+        return reply
+          .code(status)
+          .send({ message: err instanceof Error ? err.message : "Failed" });
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/intelligence/job-intelligence/lab/compare",
+    async (request, reply) => {
+      const { workspaceId } = wsParams.parse(request.params);
+      const auth = await requireIntelligenceAccess(app, request, reply, workspaceId);
+      if (!auth) return;
+      const body = z
+        .object({
+          runIds: z.array(z.string().min(1)).min(2).max(4),
+        })
+        .parse(request.body);
+      try {
+        const comparison = await compareLabRunsService({
+          prisma: app.services.prisma,
+          workspaceId,
+          runIds: body.runIds,
+        });
+        return reply.send({ comparison });
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "statusCode" in err
+            ? Number((err as { statusCode: number }).statusCode)
+            : 500;
+        return reply
+          .code(status)
+          .send({ message: err instanceof Error ? err.message : "Failed" });
+      }
     }
   );
 
