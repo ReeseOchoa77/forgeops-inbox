@@ -10,6 +10,7 @@ const NAV_SECTIONS: Array<{ page: string; section?: string; minRole?: string }> 
   { page: 'reference', section: 'Manage' },
   { page: 'intelligence', section: 'Manage', minRole: 'ADMIN' },
   { page: 'workspace' },
+  { page: 'ai-control', section: 'System', minRole: 'ADMIN' },
   { page: 'review', section: 'System', minRole: 'ADMIN' },
   { page: 'email-analysis', section: 'System', minRole: 'MEMBER' },
   { page: 'worker-jobs', section: 'System' },
@@ -47,17 +48,28 @@ describe('intelligence navigation', () => {
 })
 
 describe('email review navigation consolidation', () => {
-  it('Email Classification, Email Analysis, Worker Jobs order under System', () => {
+  it('AI Control Center, Email Classification, Email Analysis, Worker Jobs order under System', () => {
+    const aiControl = NAV_SECTIONS.find((i) => i.page === 'ai-control')
+    expect(aiControl?.section).toBe('System')
+    expect(aiControl?.minRole).toBe('ADMIN')
     const review = NAV_SECTIONS.find((i) => i.page === 'review')
     expect(review?.section).toBe('System')
     expect(review?.minRole).toBe('ADMIN')
     const systemPages = NAV_SECTIONS.filter((i) => i.section === 'System').map((i) => i.page)
-    expect(systemPages).toEqual(['review', 'email-analysis', 'worker-jobs', 'admin'])
+    expect(systemPages).toEqual([
+      'ai-control',
+      'review',
+      'email-analysis',
+      'worker-jobs',
+      'admin',
+    ])
     const ea = NAV_SECTIONS.find((i) => i.page === 'email-analysis')
     expect(ea?.minRole).toBe('MEMBER')
+    const aiIdx = systemPages.indexOf('ai-control')
     const reviewIdx = systemPages.indexOf('review')
     const eaIdx = systemPages.indexOf('email-analysis')
     const wjIdx = systemPages.indexOf('worker-jobs')
+    expect(reviewIdx).toBe(aiIdx + 1)
     expect(eaIdx).toBe(reviewIdx + 1)
     expect(wjIdx).toBe(eaIdx + 1)
   })
